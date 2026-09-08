@@ -24,6 +24,7 @@ export const SKILL_DIRS: Record<string, string[]> = {
   "grok-build": [".grok", "skills"],
   "cline-cli": [".cline", "data", "settings", "skills"],
   "qwen-code": [".qwen", "skills"], // Qwen's user-level skills root (Storage.getUserSkillsDirs)
+  "factory-droid": [".factory", "skills"], // Droid's user-level skills root
   // The pi family reads the shared ~/.agents/skills too, but writes its OWN root: skill removal is
   // by fixed directory name, so installing to the shared one would make `uninstall pi` take Codex's
   // and dsh's copy with it.

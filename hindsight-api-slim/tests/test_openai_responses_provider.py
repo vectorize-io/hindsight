@@ -397,6 +397,18 @@ def test_default_headers_passed_to_client():
     assert llm._client.default_headers.get("X-Trace-Id") == "abc123"
 
 
+def test_default_user_agent_identifies_hindsight():
+    from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
+
+    llm = OpenAIResponsesLLM(
+        provider="openai-responses",
+        api_key="sk-test",
+        base_url="",
+        model="gpt-5.6",
+    )
+    assert llm._client.default_headers["User-Agent"] == OPENAI_COMPATIBLE_USER_AGENT
+
+
 def test_custom_base_url_targets_compatible_responses_endpoint():
     """A custom base_url routes the OpenAI SDK at an OpenAI-compatible /v1/responses endpoint."""
     llm = OpenAIResponsesLLM(

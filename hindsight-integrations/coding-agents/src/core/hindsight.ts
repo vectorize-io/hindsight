@@ -12,6 +12,7 @@ import {
   PAGE_MAX_TOKENS,
   pagesFor,
   type PageTrigger,
+  pageTriggerFor,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -93,8 +94,10 @@ export interface ClientOpts {
   apiToken?: string;
   bank: string;
   /** Repository this bank is about, named in every seeded page's query (`pageScopeRule`). Only
-   *  `seedPages()` reads it; it falls back to the bank id, which carries the repo name in the
-   *  default `coding-agent::{gitProject}` template. */
+   *  `seedPages()` reads it. Undefined when no single repository is (a shared static bank, a path
+   *  map, a bank several repos are renamed onto) — the query then names the BANK, which is the
+   *  only stable subject such a bank has. Must be a property of the bank and never of the calling
+   *  session's cwd: see `bankProjectName` (#4146). */
   project?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
@@ -623,6 +626,9 @@ export class HindsightClient {
    * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
   async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
+    // The bank id is the fallback subject, not a degraded one: for a bank no single repository
+    // owns it is the only name that stays put across sessions, and under the default
+    // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
     const pages = pagesFor(this.project ?? this.bank);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
@@ -647,7 +653,9 @@ export class HindsightClient {
         source_query: page.source_query,
         tags: page.tags,
         max_tokens: PAGE_MAX_TOKENS,
-        trigger: pageTrigger,
+        // Resolved HERE, not in `buildPageTrigger`: a hashed cron (`H`) needs the page's identity,
+        // and one trigger is built per session for all of them.
+        trigger: pageTriggerFor(pageTrigger, this.bank, page.name),
       };
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
@@ -695,7 +703,8 @@ export class HindsightClient {
       }
     }
     this.log(
-      `[bank] knowledge pages seeded on ${this.bank}: ${created} created, ${updated} re-synced, ` +
+      `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
+        `${created} created, ${updated} re-synced, ` +
         `${pages.length - created - updated} unchanged`
     );
   }
@@ -745,7 +754,7 @@ export class HindsightClient {
         source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
-        trigger: args.pageTrigger ?? buildPageTrigger(),
+        trigger: pageTriggerFor(args.pageTrigger ?? buildPageTrigger(), this.bank, args.title),
       });
       try {
         const j = (await r.json()) as { page_id?: string; id?: string };

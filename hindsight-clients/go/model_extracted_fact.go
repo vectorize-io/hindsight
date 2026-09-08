@@ -29,6 +29,7 @@ type ExtractedFact struct {
 	OccurredEnd NullableString `json:"occurred_end,omitempty"`
 	// Raw (unresolved) entity names mentioned in the fact.
 	Entities []string `json:"entities,omitempty"`
+	ChunkIndex NullableInt32 `json:"chunk_index,omitempty"`
 }
 
 type _ExtractedFact ExtractedFact
@@ -216,6 +217,48 @@ func (o *ExtractedFact) SetEntities(v []string) {
 	o.Entities = v
 }
 
+// GetChunkIndex returns the ChunkIndex field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ExtractedFact) GetChunkIndex() int32 {
+	if o == nil || IsNil(o.ChunkIndex.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.ChunkIndex.Get()
+}
+
+// GetChunkIndexOk returns a tuple with the ChunkIndex field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ExtractedFact) GetChunkIndexOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ChunkIndex.Get(), o.ChunkIndex.IsSet()
+}
+
+// HasChunkIndex returns a boolean if a field has been set.
+func (o *ExtractedFact) HasChunkIndex() bool {
+	if o != nil && o.ChunkIndex.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetChunkIndex gets a reference to the given NullableInt32 and assigns it to the ChunkIndex field.
+func (o *ExtractedFact) SetChunkIndex(v int32) {
+	o.ChunkIndex.Set(&v)
+}
+// SetChunkIndexNil sets the value for ChunkIndex to be an explicit nil
+func (o *ExtractedFact) SetChunkIndexNil() {
+	o.ChunkIndex.Set(nil)
+}
+
+// UnsetChunkIndex ensures that no value is present for ChunkIndex, not even an explicit nil
+func (o *ExtractedFact) UnsetChunkIndex() {
+	o.ChunkIndex.Unset()
+}
+
 func (o ExtractedFact) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -236,6 +279,9 @@ func (o ExtractedFact) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Entities) {
 		toSerialize["entities"] = o.Entities
+	}
+	if o.ChunkIndex.IsSet() {
+		toSerialize["chunk_index"] = o.ChunkIndex.Get()
 	}
 	return toSerialize, nil
 }

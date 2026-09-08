@@ -139,6 +139,28 @@ def build_agent_user_prompt(query: str, llm_output_language: str | None = None) 
     return query + output_language_directive(llm_output_language)
 
 
+def bank_name_line(bank_profile: dict[str, Any]) -> str:
+    """The bank's name as the prompt writes it.
+
+    Shared with the prompt preview, which reports this line as its own block so a
+    reader can see it comes from the bank rather than from the prompt. Rebuilding the
+    wording there would be one more copy to keep in step.
+    """
+    return f"## Memory Bank: {bank_profile.get('name', 'Assistant')}"
+
+
+def bank_disposition_line(bank_profile: dict[str, Any]) -> str:
+    """The bank's disposition traits as the prompt writes them, or "" if it has none.
+
+    Shared with the prompt preview — see :func:`bank_name_line`.
+    """
+    disposition = bank_profile.get("disposition") or {}
+    traits = [
+        f"{trait}={disposition[trait]}" for trait in ("skepticism", "literalism", "empathy") if trait in disposition
+    ]
+    return f"Disposition: {', '.join(traits)}" if traits else ""
+
+
 def build_system_prompt_for_tools(
     bank_profile: dict[str, Any],
     context: str | None = None,
@@ -173,7 +195,6 @@ def build_system_prompt_for_tools(
         llm_output_language: Configured output language; drops the default language rule
             (the directive itself goes on the user message, see build_agent_user_prompt).
     """
-    name = bank_profile.get("name", "Assistant")
     mission = bank_profile.get("mission", "")
 
     parts = []
@@ -492,23 +513,14 @@ def build_system_prompt_for_tools(
     parts.append(_current_datetime_section())
 
     parts.append("")
-    parts.append(f"## Memory Bank: {name}")
+    parts.append(bank_name_line(bank_profile))
 
     if mission:
         parts.append(f"Mission: {mission}")
 
-    # Disposition traits
-    disposition = bank_profile.get("disposition", {})
-    if disposition:
-        traits = []
-        if "skepticism" in disposition:
-            traits.append(f"skepticism={disposition['skepticism']}")
-        if "literalism" in disposition:
-            traits.append(f"literalism={disposition['literalism']}")
-        if "empathy" in disposition:
-            traits.append(f"empathy={disposition['empathy']}")
-        if traits:
-            parts.append(f"Disposition: {', '.join(traits)}")
+    disposition_line = bank_disposition_line(bank_profile)
+    if disposition_line:
+        parts.append(disposition_line)
 
     if context:
         parts.append(f"\n## Additional Context\n{context}")

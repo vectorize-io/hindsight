@@ -53,6 +53,7 @@ class SearchTracer:
         max_tokens: int,
         tags: list[str] | None = None,
         tags_match: str | None = None,
+        query_timestamp: datetime | None = None,
     ):
         # `phases_only` keeps the timings and drops everything expensive. Phase metrics are a
         # handful of floats; the rest of a trace is every candidate's text, the query embedding and
@@ -69,12 +70,15 @@ class SearchTracer:
             max_tokens: Maximum tokens to return in results
             tags: Tags filter applied to recall
             tags_match: Tags matching mode (any, all, any_strict, all_strict)
+            query_timestamp: The as-of anchor the query was resolved against, when the
+                caller supplied one. Defaults to the moment the trace is finalized.
         """
         self.query_text = query
         self.budget = budget
         self.max_tokens = max_tokens
         self.tags = tags
         self.tags_match = tags_match
+        self.query_timestamp = query_timestamp
 
         # Trace data
         self.query_embedding: list[float] | None = None
@@ -393,7 +397,7 @@ class SearchTracer:
         query_info = QueryInfo(
             query_text=self.query_text,
             query_embedding=self.query_embedding or [],
-            timestamp=datetime.now(UTC),
+            timestamp=self.query_timestamp or datetime.now(UTC),
             budget=self.budget,
             max_tokens=self.max_tokens,
             tags=self.tags,

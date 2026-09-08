@@ -205,6 +205,23 @@ const mcpServerEntry = (dist: string, harness: HookHarnessName | "cline-cli") =>
   env: { HINDSIGHT_MCP_HARNESS: harness },
 });
 
+/** Name ownership alone is insufficient: users can legitimately register another server as
+ * `hindsight`. Match the exact script shape this package has emitted under its source, npm, and
+ * staged directory names; an incidental "coding-agents" string must not grant ownership. */
+function isOurMcpEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const candidate = entry as { command?: unknown; args?: unknown };
+  if (candidate.command !== "node" || !Array.isArray(candidate.args)) return false;
+  const script = candidate.args[0];
+  if (typeof script !== "string") return false;
+  const parts = script.replaceAll("\\", "/").split("/").filter(Boolean);
+  return (
+    parts.at(-1) === "mcp-server.js" &&
+    parts.at(-2) === "dist" &&
+    (parts.at(-3) === "coding-agents" || parts.at(-3) === "hindsight-coding-agents")
+  );
+}
+
 /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
  * event names and command files here would allow a host to run a different lifecycle than it installs. */
 function mergeHarnessHooks(
@@ -214,7 +231,7 @@ function mergeHarnessHooks(
 ): void {
   const spec = HOOK_HARNESSES[harness];
   const installedEvents = new Set<string>();
-  for (const hook of Object.values(spec.install)) {
+  for (const hook of [...Object.values(spec.install), ...(spec.additionalHooks ?? [])]) {
     // Antigravity has no SessionStart event. Its first PreInvocation performs the same seed guard,
     // so both conceptual lifecycle names intentionally resolve to one native hook entry.
     if (installedEvents.has(hook.event)) continue;
@@ -232,7 +249,8 @@ function mergeHarnessHooks(
 
 function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName): void {
   const strippedEvents = new Set<string>();
-  for (const hook of Object.values(HOOK_HARNESSES[harness].install)) {
+  const spec = HOOK_HARNESSES[harness];
+  for (const hook of [...Object.values(spec.install), ...(spec.additionalHooks ?? [])]) {
     if (strippedEvents.has(hook.event)) continue;
     strippedEvents.add(hook.event);
     setOrDelete(hooks, hook.event, stripOurs(hooks[hook.event]));
@@ -1560,6 +1578,77 @@ function defaultQwenMcp(args: string[]): boolean {
   }
 }
 
+/**
+ * Factory Droid wires everything through plain JSON files under `~/.factory/`, so the installer
+ * needs no Droid CLI round-trip:
+ *
+ * - `hooks.json` - user-level hook registrations. Droid reads the EVENT MAP at the TOP LEVEL of
+ *   this file (unlike Claude Code, which nests it under a `hooks` key inside settings.json), so
+ *   `mergeHarnessHooks` is applied to the root object, not to a `hooks` property. The matcher-group
+ *   entries themselves are Claude-shaped, which is exactly what the "nested" configStyle emits.
+ * - `mcp.json` - `mcpServers.hindsight` runs the same stdio `dist/mcp-server.js` as every other
+ *   host, tagged with `HINDSIGHT_MCP_HARNESS=factory-droid`. A same-named foreign server blocks
+ *   install instead of being overwritten. Droid reloads this file on change.
+ * - `skills/` - the companion skill, same copy/uninstall dance as the other hosts.
+ */
+const factoryDroid: HarnessInstaller = {
+  name: "factory-droid",
+  detect: (c) => onPath("droid") || existsSync(join(c.home, ".factory")),
+  preflight(c) {
+    const mcpPath = join(c.home, ".factory", "mcp.json");
+    const existing = readJson(mcpPath).mcpServers?.hindsight;
+    if (existing && !isOurMcpEntry(existing)) {
+      return (
+        `${mcpPath} already contains a user-managed MCP server named "hindsight". ` +
+        "Rename or remove that entry, then re-run install."
+      );
+    }
+  },
+  install(c) {
+    const hooksPath = join(c.home, ".factory", "hooks.json");
+    const hooks = readJson(hooksPath);
+    if (!existsSync(hooksPath)) {
+      // A standalone hooks.json takes precedence over settings.json. Copy fallback declarations
+      // before creating it, otherwise installing Hindsight silently disables every existing hook.
+      const fallback = readJson(join(c.home, ".factory", "settings.json")).hooks;
+      if (fallback && typeof fallback === "object" && !Array.isArray(fallback)) {
+        Object.assign(hooks, fallback);
+      }
+    }
+    mergeHarnessHooks(hooks as Record<string, any>, "factory-droid", c.dist);
+    writeJson(hooksPath, hooks);
+    c.log?.(`factory-droid: hooks merged into ${hooksPath}`);
+    installSkill(c, "factory-droid");
+
+    const mcpPath = join(c.home, ".factory", "mcp.json");
+    const mcp = readJson(mcpPath);
+    mcp.mcpServers = mcp.mcpServers ?? {};
+    mcp.mcpServers.hindsight = mcpServerEntry(c.dist, "factory-droid");
+    writeJson(mcpPath, mcp);
+    c.log?.(`factory-droid: MCP server registered in ${mcpPath}`);
+  },
+  uninstall(c) {
+    const hooksPath = join(c.home, ".factory", "hooks.json");
+    if (existsSync(hooksPath)) {
+      const hooks = readJson(hooksPath);
+      stripHarnessHooks(hooks as Record<string, any>, "factory-droid");
+      if (Object.keys(hooks).length) writeJson(hooksPath, hooks);
+      else rmSync(hooksPath);
+    }
+    const mcpPath = join(c.home, ".factory", "mcp.json");
+    if (existsSync(mcpPath)) {
+      const mcp = readJson(mcpPath);
+      if (isOurMcpEntry(mcp.mcpServers?.hindsight)) {
+        delete mcp.mcpServers.hindsight;
+        if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+        else rmSync(mcpPath);
+      }
+    }
+    uninstallSkill(c, "factory-droid");
+    c.log?.("factory-droid: hooks + MCP registration + skill removed");
+  },
+};
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   opencode2,
@@ -1577,6 +1666,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   cline,
   dcode,
   dsh,
+  factoryDroid,
 ];
 
 // The public executable was renamed from Gemini CLI to Antigravity's `agy`. Keep the
@@ -1708,20 +1798,8 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     );
     return 1;
   }
-  // Which server the agents will talk to. Resolved BEFORE any harness is wired so the very first
-  // session already has a config to read.
-  if (
-    command === "install" &&
-    !configureServer(
-      ctx,
-      rawArgs,
-      targets.map((t) => t.name)
-    )
-  )
-    return 1;
-
-  // Preflight runs BEFORE any config is written, and only blocks the harness that failed: on
-  // `install all` the other agents are still worth wiring. The non-zero exit keeps the failure
+  // Preflight runs before server or host config is written. It only blocks the harness that failed:
+  // on `install all` the other agents are still worth wiring. The non-zero exit keeps the failure
   // visible to whatever script invoked this.
   const blocked = new Set<string>();
   if (command === "install") {
@@ -1733,6 +1811,19 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     }
   }
   const runnable = targets.filter((t) => !blocked.has(t.name));
+  // Resolve the server only when at least one harness can be installed, and before wiring any of
+  // them so the first session already has a config to read.
+  if (
+    command === "install" &&
+    runnable.length > 0 &&
+    !configureServer(
+      ctx,
+      rawArgs,
+      runnable.map((t) => t.name)
+    )
+  )
+    return 1;
+
   const failed: string[] = [];
   for (const t of runnable) {
     if (t[command](ctx) === false) failed.push(t.name);

@@ -210,7 +210,7 @@ class TestWithinBatchSemanticLinks:
         legacy = _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=8, threshold=0.1)
 
         assert [(link[0], link[1], link[2]) for link in new] == [(link[0], link[1], link[2]) for link in legacy]
-        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-12)
+        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-6)
 
     def test_matches_across_block_boundaries(self, monkeypatch):
         """Blocking must not change which units are compared, only when."""
@@ -223,7 +223,44 @@ class TestWithinBatchSemanticLinks:
         legacy = _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=5, threshold=0.0)
 
         assert [(link[0], link[1]) for link in new] == [(link[0], link[1]) for link in legacy]
-        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-12)
+        assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-6)
+
+    def test_matches_the_float64_reference_on_degenerate_magnitudes(self):
+        """Norms are accumulated in float64: a float32 sum of squares would overflow to inf
+        above ~1e19 and flush to zero below ~1e-22, silently dropping those rows."""
+        rng = np.random.default_rng(5)
+        for scale in (1e-30, 1e-23, 1e20, 1e25):
+            embeddings = (rng.normal(size=(6, 8)) * scale).astype(np.float32)
+            unit_ids = [f"u{i}" for i in range(6)]
+
+            new = compute_semantic_links_within_batch(unit_ids, embeddings, top_k=3, threshold=0.0)
+            legacy = _legacy_semantic_links_within_batch(unit_ids, embeddings, top_k=3, threshold=0.0)
+
+            assert [(link[0], link[1]) for link in new] == [(link[0], link[1]) for link in legacy], scale
+            assert [link[3] for link in new] == pytest.approx([link[3] for link in legacy], abs=1e-6)
+
+    def test_does_not_mutate_the_caller_s_embeddings(self):
+        """Normalisation runs in place, so the batch must be copied off the caller's buffer."""
+        rng = np.random.default_rng(6)
+        embeddings = rng.normal(size=(5, 8)).astype(np.float32)
+        before = embeddings.copy()
+
+        compute_semantic_links_within_batch([f"u{i}" for i in range(5)], embeddings, top_k=3, threshold=0.0)
+
+        assert np.array_equal(embeddings, before)
+
+    def test_top_k_is_honoured_when_every_candidate_ties(self, monkeypatch):
+        """Duplicate facts give every pair the same score; introselect must still emit exactly
+        top_k neighbours per source rather than tripping over the ties."""
+        monkeypatch.setattr(link_utils, "_SEMANTIC_WITHIN_BATCH_BLOCK_ROWS", 4)
+        unit_ids = [f"u{i}" for i in range(12)]
+        embeddings = [[0.5, 0.25, 0.125, 0.0625]] * 12
+
+        links = compute_semantic_links_within_batch(unit_ids, embeddings, top_k=5, threshold=0.5)
+
+        assert len(links) == 12 * 5
+        assert all(sum(1 for link in links if link[0] == unit_id) == 5 for unit_id in unit_ids)
+        assert not [link for link in links if link[0] == link[1]]
 
     def test_invalid_embeddings_stay_excluded_across_blocks(self, monkeypatch):
         monkeypatch.setattr(link_utils, "_SEMANTIC_WITHIN_BATCH_BLOCK_ROWS", 2)

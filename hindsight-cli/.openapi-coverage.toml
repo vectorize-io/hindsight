@@ -51,6 +51,11 @@ clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
 # Not an end-user CLI command; available via the HTTP API and SDKs.
 dry_run_extract_memories = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
 
+# Prompt preview renders the exact messages an operation would send, with no LLM call and
+# no writes. It powers the control-plane "Extraction Tester" dialog alongside the dry run;
+# the multi-block payload is a UI shape, not a useful CLI output.
+preview_prompt = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
+
 # Memory curation (edit / invalidate / revert) is exposed via the HTTP API, SDKs,
 # and the control plane, not the end-user CLI. update_memory covers all three.
 update_memory = "Curation endpoint; exposed via the API, SDKs, and control plane, not the CLI"

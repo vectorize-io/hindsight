@@ -31,6 +31,14 @@ describe("fileCursorStore", () => {
     });
   });
 
+  it("round-trips the buffered appends a killed hook process must recover", () => {
+    // The whole point of the buffer: the bytes of an unconfirmed append outlive the process that
+    // built them, so the next Stop replays them instead of replacing the transcript (#3989).
+    const pending = [{ content: '{"role":"user"}', operationId: "op-1", at: 1_700_000_000_000 }];
+    fileCursorStore(HARNESS).write("s1", { turns: 4, fingerprint: "abc", bank: "b1", pending });
+    expect(fileCursorStore(HARNESS).read("s1")?.pending).toEqual(pending);
+  });
+
   it("keeps cursors separate per session", () => {
     const store = fileCursorStore(HARNESS);
     store.write("s1", { turns: 1, fingerprint: "a", bank: "b1" });

@@ -16,6 +16,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 from hindsight_api.engine.search.tags import (
     TagGroupAnd,
@@ -1414,9 +1415,11 @@ async def test_list_tags_pagination(api_client):
 
 
 @pytest.mark.asyncio
-async def test_list_tags_empty_bank(api_client):
+async def test_list_tags_empty_bank(api_client, memory):
     """Test that list_tags returns empty for bank with no tags."""
     bank_id = f"list_tags_empty_test_{datetime.now().timestamp()}"
+    # The bank has to exist: a bank nobody created is a 404, not an empty list (#4175).
+    await memory.get_bank_profile(bank_id, request_context=RequestContext())
 
     # List tags without storing anything
     response = await api_client.get(f"/v1/default/banks/{bank_id}/tags")

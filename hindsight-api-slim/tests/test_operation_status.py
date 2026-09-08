@@ -313,15 +313,84 @@ async def test_retry_rejects_batch_retain_parent(api_client, memory, test_bank_i
 
 
 @pytest.mark.asyncio
-async def test_cancel_rejects_non_pending_operations(api_client, memory, test_bank_id):
-    """DELETE /operations/{id} should only cancel pending operations."""
+async def test_cancel_rejects_terminal_operations(api_client, memory, test_bank_id):
+    """DELETE /operations/{id} should refuse operations that already finished."""
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)
 
-    for status in ("processing", "completed", "failed"):
+    for status in ("completed", "failed", "cancelled"):
         op_id = await _insert_operation(pool, test_bank_id, status)
         response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_cancel_processing_operation(api_client, memory, test_bank_id):
+    """DELETE /operations/{id} should cancel an in-flight operation (issue #4131).
+
+    This is the only way to clear a row stranded in 'processing' by a worker that
+    was killed before it could write a terminal status.
+    """
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, "processing")
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+    # And the stranded work can be re-queued once it is unwedged.
+    response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cancelling_last_child_terminalises_parent(api_client, memory, test_bank_id):
+    """A cancelled child must not strand its batch_retain parent in 'processing' (issue #4131).
+
+    'cancelled' is a done state for the sibling rollup, and the cancel itself performs the
+    rollup — otherwise nothing else ever writes the parent's terminal status and the batch
+    sits in 'processing' forever, which is the exact wedge this endpoint clears.
+    """
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    parent_id = uuid.uuid4()
+    await pool.execute(
+        """
+        INSERT INTO async_operations (operation_id, bank_id, operation_type, status, result_metadata)
+        VALUES ($1, $2, 'batch_retain', 'processing', '{"is_parent": true}'::jsonb)
+        """,
+        parent_id,
+        test_bank_id,
+    )
+
+    child_ids = []
+    for status in ("completed", "processing"):
+        child_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, result_metadata)
+            VALUES ($1, $2, 'retain', $3, $4::jsonb)
+            """,
+            child_id,
+            test_bank_id,
+            status,
+            f'{{"parent_operation_id": "{parent_id}"}}',
+        )
+        child_ids.append(child_id)
+
+    # Cancel the one child still in flight — it is the last outstanding sibling.
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{child_ids[1]}")
+    assert response.status_code == 200
+
+    parent_status = await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
+    assert parent_status == "cancelled", "parent must not be left in 'processing'"
 
 
 @pytest.mark.asyncio

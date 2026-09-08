@@ -30,6 +30,8 @@ jobs:
       all-npm: ${{ steps.filter.outputs.all-npm }}
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
+      system-tests: ${{ steps.filter.outputs.system-tests }}
+      outside-system-tests: ${{ steps.filter.outputs.outside-system-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
       integrations-eliza: ${{ steps.filter.outputs.integrations-eliza }}
@@ -149,6 +151,22 @@ jobs:
             - 'hindsight-all/**'
           integration-tests:
             - 'hindsight-integration-tests/**'
+          system-tests:
+            - 'hindsight-system-tests/**'
+          # True when the PR touches anything *other* than the system-test
+          # package. The two unconditional-by-design jobs (build-docs and
+          # verify-generated-files) hang off this rather than off a positive
+          # filter, so they keep running for every change in the repo and only
+          # step aside for a PR confined to hindsight-system-tests/ — a package
+          # nothing generates from and the docs site never reads. Iterating on
+          # that suite otherwise costs ~6 minutes of unrelated CI against a
+          # 36-second test.
+          outside-system-tests:
+            # A lone negation, deliberately. paths-filter builds one matcher per
+            # pattern and ORs them, so adding '**' alongside would make every
+            # file match and the filter always true — a change that looks right
+            # and silently does nothing.
+            - '!hindsight-system-tests/**'
           integrations-openclaw:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
@@ -492,6 +510,12 @@ jobs:
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
       run: npm ci
+
+    # Guards the guard: the smoke test's doctor assertion once passed a plugin
+    # whose hooks openclaw had blocked, so its logic has its own fixtures.
+    - name: Self-test the smoke test's doctor assertion
+      working-directory: ./hindsight-integrations/openclaw
+      run: ./scripts/doctor-check-selftest.sh
 
     - name: Run openclaw install smoke test
       working-directory: ./hindsight-integrations/openclaw
@@ -1343,7 +1367,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v6
       with:
-        node-version: '20'
+        node-version: '24'
         cache: 'npm'
         cache-dependency-path: package-lock.json
 
@@ -1398,6 +1422,9 @@ jobs:
     # generation used to build the site again inside verify-generated-files;
     # running the existing job for every PR preserves that coverage without
     # serializing two full Docusaurus builds in the generated-files check.
+    # The one exception is a PR that touches only hindsight-system-tests/,
+    # which the docs site cannot read from — see the filter of the same name.
+    if: needs.detect-changes.outputs.outside-system-tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -1853,23 +1880,6 @@ jobs:
       # with the GIL quietly re-enabled.
       DISABLE_SQLALCHEMY_CEXT_RUNTIME: "1"
 
-    services:
-      # For the image smoke test at the end of the job. The pytest run above uses the
-      # embedded pg0, not this.
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: hindsight
-          POSTGRES_PASSWORD: hindsight
-          POSTGRES_DB: hindsight
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U hindsight"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
     - uses: actions/checkout@v6
       with:
@@ -1935,6 +1945,47 @@ jobs:
       run: |
         ./.venv-ft/bin/python -m pytest tests -v \
           -m "not hs_llm_mat and not hs_llm_core"
+
+  build-freethreaded-image:
+    needs: [detect-changes]
+    # Gated on `docker` as well as `core`: this is the only job that builds
+    # Dockerfile.freethreaded, and it used to hang off the free-threaded pytest job,
+    # which does not run for a docker-only change. Two Dockerfile.freethreaded PRs
+    # merged without CI ever building the image before this was split out.
+    #
+    # Deliberately NOT gated on `has_secrets`, for the same reason as the pytest job
+    # above: the smoke test runs a mock LLM and a stub embedder, so it needs no
+    # provider credentials and therefore also covers fork PRs, which skip
+    # build-docker-images entirely.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.docker == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: build-freethreaded-image
+
+    services:
+      # For the smoke test; the image runs against this rather than embedded pg0.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: hindsight
+          POSTGRES_PASSWORD: hindsight
+          POSTGRES_DB: hindsight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hindsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Build the free-threaded image
       # Its own Dockerfile, not a target of the standalone one: different interpreter,
@@ -3503,6 +3554,52 @@ jobs:
       run: |
         echo "=== API Server Logs ==="
         cat /tmp/api-server.log || echo "No API server log found"
+
+  test-system:
+    needs: [detect-changes]
+    # Deliberately NOT gated on `has_secrets`. The whole suite runs against a stub
+    # that implements the OpenAI chat-completions/embeddings APIs and a
+    # Cohere-compatible rerank endpoint, so it needs no provider credentials — and
+    # therefore runs on fork PRs, which skip every secret-gated test-api job.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.system-tests == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: test-system (blackbox)
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install API dependencies
+      working-directory: ./hindsight-api-slim
+      # `embedded-db` (pg0) is the only extra needed: with embeddings and
+      # reranking both pointed at the stub, nothing loads sentence-transformers,
+      # so this job skips torch and the HuggingFace model cache entirely.
+      run: uv sync --frozen --extra embedded-db --index-strategy unsafe-best-match
+
+    - name: Install system-test dependencies
+      working-directory: ./hindsight-system-tests
+      run: uv sync --frozen
+
+    - name: Run system tests
+      working-directory: ./hindsight-system-tests
+      run: uv run pytest tests -v
 
   test-ag2-integration:
     needs: [detect-changes]
@@ -5276,6 +5373,11 @@ jobs:
         } | tee -a "$GITHUB_STEP_SUMMARY"
 
   verify-generated-files:
+    needs: [detect-changes]
+    # Unconditional for every change except one confined to
+    # hindsight-system-tests/ — no generated file in the repo is produced from
+    # that package, so it cannot drift them. See the outside-system-tests filter.
+    if: needs.detect-changes.outputs.outside-system-tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -5620,6 +5722,7 @@ jobs:
       - check-openapi-compatibility
       - check-cli-coverage
       - check-client-coverage
+      - test-system
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

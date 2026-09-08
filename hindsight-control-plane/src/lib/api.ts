@@ -699,7 +699,7 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Cancel a pending operation
+   * Cancel a pending or in-flight operation
    */
   async cancelOperation(bankId: string, operationId: string) {
     return this.fetchApi<{
@@ -1982,6 +1982,93 @@ export class ControlPlaneClient {
         latency_ms: number | null;
       }[];
     }>(bankApi(bankId, "/health/llm"), { method: "POST" });
+  }
+
+  /**
+   * Render the prompts an operation would send for this bank — no LLM call, no writes.
+   *
+   * Everything that shapes the prompt is read from the bank, so what comes back is
+   * the bank's *saved* configuration — there is nothing to override. Both messages
+   * come back, in send order, because a mission is not always in the system prompt:
+   * retain and consolidation keep theirs bank-agnostic and put the mission in the
+   * user message. Each message arrives as the `blocks` it is built from — the active
+   * ones concatenate back to its text — and each names the setting behind it,
+   * including settings that are currently switched off.
+   */
+  async previewPrompt(
+    bankId: string,
+    operation: "retain" | "consolidation" | "reflect",
+    strategy?: string | null
+  ) {
+    return this.fetchApi<{
+      messages: {
+        role: "system" | "user";
+        /** Active blocks concatenate to the message exactly as sent. */
+        blocks: {
+          text: string;
+          source: "config" | "builtin";
+          /** Config field behind the block; empty when no single field owns it. */
+          field: string;
+          /** Slug for a part no field owns: bank_identity, disposition, directives. */
+          section: string;
+          /** The heading the prompt text carries here, extracted from the prompt itself. */
+          heading: string;
+          /** False for a setting that is switched off, shown where it would land. */
+          active: boolean;
+          value?: string | null;
+          kind: "text" | "boolean" | "choice" | "complex";
+          choices?: string[] | null;
+          /** False for server-level fields, which shape the prompt but cannot be set per bank. */
+          editable: boolean;
+        }[];
+      }[];
+      /** The retain strategy these prompts were rendered under, if any. */
+      strategy?: string | null;
+      /** The bank's retain strategy names, so a picker needs no second call. */
+      strategies?: string[];
+      /** Settings that shape the run without appearing in the prompt, such as chunk sizes. */
+      run_settings?: {
+        field: string;
+        value?: string | null;
+        kind: "text" | "boolean" | "choice" | "complex";
+        editable: boolean;
+      }[];
+      response_schema?: Record<string, unknown> | null;
+      /** Set when the configuration means no prompt is sent at all (chunks mode). */
+      skipped_reason?: string | null;
+    }>(bankApi(bankId, "/prompts/preview"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation, strategy: strategy ?? null }),
+    });
+  }
+
+  /**
+   * Extract facts from sample text without storing anything — a real LLM call.
+   *
+   * The paid half of the prompt tester: `previewPrompt` shows what would be sent,
+   * this shows what comes back. Runs under the same strategy-resolved config a real
+   * retain would, so what it extracts is what retain would extract.
+   */
+  async dryRunExtract(bankId: string, content: string, strategy?: string | null) {
+    return this.fetchApi<{
+      facts: {
+        text: string;
+        fact_type: string;
+        entities: string[];
+        occurred_start?: string | null;
+        occurred_end?: string | null;
+        /** Index into `chunks` of the chunk this fact came from. */
+        chunk_index?: number | null;
+      }[];
+      /** The chunks the input was cut into before extraction. */
+      chunks?: { text: string; fact_count: number }[];
+      usage?: Record<string, unknown> | null;
+    }>(bankApi(bankId, "/memories/dry-run-extract"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, strategy: strategy ?? null }),
+    });
   }
 
   /**

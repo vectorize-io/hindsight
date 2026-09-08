@@ -30,9 +30,10 @@ from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
 import asyncpg
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...config import get_config
+from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
@@ -827,7 +828,24 @@ class _UpdateAction(BaseModel):
 
 
 class _DeleteAction(BaseModel):
-    observation_id: str  # UUID of the observation to remove
+    """One DELETE from an LLM response.
+
+    ``observation_id`` stays required — a delete naming no target has no defensible
+    fallback, and guessing one would remove the wrong observation. But rejecting the
+    entry rejects the ENTIRE ``_ConsolidationBatchResponse``, taking the batch's
+    perfectly good creates and updates with it (#4152), so a near-miss is worth
+    absorbing rather than paying a bisected re-run for: models that copy the
+    observation's own field name emit ``id``, which is unambiguous here because a
+    delete entry has exactly one identifier. ``populate_by_name`` keeps the
+    canonical name working for in-process construction, and the generated JSON
+    schema still advertises ``observation_id`` alone (pydantic emits the first
+    of the ``AliasChoices``), so what a grammar-constrained provider is told to
+    emit does not change — this only widens what a free-form one gets away with.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    observation_id: str = Field(validation_alias=AliasChoices("observation_id", "id"))
     reason: str = ""  # LLM's one-sentence justification (diagnostic only)
 
 
@@ -886,6 +904,10 @@ class _BatchLLMResult:
     obs_count: int = 0
     prompt_chars: int = 0
     failed: bool = False
+    #: How many attempts inside this batch call raised. Non-zero even when a later
+    #: attempt succeeded, so the run summary can report calls that were retried out
+    #: of existence — `failed` alone hides them (#4151).
+    failed_attempts: int = 0
 
 
 @dataclass
@@ -1080,6 +1102,7 @@ class ConsolidationPerfLog:
         self.llm_calls: int = 0
         self.total_obs_in_context: int = 0
         self.total_prompt_chars: int = 0
+        self.llm_batch_failures: int = 0
 
     def log(self, message: str) -> None:
         """Add a log line."""
@@ -1099,6 +1122,10 @@ class ConsolidationPerfLog:
         self.llm_calls += 1
         self.total_obs_in_context += obs_count
         self.total_prompt_chars += prompt_chars
+
+    def record_llm_batch_failures(self, count: int) -> None:
+        """Record LLM batch attempts that raised, whether or not a retry rescued them."""
+        self.llm_batch_failures += count
 
     def merge_from(self, other: "ConsolidationPerfLog") -> None:
         """Merge a per-batch perf log into this (job-level) one.
@@ -1120,6 +1147,7 @@ class ConsolidationPerfLog:
         self.llm_calls += other.llm_calls
         self.total_obs_in_context += other.total_obs_in_context
         self.total_prompt_chars += other.total_prompt_chars
+        self.llm_batch_failures += other.llm_batch_failures
 
     def flush(self) -> None:
         """Flush all log lines to the logger."""
@@ -1455,6 +1483,11 @@ async def _run_consolidation_job(
         "actions_executed": 0,
         "skipped": 0,
         "memories_failed": 0,
+        # LLM batch attempts that raised, including those a retry or the adaptive bisection
+        # later rescued. `memories_failed` counts only facts left stuck, so it reads 0 for
+        # a run that discarded every response it got (#4151, #4152). One batch call can
+        # contribute several attempts, so this is not bounded by the batch count.
+        "llm_batch_failures": 0,
     }
 
     # Track all unique tags from consolidated memories for mental model refresh filtering
@@ -1707,9 +1740,7 @@ async def _run_consolidation_job(
 
             cancelled_local = False
             if operation_id and not await memory_engine._check_op_alive(operation_id):
-                logger.info(
-                    f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping early"
-                )
+                logger.info(f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled, stopping early")
                 cancelled_local = True
 
             # Per-batch local stats; merged into outer state once, serially,
@@ -1958,6 +1989,22 @@ async def _run_consolidation_job(
 
     if timing_parts:
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
+
+    # A run whose LLM calls kept failing schema validation looks exactly like a clean one
+    # from the counters above: adaptive bisection rescues the facts, so nothing is left
+    # carrying `consolidation_failed_at`, while everything those responses would have done
+    # -- notably their deletes -- was thrown away (#4151, #4152). Say so, loudly, and only
+    # when it happened, so a healthy summary is unchanged.
+    stats["llm_batch_failures"] = perf.llm_batch_failures
+    if perf.llm_batch_failures:
+        # Attempts, not batches: one batch call can burn up to `consolidation_max_attempts`
+        # of them, so this can exceed the batch count above rather than being a share of it.
+        perf.log(
+            f"[5] WARNING: {perf.llm_batch_failures} LLM batch attempt(s) failed and their responses were "
+            f"discarded (creates, updates AND deletes alike). Facts the retry/bisection path rescued are NOT "
+            f"reflected in failed_consolidation; see hindsight.consolidation.batch_failures for the "
+            f"per-class breakdown."
+        )
 
     # Trigger mental-model refreshes once, when the chain has fully drained. On a
     # round-limited round we skip and carry the affected tags forward (above); the
@@ -2236,6 +2283,7 @@ async def _process_memory_batch(
     if perf:
         perf.record_timing("llm", time.time() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
+        perf.record_llm_batch_failures(llm_result.failed_attempts)
 
     # 4. Prepare every action connection-free, then apply them all in ONE transaction.
     #
@@ -3156,6 +3204,7 @@ async def _consolidate_batch_with_llm(
     inner_max_retries = config.consolidation_llm_max_retries
     last_exc: Exception | None = None
     attempts_made = 0
+    failed_attempts = 0
     # Pre-compute a stable identifier set for the batch so failure logs name the
     # exact memories whose consolidation is failing — without this, an opaque
     # "LLM batch call failed" line gives operators no way to find the offending
@@ -3211,9 +3260,19 @@ async def _consolidate_batch_with_llm(
                 deletes=response.deletes,
                 obs_count=len(union_observations),
                 prompt_chars=len(system_prompt) + len(user_content),
+                failed_attempts=failed_attempts,
             )
         except Exception as exc:
             failure_class = _classify_batch_failure(exc)
+            # Count every failed call, including the ones adaptive bisection goes on to
+            # rescue. `failed_consolidation` cannot show those — it is a gauge over rows
+            # still carrying `consolidation_failed_at` when the run ends — so without this
+            # a run that burned N schema-invalid calls and dropped every delete they
+            # carried reads exactly like a clean one (#4151, #4152). Exception path only.
+            get_metrics_collector().record_consolidation_batch_failure(
+                failure_class=str(failure_class), error_type=type(exc).__name__
+            )
+            failed_attempts += 1
             if failure_class is _BatchFailureClass.PROPAGATE:
                 logger.warning(
                     f"[CONSOLIDATION] LLM batch call for {batch_label} raised a non-batch failure "
@@ -3243,7 +3302,10 @@ async def _consolidate_batch_with_llm(
         f"{batch_label}, skipping batch (the caller will bisect it). Last error: {last_exc}"
     )
     return _BatchLLMResult(
-        obs_count=len(union_observations), prompt_chars=len(system_prompt) + len(user_content), failed=True
+        obs_count=len(union_observations),
+        prompt_chars=len(system_prompt) + len(user_content),
+        failed=True,
+        failed_attempts=failed_attempts,
     )
 
 

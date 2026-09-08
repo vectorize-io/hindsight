@@ -5,7 +5,9 @@ import {
   buildPageTrigger,
   CODING_BANK_TEMPLATE,
   codingBankManifest,
+  expandCronHash,
   KNOWLEDGE_LABELS,
+  pageTriggerFor,
   PAGE_FACT_TYPES,
   REFLECT_MISSION,
   RETAIN_STRATEGIES,
@@ -74,6 +76,93 @@ describe("buildPageTrigger", () => {
   });
 });
 
+/**
+ * One `pageTriggerCron` is shared by every page in every bank running this plugin, so a literal
+ * expression schedules ALL of them on the one minute it names — a pile of LLM syntheses on the
+ * worker pool that also serves retain. `H` is Jenkins' answer: hash the field per page.
+ */
+describe("hashed cron fields", () => {
+  const cron = (raw: string, bank: string, page: string) =>
+    pageTriggerFor(
+      buildPageTrigger(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: raw })),
+      bank,
+      page
+    ).refresh_cron;
+
+  it("leaves an expression without H exactly as written", () => {
+    expect(cron("0 3 * * *", "repo-a", "Component map")).toBe("0 3 * * *");
+    expect(cron("0 3 * * *", "repo-b", "Core concepts")).toBe("0 3 * * *");
+  });
+
+  it("resolves H to an ordinary cron expression the server can parse", () => {
+    // `H` never leaves this package — `refresh_cron` is standard 5-field cron server-side.
+    expect(cron("H H * * *", "repo-a", "Component map")).toMatch(
+      /^(?:[0-9]|[1-5][0-9]) (?:[0-9]|1[0-9]|2[0-3]) \* \* \*$/
+    );
+    expect(cron("H * * * *", "repo-a", "Component map")).toMatch(
+      /^(?:[0-9]|[1-5][0-9]) \* \* \* \*$/
+    );
+  });
+
+  it("keeps the fields the operator wrote and hashes only the H", () => {
+    // "spread within 03:00" — the hour is a decision, the minute is not.
+    const daily = cron("H 3 * * *", "repo-a", "Component map");
+    expect(daily).toMatch(/^\d+ 3 \* \* \*$/);
+    // A range bounds where the hash may land: spread across the night only.
+    const hours = new Set(
+      Array.from({ length: 60 }, (_, i) =>
+        Number(cron("H H(0-5) * * *", `repo-${i}`, "Component map")!.split(" ")[1])
+      )
+    );
+    expect(Math.min(...hours)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...hours)).toBeLessThanOrEqual(5);
+    expect(hours.size).toBeGreaterThan(1);
+  });
+
+  it("gives each page its own slot, stably", () => {
+    const one = cron("H H * * *", "repo-a", "Component map");
+    // Stable: a page keeps its slot across runs, machines and releases, or every session would
+    // reschedule it (and the seed PATCH would report drift forever).
+    expect(cron("H H * * *", "repo-a", "Component map")).toBe(one);
+    expect(cron("H H * * *", "repo-a", "Core concepts")).not.toBe(one);
+    expect(cron("H H * * *", "repo-b", "Component map")).not.toBe(one);
+  });
+
+  it("spreads a shared config across banks instead of piling them on one minute", () => {
+    const slots = Array.from({ length: 50 }, (_, i) =>
+      cron("H H * * *", `repo-${i}`, "Component map")
+    );
+    // The whole point: 50 banks copying the same setting do not collide. Hashing distributes
+    // approximately — it does not partition — so a couple of collisions are expected, not a bug.
+    expect(new Set(slots).size).toBeGreaterThan(45);
+  });
+
+  it("does not derive minute and hour from the same number", () => {
+    // Hashing the field index alongside the seed is what keeps "H H * * *" worth 1440 slots
+    // rather than 60 correlated ones.
+    const minutes = new Set<number>();
+    const hours = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const [m, h] = cron("H H * * *", `repo-${i}`, "Component map")!.split(" ");
+      minutes.add(Number(m));
+      hours.add(Number(h));
+    }
+    expect(minutes.size).toBeGreaterThan(40);
+    expect(hours.size).toBe(24);
+  });
+
+  it("leaves a malformed expression for the server to reject", () => {
+    // Rewriting it here would invent a schedule nobody asked for; resolveConfig refuses it first.
+    expect(expandCronHash("H(9-3) * * * *", "seed")).toBe("H(9-3) * * * *");
+    expect(expandCronHash("H H", "seed")).toBe("H H");
+  });
+
+  it("passes a trigger with no cron through untouched", () => {
+    const auto = buildPageTrigger(resolveConfig({}));
+    expect(pageTriggerFor(auto, "repo-a", "Component map")).toBe(auto);
+  });
+});
+
 describe("page trigger config resolution", () => {
   it("keeps today's behaviour when nothing is configured", () => {
     expect(resolveConfig({}).pageTriggerType).toBe("auto-refresh");
@@ -88,6 +177,27 @@ describe("page trigger config resolution", () => {
     expect(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "   " }).pageTriggerType).toBe(
       "auto-refresh"
     );
+  });
+
+  /**
+   * `expandCronHash` leaves an expression it cannot read alone, so an unchecked malformed `H`
+   * would reach the server verbatim and fail page creation with a parse error naming syntax this
+   * package invented. Only the H fields are checked — ordinary cron syntax is the server's.
+   */
+  it("falls back to auto-refresh on a malformed hashed field", () => {
+    for (const bad of ["H(9-3) * * * *", "H(0-99) * * * *", "H H", "Hx * * * *"]) {
+      expect(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: bad }).pageTriggerType).toBe(
+        "auto-refresh"
+      );
+    }
+  });
+
+  it("accepts a well-formed hashed cron", () => {
+    for (const good of ["H H * * *", "H * * * *", "H 3 * * *", "H H(0-5) * * *"]) {
+      const cfg = resolveConfig({ pageTriggerType: "cron", pageTriggerCron: good });
+      expect(cfg.pageTriggerType).toBe("cron");
+      expect(cfg.pageTriggerCron).toBe(good);
+    }
   });
 
   it("ignores a value that is not one of the three types", () => {

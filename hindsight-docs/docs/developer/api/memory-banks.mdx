@@ -34,6 +34,12 @@ Banks are completely isolated from each other — memories stored in one bank ar
 
 You don't need to pre-create a bank. Hindsight will automatically create it with default settings when you first use it.
 
+Only *writes* create a bank — retaining, updating its profile, changing its config. **Reads of a
+bank that does not exist return `404`**, so a typo'd, renamed or deleted `bank_id` is reported
+rather than answered with empty results. That matters if you are monitoring a bank: `GET .../stats`
+on a missing bank fails loudly instead of returning zeroed counters that look like a healthy,
+empty bank.
+
 :::tip Prerequisites
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
 :::
@@ -374,6 +380,86 @@ Invalid policies are rejected on PATCH with HTTP 422.
 See the [Memory Defense guide](../memory-defense/index.md) for usage examples.
 
 ---
+
+## Previewing Prompts
+
+A mission only means something once you can see the prompt it lands in. `POST /v1/default/banks/{bank_id}/prompts/preview` renders the exact messages `retain`, `consolidation` or `reflect` would send for a bank — no LLM call, no reads, nothing stored.
+
+The operation is the whole request. Everything that shapes the prompt is read from the bank — its resolved config, profile and directives — and the runtime data an operation would be given is a fixed bracketed placeholder:
+
+```bash
+curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
+  -H "Content-Type: application/json" \
+  -d '{"operation": "retain"}'
+```
+
+For `retain`, add `"strategy": "<name>"` to render under one of the bank's named retain strategies. Omit it and the bank's `retain_default_strategy` applies — exactly as it does for a retain that names none — so what you see is what retain would send. The response echoes the strategy that applied in `strategy`, and lists the bank's strategy names in `strategies` so a picker needs no second call.
+
+There is deliberately nothing to override. A preview answers "what does this bank send"; letting a caller pass its own mission or sample text only moves that question somewhere the bank cannot answer it. To try a candidate value, save it and look again — the response says which settings are editable.
+
+The response carries the messages in send order, each broken into the blocks it is built from:
+
+```json
+{
+  "messages": [
+    {
+      "role": "system",
+      "blocks": [
+        {
+          "text": "Extract SIGNIFICANT facts from text...",
+          "source": "builtin",
+          "field": "retain_extraction_mode",
+          "section": "",
+          "heading": "Selectivity",
+          "active": true,
+          "value": "concise",
+          "kind": "choice",
+          "choices": ["concise", "verbose", "verbatim", "chunks", "custom"],
+          "editable": true
+        },
+        {
+          "text": "",
+          "source": "config",
+          "field": "retain_custom_instructions",
+          "section": "",
+          "heading": "",
+          "active": false,
+          "kind": "text",
+          "editable": true
+        }
+      ]
+    },
+    { "role": "user", "blocks": [] }
+  ],
+  "response_schema": { "type": "object", "properties": { "facts": {} } }
+}
+```
+
+- **`messages`** — the request, system first, exactly as the model receives it.
+- **`blocks`** — the **active** blocks of a message concatenate back to its text exactly: nothing dropped, duplicated or reordered. `source` says what produced each: `config` for a setting you can change, `builtin` for Hindsight's own wording. The runtime data an operation is given is not a block — it is a hole in the text, marked inline with `«…»`.
+- **Inactive blocks** (`active: false`) have no text. They mark a setting that is switched off, at the point where it *would* land — so a mission you have not written yet is still visible where it would go.
+- **Identifying a block** — whichever of these applies, in order: `field` is the config field behind it; `section` is a slug for a part no single field owns (`bank_identity`, `disposition`, `directives`); `heading` is the section heading the prompt text itself carries there. All three are machine values. The response carries **no display copy** — what a block is called, and what turning a switched-off one on would do, is for the client to say in the language it is running in.
+- **`editable`** — false for server-level fields such as `llm_output_language`, which shape the prompt but cannot be overridden per bank.
+
+**Both messages are returned on purpose.** For `retain` and `consolidation` the mission travels in the *user* message, not the system prompt: keeping the system prompt identical for every bank lets one provider-side prompt cache serve them all, which is a large cost saving on high-volume ingestion. Only `reflect` puts its mission in the system prompt.
+
+### When there is no prompt
+
+`chunks` extraction mode stores each chunk verbatim and never calls an LLM. There is no prompt to show, so `messages` is empty and `skipped_reason` explains why:
+
+```json
+{
+  "operation": "retain",
+  "messages": [],
+  "skipped_reason": "Chunks mode stores each chunk verbatim as its own memory and never calls an LLM, ..."
+}
+```
+
+In the Control Plane, each Mission field on the bank **Configuration** tab has a **Preview prompt** button, and each block's setting can be edited there and saved to the bank.
+
+:::tip
+[Dry-run extraction](/developer/api/memories) is the paid counterpart: it spends a real LLM call to show what the same configuration actually *extracts*. It resolves its config the same way, strategy included, so the two agree. The Control Plane pairs them in one prompt tester.
+:::
 
 ## Updating Configuration
 

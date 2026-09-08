@@ -45,19 +45,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Brain,
-  Download,
-  Trash2,
-  MoreVertical,
-  Pencil,
-  RotateCcw,
-  Activity,
-  FlaskConical,
-} from "lucide-react";
+import { Brain, Download, Trash2, MoreVertical, Pencil, RotateCcw, Activity } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
-import { ExtractDialog } from "@/components/extract-dialog";
 
 type NavItem =
   | "home"
@@ -133,7 +123,6 @@ export default function BankPage() {
 
   // Bank actions state
   const [showLlmHealthDialog, setShowLlmHealthDialog] = useState(false);
-  const [showExtractDialog, setShowExtractDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
@@ -291,10 +280,6 @@ export default function BankPage() {
                         >
                           <Download className="w-4 h-4 mr-2" />
                           {t("exportTemplate")}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setShowExtractDialog(true)}>
-                          <FlaskConical className="w-4 h-4 mr-2" />
-                          {t("dryRunExtraction")}
                         </DropdownMenuItem>
                         {llmHealthEnabled && (
                           <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
@@ -753,7 +738,6 @@ export default function BankPage() {
       )}
 
       {/* Dry-run extraction */}
-      <ExtractDialog open={showExtractDialog} onOpenChange={setShowExtractDialog} />
 
       {/* Delete Bank Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

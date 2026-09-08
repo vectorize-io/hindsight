@@ -1,11 +1,12 @@
-"""Tests for operation cancellation when a bank is deleted.
+"""Tests for operation cancellation — by an operator, or by the bank being deleted.
 
 Covers:
 - CASCADE DELETE: deleting a bank removes async_operations and webhooks rows
-- _check_op_alive: returns True when op exists, False when deleted
-- _mark_operation_completed / _mark_operation_failed: graceful no-op when row is gone
-- Consolidation checkpoint: stops early after a batch commit if op was deleted
-- Retain checkpoint: stops between sub-batches if op was deleted
+- _check_op_alive: returns True when op exists, False when deleted or cancelled
+- _mark_operation_completed / _mark_operation_failed: graceful no-op when the row is
+  gone, and never overwriting an operator's 'cancelled' (issue #4131)
+- Consolidation checkpoint: stops early after a batch commit if op was cancelled
+- Retain checkpoint: stops between sub-batches if op was cancelled
 """
 
 import uuid
@@ -171,6 +172,31 @@ class TestCheckOpAlive:
 
         assert await memory._check_op_alive(str(op_id)) is False
 
+    @pytest.mark.asyncio
+    async def test_returns_false_when_op_cancelled(self, memory: MemoryEngine, request_context):
+        """A cancelled 'processing' row stops the running task at its next checkpoint.
+
+        This is what makes `DELETE /operations/{id}` work on in-flight operations
+        (issue #4131) — the API only flips the status, the task does the stopping.
+        """
+        bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        op_id = uuid.uuid4()
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+                VALUES ($1, $2, 'consolidation', 'processing')
+                """,
+                op_id,
+                bank_id,
+            )
+            assert await memory._check_op_alive(str(op_id)) is True
+            await conn.execute("UPDATE async_operations SET status = 'cancelled' WHERE operation_id = $1", op_id)
+
+        assert await memory._check_op_alive(str(op_id)) is False
+
 
 # ---------------------------------------------------------------------------
 # _mark_operation_completed / _mark_operation_failed graceful no-op
@@ -188,6 +214,58 @@ class TestMarkOperationGracefulOnMissingRow:
     async def test_mark_failed_does_not_raise_when_row_missing(self, memory: MemoryEngine):
         missing_id = str(uuid.uuid4())
         await memory._mark_operation_failed(missing_id, "some error", "traceback here")  # no exception
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_does_not_overwrite_cancelled(self, memory: MemoryEngine, request_context):
+        """A task that raises after being cancelled must not report 'failed' (issue #4131).
+
+        'failed' would both hide the operator's decision and make the row look like it
+        died on its own, which is a different thing to retry.
+        """
+        bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        op_id = uuid.uuid4()
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+                VALUES ($1, $2, 'consolidation', 'cancelled')
+                """,
+                op_id,
+                bank_id,
+            )
+
+        await memory._mark_operation_failed(str(op_id), "boom", "traceback here")
+
+        async with memory._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, error_message FROM async_operations WHERE operation_id = $1", op_id
+            )
+        assert row["status"] == "cancelled"
+        assert row["error_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_mark_completed_does_not_overwrite_cancelled(self, memory: MemoryEngine, request_context):
+        bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        op_id = uuid.uuid4()
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+                VALUES ($1, $2, 'consolidation', 'cancelled')
+                """,
+                op_id,
+                bank_id,
+            )
+
+        await memory._mark_operation_completed(str(op_id))
+
+        async with memory._pool.acquire() as conn:
+            status = await conn.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", op_id)
+        assert status == "cancelled"
 
     @pytest.mark.asyncio
     async def test_mark_completed_and_fire_webhook_does_not_raise_when_row_missing(self, memory: MemoryEngine):

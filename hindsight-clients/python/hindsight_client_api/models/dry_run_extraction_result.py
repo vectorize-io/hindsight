@@ -20,17 +20,19 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.extracted_fact import ExtractedFact
+from hindsight_client_api.models.extraction_chunk import ExtractionChunk
 from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
 from typing_extensions import Self
 
 class DryRunExtractionResult(BaseModel):
     """
-    Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage.
+    Result of dry-run fact extraction: candidate facts, the chunks they came from, and aggregated LLM token usage.
     """ # noqa: E501
     facts: Optional[List[ExtractedFact]] = Field(default=None, description="Candidate facts the retain step would extract.")
+    chunks: Optional[List[ExtractionChunk]] = Field(default=None, description="The chunks the input was cut into before extraction. Already computed on every path; returned because `retain_chunk_size` is otherwise a number with no visible effect.")
     usage: Optional[TokenUsage] = Field(default=None, description="Aggregated token usage across the extraction LLM calls.")
-    __properties: ClassVar[List[str]] = ["facts", "usage"]
+    __properties: ClassVar[List[str]] = ["facts", "chunks", "usage"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +80,13 @@ class DryRunExtractionResult(BaseModel):
                 if _item_facts:
                     _items.append(_item_facts.to_dict())
             _dict['facts'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in chunks (list)
+        _items = []
+        if self.chunks:
+            for _item_chunks in self.chunks:
+                if _item_chunks:
+                    _items.append(_item_chunks.to_dict())
+            _dict['chunks'] = _items
         # override the default output from pydantic by calling `to_dict()` of usage
         if self.usage:
             _dict['usage'] = self.usage.to_dict()
@@ -94,6 +103,7 @@ class DryRunExtractionResult(BaseModel):
 
         _obj = cls.model_validate({
             "facts": [ExtractedFact.from_dict(_item) for _item in obj["facts"]] if obj.get("facts") is not None else None,
+            "chunks": [ExtractionChunk.from_dict(_item) for _item in obj["chunks"]] if obj.get("chunks") is not None else None,
             "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None
         })
         return _obj

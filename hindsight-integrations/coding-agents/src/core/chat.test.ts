@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
 import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
-import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
 describe("renderSessionJsonl", () => {
   const turns: TransportTurn[] = [
@@ -174,14 +174,105 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(retain).toHaveBeenCalledTimes(1);
   });
 
-  it("replaces the whole document after a failed write, instead of appending onto an unknown state", async () => {
+  it("buffers a failed append and replays it, instead of re-sending the whole transcript", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();
     await write(client, turns(2), cursors);
 
     retain.mockRejectedValueOnce(new Error("timeout"));
     await expect(write(client, turns(4), cursors)).rejects.toThrow("timeout");
+    const failed = retain.mock.calls[1];
+    // Not dirty: a failed append no longer condemns the session to full replacement (#3989). Its
+    // turns are counted in the cursor because the buffer covers them.
+    expect(cursors.read("s1")?.dirty).toBeUndefined();
+    expect(cursors.read("s1")?.turns).toBe(4);
+    expect(cursors.read("s1")?.pending).toHaveLength(1);
+
+    await write(client, turns(6), cursors);
+    // The buffered slice goes out FIRST, byte-for-byte under its original operation id, so a write
+    // the server actually committed collapses into that operation instead of appending twice.
+    const replay = retain.mock.calls[2];
+    expect(replay[0]).toBe(failed[0]);
+    expect(replay[5].operationId).toBe(failed[5].operationId);
+    expect(replay[5].updateMode).toBe("append");
+    // Then only what is new. The transcript is never re-sent, and never re-extracted.
+    const tail = retain.mock.calls[3];
+    expect(tail[5].updateMode).toBe("append");
+    expect((tail[0] as string).split("\n").map((l) => JSON.parse(l) as TransportTurn)).toEqual([
+      turn(4),
+      turn(5),
+    ]);
+    expect(cursors.read("s1")).toEqual({
+      turns: 6,
+      fingerprint: expect.any(String),
+      bank: "coding-agent::repo",
+    });
+  });
+
+  it("drops a buffered append as soon as it lands, so a later failure cannot resend it", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    await write(client, turns(2), cursors);
+    retain.mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(4), cursors)).rejects.toThrow("timeout");
+
+    // The replay lands; the new tail behind it does not.
+    retain.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(6), cursors)).rejects.toThrow("timeout");
+    const pending = cursors.read("s1")?.pending ?? [];
+    expect(pending).toHaveLength(1);
+    expect(pending[0].content).toBe(retain.mock.calls[3][0]);
+  });
+
+  it("stops flushing rather than starting a request the host deadline cannot fit", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    await write(client, turns(2), cursors);
+    retain.mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(4), cursors)).rejects.toThrow("timeout");
+
+    // A budget that fits the replay and nothing after it: the new tail stays buffered for the next
+    // write-back instead of overrunning the deadline the host kills the hook at.
+    await retainLiveSession(client, "s1", turns(6), "2026-01-01T00:00:00Z", "codex", {
+      cursors,
+      retryUntil: Date.now(),
+    });
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(cursors.read("s1")?.pending).toHaveLength(1);
+
+    await write(client, turns(6), cursors);
+    expect(retain).toHaveBeenCalledTimes(4);
+    expect(cursors.read("s1")?.pending).toBeUndefined();
+  });
+
+  it("replaces again after a failed replace, which needs no buffer to be idempotent", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    retain.mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(2), cursors)).rejects.toThrow("timeout");
     expect(cursors.read("s1")?.dirty).toBe(true);
+    expect(cursors.read("s1")?.pending).toBeUndefined();
+
+    await write(client, turns(4), cursors);
+    expect(retain.mock.calls[1][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[1][0]).toBe(
+      renderSessionJsonl("conversation:s1", turns(4), "2026-01-01T00:00:00Z")
+    );
+  });
+
+  it("replaces rather than replaying a buffer the server may no longer dedupe", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    await write(client, turns(2), cursors);
+    retain.mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(4), cursors)).rejects.toThrow("timeout");
+
+    const stale = cursors.read("s1");
+    const pending = (stale?.pending ?? []).map((p) => ({
+      ...p,
+      at: p.at - PENDING_MAX_AGE_MS - 1,
+    }));
+    if (stale) cursors.write("s1", { ...stale, pending });
 
     await write(client, turns(6), cursors);
     const recovery = retain.mock.calls[2];
@@ -189,11 +280,7 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(recovery[0]).toBe(
       renderSessionJsonl("conversation:s1", turns(6), "2026-01-01T00:00:00Z")
     );
-    expect(cursors.read("s1")).toEqual({
-      turns: 6,
-      fingerprint: expect.any(String),
-      bank: "coding-agent::repo",
-    });
+    expect(cursors.read("s1")?.pending).toBeUndefined();
   });
 
   it("never appends against a server that ignores operation_id", async () => {

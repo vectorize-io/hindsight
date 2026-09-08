@@ -8,7 +8,17 @@ source "$SCRIPT_DIR/start-all.sh"
 unset HINDSIGHT_START_ALL_SOURCE_ONLY
 
 TMP_DIR="$(mktemp -d)"
-trap 'chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
+HTTP_SERVER_PID=""
+
+cleanup() {
+    if [ -n "$HTTP_SERVER_PID" ]; then
+        kill "$HTTP_SERVER_PID" 2>/dev/null || true
+        wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    fi
+    chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
 assert_contains() {
     local output="$1"
@@ -43,6 +53,72 @@ assert_empty() {
         exit 1
     fi
 }
+
+# =============================================================================
+# http_probe wiring
+#
+# The probe's semantics are covered by pytest, against the module that
+# implements them: hindsight-api-slim/tests/test_http_probe.py. All that is
+# left to check here is that this script delegates to it correctly.
+#
+# Skipped when hindsight_api.http_probe is not importable - this file also runs in CI
+# from a bare checkout with no virtualenv, where only the pg0 helpers below
+# are exercisable.
+# =============================================================================
+if python3 -c "import hindsight_api.http_probe" >/dev/null 2>&1; then
+    HTTP_PORT_FILE="$TMP_DIR/http-port"
+
+    python3 - "$HTTP_PORT_FILE" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(204 if self.path == "/ok" else 404)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+pathlib.Path(sys.argv[1]).write_text(str(server.server_port), encoding="ascii")
+server.serve_forever()
+PY
+    HTTP_SERVER_PID=$!
+
+    for _ in $(seq 1 50); do
+        [ -s "$HTTP_PORT_FILE" ] && break
+        sleep 0.1
+    done
+    if [ ! -s "$HTTP_PORT_FILE" ]; then
+        echo "HTTP probe test server did not start"
+        exit 1
+    fi
+    HTTP_TEST_URL="http://127.0.0.1:$(cat "$HTTP_PORT_FILE")"
+
+    if ! http_probe "$HTTP_TEST_URL/ok" 5 >/dev/null 2>&1; then
+        echo "http_probe should succeed against a healthy endpoint"
+        exit 1
+    fi
+    if http_probe "$HTTP_TEST_URL/missing" 5 >/dev/null 2>&1; then
+        echo "http_probe should fail against a 404"
+        exit 1
+    fi
+    if ! require_http_probe_runtime; then
+        echo "require_http_probe_runtime should pass when the module imports"
+        exit 1
+    fi
+
+    kill "$HTTP_SERVER_PID" 2>/dev/null || true
+    wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    HTTP_SERVER_PID=""
+    echo "start-all HTTP probe wiring checks passed"
+else
+    echo "start-all HTTP probe wiring checks skipped (hindsight_api.http_probe not importable)"
+fi
 
 mkdir -p "$TMP_DIR/empty"
 assert_empty "$(check_pg0_data_integrity "$TMP_DIR/empty")"

@@ -81,7 +81,7 @@ RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
 # =============================================================================
 # Stage: SDK Builder (needed for Control Plane)
 # =============================================================================
-FROM node:20-slim AS sdk-builder
+FROM node:24-slim AS sdk-builder
 
 ARG INCLUDE_CP
 RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping SDK build" && exit 0; fi
@@ -99,7 +99,7 @@ RUN npm run build -w @vectorize-io/hindsight-client
 # =============================================================================
 # Stage: Control Plane Builder
 # =============================================================================
-FROM node:20-slim AS cp-builder
+FROM node:24-slim AS cp-builder
 
 ARG INCLUDE_CP
 RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping CP build" && exit 0; fi
@@ -168,9 +168,7 @@ WORKDIR /app
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
-    curl \
     procps \
-    libxml2 \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
@@ -182,13 +180,11 @@ RUN apt-get update && apt-get upgrade -y \
 RUN useradd -m -s /bin/bash hindsight
 
 # Copy API with virtual environment from builder
-COPY --from=api-builder /app/api /app/api
+COPY --chown=hindsight:hindsight --from=api-builder /app/api /app/api
 
 # Copy startup script
-COPY docker/standalone/start-all.sh /app/start-all.sh
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
-
-RUN chown -R hindsight:hindsight /app
 
 USER hindsight
 
@@ -256,7 +252,7 @@ CMD ["/app/start-all.sh"]
 # =============================================================================
 # Stage: Final Image - Control Plane Only
 # =============================================================================
-FROM node:20-alpine AS cp-only
+FROM node:24-alpine AS cp-only
 
 WORKDIR /app
 
@@ -275,8 +271,13 @@ WORKDIR /app
 COPY docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
 
-# Install curl for health checks. `apk upgrade` first, for the same reason the
-# Debian stages run `apt-get upgrade` - see the comment on the api-only stage.
+# Install bash for the shared startup script. No curl: this image performs no
+# health check. start-all.sh probes only the API (gated on ENABLE_API, which
+# this stage sets to false) and the LLM under the opt-in HINDSIGHT_WAIT_FOR_DEPS,
+# which a control-plane-only container has no reason to set; the control-plane
+# branch launches `node server.js` and waits on nothing. There is no HEALTHCHECK
+# instruction either. `apk upgrade` runs first for the same reason the Debian
+# stages run `apt-get upgrade` - see the comment on the api-only stage.
 # npm is removed for the same reason the Debian stages remove pip's build
 # tooling: nothing invokes it at runtime - start-all.sh launches the pre-built
 # Next standalone bundle with `node server.js` - and dropping it leaves no
@@ -287,7 +288,7 @@ RUN chmod +x /app/start-all.sh
 # The `[ -e ]` guard is deliberate: a bare `rm -rf` on a path a future base
 # image no longer uses succeeds silently and npm quietly ships again. Fail the
 # build instead, so the path assumption has to be revisited on a base bump.
-RUN apk upgrade --no-cache && apk add --no-cache curl bash \
+RUN apk upgrade --no-cache && apk add --no-cache bash \
     && [ -e /usr/local/lib/node_modules/npm ] \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     && ! command -v npm
@@ -308,19 +309,10 @@ FROM python:3.11-slim AS standalone
 
 WORKDIR /app
 
-# Install Node.js, curl, uv, and system dependencies
+# Install uv and system dependencies. Node arrives separately, below.
 # Note: libicu version varies by Debian version - try common versions in order
 # Runtime images use uv directly; remove pip build tooling after installation so
 # vulnerable setuptools-vendored packages and wheel are not shipped in production.
-# npm goes the same way: nothing invokes it at runtime - start-all.sh launches
-# the pre-built Next standalone bundle with `node server.js` - and dropping it
-# leaves no scannable vulnerable tar component in the stage. corepack is
-# deliberately kept: it has no node_modules tree and ships no tar package
-# metadata, so a scanner reports nothing for it. npm is not installed as a
-# separate apt package here - NodeSource's `nodejs` package ships it
-# (`dpkg -S /usr/bin/npm` resolves to `nodejs`), so `apt-get remove npm` is a
-# no-op and removal by path is the only option. The `[ -e ]` guard fails the
-# build if a base bump moves that path, rather than silently shipping npm.
 # `upgrade` before `install`: without it the image ships whatever package
 # snapshot the base image was cut with, so security updates published since
 # never reach the runtime layers - that is how 0.9.2 shipped openssl 3.5.6 with
@@ -328,43 +320,55 @@ WORKDIR /app
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
-    curl \
     procps \
-    libxml2 \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
     && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && [ -e /usr/lib/node_modules/npm ] \
-    && rm -rf /usr/lib/node_modules/npm /usr/bin/npm /usr/bin/npx \
-    && ! command -v npm \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && pip uninstall --yes setuptools wheel
 
+# This is a Python base image, but it also runs the control plane - a pre-built
+# Next standalone bundle launched with `node server.js` - so it needs a Node
+# runtime. Take cp-builder's binary rather than NodeSource's apt repo. That
+# bootstrap was a `curl | bash` from a third-party host at build time, it made
+# builds non-reproducible (the remote script and repo move under a fixed
+# Dockerfile), and it dragged ~14 packages into the runtime image that nothing
+# runs: the whole GnuPG suite, used only to verify the repo key at build time,
+# plus a second system Python (3.13, in a python:3.11 image).
+#
+# Copying the binary also means npm never arrives, so the previous removal by
+# path - and its `[ -e ]` guard against a base bump moving that path - is gone
+# with it. corepack does not come along either; nothing invoked it.
+#
+# node:24-slim and python:3.11-slim are both Debian and glibc is backward
+# compatible, so the binary runs here. `node --version` fails the build if a
+# base change on either side ever breaks that, rather than shipping an image
+# whose control plane cannot start.
+COPY --from=cp-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=cp-builder /usr/local/LICENSE /usr/local/LICENSE
+RUN node --version && ! command -v npm
+
 RUN useradd -m -s /bin/bash hindsight
 
 # Copy API with virtual environment from builder
-COPY --from=api-builder /app/api /app/api
+COPY --chown=hindsight:hindsight --from=api-builder /app/api /app/api
 
 # Copy built SDK
-COPY --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
+COPY --chown=hindsight:hindsight --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
 
 # Copy Control Plane standalone build
 WORKDIR /app/control-plane
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/standalone ./
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/.next/static ./.next/static
-COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/standalone ./
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/.next/static ./.next/static
+COPY --chown=hindsight:hindsight --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
 
 WORKDIR /app
 
 # Copy startup script
-COPY docker/standalone/start-all.sh /app/start-all.sh
+COPY --chown=hindsight:hindsight docker/standalone/start-all.sh /app/start-all.sh
 RUN chmod +x /app/start-all.sh
-
-RUN chown -R hindsight:hindsight /app
 
 USER hindsight
 

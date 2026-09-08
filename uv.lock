@@ -1882,7 +1882,7 @@ requires-dist = [
     { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.22.0,<=0.23.0" },
     { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.22.0,<=0.23.0" },
     { name = "toktok-rs", specifier = ">=0.1.3" },
-    { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", marker = "extra == 'local-ml'", specifier = ">=5.5.0" },
     { name = "transformers", marker = "extra == 'local-onnx'", specifier = ">=5.5.0" },
     { name = "typer", specifier = ">=0.9.0" },

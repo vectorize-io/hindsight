@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "hindsight-api-slim"
 version = "0.9.2"
-description = "Hindsight: Agent Memory That Works Like Human Memory"
+description = "Hindsight: Agent Memory That Learns"
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -120,7 +120,13 @@ local-ml = [
     # this cap: without it an in-place upgrade can pull tokenizers 0.23.1 and
     # break local embeddings/reranker startup. See issue #2055.
     "tokenizers>=0.22.0,<=0.23.0",
-    "torch>=2.6.0", # CVE fix for remote code execution
+    # >=2.6.0 for the remote-code-execution CVE fix. The 2.11.0 floor is for
+    # ARMv8.0 CPUs (e.g. Cortex-A57): torch 2.10.0's aarch64 wheel bundles a
+    # mimalloc whose ELF constructor runs an inline ARMv8.1 LSE atomic
+    # (`ldaddal` in `_mi_options_init`), so `import torch` dies with SIGILL at
+    # dlopen time on any CPU without LSE. 2.11.0+ keeps LSE behind the
+    # runtime-dispatched outline-atomics helpers again. See issue #4142.
+    "torch>=2.11.0",
     "einops>=0.8.2",
     "flashrank>=0.2.0",
     # Apple Silicon local inference — mlx publishes wheels only for

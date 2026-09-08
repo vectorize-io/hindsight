@@ -107,7 +107,7 @@ async def test_session_id_is_stable_across_provider_retries():
             initial_backoff=0,
         )
 
-    assert result.ok is True
+    assert result.content.ok is True
     first, second = _sent_session_ids(create)
     assert first and second
     assert first == second, "retries of one operation must reuse the session id"

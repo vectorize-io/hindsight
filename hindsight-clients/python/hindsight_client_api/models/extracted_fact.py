@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,7 +31,8 @@ class ExtractedFact(BaseModel):
     occurred_start: Optional[StrictStr] = None
     occurred_end: Optional[StrictStr] = None
     entities: Optional[List[StrictStr]] = Field(default=None, description="Raw (unresolved) entity names mentioned in the fact.")
-    __properties: ClassVar[List[str]] = ["text", "fact_type", "occurred_start", "occurred_end", "entities"]
+    chunk_index: Optional[StrictInt] = None
+    __properties: ClassVar[List[str]] = ["text", "fact_type", "occurred_start", "occurred_end", "entities", "chunk_index"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,6 +83,11 @@ class ExtractedFact(BaseModel):
         if self.occurred_end is None and "occurred_end" in self.model_fields_set:
             _dict['occurred_end'] = None
 
+        # set to None if chunk_index (nullable) is None
+        # and model_fields_set contains the field
+        if self.chunk_index is None and "chunk_index" in self.model_fields_set:
+            _dict['chunk_index'] = None
+
         return _dict
 
     @classmethod
@@ -98,7 +104,8 @@ class ExtractedFact(BaseModel):
             "fact_type": obj.get("fact_type"),
             "occurred_start": obj.get("occurred_start"),
             "occurred_end": obj.get("occurred_end"),
-            "entities": obj.get("entities")
+            "entities": obj.get("entities"),
+            "chunk_index": obj.get("chunk_index")
         })
         return _obj
 

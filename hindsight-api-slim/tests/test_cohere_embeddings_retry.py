@@ -19,7 +19,7 @@ import pytest
 
 from hindsight_api.engine.embeddings import (
     CohereEmbeddings,
-    EmbeddingRetryPolicy,
+    RetryPolicy,
     create_embeddings_from_env,
 )
 
@@ -63,10 +63,10 @@ class _CohereApiError(Exception):
 
 
 # Fast policy so these tests exercise the retry logic, not the sleeps.
-_FAST_POLICY = EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0)
+_FAST_POLICY = RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0)
 
 
-def _make_embeddings(side_effect, policy: EmbeddingRetryPolicy = _FAST_POLICY) -> CohereEmbeddings:
+def _make_embeddings(side_effect, policy: RetryPolicy = _FAST_POLICY) -> CohereEmbeddings:
     emb = CohereEmbeddings(api_key="co-test", model="embed-english-v3.0", retry_policy=policy)
     client = MagicMock()
     client.embed = MagicMock(side_effect=side_effect)
@@ -159,7 +159,7 @@ def test_retry_budget_is_shared_across_batches():
     Four concurrent batches at five retries each would be 24 upstream calls if every
     batch got its own budget; one budget for the whole call cuts it to a handful.
     """
-    policy = EmbeddingRetryPolicy(max_retries=5, initial_backoff=0.05, max_backoff=0.05, budget_seconds=0.06)
+    policy = RetryPolicy(max_retries=5, initial_backoff=0.05, max_backoff=0.05, budget_seconds=0.06)
     calls = {"n": 0}
     lock = threading.Lock()
 

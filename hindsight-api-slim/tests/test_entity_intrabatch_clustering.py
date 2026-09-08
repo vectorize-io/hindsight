@@ -5,12 +5,17 @@ reimplementation of Postgres pg_trgm) and `_cluster_new_entity_names` (union-fin
 selection). No DB, no LLM — deterministic.
 """
 
+import math
+import random
+
 import pytest
 
 from hindsight_api.engine.entity_resolver import (
     _cluster_new_entity_names,
     _find_intrabatch_similar_pairs,
     _SimilarNamePair,
+    _trigram_set,
+    _trigram_set_similarity,
     trigram_similarity,
 )
 
@@ -110,3 +115,84 @@ def test_separate_clusters_stay_separate():
     )
     assert len(result) == 2
     assert all(len(members) == 2 for members in result.values())
+
+
+# --- The prefix-filtering join must return exactly what the quadratic loop returned -----------
+#
+# `_find_intrabatch_similar_pairs` prunes candidate pairs with a prefix filter instead of
+# comparing all of them. The pruning is only allowed to skip pairs that could never clear the
+# cutoff, so the join is pinned against the double loop it replaced rather than against a list
+# of expected pairs — a bad prefix bound shows up as a *missing* pair, which no fixed example
+# would catch.
+
+
+def _pairs_by_exhaustive_comparison(names: list[str], threshold: float) -> set[tuple[str, str]]:
+    """Every qualifying pair, found by comparing all of them — the pre-optimisation behaviour."""
+    trigrams = [_trigram_set(n) for n in names]
+    return {
+        (names[i], names[j])
+        for i in range(len(names))
+        for j in range(i + 1, len(names))
+        if _trigram_set_similarity(trigrams[i], trigrams[j]) >= threshold
+    }
+
+
+def _pairs_from_join(names: list[str], threshold: float) -> set[tuple[str, str]]:
+    return {(p.name_a, p.name_b) for p in _find_intrabatch_similar_pairs(names, threshold)}
+
+
+_WORD_PARTS = ["as", "ter", "wren", "mer", "ri", "vale", "cor", "vin", "北京", "josé", "ke", "0", "x"]
+
+
+def _random_batch(rng: random.Random) -> list[str]:
+    """A batch of distinct names built from shared fragments, so near-misses are common."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for _ in range(rng.randint(2, 40)):
+        name = " ".join(rng.choice(_WORD_PARTS) for _ in range(rng.randint(1, 3)))
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+# Thresholds include values that are exactly achievable Jaccard ratios (1/3, 2/5, 7/13 ...): the
+# prefix length is `|A| - ceil(t * |A|) + 1`, so a float `t * |A|` landing a hair above a whole
+# number would shorten the prefix by one and silently drop a pair sitting exactly on the cutoff.
+_EQUIVALENCE_THRESHOLDS = [0.1, 0.2, 1 / 3, 0.4, 2 / 5, 0.5, 7 / 13, 0.6, 2 / 3, 0.75, 0.8, 0.9, 0.99, 1.0]
+
+
+@pytest.mark.parametrize("threshold", _EQUIVALENCE_THRESHOLDS)
+def test_join_returns_exactly_the_exhaustive_pairs(threshold):
+    rng = random.Random(20260907)
+    for _ in range(40):
+        names = _random_batch(rng)
+        assert _pairs_from_join(names, threshold) == _pairs_by_exhaustive_comparison(names, threshold)
+
+
+def test_join_keeps_a_pair_sitting_exactly_on_the_cutoff():
+    # Merrivale/Merryvale is 7/13; at exactly that cutoff it is in, one ulp above it is out.
+    names = ["Merrivale", "Merryvale"]
+    assert _pairs_from_join(names, 7 / 13) == {("Merrivale", "Merryvale")}
+    assert _pairs_from_join(names, math.nextafter(7 / 13, 1.0)) == set()
+
+
+def test_join_emits_pairs_in_input_order():
+    # The join visits names shortest-trigram-set-first, which is not input order; the pair it
+    # emits must still name them the way the caller listed them.
+    names = ["ke-aster", "Aster"]
+    assert _pairs_from_join(names, 0.5) == {("ke-aster", "Aster")}
+
+
+def test_join_ignores_names_with_no_trigrams():
+    # "!!!" has no word characters, so pg_trgm gives it no trigrams and it can never reach a
+    # positive cutoff — but it must not break the batch around it.
+    names = ["!!!", "Aster", "aster 0", "***"]
+    assert _pairs_from_join(names, 0.5) == {("Aster", "aster 0")}
+
+
+def test_join_handles_a_batch_of_mutually_similar_names():
+    # The shape that defeats prefix filtering: every name probes into every bucket. Correctness
+    # must not depend on the pruning actually pruning anything.
+    names = [f"Acme Corporation Subsidiary {i:04d}" for i in range(30)]
+    assert _pairs_from_join(names, 0.5) == _pairs_by_exhaustive_comparison(names, 0.5)

@@ -49,6 +49,9 @@ export default defineConfig({
     "devin-hook": "src/devin-hook.ts",
     "devin-sessionstart-hook": "src/devin-sessionstart-hook.ts",
     "devin-stop-hook": "src/devin-stop-hook.ts",
+    "droid-hook": "src/droid-hook.ts",
+    "droid-sessionstart-hook": "src/droid-sessionstart-hook.ts",
+    "droid-stop-hook": "src/droid-stop-hook.ts",
     // Spawned DETACHED to start the local daemon — a cold start outlives every hook timeout.
     "daemon-start": "src/daemon-start.ts",
     "mcp-server": "src/mcp-server.ts",

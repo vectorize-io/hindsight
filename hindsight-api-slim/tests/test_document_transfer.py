@@ -102,7 +102,14 @@ def _unique_bank(prefix: str) -> str:
 
 
 async def _retain(memory, bank_id, content, request_context, document_id):
-    await memory.retain_async(
+    """Retain one document and return the ids of the facts it created.
+
+    Returned rather than left to a follow-up `list_memory_units` call: retain
+    already knows exactly which facts it wrote, whereas the list query answers a
+    different question ("what is in the bank now") that also reflects
+    auto-consolidation and anything else touching the bank concurrently.
+    """
+    return await memory.retain_async(
         bank_id=bank_id,
         content=content,
         context="Test context",
@@ -1265,11 +1272,11 @@ async def test_export_import_observations(memory, request_context):
     src = _unique_bank("transfer_obs_src")
     dst = _unique_bank("transfer_obs_dst")
     try:
-        await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
-        # Sources must be world/experience facts (not auto-consolidation observations).
-        units = await memory.list_memory_units(src, fact_type="world", request_context=request_context)
-        source_ids = [uuid.UUID(str(i["id"])) for i in units["items"][:2]]
-        assert len(source_ids) == 2
+        # Sources must be world/experience facts, never auto-consolidation
+        # observations -- which is what retain returns, so take them from there.
+        created = await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+        assert len(created) >= 2, f"setup: retain created {len(created)} facts, need at least 2"
+        source_ids = [uuid.UUID(str(i)) for i in created[:2]]
 
         # Create a real observation over those source facts. The helper self-acquires a
         # short-lived connection now (the embed runs off-connection), so pass the backend.

@@ -1011,6 +1011,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageBundleResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1083,6 +1084,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageBundleResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1155,6 +1157,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageBundleResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1289,6 +1292,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgeTreeResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1361,6 +1365,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgeTreeResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1433,6 +1438,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgeTreeResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1868,6 +1874,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageSearchResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1948,6 +1955,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageSearchResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2028,6 +2036,7 @@ class KnowledgeBaseApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "KnowledgePageSearchResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

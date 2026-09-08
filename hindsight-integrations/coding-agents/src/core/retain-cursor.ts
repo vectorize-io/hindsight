@@ -17,19 +17,56 @@
  *                        NOT Claude Code compaction, which this used to cite: that appends a
  *                        summary record and leaves every earlier record in place (#3379), so the
  *                        prefix stays intact and the append path keeps working.
- *   - dirty              the previous retain failed, or its outcome is unknown (the client aborts at
- *                        15s while the server may well have committed it). Appending on top of an
- *                        unknown state is the one way to DUPLICATE turns inside the document, so we
- *                        rewrite the whole thing instead and let replace re-establish the truth.
+ *   - dirty              a REPLACE was started and not confirmed. There is nothing worth replaying
+ *                        (another replace re-establishes the same truth from the same transcript),
+ *                        so the next write-back simply replaces again.
  *
- * `dirty` is set BEFORE the request and cleared after it succeeds, so an overlapping retain (the
- * runtime fires them without awaiting) sees the advanced cursor and does not re-send the same slice.
+ * An APPEND that fails does NOT fall back to replace, because that fallback is what made a single
+ * outage cost a full re-extraction on every subsequent Stop for the life of the session (#3989).
+ * Its bytes are buffered in `pending` instead and replayed on the next write-back, unchanged and
+ * under their original operation id — so a write the server actually committed is collapsed into
+ * that same operation rather than appending the turns twice, which is the only thing appending onto
+ * an unknown state could otherwise get wrong. The buffer is an optimisation, never the source of
+ * truth: whenever it cannot be trusted (see `pendingReplayable`) the cursor falls back to replace.
+ *
+ * The claim (`dirty`, or `pending` plus the advanced position) is written BEFORE the request and
+ * settled after it, so an overlapping retain (the runtime fires them without awaiting) sees the
+ * advanced cursor and does not re-send the same slice.
  */
 import { createHash } from "node:crypto";
 import type { TransportTurn } from "./chat";
 
+/** One append that was built and submitted but never confirmed. */
+export interface PendingAppend {
+  /** Its EXACT bytes. Replayed unchanged — different bytes would be a different operation, and the
+   *  server's dedupe (which is what makes a replay safe at all) would not apply to them. */
+  content: string;
+  /** The operation id it went out under, replayed unchanged for the same reason. */
+  operationId: string;
+  /** When it was buffered, so a replay cannot outlive the server's operation retention. */
+  at: number;
+}
+
+/** A buffered append is only replayable while the server still holds the operation it would collapse
+ *  into. Operations are kept forever by default (`HINDSIGHT_API_OPERATION_RETENTION_DAYS=0`), but an
+ *  operator can prune them, and a replay after that prune would append the same turns a second time
+ *  — so buffered bytes expire well inside any retention an operator would plausibly configure. */
+export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+/** Past this much buffered content a replace costs about the same as the replay and is simpler, so
+ *  the buffer stops growing and the cursor falls back to it. Also bounds the cursor file. */
+export const PENDING_MAX_BYTES = 256 * 1024;
+
+/** Whether a cursor's buffered appends can still be replayed, or the write-back must replace. */
+export function pendingReplayable(cursor: RetainCursor, now: number): boolean {
+  const pending = cursor.pending ?? [];
+  if (!pending.length) return true;
+  if (pending.some((p) => now - p.at > PENDING_MAX_AGE_MS)) return false;
+  return pending.reduce((n, p) => n + p.content.length, 0) <= PENDING_MAX_BYTES;
+}
+
 export interface RetainCursor {
-  /** Turns already written to the document (index into the normalized transcript). */
+  /** Turns the document holds once every `pending` entry has been applied — what the next append
+   *  must start from, whether those turns are already committed or still buffered. */
   turns: number;
   /** Identity of the written prefix — detects a rewritten transcript (see module doc). */
   fingerprint: string;
@@ -37,8 +74,11 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
-  /** A write was started and not confirmed: the next retain must replace, not append. */
+  /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
+  /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns
+   *  are already counted in `turns`: the cursor covers what is committed OR buffered. */
+  pending?: PendingAppend[];
 }
 
 /**
@@ -68,10 +108,13 @@ export type RetainPlan =
 export function planRetain(
   turns: TransportTurn[],
   cursor: RetainCursor | undefined,
-  opts: { appendSupported: boolean; bank: string }
+  opts: { appendSupported: boolean; bank: string; now?: number }
 ): RetainPlan {
   if (!turns.length) return { mode: "skip" };
   if (!opts.appendSupported || !cursor || cursor.dirty) return { mode: "replace" };
+  // Buffered appends we can no longer replay safely: replace subsumes them (and the caller drops
+  // them), so the document is rebuilt from the transcript rather than left with a gap.
+  if (!pendingReplayable(cursor, opts.now ?? Date.now())) return { mode: "replace" };
   // A different bank holds no document for this session: appending would store the tail alone.
   if (cursor.bank !== opts.bank) return { mode: "replace" };
   // Fewer turns than we wrote: the transcript shrank, so it was rewritten, not extended.

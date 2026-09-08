@@ -322,7 +322,7 @@ def test_a_call_result_binding_is_only_read_through_its_fields():
     """
     #: Reading the whole envelope is legitimate here: these hand it onward
     #: unchanged rather than treating it as the payload.
-    PASSTHROUGH = {"sanitize_llm_value", "isinstance_ok"}
+    PASSTHROUGH = {"sanitize_value", "isinstance_ok"}
 
     offenders = []
     for path in _source_files():

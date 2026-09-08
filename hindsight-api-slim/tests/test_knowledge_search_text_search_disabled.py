@@ -59,8 +59,16 @@ def search(monkeypatch):
     async def fake_get_bank_config(bank_id, context=None):
         return resolved
 
+    async def fake_require_bank_exists(bank_id):
+        # The search 404s for a bank nobody created (#4175). That check reads the
+        # bank row through a real pool, which this engine — stubbed down to the one
+        # method under test — does not have. The SQL asserted below is emitted only
+        # for a bank that exists, so the stub says it does.
+        return None
+
     engine._authenticate_tenant = fake_authenticate
     engine._get_backend = fake_get_backend
+    engine._require_bank_exists = fake_require_bank_exists
     engine._config_resolver = SimpleNamespace(get_bank_config=fake_get_bank_config)
 
     @asynccontextmanager

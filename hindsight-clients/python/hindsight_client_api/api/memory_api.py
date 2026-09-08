@@ -1328,6 +1328,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "GraphDataResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1428,6 +1429,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "GraphDataResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1528,6 +1530,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "GraphDataResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2324,6 +2327,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListMemoryUnitsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2436,6 +2440,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListMemoryUnitsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2548,6 +2553,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListMemoryUnitsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2741,6 +2747,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ObservationScopesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2821,6 +2828,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ObservationScopesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2901,6 +2909,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ObservationScopesResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -3061,6 +3070,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListTagsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -3149,6 +3159,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListTagsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -3237,6 +3248,7 @@ class MemoryApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListTagsResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

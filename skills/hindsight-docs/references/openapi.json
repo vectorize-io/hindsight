@@ -267,6 +267,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -480,6 +483,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -545,6 +551,75 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DryRunExtractionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/prompts/preview": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Preview an operation's prompts (no LLM call)",
+        "description": "Render the exact system and user messages retain, consolidation or reflect would send for this bank, without calling an LLM, reading memories, or changing anything. Everything that shapes the prompt comes from the bank; the runtime data an operation would be given is a fixed placeholder. Both messages are returned: retain and consolidation keep their system prompt bank-agnostic (one provider-side cache serves every bank) and carry the mission in the user message instead.",
+        "operationId": "preview_prompt",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptPreviewResponse"
                 }
               }
             }
@@ -1058,6 +1133,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1198,6 +1276,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1283,6 +1364,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1366,6 +1450,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -1640,6 +1727,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2262,6 +2352,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2459,6 +2552,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2543,6 +2639,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2885,6 +2984,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3292,6 +3394,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3785,6 +3890,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3978,6 +4086,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -4074,8 +4185,8 @@
         "tags": [
           "Operations"
         ],
-        "summary": "Cancel a pending async operation",
-        "description": "Cancel a pending async operation by removing it from the queue",
+        "summary": "Cancel a pending or in-flight async operation",
+        "description": "Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.",
         "operationId": "cancel_operation",
         "parameters": [
           {
@@ -4781,6 +4892,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -5312,6 +5426,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -5497,6 +5614,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -5850,6 +5970,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6465,6 +6588,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6553,6 +6679,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6814,6 +6943,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6902,6 +7034,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -9969,6 +10104,18 @@
             "description": "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.",
             "deprecated": true
           },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "Name of a retain strategy to extract under (a key of the bank's `retain_strategies`). Omit it and the bank's `retain_default_strategy` applies, exactly as it does for a retain that names none."
+          },
           "retain_mission": {
             "anyOf": [
               {
@@ -10079,6 +10226,14 @@
             "title": "Facts",
             "description": "Candidate facts the retain step would extract."
           },
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractionChunk"
+            },
+            "type": "array",
+            "title": "Chunks",
+            "description": "The chunks the input was cut into before extraction. Already computed on every path; returned because `retain_chunk_size` is otherwise a number with no visible effect."
+          },
           "usage": {
             "$ref": "#/components/schemas/TokenUsage",
             "description": "Aggregated token usage across the extraction LLM calls."
@@ -10086,7 +10241,7 @@
         },
         "type": "object",
         "title": "DryRunExtractionResult",
-        "description": "Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage."
+        "description": "Result of dry-run fact extraction: candidate facts, the chunks they came from,\nand aggregated LLM token usage."
       },
       "EntityDetailResponse": {
         "properties": {
@@ -10492,6 +10647,18 @@
             "type": "array",
             "title": "Entities",
             "description": "Raw (unresolved) entity names mentioned in the fact."
+          },
+          "chunk_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Index",
+            "description": "Index into `chunks` of the chunk this fact came from; null if it could not be attributed."
           }
         },
         "type": "object",
@@ -10501,6 +10668,27 @@
         ],
         "title": "ExtractedFact",
         "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape \u2014 only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, \u2026)\nare omitted because nothing is stored. Entities are raw, unresolved names."
+      },
+      "ExtractionChunk": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The chunk as the extractor saw it."
+          },
+          "fact_count": {
+            "type": "integer",
+            "title": "Fact Count",
+            "description": "How many facts came out of this chunk."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "fact_count"
+        ],
+        "title": "ExtractionChunk",
+        "description": "One chunk the extractor was handed, and how much it yielded."
       },
       "FactsIncludeOptions": {
         "properties": {},
@@ -14024,6 +14212,226 @@
           "total": 150
         }
       },
+      "PromptBlockModel": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The block's text; empty when the block is inactive."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "config",
+              "builtin"
+            ],
+            "title": "Source",
+            "description": "`config` \u2014 produced by a setting (`field` names it); `builtin` \u2014 Hindsight's own wording."
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "Config field behind this block; empty when no single field owns it.",
+            "default": ""
+          },
+          "section": {
+            "type": "string",
+            "title": "Section",
+            "description": "Slug for a part the preview names itself and no field owns: `bank_identity`, `disposition`, `directives`. Empty otherwise.",
+            "default": ""
+          },
+          "heading": {
+            "type": "string",
+            "title": "Heading",
+            "description": "The section heading the prompt text carries at this point, extracted from the prompt itself. Empty when it carries none.",
+            "default": ""
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "Whether this block is in the prompt as configured.",
+            "default": true
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "The field's effective value; null when unset."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "boolean",
+              "choice",
+              "complex"
+            ],
+            "title": "Kind",
+            "description": "Shape of the value, so a client can offer the right control for editing it."
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices",
+            "description": "Allowed values, when `kind` is `choice`."
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "description": "Whether this bank may override the field via the bank config API. Server-level fields shape the prompt but cannot be set per bank, and offering to edit one would only collect a 400.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "source",
+          "kind"
+        ],
+        "title": "PromptBlockModel",
+        "description": "One block of a message: its text, and the setting that decides it.\n\nThe **active** blocks of a message concatenate back to the exact text sent, so a\nclient can render them separately without showing the reader something the model\nnever receives. An **inactive** block has no text: it marks a setting that is\nswitched off, at the point where it would land if it were on.\n\nEverything identifying a block is a machine value, never display copy \u2014 what a\nblock is called, and what turning a switched-off one on would do, is for the\nclient to say in the language it is running in."
+      },
+      "PromptMessageModel": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user"
+            ],
+            "title": "Role"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/PromptBlockModel"
+            },
+            "type": "array",
+            "title": "Blocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "PromptMessageModel",
+        "description": "One message of the request, as the blocks it is built from."
+      },
+      "PromptPreviewRequest": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "consolidation",
+              "reflect"
+            ],
+            "title": "Operation",
+            "description": "Which operation's prompts to render.",
+            "default": "retain"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "Name of a retain strategy to render under (a key of the bank's `retain_strategies`). Retain only. Omit it and the bank's `retain_default_strategy` applies, exactly as it does for a retain that names none."
+          }
+        },
+        "type": "object",
+        "title": "PromptPreviewRequest",
+        "description": "Request to render the prompts an operation would send, without calling an LLM.\n\nThe operation is the whole request: everything that shapes the prompt comes from\nthe bank \u2014 its resolved config, profile and directives \u2014 and the runtime data an\noperation would be given is a fixed placeholder. There is deliberately nothing to\noverride. A preview answers \"what does this bank send\"; letting a caller pass its\nown mission or sample text only moved that question somewhere the bank cannot\nanswer it. To try a candidate value, save it and look again \u2014 the response says\nwhich settings are editable.",
+        "example": {
+          "operation": "retain"
+        }
+      },
+      "PromptPreviewResponse": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/PromptMessageModel"
+            },
+            "type": "array",
+            "title": "Messages",
+            "description": "Request messages, in send order. Each is given as the blocks it is built from."
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "The retain strategy these prompts were rendered under, if any."
+          },
+          "strategies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "Names of the bank's retain strategies, so a client can offer them without a second call."
+          },
+          "run_settings": {
+            "items": {
+              "$ref": "#/components/schemas/RunSettingModel"
+            },
+            "type": "array",
+            "title": "Run Settings",
+            "description": "Settings that shape the operation without appearing in its prompt, such as chunk sizes."
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "JSON schema the response is constrained to, when the operation constrains it."
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Reason",
+            "description": "Why no prompt is sent, when the configuration means none is."
+          }
+        },
+        "type": "object",
+        "title": "PromptPreviewResponse",
+        "description": "The messages one call of the requested operation would send.\n\n`messages` is in send order, system first. Both are always present because a\nmission is not necessarily in the system prompt: retain and consolidation keep\ntheir system prompt bank-agnostic (so one provider-side cache serves every bank)\nand carry the mission in the user message instead.\n\nWhen `skipped_reason` is set the configuration means no prompt is sent at all \u2014\n`chunks` extraction mode stores each chunk verbatim and never calls an LLM \u2014 and\n`messages` is empty."
+      },
       "RecallRequest": {
         "properties": {
           "query": {
@@ -15418,6 +15826,50 @@
           "operation_id": "550e8400-e29b-41d4-a716-446655440000",
           "success": true
         }
+      },
+      "RunSettingModel": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Effective value; null when unset."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "boolean",
+              "choice",
+              "complex"
+            ],
+            "title": "Kind",
+            "description": "Shape of the value, so a client can offer the right control."
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "description": "Whether this bank may override the field via the bank config API.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "kind"
+        ],
+        "title": "RunSettingModel",
+        "description": "A setting that shapes the operation without appearing in its prompt.\n\nChunk sizes decide how the input is cut before extraction runs, so they change\nwhat comes back while contributing no prompt text \u2014 they cannot be blocks, which\npartition the message, and these are in none of it."
       },
       "SourceFactsIncludeOptions": {
         "properties": {

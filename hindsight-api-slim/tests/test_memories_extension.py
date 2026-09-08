@@ -420,6 +420,8 @@ class InMemoryMemories(MemoriesExtension):
     async def list_memory_units(self, *, conn, ops, fq_table, bank_id, limit=100, offset=0, **kwargs):
         self.calls.append("list_memory_units")
         ordered = list(self.rows.values())
+        if kwargs.get("document_id") is not None:
+            ordered = [row for row in ordered if row.document_id == kwargs["document_id"]]
         return {"items": ordered[offset : offset + limit], "total": len(ordered), "limit": limit, "offset": offset}
 
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id, unit_id):
@@ -759,19 +761,40 @@ class _InMemoryRetainSession(RetainSession):
         self._store.calls.append("session.commit")
         unit_ids: dict[str, list[str]] = {}
         for part in self._parts:
-            doc = self._store.documents.setdefault(part.document_id, {"chunks": [], "text": ""})
+            # Session parts carry FactRecord objects and the store's document schema,
+            # not the SQL pipeline's processed facts or an alternate chunks/text shape.
+            if part.document_id not in self._store.documents:
+                await self._store.put_document(
+                    bank_id=self._bank_id,
+                    document_id=part.document_id,
+                    content_hash=part.content_hash,
+                    original_text=part.document_body or "",
+                    chunk_texts=[],
+                    tags=part.tags,
+                    metadata=part.metadata,
+                )
+            doc = self._store.documents[part.document_id]
             if part.document_body is not None:
-                doc["text"] = part.document_body
+                doc["original_text"] = part.document_body
+            doc["content_hash"] = part.content_hash
             if part.chunk_texts:
                 # `chunk_offset` is per document, so a part is placed at its offset rather than
                 # appended — two parts of one document can arrive in either order.
                 needed = part.chunk_offset + len(part.chunk_texts)
-                if len(doc["chunks"]) < needed:
-                    doc["chunks"].extend([""] * (needed - len(doc["chunks"])))
-                doc["chunks"][part.chunk_offset : needed] = list(part.chunk_texts)
+                if len(doc["chunk_texts"]) < needed:
+                    doc["chunk_texts"].extend([""] * (needed - len(doc["chunk_texts"])))
+                doc["chunk_texts"][part.chunk_offset : needed] = list(part.chunk_texts)
             if part.facts:
-                ids = self._store.allocate_unit_ids(len(part.facts))
-                await self._store.index_facts(self._bank_id, ids, part.facts, part.document_id)
+                ids = [fact.unit_id for fact in part.facts]
+                for fact in part.facts:
+                    self._store.rows[fact.unit_id] = StoredMemory(
+                        unit_id=fact.unit_id,
+                        text=fact.text,
+                        fact_type=fact.fact_type,
+                        document_id=part.document_id,
+                        tags=list(fact.tags),
+                        created_at=fact.created_at or datetime.now(timezone.utc),
+                    )
                 unit_ids.setdefault(part.document_id, []).extend(ids)
         self._parts.clear()
         return RetainResult(unit_ids=unit_ids)
@@ -885,6 +908,11 @@ async def test_engine_list_tags_routes_through_the_installed_store(memory, reque
         tags = ["only-in-the-store"]
 
     await store.insert_facts(conn=None, ops=None, bank_id="seam-bank", facts=[_Fact()], document_id="d")
+
+    # The read 404s for a bank nobody created (#4175). A store owns the facts, never the bank row
+    # itself, so a real deployment always has this row — a retain writes it before the store sees
+    # anything. Only the stub reaches an engine read without one.
+    await memory.get_bank_profile("seam-bank", request_context=request_context)
 
     result = await memory.list_tags("seam-bank", request_context=request_context)
 
@@ -1103,6 +1131,7 @@ async def test_engine_list_memory_units_routes_through_store(memory, request_con
     store = InMemoryMemories({})
     set_memories(store)
     await _seed(store, "seam-bank", text="only in the store", fact_type="world")
+    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     res = await memory.list_memory_units("seam-bank", request_context=request_context)
     assert "list_memory_units" in store.calls
     assert res["total"] == 1  # the row exists only in the stub, so it can only have come from it
@@ -1144,6 +1173,7 @@ async def test_apply_edit_is_told_the_pre_edit_fact_type(memory, request_context
 async def test_engine_list_entities_routes_through_store(memory, request_context, restore_default_store):
     store = InMemoryMemories({})
     set_memories(store)
+    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     await memory.list_entities("seam-bank", request_context=request_context)
     assert "list_entities" in store.calls
 

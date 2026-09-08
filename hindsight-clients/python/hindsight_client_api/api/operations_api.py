@@ -62,9 +62,9 @@ class OperationsApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> CancelOperationResponse:
-        """Cancel a pending async operation
+        """Cancel a pending or in-flight async operation
 
-        Cancel a pending async operation by removing it from the queue
+        Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -138,9 +138,9 @@ class OperationsApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[CancelOperationResponse]:
-        """Cancel a pending async operation
+        """Cancel a pending or in-flight async operation
 
-        Cancel a pending async operation by removing it from the queue
+        Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -214,9 +214,9 @@ class OperationsApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Cancel a pending async operation
+        """Cancel a pending or in-flight async operation
 
-        Cancel a pending async operation by removing it from the queue
+        Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1018,6 +1018,7 @@ class OperationsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "OperationsListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1110,6 +1111,7 @@ class OperationsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "OperationsListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1202,6 +1204,7 @@ class OperationsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "OperationsListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

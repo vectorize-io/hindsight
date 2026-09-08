@@ -1167,6 +1167,41 @@ async def _import_observations(
 
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
+            # ``source_memory_ids`` is a bare uuid[] with no foreign key, so a
+            # ref that resolved above but whose unit is no longer in this bank
+            # would be written as a dangling reference and silently corrupt the
+            # observation graph (an observation citing units that exist nowhere).
+            # Re-check liveness inside the write transaction and treat a missing
+            # source exactly like an unresolved one: skip the observation.
+            live = {
+                r["id"]
+                for r in await conn.fetch(
+                    f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2)",
+                    bank_id,
+                    [uuid.UUID(s) for _obs, sources in resolved for s in sources],
+                )
+            }
+            kept_resolved: list[tuple[TransferObservation, list[str]]] = []
+            kept_processed: list[ProcessedFact] = []
+            for (obs, sources), fact in zip(resolved, processed):
+                missing = [s for s in sources if uuid.UUID(s) not in live]
+                if missing:
+                    logger.warning(
+                        "[transfer] Skipping observation for bank %s: %d of %d source units are missing (%s)",
+                        bank_id,
+                        len(missing),
+                        len(sources),
+                        ", ".join(sorted(missing)),
+                    )
+                    outcome.skipped += 1
+                    continue
+                kept_resolved.append((obs, sources))
+                kept_processed.append(fact)
+            if not kept_resolved:
+                return outcome
+            resolved = kept_resolved
+            processed = kept_processed
+
             obs_unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed, ops=ops)
 
             all_source_ids: set[uuid.UUID] = set()

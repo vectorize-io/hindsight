@@ -32,6 +32,7 @@ class DryRunExtractRequest(BaseModel):
     context: Optional[StrictStr] = Field(default='', description="Optional context about the content.")
     timestamp: Optional[datetime] = None
     agent_name: Optional[StrictStr] = None
+    strategy: Optional[StrictStr] = None
     retain_mission: Optional[StrictStr] = None
     retain_extraction_mode: Optional[StrictStr] = None
     retain_custom_instructions: Optional[StrictStr] = None
@@ -40,7 +41,7 @@ class DryRunExtractRequest(BaseModel):
     entity_labels: Optional[List[LabelGroupInput]] = None
     entities_allow_free_form: Optional[StrictBool] = None
     llm_output_language: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["content", "context", "timestamp", "agent_name", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_extract_causal_links", "retain_chunk_size", "entity_labels", "entities_allow_free_form", "llm_output_language"]
+    __properties: ClassVar[List[str]] = ["content", "context", "timestamp", "agent_name", "strategy", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_extract_causal_links", "retain_chunk_size", "entity_labels", "entities_allow_free_form", "llm_output_language"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -98,6 +99,11 @@ class DryRunExtractRequest(BaseModel):
         if self.agent_name is None and "agent_name" in self.model_fields_set:
             _dict['agent_name'] = None
 
+        # set to None if strategy (nullable) is None
+        # and model_fields_set contains the field
+        if self.strategy is None and "strategy" in self.model_fields_set:
+            _dict['strategy'] = None
+
         # set to None if retain_mission (nullable) is None
         # and model_fields_set contains the field
         if self.retain_mission is None and "retain_mission" in self.model_fields_set:
@@ -154,6 +160,7 @@ class DryRunExtractRequest(BaseModel):
             "context": obj.get("context") if obj.get("context") is not None else '',
             "timestamp": obj.get("timestamp"),
             "agent_name": obj.get("agent_name"),
+            "strategy": obj.get("strategy"),
             "retain_mission": obj.get("retain_mission"),
             "retain_extraction_mode": obj.get("retain_extraction_mode"),
             "retain_custom_instructions": obj.get("retain_custom_instructions"),

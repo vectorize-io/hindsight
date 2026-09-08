@@ -11,7 +11,7 @@ from hindsight_api.config import (
     clear_config_cache,
 )
 from hindsight_api.engine.embeddings import (
-    EmbeddingRetryPolicy,
+    RetryPolicy,
     LiteLLMEmbeddings,
     create_embeddings_from_env,
 )
@@ -39,7 +39,7 @@ async def test_litellm_embeddings_initialize_probe_success() -> None:
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(initial_backoff=0.01),
+        retry_policy=RetryPolicy(initial_backoff=0.01),
     )
 
     mock_resp = httpx.Response(
@@ -61,7 +61,7 @@ async def test_litellm_embeddings_probe_retries_on_500_and_recovers() -> None:
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01),
+        retry_policy=RetryPolicy(max_retries=3, initial_backoff=0.01),
     )
 
     req = httpx.Request("POST", "http://test-litellm:4000/embeddings")
@@ -85,7 +85,7 @@ async def test_litellm_embeddings_probe_retries_on_connect_error_and_recovers() 
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01),
+        retry_policy=RetryPolicy(max_retries=3, initial_backoff=0.01),
     )
 
     req = httpx.Request("POST", "http://test-litellm:4000/embeddings")
@@ -112,7 +112,7 @@ async def test_litellm_embeddings_probe_exhausts_retries_and_raises() -> None:
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(max_retries=2, initial_backoff=0.01),
+        retry_policy=RetryPolicy(max_retries=2, initial_backoff=0.01),
     )
 
     req = httpx.Request("POST", "http://test-litellm:4000/embeddings")
@@ -130,7 +130,7 @@ def _ready_embeddings(dimensions: int | None, dim: int) -> LiteLLMEmbeddings:
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
         dimensions=dimensions,
-        retry_policy=EmbeddingRetryPolicy(max_retries=2, initial_backoff=0.01),
+        retry_policy=RetryPolicy(max_retries=2, initial_backoff=0.01),
     )
     embeddings._client = httpx.Client()
     embeddings._dimension = dim
@@ -198,7 +198,7 @@ async def test_litellm_embeddings_probe_does_not_retry_client_error() -> None:
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01),
+        retry_policy=RetryPolicy(max_retries=3, initial_backoff=0.01),
     )
 
     req = httpx.Request("POST", "http://test-litellm:4000/embeddings")
@@ -216,7 +216,7 @@ async def test_litellm_embeddings_probe_empty_data_names_the_env_var() -> None:
     embeddings = LiteLLMEmbeddings(
         api_base="http://test-litellm:4000",
         model="text-embedding-3-small",
-        retry_policy=EmbeddingRetryPolicy(initial_backoff=0.01),
+        retry_policy=RetryPolicy(initial_backoff=0.01),
     )
 
     req = httpx.Request("POST", "http://test-litellm:4000/embeddings")

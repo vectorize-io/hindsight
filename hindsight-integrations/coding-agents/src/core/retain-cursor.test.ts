@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { TransportTurn } from "./chat";
-import { fingerprintTurns, memoryCursorStore, planRetain } from "./retain-cursor";
+import {
+  PENDING_MAX_AGE_MS,
+  PENDING_MAX_BYTES,
+  fingerprintTurns,
+  memoryCursorStore,
+  planRetain,
+  type PendingAppend,
+} from "./retain-cursor";
 
 const turn = (i: number): TransportTurn => ({ role: "user", content: `turn ${i}` });
 const turns = (n: number, from = 0): TransportTurn[] =>
@@ -16,6 +23,8 @@ const cursorFor = (all: TransportTurn[], count: number) => ({
 
 const SUPPORTED = { appendSupported: true, bank: BANK };
 
+const pendingAt = (at: number): PendingAppend => ({ content: "{}", operationId: "op", at });
+
 describe("planRetain", () => {
   it("appends only the turns added since the last write", () => {
     const all = turns(5);
@@ -26,11 +35,33 @@ describe("planRetain", () => {
     expect(planRetain(turns(3), undefined, SUPPORTED)).toEqual({ mode: "replace" });
   });
 
-  it("replaces when the previous write was never confirmed", () => {
-    // The one case that would DUPLICATE turns inside the document if we appended anyway: the
-    // server may or may not hold the last slice, and only a replace settles it.
+  it("replaces when a previous REPLACE was never confirmed", () => {
+    // Nothing is buffered for a replace — another one re-establishes the same truth.
     const all = turns(5);
     expect(planRetain(all, { ...cursorFor(all, 3), dirty: true }, SUPPORTED)).toEqual({
+      mode: "replace",
+    });
+  });
+
+  it("keeps appending over an unconfirmed APPEND, whose bytes are buffered for replay", () => {
+    const all = turns(5);
+    const cursor = { ...cursorFor(all, 3), pending: [pendingAt(Date.now())] };
+    expect(planRetain(all, cursor, SUPPORTED)).toEqual({ mode: "append", fromTurn: 3 });
+  });
+
+  it("replaces once a buffered append is too old for the server to still dedupe it", () => {
+    const all = turns(5);
+    const cursor = {
+      ...cursorFor(all, 3),
+      pending: [pendingAt(Date.now() - PENDING_MAX_AGE_MS - 1)],
+    };
+    expect(planRetain(all, cursor, SUPPORTED)).toEqual({ mode: "replace" });
+  });
+
+  it("replaces once the buffer has grown past the point where a replace is cheaper", () => {
+    const all = turns(5);
+    const big = { ...pendingAt(Date.now()), content: "x".repeat(PENDING_MAX_BYTES + 1) };
+    expect(planRetain(all, { ...cursorFor(all, 3), pending: [big] }, SUPPORTED)).toEqual({
       mode: "replace",
     });
   });

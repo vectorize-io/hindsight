@@ -16,6 +16,7 @@ import pytest_asyncio
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 from hindsight_api.config import clear_config_cache
+from hindsight_api.engine.retain import fact_extraction
 from hindsight_api.extensions import (
     OperationValidatorExtension,
     PrecheckContext,
@@ -30,6 +31,9 @@ FACT_KEYS = {
     "occurred_start",
     "occurred_end",
     "entities",
+    # Not a storage field: which of the returned `chunks` this fact came from, so a
+    # caller can group facts under the chunk that produced them.
+    "chunk_index",
 }
 
 
@@ -248,3 +252,142 @@ async def test_dry_run_disabled_returns_404_even_with_validator(api_client, memo
     finally:
         clear_config_cache()  # env restored on with-exit; reset so later tests see the default
         memory._operation_validator = previous
+
+
+async def _config_used_by_dry_run(api_client, memory, bank_id, body):
+    """The config the dry run actually hands the extractor.
+
+    Asserted directly rather than through the returned facts: what the strategy
+    changes is the settings extraction runs under, and the MockLLM's echo of the
+    prompt is a slow, indirect proxy for that.
+    """
+    captured = {}
+    real = fact_extraction.extract_facts_from_text
+
+    async def spy(*args, **kwargs):
+        captured["config"] = kwargs["config"]
+        return await real(*args, **kwargs)
+
+    with patch.object(fact_extraction, "extract_facts_from_text", spy):
+        resp = await api_client.post(f"/v1/default/banks/{bank_id}/memories/dry-run-extract", json=body)
+    assert resp.status_code == 200, resp.text
+    return captured["config"]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_applies_the_banks_default_strategy(api_client, memory):
+    """Retain resolves through `_resolve_retain_config`, which applies the bank's
+    `retain_default_strategy` when a caller names none. The dry run resolved the
+    config directly and skipped strategies entirely, so it extracted under settings a
+    real retain would not have used."""
+    bank_id = f"dryrun-strategy-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.update_bank_config(
+        bank_id=bank_id,
+        updates={
+            "retain_strategies": {"wordy": {"retain_extraction_mode": "verbose"}},
+            "retain_default_strategy": "wordy",
+        },
+        request_context=RequestContext(),
+    )
+
+    config = await _config_used_by_dry_run(api_client, memory, bank_id, {"content": "Alice moved to Berlin."})
+
+    assert config.retain_extraction_mode == "verbose"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_honors_a_named_strategy(api_client, memory):
+    bank_id = f"dryrun-named-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.update_bank_config(
+        bank_id=bank_id,
+        updates={
+            "retain_strategies": {
+                "wordy": {"retain_extraction_mode": "verbose"},
+                "terse": {"retain_extraction_mode": "verbatim"},
+            },
+            "retain_default_strategy": "wordy",
+        },
+        request_context=RequestContext(),
+    )
+
+    config = await _config_used_by_dry_run(
+        api_client, memory, bank_id, {"content": "Alice moved to Berlin.", "strategy": "terse"}
+    )
+
+    assert config.retain_extraction_mode == "verbatim"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_in_chunks_mode_returns_the_chunks_not_llm_facts(api_client, memory):
+    """chunks mode never reaches an LLM in a real retain — each chunk is stored
+    verbatim — but that branch lives in `extract_facts_from_contents`, which the dry
+    run does not go through. It called the model and showed extracted facts for a
+    configuration that produces none."""
+    bank_id = f"dryrun-chunks-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.update_bank_config(
+        bank_id=bank_id,
+        updates={"retain_extraction_mode": "chunks"},
+        request_context=RequestContext(),
+    )
+    text = "Alice moved to Berlin in 2021 and works as a nurse."
+
+    resp = await api_client.post(f"/v1/default/banks/{bank_id}/memories/dry-run-extract", json={"content": text})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [f["text"] for f in body["facts"]] == [text], "the chunk is the memory, verbatim"
+    # No model call, so nothing to bill. Null fields are omitted API-wide (#2204).
+    assert (body.get("usage") or {}).get("total_tokens", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_dry_run_returns_the_chunks_it_extracted_from(api_client, memory):
+    """Already computed on every path and previously discarded. Without them
+    `retain_chunk_size` is a number with no visible effect — you can change it and see
+    nothing, which is the opposite of what a tester is for."""
+    bank_id = f"dryrun-chunks-md-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.update_bank_config(
+        bank_id=bank_id, updates={"retain_chunk_size": 60}, request_context=RequestContext()
+    )
+    text = "Alice moved to Berlin in 2021. " * 6
+
+    resp = await api_client.post(f"/v1/default/banks/{bank_id}/memories/dry-run-extract", json={"content": text})
+
+    assert resp.status_code == 200, resp.text
+    chunks = resp.json()["chunks"]
+    assert len(chunks) > 1, "a 60-char chunk size must cut this text up"
+    assert all(c["text"] for c in chunks)
+    assert all("fact_count" in c for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_each_fact_names_the_chunk_it_came_from(api_client, memory):
+    """Derived from the per-chunk counts both extraction paths already return, so the
+    real retain pipeline carries nothing extra for a preview's benefit."""
+    bank_id = f"dryrun-attr-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.update_bank_config(
+        bank_id=bank_id, updates={"retain_chunk_size": 60}, request_context=RequestContext()
+    )
+
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": "Alice moved to Berlin in 2021. " * 6},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    chunks, facts = body["chunks"], body["facts"]
+    assert len(chunks) > 1
+
+    # Every fact points at a real chunk, and the per-chunk totals add up: a fact
+    # attributed to the wrong chunk would still pass a "not null" check.
+    for fact in facts:
+        assert 0 <= fact["chunk_index"] < len(chunks)
+    for index, chunk in enumerate(chunks):
+        attributed = [f for f in facts if f["chunk_index"] == index]
+        assert len(attributed) == chunk["fact_count"], f"chunk {index} count disagrees"

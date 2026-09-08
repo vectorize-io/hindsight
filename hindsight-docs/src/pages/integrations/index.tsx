@@ -5,6 +5,10 @@ import Layout from '@theme/Layout';
 import {usePluginData} from '@docusaurus/useGlobalData';
 import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
 import {integrationsSorted, CATEGORY_LABELS, groupByCategory} from '@site/src/lib/integrations';
+// Agents covered by the Coding Agents plugin, drawn on its card: the whole pitch of that package
+// is "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
+// Shared with the sidebar preview so the two cannot drift.
+import {CODING_AGENT_HARNESSES} from '@site/src/lib/coding-agent-harnesses';
 import styles from './index.module.css';
 
 /**
@@ -13,28 +17,6 @@ import styles from './index.module.css';
  * deepest native integration.
  */
 const FEATURED_IDS = ['coding-agents', 'vercel-ai-sdk', 'openclaw'];
-
-/**
- * Agents covered by the Coding Agents plugin, drawn on its card. The whole pitch of that package is
- * "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
- * Files live in static/img/harness/, named by the harness id the plugin itself uses.
- */
-const CODING_AGENT_LOGOS: {id: string; name: string; file: string}[] = [
-  {id: 'claude-code', name: 'Claude Code', file: 'claude-code.png'},
-  {id: 'codex', name: 'Codex CLI', file: 'codex.svg'},
-  {id: 'opencode', name: 'opencode', file: 'opencode.png'},
-  {id: 'kilo', name: 'Kilo CLI', file: 'kilo.svg'},
-  {id: 'cursor-cli', name: 'Cursor CLI', file: 'cursor-cli.svg'},
-  {id: 'copilot-cli', name: 'GitHub Copilot CLI', file: 'copilot-cli.svg'},
-  {id: 'grok-build', name: 'Grok Build', file: 'grok-build.svg'},
-  {id: 'qwen-code', name: 'Qwen Code', file: 'qwen-code.svg'},
-  {id: 'antigravity-cli', name: 'Antigravity CLI', file: 'antigravity-cli.png'},
-  {id: 'devin-cli', name: 'Devin CLI', file: 'devin-cli.svg'},
-  {id: 'cline-cli', name: 'Cline CLI', file: 'cline-cli.svg'},
-  {id: 'dsh', name: 'DeepSeek Harness', file: 'dsh.svg'},
-  {id: 'pi', name: 'pi', file: 'pi.svg'},
-  {id: 'prime-agent', name: 'Prime Agent', file: 'prime-agent.svg'},
-];
 
 const INTEGRATIONS_JSON_URL =
   'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';
@@ -100,12 +82,12 @@ function IntegrationCard({
 
       {featured && integration.id === 'coding-agents' && (
         <div className={styles.harnessStrip} aria-label="Supported coding agents">
-          {CODING_AGENT_LOGOS.map((h) => (
+          {CODING_AGENT_HARNESSES.map((h) => (
             <img
               key={h.id}
               src={`${harnessBase}${h.file}`}
-              alt={h.name}
-              title={h.name}
+              alt={h.label}
+              title={h.label}
               className={styles.harnessLogo}
               loading="lazy"
             />

@@ -6,6 +6,7 @@ They are stored in the 'directives' table.
 
 import urllib.parse
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -16,6 +17,7 @@ from hindsight_api.engine.memory_engine import (
     _mental_model_stale_scope_from_row,
     fq_table,
 )
+from hindsight_api.engine.memories import MemoryScopeWatermark
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate
 
@@ -1665,6 +1667,218 @@ class TestMentalModelStaleness:
         assert by_id[stale["id"]]["is_stale"] is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    @pytest.mark.parametrize(
+        "tags_match,expected_before,expected_after",
+        [
+            # Phase 1 (recent writes: one other tag, one untagged): the strict modes
+            # and `exact` see only tagged rows, so they stay fresh; `any`/`all`
+            # include untagged rows, so the untagged write alone makes them stale.
+            # Phase 2 adds a recent ["user_a", "extra"] — a superset of the scope.
+            # Containment and overlap both match it; set equality does not, which is
+            # the one case that separates `exact` from `all_strict`.
+            ("all_strict", False, True),
+            ("any_strict", False, True),
+            ("exact", False, False),
+            ("any", True, True),
+            ("all", True, True),
+        ],
+    )
+    async def test_both_query_shapes_agree_in_every_tag_mode(
+        self, memory: MemoryEngine, request_context, tags_match, expected_before, expected_after
+    ):
+        """The tag-indexable shape must answer exactly as the LIMIT 1 shape does (#4169).
+
+        Only the modes whose clause the GIN index on ``tags`` can serve take the
+        aggregate; the rest stay on the time-ordered walk. Both are asked here, on
+        the same data, and pinned against the answer the scope's own semantics
+        require — a shape that quietly disagreed with the refresh gate would flag
+        pages the gate then refuses to refresh, which is the failure #3291 was.
+        """
+        from hindsight_api.engine.memories import get_memories
+
+        bank_id = f"test-mm-shapes-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        since = datetime.now(timezone.utc)
+        # Recent, but none of it on this scope's own tag.
+        await self._insert_memory(memory, bank_id, tags=["other"])
+        await self._insert_memory(memory, bank_id, tags=[])
+
+        store = get_memories()
+        pool = await memory._get_pool()
+
+        async def ask() -> bool:
+            async with pool.acquire() as conn:
+                single = await store.any_memory_updated_since(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    since=since,
+                    tags=["user_a"],
+                    tags_match=tags_match,
+                )
+                batch = await store.any_memory_updated_since_batch(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    scopes=[
+                        MemoryScopeWatermark(
+                            key="k", since=since, tags=["user_a"], tags_match=tags_match, fact_types=None
+                        )
+                    ],
+                )
+            assert single == batch["k"], f"{tags_match}: single-scope and batched shapes disagree"
+            return single
+
+        assert await ask() is expected_before
+        # A superset of the scope: matched by containment and overlap, not by set
+        # equality.
+        await self._insert_memory(memory, bank_id, tags=["user_a", "extra"])
+        assert await ask() is expected_after
+        # The scope's own tag, exactly: every mode must now report stale.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+        assert await ask() is True
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_both_query_shapes_agree_with_fact_types_and_tag_groups(self, memory: MemoryEngine, request_context):
+        """The two extra scope dimensions still narrow the answer in both shapes.
+
+        ``fact_types`` rides in the same WHERE as the tag clause, and compound
+        ``tag_groups`` are the case neither shape can express against a joined row —
+        they fall back to the single-scope path. Both are checked here because the
+        aggregate rewrite touches the WHERE they live in.
+        """
+        from hindsight_api.engine.memories import get_memories
+        from hindsight_api.engine.search.tags import TagGroupLeaf
+
+        bank_id = f"test-mm-shapes2-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        since = datetime.now(timezone.utc)
+        await self._insert_memory(memory, bank_id, tags=["user_a"], fact_type="world")
+
+        store = get_memories()
+        pool = await memory._get_pool()
+
+        async def ask(**kwargs) -> bool:
+            async with pool.acquire() as conn:
+                single = await store.any_memory_updated_since(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, since=since, **kwargs
+                )
+                batch = await store.any_memory_updated_since_batch(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    scopes=[
+                        MemoryScopeWatermark(
+                            key="k",
+                            since=since,
+                            tags=kwargs.get("tags"),
+                            tags_match=kwargs.get("tags_match", "any"),
+                            fact_types=kwargs.get("fact_types"),
+                            tag_groups=kwargs.get("tag_groups"),
+                        )
+                    ],
+                )
+            assert single == batch["k"], "single-scope and batched shapes disagree"
+            return single
+
+        assert await ask(tags=["user_a"], tags_match="all_strict", fact_types=["world"]) is True
+        assert await ask(tags=["user_a"], tags_match="all_strict", fact_types=["experience"]) is False
+        # Compound scope: the write carries user_a, so the group it satisfies is stale
+        # and the one it does not is fresh.
+        assert await ask(tag_groups=[TagGroupLeaf(tags=["user_a"])]) is True
+        assert await ask(tag_groups=[TagGroupLeaf(tags=["user_b"])]) is False
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_polling_surfaces_skip_the_scoped_scan_on_a_quiet_bank(self, memory: MemoryEngine, request_context):
+        """Every staleness surface resolves the watermark itself, not just reflect (#4169).
+
+        The scoped check is only cheap when the model *is* stale: it walks every
+        memory written since the model's watermark and can stop early only at a
+        match, so a model whose own tags have been quiet pays for the whole walk to
+        be told "no". The list and the single-model read used to pay that on every
+        poll; both now rule the model out against the bank's newest write first,
+        and only ask about what that cannot settle.
+        """
+        bank_id = f"test-mm-quiet-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        # Written first, so the model ends up refreshed *after* the newest write.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+        model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="quiet MM",
+            source_query="q",
+            content="quiet",
+            tags=["user_a"],
+            request_context=request_context,
+        )
+
+        from hindsight_api.engine.memories import get_memories
+
+        store = get_memories()
+        asked: list[str] = []
+        original_single = store.any_memory_updated_since
+        original_batch = store.any_memory_updated_since_batch
+
+        async def counting_single(*args, **kwargs):
+            asked.append("single")
+            return await original_single(*args, **kwargs)
+
+        async def counting_batch(*args, scopes, **kwargs):
+            asked.extend("batch" for _ in scopes)
+            return await original_batch(*args, scopes=scopes, **kwargs)
+
+        store.any_memory_updated_since = counting_single
+        store.any_memory_updated_since_batch = counting_batch
+        try:
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [False]
+            single = await memory.get_mental_model(bank_id, model["id"], request_context=request_context)
+            assert single["is_stale"] is False
+            assert asked == [], "nothing written since the model read: no scoped query from either surface"
+
+            # A write inside the scope moves the watermark past the model, and the
+            # scoped question is asked for real — the shortcut skips work, never
+            # the answer.
+            await self._insert_memory(memory, bank_id, tags=["user_a"])
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [True]
+            single = await memory.get_mental_model(bank_id, model["id"], request_context=request_context)
+            assert single["is_stale"] is True
+            assert asked == ["batch", "single"]
+
+            # A write outside the scope moves the watermark too, so the shortcut
+            # cannot settle it — and the scoped answer is still "not stale".
+            # Stamp the model current directly: a real refresh would need an LLM,
+            # and what is under test is the query it is asked, not its content.
+            pool = await memory._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('mental_models')} SET last_memory_seen_at = now() "
+                    f"WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    model["id"],
+                )
+            asked.clear()
+            await self._insert_memory(memory, bank_id, tags=["user_b"])
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [False]
+            assert asked == ["batch"], "behind the watermark, out of scope: asked, and answered fresh"
+        finally:
+            store.any_memory_updated_since = original_single
+            store.any_memory_updated_since_batch = original_batch
+            await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.memory_backend_incompatible
     async def test_tool_search_mental_models_skips_the_scan_below_the_watermark(

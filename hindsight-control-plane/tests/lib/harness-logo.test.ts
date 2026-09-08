@@ -49,6 +49,7 @@ describe("resolveHarnessLogo", () => {
     "cursor-cli",
     "devin-cli",
     "dsh",
+    "factory-droid",
     "grok-build",
     "kilo",
     "opencode",

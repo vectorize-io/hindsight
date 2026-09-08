@@ -18,6 +18,7 @@ import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn } from "./bank";
 import { log } from "./log";
 import { DEFAULT_OBSERVATION_SCOPES, type ObservationScopes } from "./hindsight";
+import { isHashedCron, parseHashedCron } from "./missions";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
 export // HINDSIGHT_CONFIG joins the two env exceptions (diag/log files): it points at THE config file,
@@ -114,7 +115,10 @@ export interface RawConfig {
    *  consolidation, which adds up fast across auto-surveyed repos (#3506). Existing pages keep the
    *  trigger they were created with — this changes what NEW pages get. */
   pageTriggerType?: "auto-refresh" | "cron" | "manual";
-  /** Schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. "0 3 * * *". */
+  /** Schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. "0 3 * * *".
+   *  A field written `H` ("0 3 * * *" -> "H H * * *") is replaced per page by a value hashed from
+   *  bank + page name, so pages spread across the period instead of all firing on the one minute
+   *  this shared setting names. See `expandCronHash` in core/missions.ts. */
   pageTriggerCron?: string;
   autoSeed?: boolean; // SessionStart: auto-seed a cold repo's bank from git history (default true)
   seedLimit?: number; // SessionStart auto-seed: most-recent-N-commits cap (default 300)
@@ -230,15 +234,26 @@ export interface Config {
  * `"cron"` without a `pageTriggerCron` is a broken config, not a request to stop refreshing: the
  * API rejects a cron trigger with no expression, which would fail page creation outright. Fall
  * back to the default and say so — a user who wants pages to stop refreshing writes "manual".
+ *
+ * A malformed `H` is refused here for the same reason and not one step later: `expandCronHash`
+ * leaves an expression it cannot read alone, so an unchecked `"H(9-3) * * * *"` would reach the
+ * server verbatim and fail page creation with a cron parse error naming syntax this package
+ * invented. Ordinary cron syntax stays unvalidated — the server owns that, and duplicating its
+ * parser here would only disagree with it.
  */
 function resolvePageTriggerType(raw: RawConfig): "auto-refresh" | "cron" | "manual" {
   if (raw.pageTriggerType === "manual") return "manual";
   if (raw.pageTriggerType === "cron") {
-    if (raw.pageTriggerCron?.trim()) return "cron";
+    const cron = raw.pageTriggerCron?.trim();
+    if (cron && (!isHashedCron(cron) || parseHashedCron(cron))) return "cron";
     log.warn(
       "config",
-      'pageTriggerType "cron" needs pageTriggerCron (UTC 5-field, e.g. "0 3 * * *") — ' +
-        'falling back to "auto-refresh"'
+      cron
+        ? `pageTriggerCron ${JSON.stringify(cron)} has a malformed hashed field — ` +
+            'write `H` or `H(<lo>-<hi>)` within the field\'s own range, e.g. "H H(0-5) * * *" — ' +
+            'falling back to "auto-refresh"'
+        : 'pageTriggerType "cron" needs pageTriggerCron (UTC 5-field, e.g. "H H * * *") — ' +
+            'falling back to "auto-refresh"'
     );
   }
   return "auto-refresh";

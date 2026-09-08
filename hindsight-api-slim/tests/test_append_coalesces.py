@@ -20,6 +20,22 @@ def _ts() -> float:
     return datetime.now(timezone.utc).timestamp()
 
 
+# Splitting is a TRANSPORT detail — an oversized item is sliced into sequential sub-batches — so
+# every assertion in this file must hold either way, and none of them used to run split at all.
+#
+# This axis does NOT catch #3989 (verified: it passes on the commit that had the bug). That one
+# needed a SECOND append to surface, because the first truncated `original_text` and only the next
+# one diffed against the truncation — it is pinned end to end in
+# test_oversized_append_truncates_document.py. The axis is here because "only breaks when split"
+# is a whole class of defect that nothing in this file could previously see.
+@pytest.fixture(autouse=True, params=["unsplit", "split"], ids=["unsplit", "split"])
+def _split_mode(request, monkeypatch):
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", "1000000" if request.param == "unsplit" else "300")
+    clear_config_cache()
+    yield request.param
+    clear_config_cache()
+
+
 @pytest.fixture(autouse=True)
 def _no_side_work(monkeypatch):
     # Consolidation and observations would mint and retire units of their own, which is not what

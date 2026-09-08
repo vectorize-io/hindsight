@@ -1544,6 +1544,29 @@ class MemoriesExtension(Extension, ABC):
             for scope in scopes
         }
 
+    async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
+        """The newest ``updated_at`` across the bank's memories, or None if it has none.
+
+        The bank-wide counterpart of :meth:`any_memory_updated_since`, and the
+        shortcut in front of it: a mental model whose watermark is at or past this
+        cannot be stale whatever its scope, so every staleness surface asks this
+        once and only then asks the scoped question for the models it cannot rule
+        out. That is worth a method of its own because the scoped check is the
+        expensive one — it is bounded by the writes since a model's watermark, and
+        a model whose own scope has been quiet pays for all of them.
+
+        None means the bank has no memories, never "unknown": a store that cannot
+        answer cheaply should leave the default in place rather than return None,
+        which callers read as an empty bank and act on.
+
+        The default is the value ``consolidation_freshness`` already computes, so a
+        store works without implementing this; override it when the aggregate costs
+        more than the single value does (Postgres reads it off the
+        ``(bank_id, updated_at)`` index instead of scanning to count).
+        """
+        fresh = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return fresh.get("last_memory_write_at")
+
     async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
         """Which of ``unit_ids`` still exist among the bank's live memories.
 

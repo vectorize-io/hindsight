@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
-from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_llm_value
+from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output, sanitize_value
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
@@ -1349,6 +1349,25 @@ def _append_map_fields_prompt(fields: dict[str, "MapField"], lines: list[str], i
             lines.append(f"{pad}• {field_name} (text){field_desc}")
 
 
+def build_free_form_entities_instruction(free_form_entities: bool) -> str:
+    """The one line `entities_allow_free_form` decides, inside the entity-labels section.
+
+    Shared with the prompt preview, which reports this line as its own block so the
+    flag is visible as something shaping the prompt rather than hiding inside the
+    labels text. The section only exists when labels are configured, so with none the
+    flag changes nothing.
+    """
+    if free_form_entities:
+        return (
+            "Classify each fact using the structured 'labels' field below. "
+            "Continue extracting regular named entities in the 'entities' field."
+        )
+    return (
+        "Classify each fact using the structured 'labels' field below. "
+        "Do NOT add regular named entities — labels-only mode."
+    )
+
+
 def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, free_form_entities: bool = True) -> str:
     """Build the entity labels classification section for the extraction prompt."""
     if labels_cfg is None:
@@ -1365,10 +1384,7 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
     if not labels_cfg.attributes:
         return ""
 
-    if free_form_entities:
-        entities_instruction = "Classify each fact using the structured 'labels' field below. Continue extracting regular named entities in the 'entities' field."
-    else:
-        entities_instruction = "Classify each fact using the structured 'labels' field below. Do NOT add regular named entities — labels-only mode."
+    entities_instruction = build_free_form_entities_instruction(free_form_entities)
 
     lines = [
         "\n\n══════════════════════════════════════════════════════════════════════════",
@@ -1585,6 +1601,54 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             response_schema = DynamicResponse
 
     return prompt, response_schema
+
+
+@dataclass(frozen=True)
+class ChunkPromptParts:
+    """Exactly what one extraction call sends: both messages plus the response schema.
+
+    Both messages are kept because the bank's retain mission is deliberately absent
+    from ``system_prompt`` — see :func:`_retain_mission_preamble`. A preview that
+    showed only the system prompt would show a configured mission as missing.
+    """
+
+    system_prompt: str
+    user_message: str
+    response_schema: type
+
+
+def build_chunk_prompt_parts(
+    config,
+    *,
+    chunk: str,
+    chunk_index: int = 0,
+    total_chunks: int = 1,
+    event_date: datetime | None = None,
+    context: str = "",
+    metadata: dict[str, str] | None = None,
+    agent_name: str | None = None,
+) -> ChunkPromptParts:
+    """Render the extraction messages for one chunk without calling the LLM.
+
+    The single place both the extraction path and the prompt-preview endpoint go
+    through, so a preview always reflects the real request.
+    """
+    system_prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    user_message = _build_user_message(
+        chunk,
+        chunk_index,
+        total_chunks,
+        event_date,
+        context,
+        metadata,
+        agent_name,
+        mission_preamble=_retain_mission_preamble(config),
+    )
+    return ChunkPromptParts(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        response_schema=response_schema,
+    )
 
 
 def _retain_mission_preamble(config) -> str:
@@ -1810,24 +1874,25 @@ async def _extract_facts_from_chunk(
 
     logger = logging.getLogger(__name__)
 
-    # Build prompt and schema using helper function
-    prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    # Assembled by the same helper the prompt-preview endpoint calls, so what the
+    # control plane shows for a candidate mission cannot drift from what is sent.
+    parts = build_chunk_prompt_parts(
+        config,
+        chunk=chunk,
+        chunk_index=chunk_index,
+        total_chunks=total_chunks,
+        event_date=event_date,
+        context=context,
+        metadata=metadata,
+        agent_name=agent_name,
+    )
+    prompt = parts.system_prompt
+    response_schema = parts.response_schema
+    user_message = parts.user_message
 
     # Check config for extraction mode and causal link extraction
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
-
-    # Build user message — the bank mission rides here (not in the cached prefix).
-    user_message = _build_user_message(
-        chunk,
-        chunk_index,
-        total_chunks,
-        event_date,
-        context,
-        metadata,
-        agent_name,
-        mission_preamble=_retain_mission_preamble(config),
-    )
 
     # Swap image placeholders for the images themselves, in place. Done on the
     # fully assembled message rather than on the chunk so the surrounding prompt
@@ -2359,7 +2424,8 @@ async def extract_facts_from_text(
         llm_config: LLM configuration to use
         config: Resolved HindsightConfig for this bank
         context: Context about the conversation/document
-        metadata: Optional document metadata key-value pairs
+        metadata: Optional document metadata key-value pairs. Also selects the
+            chain member when the retain LLM uses the "metadata" strategy.
         agent_name: Optional narrator to prime the prompt with ("Narrator: {name}").
             Retain never sets it — see the caller in retain/orchestrator.py — and the
             dry-run endpoint's field that does is deprecated in favour of ``context``.
@@ -2374,6 +2440,15 @@ async def extract_facts_from_text(
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
         - usage: Aggregated token usage across all LLM calls
     """
+    # Metadata routing binds the member here rather than at the operation level:
+    # one call to this function is one retain item, so its metadata is
+    # unambiguous, and every chunk it fans out below shares that one item's
+    # classification. A chain in any other mode (or an item matching no route)
+    # returns the wrapper unchanged.
+    route_for = getattr(llm_config, "route_for", None)
+    if route_for is not None:
+        llm_config = route_for(metadata)
+
     chunks = chunk_text(
         text,
         max_chars=config.retain_chunk_size,
@@ -2742,7 +2817,7 @@ async def extract_facts_from_contents_batch_api(
     # Batch results are downloaded straight from the provider's output file, so they
     # never pass through ``LLMProvider.call`` and miss the scrub it applies. Sanitize
     # them here so the batch path gets the same guarantee as the sync one (#3729).
-    batch_results = sanitize_llm_value(await batch_impl.retrieve_batch_results(batch_id))
+    batch_results = sanitize_value(await batch_impl.retrieve_batch_results(batch_id))
 
     # Map results by custom_id
     results_by_id = {result["custom_id"]: result for result in batch_results}

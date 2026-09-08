@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -35,6 +36,7 @@ from ...search.tags import (
     build_tag_groups_where_clause,
     build_tags_where_clause,
     build_tags_where_clause_simple,
+    tag_clause_is_index_only,
 )
 from ..base import MemoryScopeWatermark, ScanPage, StoredMemory
 
@@ -499,15 +501,55 @@ async def any_memory_updated_since(
 ) -> bool:
     """Whether any memory in ``bank_id``'s scope was written after ``since``.
 
-    Backs the mental-model staleness check, so it is a bounded existence test —
-    ``LIMIT 1``, never a COUNT: the answer is "is there one", and the planner can
-    stop at the first hit. The scope is the mental model's: its flat tags (or the
-    compound ``tag_groups``) plus an optional ``fact_types`` restriction. This is
-    where the staleness query's WHERE lives, so the same scope that gates a
-    refresh decides whether one is due.
+    Backs the mental-model staleness check. Two shapes, because which index can
+    answer it depends on the scope, and the wrong one walks the bank (#4169):
+
+    * **Tag-indexable scopes** — the ``_strict`` modes and ``exact``, whose clause
+      is a bare ``tags @>``/``&&`` (see
+      :func:`~...search.tags.tag_clause_is_index_only`) — ask ``bool_or(updated_at
+      > since)`` with the *tag predicate alone* in the WHERE. Leaving
+      ``updated_at`` out of the WHERE is the whole point: it makes ``tags`` the
+      only index-eligible filter, so the planner reaches
+      ``idx_memory_units_tags`` and reads just the scope's own rows. Put the time
+      predicate back and it prefers a scan (measured: a seq scan of the bank).
+      Cost is then the size of the scope, not the size of the bank. ``bank_id``
+      stays in the WHERE and is still enforced, but as a recheck on the heap rather
+      than an index condition — that index is not bank-scoped, so a tag many banks
+      share costs their rows too. Bounded by the tag, and still far below a walk of
+      every write since the watermark.
+    * **Everything else** — ``any``/``all`` (whose ``OR tags IS NULL`` disjunct no
+      index can serve), an untagged scope, and compound ``tag_groups`` — keep the
+      bounded ``LIMIT 1`` existence test on ``(bank_id, updated_at)``. It stops at
+      the first hit, which is fast whenever the answer is "stale"; when it is not,
+      it walks every memory written since ``since``, and the caller's bank-wide
+      watermark check is what keeps it off that path (see
+      ``MemoryEngine.compute_mental_model_is_stale``).
+
+    Measured on 100k rows, one quiet scope: 16-21ms on the ``LIMIT 1`` shape
+    against 0.6-0.9ms on the aggregate; for a hot scope the aggregate costs
+    1.9-3.1ms against 1.1-1.6ms, which is the trade — bounded by the scope
+    instead of by the bank.
+
+    The scope is the mental model's: its flat tags (or the compound
+    ``tag_groups``) plus an optional ``fact_types`` restriction. This is where the
+    staleness query's WHERE lives, so the same scope that gates a refresh decides
+    whether one is due.
     """
+    # `since` is bound as $2 either way: in the WHERE for the LIMIT 1 shape, in the
+    # aggregate's own expression for the indexable one.
+    #
+    # Postgres only. The aggregate shape exists to reach a GIN index that Oracle has
+    # no counterpart for — its rewriter turns `tags @>` / `&&` into JSON_TABLE
+    # existence predicates, which no index serves either way — and `bool_or` is not
+    # an Oracle aggregate at all, so on Oracle this would be a syntax error rather
+    # than a slower plan. Oracle keeps the LIMIT 1 shape, which rewrites cleanly.
+    indexable = (
+        getattr(conn, "backend_type", "postgresql") == "postgresql"
+        and not tag_groups
+        and tag_clause_is_index_only(tags, tags_match)
+    )
     params: list[Any] = [bank_id, since]
-    where = ["bank_id = $1", "updated_at > $2"]
+    where = ["bank_id = $1"] if indexable else ["bank_id = $1", "updated_at > $2"]
 
     built = build_tags_where_clause(tags, param_offset=len(params) + 1, match=tags_match)
     tag_clause = built.sql
@@ -529,11 +571,56 @@ async def any_memory_updated_since(
         params.append(list(fact_types))
         where.append(f"fact_type = ANY(${len(params)}::text[])")
 
+    if indexable:
+        # bool_or over an empty match set is NULL, which is "no in-scope memory at
+        # all" — not stale, same as the LIMIT 1 shape returning no row.
+        hit = await conn.fetchval(
+            f"SELECT bool_or(updated_at > $2) FROM {fq_table('memory_units')} WHERE {' AND '.join(where)}",
+            *params,
+        )
+        return bool(hit)
+
     row = await conn.fetchval(
         f"SELECT 1 FROM {fq_table('memory_units')} WHERE {' AND '.join(where)} LIMIT 1",
         *params,
     )
     return row is not None
+
+
+async def latest_memory_write_at(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+) -> datetime | None:
+    """The newest ``updated_at`` across ``bank_id``'s memories, or None if it has none.
+
+    The bank-wide half of the staleness question, and the cheap one: ``MAX`` over
+    the leading column of ``idx_memory_units_bank_updated_at`` is a single backward
+    index probe, whatever the bank's size. A mental model that has read the
+    memories at or past this cannot be stale however its scope is drawn, which is
+    what lets the staleness surfaces skip the scoped scan entirely on a bank whose
+    writes have not moved since.
+    """
+    return await conn.fetchval(
+        f"SELECT MAX(updated_at) FROM {fq_table('memory_units')} WHERE bank_id = $1",
+        bank_id,
+    )
+
+
+@dataclass(frozen=True)
+class _ScopeGroupKey:
+    """What makes two staleness scopes answerable by one query.
+
+    Scopes with the same tag clause *and* the same query shape share a prepared
+    plan, so they are asked together; anything else needs its own statement.
+    """
+
+    tag_clause: str
+    """The generated tag predicate, phrased over the joined scope's `s.tags`."""
+
+    indexable: bool
+    """Whether that predicate can be answered from the GIN index on ``tags`` alone."""
 
 
 async def any_memory_updated_since_batch(
@@ -547,20 +634,32 @@ async def any_memory_updated_since_batch(
 
     The knowledge tree and the mental-model list ask this for every model in the
     bank on a poll, and one round-trip each is what made the exact answer look
-    expensive — the scans themselves are microseconds once
-    ``idx_memory_units_bank_updated_at`` exists. Scopes are grouped by the tag
-    clause they generate (a bank's pages almost always share one), each group is
+    expensive. Scopes are grouped by the tag clause they generate and the query
+    shape it implies (a bank's pages almost always share both), each group is
     joined against its scope set as JSON, and every group is a single prepared
     plan however many pages it covers.
 
-    Two details in the SQL are load-bearing:
+    Which of the two shapes a group gets is :func:`any_memory_updated_since`'s
+    decision, made per group here — the aggregate over the tag index for scopes
+    whose clause that index can serve, the time-ordered ``LIMIT 1`` for the rest.
+    Read that docstring first; what follows is what the *batched* form adds.
 
-    * ``ORDER BY mu.updated_at DESC`` inside the LATERAL. It does not change the
-      answer — we only ask whether a row exists — but without it the planner
-      estimates the ``LIMIT 1`` will be satisfied early, picks a sequential scan,
-      and the whole point is lost (measured: 13 ms per scope instead of 0.03 ms).
-      The ORDER BY makes the ``(bank_id, updated_at DESC)`` index the obvious way
-      to run the join, which is also the cheapest.
+    Three details in the SQL are load-bearing:
+
+    * ``ORDER BY mu.updated_at DESC`` inside the ``LIMIT 1`` LATERAL. It does not
+      change the answer — we only ask whether a row exists — but without it the
+      planner estimates the ``LIMIT 1`` will be satisfied early, picks a sequential
+      scan, and the whole point is lost (measured: 13 ms per scope instead of
+      0.03 ms). It makes the ``(bank_id, updated_at DESC)`` index the obvious way
+      to run the join, which is the cheapest **when the scope has a match** — and
+      a walk to the end of the index when it does not. That is the cost the other
+      shape exists to avoid, and for the modes still on this one it is the
+      caller's bank-wide watermark check that keeps them off it.
+    * ``COALESCE(h.hit, false)`` in the aggregate shape against
+      ``(h.hit IS NOT NULL)`` in the other. A ``LIMIT 1`` LATERAL yields no row for
+      a scope with no match; ``bool_or`` yields one row holding NULL. Projecting
+      either as "not stale" is the same answer, but only if each is spelled for its
+      own shape — read the wrong way round, every quiet scope reports stale.
     * ``LEFT JOIN LATERAL`` rather than a correlated ``EXISTS``. A scalar subquery
       over a function scan gets no useful row estimate and falls back to a
       sequential scan for the same reason.
@@ -571,9 +670,8 @@ async def any_memory_updated_since_batch(
 
     Postgres only. This module backs both SQL dialects, and Oracle reaches it
     through a regex rewriter that does not model ``jsonb_to_recordset`` or
-    ``LATERAL``, so an Oracle connection takes the same per-scope path. It is the
-    round-trips that are saved here, not the scans — the scans are cheap on both
-    dialects once the ``(bank_id, updated_at)`` index exists.
+    ``LATERAL``, so an Oracle connection takes the same per-scope path — which is
+    :func:`any_memory_updated_since`, and therefore picks up the same two shapes.
     """
     if not scopes:
         return {}
@@ -596,8 +694,9 @@ async def any_memory_updated_since_batch(
     table = fq_table("memory_units")
     results: dict[str, bool] = {}
 
-    # Group by the generated clause: same clause, same query text, one plan.
-    by_clause: dict[str, list[MemoryScopeWatermark]] = {}
+    # Group by the generated clause and the shape it implies: same key, same query
+    # text, one plan.
+    by_clause: dict[_ScopeGroupKey, list[MemoryScopeWatermark]] = {}
     for scope in scopes:
         if scope.tag_groups:
             results[scope.key] = await any_memory_updated_since(
@@ -616,10 +715,14 @@ async def any_memory_updated_since_batch(
         # cosmetic: both sides of the join expose a `tags` column, and an unqualified
         # one would resolve by scoping rules rather than by intent.
         built = build_tags_where_clause(scope.tags, table_alias="mu.", match=scope.tags_match, value_expr="s.tags")
-        tag_clause = built.sql
-        by_clause.setdefault(tag_clause, []).append(scope)
+        # The shape is part of the group key, not just the clause: the two forms are
+        # different SQL, and a mode that can use the tag index must not be folded in
+        # with one that cannot.
+        indexable = tag_clause_is_index_only(scope.tags, scope.tags_match)
+        by_clause.setdefault(_ScopeGroupKey(built.sql, indexable), []).append(scope)
 
-    for tag_clause, group in by_clause.items():
+    for key, group in by_clause.items():
+        tag_clause = key.tag_clause
         payload = [
             {
                 "scope_key": scope.key,
@@ -631,28 +734,47 @@ async def any_memory_updated_since_batch(
             }
             for scope in group
         ]
-        rows = await conn.fetch(
-            f"""
+        # `tags` must be varchar[], matching memory_units.tags: there is no
+        # `varchar[] @> text[]` operator, so a text[] column here fails to resolve
+        # the containment operators the tag clauses are built from.
+        scope_set = (
+            "FROM jsonb_to_recordset($2::jsonb)\n"
+            "     AS s(scope_key text, since timestamptz, tags varchar[], fact_types text[])"
+        )
+        fact_type_clause = "AND (s.fact_types IS NULL OR mu.fact_type = ANY(s.fact_types))"
+        if key.indexable:
+            # The tag predicate is the only index-eligible filter, deliberately: the
+            # time comparison rides inside the aggregate so the planner reaches the
+            # GIN index on `tags` and touches only the scope's own rows. `bool_or`
+            # over an empty set is NULL, hence the COALESCE — unlike `LIMIT 1`,
+            # which simply yields no row.
+            sql = f"""
+            SELECT s.scope_key, COALESCE(h.hit, false) AS stale
+            {scope_set}
+            LEFT JOIN LATERAL (
+                SELECT bool_or(mu.updated_at > s.since) AS hit
+                FROM {table} mu
+                WHERE mu.bank_id = $1
+                  {tag_clause}
+                  {fact_type_clause}
+            ) h ON TRUE
+            """
+        else:
+            sql = f"""
             SELECT s.scope_key, (h.hit IS NOT NULL) AS stale
-            FROM jsonb_to_recordset($2::jsonb)
-                 -- `tags` must be varchar[], matching memory_units.tags: there is no
-                 -- `varchar[] @> text[]` operator, so a text[] column here fails to
-                 -- resolve the containment operators the tag clauses are built from.
-                 AS s(scope_key text, since timestamptz, tags varchar[], fact_types text[])
+            {scope_set}
             LEFT JOIN LATERAL (
                 SELECT 1 AS hit
                 FROM {table} mu
                 WHERE mu.bank_id = $1
                   AND mu.updated_at > s.since
                   {tag_clause}
-                  AND (s.fact_types IS NULL OR mu.fact_type = ANY(s.fact_types))
+                  {fact_type_clause}
                 ORDER BY mu.updated_at DESC
                 LIMIT 1
             ) h ON TRUE
-            """,
-            bank_id,
-            json.dumps(payload),
-        )
+            """
+        rows = await conn.fetch(sql, bank_id, json.dumps(payload))
         results.update({row["scope_key"]: row["stale"] for row in rows})
 
     return results
@@ -705,6 +827,7 @@ __all__ = [
     "count_memories",
     "find_unconsolidated",
     "get_memories",
+    "latest_memory_write_at",
     "list_tags",
     "live_memory_ids",
     "mark_consolidated",

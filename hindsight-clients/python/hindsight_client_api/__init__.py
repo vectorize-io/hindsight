@@ -105,6 +105,7 @@ from hindsight_client_api.models.entity_list_response import EntityListResponse
 from hindsight_client_api.models.entity_observation_response import EntityObservationResponse
 from hindsight_client_api.models.entity_state_response import EntityStateResponse
 from hindsight_client_api.models.extracted_fact import ExtractedFact
+from hindsight_client_api.models.extraction_chunk import ExtractionChunk
 from hindsight_client_api.models.features_info import FeaturesInfo
 from hindsight_client_api.models.file_content_block import FileContentBlock
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
@@ -163,6 +164,10 @@ from hindsight_client_api.models.operation_progress import OperationProgress
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
+from hindsight_client_api.models.prompt_block_model import PromptBlockModel
+from hindsight_client_api.models.prompt_message_model import PromptMessageModel
+from hindsight_client_api.models.prompt_preview_request import PromptPreviewRequest
+from hindsight_client_api.models.prompt_preview_response import PromptPreviewResponse
 from hindsight_client_api.models.recall_request import RecallRequest
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult
@@ -183,6 +188,7 @@ from hindsight_client_api.models.reprocess_document_response import ReprocessDoc
 from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.retry_operation_response import RetryOperationResponse
+from hindsight_client_api.models.run_setting_model import RunSettingModel
 from hindsight_client_api.models.source_facts_include_options import SourceFactsIncludeOptions
 from hindsight_client_api.models.tag_group_and_input import TagGroupAndInput
 from hindsight_client_api.models.tag_group_and_output import TagGroupAndOutput

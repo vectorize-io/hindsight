@@ -11,8 +11,14 @@
  *
  * Deliberately free of the `@site/` alias and of any JSON import so it can be pulled in both from
  * the theme (webpack, where the alias exists) and from sidebars-integrations.ts (evaluated at
- * config load, where it does not).
+ * config load, where it does not) — which is why the harness roster below is imported by relative
+ * path too.
  */
+import {
+  CODING_AGENT_HARNESSES as HARNESS_ROSTER,
+  harnessIconPath,
+} from './coding-agent-harnesses';
+
 export interface IntegrationGroup {
   label: string;
   categories: string[];
@@ -32,23 +38,14 @@ export const CODING_AGENTS_LINK = '/sdks/integrations/coding-agents';
  *
  * All of these are covered by the single Coding Agents plugin, so listing ten doc pages would
  * present it as ten separate integrations; every logo links to the one page instead. The logos also
- * make the group recognisable at a glance in a way a column of names is not. Files live in
- * static/img/harness/, named by the harness id the plugin itself uses.
+ * make the group recognisable at a glance in a way a column of names is not.
+ *
+ * The roster itself lives in ./coding-agent-harnesses — the one list this site and its integrations
+ * gallery both read, so adding a harness cannot leave one of them behind.
  */
-export const CODING_AGENT_HARNESSES: {label: string; icon: string}[] = [
-  {label: 'Claude Code', icon: '/img/harness/claude-code.png'},
-  {label: 'Codex CLI', icon: '/img/harness/codex.svg'},
-  {label: 'opencode', icon: '/img/harness/opencode.png'},
-  {label: 'Kilo CLI', icon: '/img/harness/kilo.svg'},
-  {label: 'Cursor CLI', icon: '/img/harness/cursor-cli.svg'},
-  {label: 'GitHub Copilot CLI', icon: '/img/harness/copilot-cli.svg'},
-  {label: 'Grok Build', icon: '/img/harness/grok-build.svg'},
-  {label: 'Qwen Code', icon: '/img/harness/qwen-code.svg'},
-  {label: 'Antigravity CLI', icon: '/img/harness/antigravity-cli.png'},
-  {label: 'Devin CLI', icon: '/img/harness/devin-cli.svg'},
-  {label: 'Cline CLI', icon: '/img/harness/cline-cli.svg'},
-  {label: 'DeepSeek Harness', icon: '/img/harness/dsh.svg'},
-];
+export const CODING_AGENT_HARNESSES: {label: string; icon: string}[] = HARNESS_ROSTER.map(
+  (harness) => ({label: harness.label, icon: harnessIconPath(harness)}),
+);
 
 // Order here is display order in both sidebars. Coding agents lead: they're the most common entry
 // point into the docs.

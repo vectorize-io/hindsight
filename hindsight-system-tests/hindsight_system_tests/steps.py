@@ -1,0 +1,38 @@
+"""Which pipeline step an LLM call belongs to, decided in exactly one place.
+
+Nothing on the wire says "this is fact extraction". The scope is a server-side
+concept, the ``json_schema`` name is the constant ``"response"``, and the model
+name is whatever the deployment configured. All that reaches the stub is the
+prompt.
+
+So a step is identified by an anchor: a short, load-bearing phrase from its
+prompt. Tests never write those phrases — they say ``on_step("extract_facts")``
+and the mapping lives here. That is the difference between a prompt edit costing
+one line and costing thirty red tests, which is the failure mode that kills
+wiremock-style suites.
+
+When an anchor stops matching, the miss report prints the prompt that arrived;
+fix the anchor here, once.
+"""
+
+from __future__ import annotations
+
+# Anchor phrases, each unique to one step's prompt. Keep them short: the more of
+# a prompt an anchor quotes, the more prompt edits break it.
+STEP_ANCHORS: dict[str, str] = {
+    "extract_facts": "Extract facts from the following chunk.",
+    "consolidate": "### Existing observations",
+    "connection_probe": "Say 'ok'",
+}
+
+
+class UnknownStep(KeyError):
+    """Raised for a step name with no anchor, so a typo fails loudly at declaration."""
+
+
+def anchor_for(step: str) -> str:
+    try:
+        return STEP_ANCHORS[step]
+    except KeyError:
+        known = ", ".join(sorted(STEP_ANCHORS))
+        raise UnknownStep(f"unknown step {step!r}; known steps: {known}") from None

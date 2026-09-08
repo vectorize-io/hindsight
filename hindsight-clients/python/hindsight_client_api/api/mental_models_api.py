@@ -1912,6 +1912,7 @@ class MentalModelsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MentalModelListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2004,6 +2005,7 @@ class MentalModelsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MentalModelListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2096,6 +2098,7 @@ class MentalModelsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "MentalModelListResponse",
+            '404': None,
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

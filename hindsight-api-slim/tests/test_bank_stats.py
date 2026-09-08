@@ -13,6 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 
 
@@ -24,9 +25,14 @@ async def api_client(memory):
         yield client
 
 
-@pytest.fixture
-def test_bank_id():
-    return f"stats_test_{datetime.now().timestamp()}"
+@pytest_asyncio.fixture
+async def test_bank_id(memory):
+    bank_id = f"stats_test_{datetime.now().timestamp()}"
+    # Create the bank. Bank-scoped reads 404 for a bank nobody created (#4175),
+    # so a stats test that only invents an id would exercise that path instead of
+    # the empty-bank one it is about.
+    await memory.get_bank_profile(bank_id, request_context=RequestContext())
+    return bank_id
 
 
 async def _insert_memory(memory, bank_id: str, text: str, *, failed: bool = False) -> str:

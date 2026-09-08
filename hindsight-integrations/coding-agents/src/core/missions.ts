@@ -6,6 +6,8 @@
  * every harness adapter.
  */
 
+import { createHash } from "node:crypto";
+
 // ── retain missions (git vs chat need different extraction) ─────────────────────
 export const GIT_MISSION =
   "You are ingesting a single git commit: its message and its full diff. Extract the concrete " +
@@ -194,7 +196,12 @@ export interface KnowledgePage {
 }
 
 /**
- * The subject-scoping clause every seeded page's query carries, naming the repository it is about.
+ * The subject-scoping clause every seeded page's query carries, naming the subject it is about.
+ *
+ * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
+ * several repos share has no repo to name, and naming whichever one seeded last made the sentence
+ * flip on every session start (#4146). Either way it must be stable for the bank, because the
+ * clause is PATCHed onto pages that outlive the session.
  *
  * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
  * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
@@ -269,10 +276,11 @@ const PAGE_TAXONOMY: readonly KnowledgePage[] = [
 ];
 
 /**
- * The seeded pages for one repository: the taxonomy above with `project` named in every query.
+ * The seeded pages for one subject: the taxonomy above with `project` named in every query.
  *
- * A pure function of `project`, so the query text is STABLE for a given repo and `seedPages()`
- * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run.
+ * A pure function of `project`, so the query text is STABLE for a given subject and `seedPages()`
+ * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run — which
+ * holds only while the caller's `project` is itself stable per bank (see `bankProjectName`).
  */
 export function pagesFor(project: string): KnowledgePage[] {
   const scope = pageScopeRule(project);
@@ -316,6 +324,127 @@ export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
 export interface PageTriggerConfig {
   pageTriggerType?: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
+}
+
+// ── hashed cron fields (`H`) ───────────────────────────────────────────────────
+/**
+ * A cron field written `H` means "pick a value in this field's range by hashing the page", so
+ * every page gets its OWN stable slot instead of the one the config literally names.
+ *
+ * One `pageTriggerCron` is shared by every page in every bank running this plugin — it ships as a
+ * single documented example and is copied verbatim. A literal `"0 3 * * *"` therefore does not
+ * schedule a refresh at 03:00; it schedules ALL of them at 03:00, on the worker pool that also
+ * serves retain, so a session ingesting at 03:0x queues behind ~5 page syntheses per bank that
+ * happened to share the one minute the docs suggested. Moving the hour moves the pile.
+ *
+ * `H` is Jenkins' syntax for exactly this problem, borrowed rather than invented because it is
+ * already recognisable, and it composes with the rest of the expression instead of replacing it:
+ *
+ *   "H H * * *"      once a day, at this page's own minute and hour
+ *   "H * * * *"      once an hour, at this page's own minute
+ *   "H 3 * * *"      daily at 03:MM — spread within the hour the operator chose
+ *   "H H(0-5) * * *" daily, spread across the night only
+ *   "0 3 * * *"      unchanged: no `H`, no hashing, exactly what it says
+ *
+ * The alternative — one enum member per period (`daily-staggered`, then `hourly-staggered`, then
+ * whatever is asked for next) — spells the schedule in the type name, so every new period is a new
+ * config value, a new branch, and a new row of docs. Spreading is a property of the SCHEDULE, so it
+ * belongs in the expression.
+ *
+ * `H` never leaves this package: `expandCronHash` resolves it to an ordinary 5-field expression
+ * before the trigger is sent, because `refresh_cron` is parsed server-side as standard cron.
+ */
+const CRON_FIELD_RANGES: readonly (readonly [number, number])[] = [
+  [0, 59], // minute
+  [0, 23], // hour
+  [1, 31], // day of month
+  [1, 12], // month
+  [0, 6], // day of week
+];
+
+const HASHED_FIELD = /^H(?:\((\d+)-(\d+)\))?$/;
+
+/**
+ * Does this expression ask for hashing at all? Plain crons take every path below unchanged.
+ *
+ * Any field STARTING with `H` counts, not just a well-formed one: no standard cron field begins
+ * with `H` (values are digits, `*`, `,`, `-`, `/`, and the JAN-DEC/SUN-SAT names), so `"Hx"` is a
+ * typo in this package's syntax rather than something the server was going to accept. Claiming it
+ * here is what gets it reported as a malformed hashed field instead of an opaque cron parse error.
+ */
+export function isHashedCron(cron: string): boolean {
+  return /(^|\s)H/.test(cron);
+}
+
+/**
+ * The five fields of `cron` when every `H` in it is well-formed, else `undefined`.
+ *
+ * Only the `H` fields are checked. The rest are the server's to validate, as they already are —
+ * this package does not own cron syntax, only the extension it adds to it.
+ */
+export function parseHashedCron(cron: string): string[] | undefined {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== CRON_FIELD_RANGES.length) return undefined;
+  for (const [i, field] of fields.entries()) {
+    if (!field.startsWith("H")) continue;
+    const m = HASHED_FIELD.exec(field);
+    if (!m) return undefined;
+    if (m[1] === undefined) continue;
+    const [lo, hi] = [Number(m[1]), Number(m[2])];
+    const [min, max] = CRON_FIELD_RANGES[i];
+    if (lo > hi || lo < min || hi > max) return undefined;
+  }
+  return fields;
+}
+
+/**
+ * `seed`'s own value in `[lo, hi]` — stable across machines, processes and releases.
+ *
+ * The field index is hashed alongside the seed so `H H * * *` does not derive its minute and its
+ * hour from one number: the two would move together across pages, collapsing the 1440 daily slots
+ * the expression offers back towards 60.
+ */
+function hashedValue(seed: string, field: number, lo: number, hi: number): number {
+  const digest = createHash("sha256").update(`${seed}\u0000${field}`).digest();
+  return lo + (digest.readUInt32BE(0) % (hi - lo + 1));
+}
+
+/**
+ * `cron` with each `H` replaced by `seed`'s own value for that field — an ordinary cron expression.
+ *
+ * Returns the input untouched when it holds no `H`, and when an `H` in it is malformed: a bad
+ * expression is reported by the server that parses crons, not silently rewritten into a valid one
+ * that runs at a time nobody asked for. `resolvePageTriggerType` rejects it before it gets here.
+ */
+export function expandCronHash(cron: string, seed: string): string {
+  if (!isHashedCron(cron)) return cron;
+  const fields = parseHashedCron(cron);
+  if (!fields) return cron;
+  return fields
+    .map((field, i) => {
+      const m = HASHED_FIELD.exec(field);
+      if (!m) return field;
+      const [lo, hi] =
+        m[1] === undefined ? CRON_FIELD_RANGES[i] : ([Number(m[1]), Number(m[2])] as const);
+      return String(hashedValue(seed, i, lo, hi));
+    })
+    .join(" ");
+}
+
+/**
+ * `trigger` as it should be sent for ONE page, resolving any `H` against that page's identity.
+ *
+ * Applied where a page is created rather than where the trigger is built, because that is the only
+ * place the identity exists: `buildPageTrigger` runs once per session for all of them.
+ *
+ * The seed is bank + page name — the pair that identifies a page across runs — so a page keeps its
+ * slot for as long as it keeps its name, and two banks seeded from the same config land on
+ * different ones. Hashing distributes; it does not partition, so two pages CAN still collide.
+ */
+export function pageTriggerFor(trigger: PageTrigger, bank: string, page: string): PageTrigger {
+  const cron = trigger.refresh_cron;
+  if (!cron || !isHashedCron(cron)) return trigger;
+  return { ...trigger, refresh_cron: expandCronHash(cron, `${bank}\u0000${page}`) };
 }
 
 /**

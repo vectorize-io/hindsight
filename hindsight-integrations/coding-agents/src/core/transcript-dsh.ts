@@ -2,9 +2,10 @@
  * DeepSeek Harness (dsh) transcript normalizer.
  *
  * dsh keeps a session as an append-only log of typed `SessionEvent`s rather than a chat array, and
- * a plugin reads that log straight off `agent.session.events` — so this is a pure function over
- * those events, like the opencode normalizer, not a file reader. The SAME event vocabulary is what
- * dsh persists to disk, so the backfill reader (core/history.ts) feeds this exact function.
+ * a plugin reads that log straight off the live session (`snapshotEvents()`) — so this is a pure
+ * function over those events, like the opencode normalizer, not a file reader. The SAME event
+ * vocabulary is what dsh persists to disk, so the backfill reader (core/history.ts) feeds this
+ * exact function.
  *
  * Only three of the ~30 event types carry conversation:
  *   - `user/message`      surface, a UserMessage — the human prompt OR an injected plugin context

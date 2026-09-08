@@ -743,14 +743,29 @@ def compute_semantic_links_within_batch(
     if len(unit_ids) < 2:
         return []
 
+    n_units = len(unit_ids)
     links = []
-    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
-    norms = np.linalg.norm(new_embeddings_matrix, axis=1)
-    valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
-    normalized_embeddings = np.zeros_like(new_embeddings_matrix)
-    normalized_embeddings[valid_embeddings] = (
-        new_embeddings_matrix[valid_embeddings] / norms[valid_embeddings, np.newaxis]
+    # float32, not float64: `PackedEmbedding` is already `array("f")` and pgvector's `vector`
+    # column stores float32, so the doubles the old `dtype=float` produced were padding that
+    # nothing downstream could use -- they only doubled the working set and pushed BLAS off
+    # SGEMM onto DGEMM. `np.array` (not `asarray`) because this buffer is normalised in place
+    # below and must not alias an ndarray the caller still owns.
+    normalized_embeddings = np.array(embeddings, dtype=np.float32)
+    # Accumulate the norms in float64. The vectors are float32, but summing 1536 squares in
+    # float32 overflows to inf above ~1e19 and flushes to zero below ~1e-22, which would drop
+    # those rows as "invalid" when float64 handled them fine. `einsum` keeps the wide
+    # accumulator without materialising an (n, dim) float64 copy of the batch.
+    norms = np.sqrt(np.einsum("ij,ij->i", normalized_embeddings, normalized_embeddings, dtype=np.float64))
+    # A non-finite component poisons its own row norm, so the norm check alone catches NaN and
+    # inf rows -- no need for an (n, dim) `isfinite` mask over the whole batch.
+    valid_embeddings = np.isfinite(norms) & (norms > 0)
+    np.divide(
+        normalized_embeddings,
+        norms[:, np.newaxis].astype(np.float32),
+        out=normalized_embeddings,
+        where=valid_embeddings[:, np.newaxis],
     )
+    normalized_embeddings[~valid_embeddings] = 0.0
 
     # One matrix product per block of rows, rather than one per unit against a
     # freshly gathered copy of every other unit. `normalized[others]` is advanced
@@ -761,26 +776,48 @@ def compute_semantic_links_within_batch(
     # O(n^2 * dim) dot products either way; this hands them to BLAS in one call and
     # keeps the transient at one block of similarity rows.
     block_rows = _SEMANTIC_WITHIN_BATCH_BLOCK_ROWS
-    for start in range(0, len(unit_ids), block_rows):
-        stop = min(start + block_rows, len(unit_ids))
-        block_similarities = normalized_embeddings[start:stop] @ normalized_embeddings.T
+    # One (block_rows, n) buffer for the whole sweep. At 36K facts each block of
+    # similarities is 37 MB, and allocating and freeing that once per block is churn
+    # the allocator does not need to see.
+    similarity_buffer = np.empty((min(block_rows, n_units), n_units), dtype=np.float32)
+    invalid_columns = np.flatnonzero(~valid_embeddings)
+    for start in range(0, n_units, block_rows):
+        stop = min(start + block_rows, n_units)
+        block_similarities = similarity_buffer[: stop - start]
+        np.matmul(normalized_embeddings[start:stop], normalized_embeddings.T, out=block_similarities)
         # A unit with an unusable embedding is neither a source nor a target.
-        block_similarities[:, ~valid_embeddings] = -np.inf
+        if invalid_columns.size:
+            block_similarities[:, invalid_columns] = -np.inf
+        # Never link a unit to itself: row `i` of the block is unit `start + i`.
+        diagonal = np.arange(stop - start)
+        block_similarities[diagonal, start + diagonal] = -np.inf
 
-        for i in range(start, stop):
-            if not valid_embeddings[i]:
+        for local_index, unit_index in enumerate(range(start, stop)):
+            if not valid_embeddings[unit_index]:
                 continue
 
-            similarities = block_similarities[i - start]
-            similarities[i] = -np.inf  # never link a unit to itself
-
+            similarities = block_similarities[local_index]
             above_threshold = np.where(similarities >= threshold)[0]
-            if len(above_threshold) > 0:
-                sorted_indices = above_threshold[np.argsort(-similarities[above_threshold])][:top_k]
-                for other_idx in sorted_indices:
-                    other_id = unit_ids[other_idx]
-                    similarity = float(min(1.0, max(0.0, similarities[other_idx])))
-                    links.append((unit_ids[i], other_id, "semantic", similarity, None))
+            candidate_count = len(above_threshold)
+            if candidate_count == 0:
+                continue
+
+            if candidate_count > top_k:
+                # Introselect the top k in O(candidates), then sort only those k, rather
+                # than sorting every candidate to throw all but k of them away.
+                candidate_scores = -similarities[above_threshold]
+                top_partition = np.argpartition(candidate_scores, top_k)[:top_k]
+                neighbours = above_threshold[top_partition[np.argsort(candidate_scores[top_partition])]]
+            elif candidate_count > 1:
+                neighbours = above_threshold[np.argsort(-similarities[above_threshold])]
+            else:
+                neighbours = above_threshold
+
+            from_id = unit_ids[unit_index]
+            # One C-level pass to clamp and unbox, instead of boxing each score on its own.
+            scores = np.clip(similarities[neighbours], 0.0, 1.0).tolist()
+            for other_index, similarity in zip(neighbours, scores):
+                links.append((from_id, unit_ids[other_index], "semantic", similarity, None))
 
     return links
 

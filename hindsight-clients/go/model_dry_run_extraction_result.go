@@ -17,10 +17,12 @@ import (
 // checks if the DryRunExtractionResult type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &DryRunExtractionResult{}
 
-// DryRunExtractionResult Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage.
+// DryRunExtractionResult Result of dry-run fact extraction: candidate facts, the chunks they came from, and aggregated LLM token usage.
 type DryRunExtractionResult struct {
 	// Candidate facts the retain step would extract.
 	Facts []ExtractedFact `json:"facts,omitempty"`
+	// The chunks the input was cut into before extraction. Already computed on every path; returned because `retain_chunk_size` is otherwise a number with no visible effect.
+	Chunks []ExtractionChunk `json:"chunks,omitempty"`
 	// Aggregated token usage across the extraction LLM calls.
 	Usage *TokenUsage `json:"usage,omitempty"`
 }
@@ -74,6 +76,38 @@ func (o *DryRunExtractionResult) SetFacts(v []ExtractedFact) {
 	o.Facts = v
 }
 
+// GetChunks returns the Chunks field value if set, zero value otherwise.
+func (o *DryRunExtractionResult) GetChunks() []ExtractionChunk {
+	if o == nil || IsNil(o.Chunks) {
+		var ret []ExtractionChunk
+		return ret
+	}
+	return o.Chunks
+}
+
+// GetChunksOk returns a tuple with the Chunks field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *DryRunExtractionResult) GetChunksOk() ([]ExtractionChunk, bool) {
+	if o == nil || IsNil(o.Chunks) {
+		return nil, false
+	}
+	return o.Chunks, true
+}
+
+// HasChunks returns a boolean if a field has been set.
+func (o *DryRunExtractionResult) HasChunks() bool {
+	if o != nil && !IsNil(o.Chunks) {
+		return true
+	}
+
+	return false
+}
+
+// SetChunks gets a reference to the given []ExtractionChunk and assigns it to the Chunks field.
+func (o *DryRunExtractionResult) SetChunks(v []ExtractionChunk) {
+	o.Chunks = v
+}
+
 // GetUsage returns the Usage field value if set, zero value otherwise.
 func (o *DryRunExtractionResult) GetUsage() TokenUsage {
 	if o == nil || IsNil(o.Usage) {
@@ -118,6 +152,9 @@ func (o DryRunExtractionResult) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if !IsNil(o.Facts) {
 		toSerialize["facts"] = o.Facts
+	}
+	if !IsNil(o.Chunks) {
+		toSerialize["chunks"] = o.Chunks
 	}
 	if !IsNil(o.Usage) {
 		toSerialize["usage"] = o.Usage

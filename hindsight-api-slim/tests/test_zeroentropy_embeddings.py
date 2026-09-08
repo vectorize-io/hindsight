@@ -295,7 +295,7 @@ def _retrying_embeddings(responses: list[int], policy=None):
     """Build a provider whose transport replays `responses` (HTTP status codes) in order."""
     import threading
 
-    from hindsight_api.engine.embeddings import EmbeddingRetryPolicy, ZeroEntropyEmbeddings
+    from hindsight_api.engine.embeddings import RetryPolicy, ZeroEntropyEmbeddings
 
     statuses = list(responses)
     calls = {"n": 0}
@@ -316,8 +316,7 @@ def _retrying_embeddings(responses: list[int], policy=None):
         api_key="ze-test",
         dimensions=1280,
         batch_size=2,
-        retry_policy=policy
-        or EmbeddingRetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
+        retry_policy=policy or RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
     )
     embeddings._client = httpx.Client(
         transport=httpx.MockTransport(handler),

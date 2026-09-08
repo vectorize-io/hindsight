@@ -89,6 +89,29 @@ def _parse_tags_match(match: TagsMatch) -> TagMatchSemantics:
         return TagMatchSemantics("&&", include_untagged=True)
 
 
+def tag_clause_is_index_only(tags: list[str] | None, match: TagsMatch) -> bool:
+    """Whether this mode's clause is a bare, GIN-indexable predicate on ``tags``.
+
+    True for the ``_strict`` modes and ``exact`` with a non-empty scope: their
+    clause is `tags @> v` / `tags && v` (plus the untagged exclusions, which are
+    rechecks), so Postgres can answer it from ``idx_memory_units_tags`` alone.
+    False for ``any``/``all``, whose clause is a disjunction —
+    ``tags IS NULL OR tags = '{}' OR tags <op> v`` — that no index can serve, and
+    for an empty scope, which is not a tag filter at all.
+
+    The staleness check reads this to decide which shape of existence test to
+    issue: a scope that can be answered from the tag index is asked with the tag
+    predicate *alone* so the planner reaches that index, while one that cannot is
+    left on the time-ordered walk that at least terminates at the first match.
+    See ``any_memory_updated_since`` for what that buys (#4169).
+    """
+    if not tags:
+        return False
+    if match == "exact":
+        return True
+    return not _parse_tags_match(match).include_untagged
+
+
 def build_tags_where_clause(
     tags: list[str] | None,
     param_offset: int = 1,

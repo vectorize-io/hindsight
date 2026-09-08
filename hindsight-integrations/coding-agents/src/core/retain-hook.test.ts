@@ -324,7 +324,7 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
     expect(JSON.parse(rewritten[1])).toMatchObject({ content: "summary of the work so far" });
   });
 
-  it("a failed write is not silently skipped by the next one — it replaces", async () => {
+  it("a failed write is not silently skipped by the next one — it is replayed", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();
     writeFileSync(file, [line(0), line(1)].join("\n"));
@@ -333,14 +333,21 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
     retain.mockRejectedValueOnce(new Error("server unreachable"));
     writeFileSync(file, [line(0), line(1), line(2)].join("\n"));
     await stop(client, cursors); // buildRetain swallows the failure by design
+    const failed = retain.mock.calls[1];
 
     writeFileSync(file, [line(0), line(1), line(2), line(3)].join("\n"));
     await stop(client, cursors);
 
-    expect(retain).toHaveBeenCalledTimes(3);
-    expect(retain.mock.calls[2][5].updateMode).toBeUndefined();
-    // Everything the failed append would have carried is back in the replaced document.
-    expect((retain.mock.calls[2][0] as string).split("\n")).toHaveLength(5);
+    // The next Stop replays the failed slice verbatim and then appends the new one. Neither is a
+    // replace: an outage costs one retried append, not a full re-extraction per Stop (#3989).
+    expect(retain).toHaveBeenCalledTimes(4);
+    expect(retain.mock.calls[2][0]).toBe(failed[0]);
+    expect(retain.mock.calls[2][5].operationId).toBe(failed[5].operationId);
+    expect(retain.mock.calls.slice(1).map((c) => c[5].updateMode)).toEqual([
+      "append",
+      "append",
+      "append",
+    ]);
   });
 });
 
@@ -400,6 +407,23 @@ describe("runRetainHook honors retainSessions", () => {
   it("writes the transcript back by default", async () => {
     const { retain, makeClient } = stubClient();
     await runRetainHook(spec, makeClient);
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies an event gate before building a client", async () => {
+    const { retain, makeClient } = stubClient();
+    const notificationSpec = {
+      ...spec,
+      accept: (ev: Record<string, unknown>) => ev.notification_type === "idle_prompt",
+    };
+
+    stdin = JSON.stringify({ ...event(), notification_type: "permission_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(makeClient).not.toHaveBeenCalled();
+
+    stdin = JSON.stringify({ ...event(), notification_type: "idle_prompt" });
+    await runRetainHook(notificationSpec, makeClient);
     expect(retain).toHaveBeenCalledTimes(1);
   });
 

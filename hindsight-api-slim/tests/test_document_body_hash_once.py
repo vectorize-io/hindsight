@@ -44,7 +44,7 @@ def test_screened_body_hash_matches_what_retain_would_have_computed():
     assert screened.content_hash == _hash_the_way_retain_would(screened.text)
 
 
-def test_sub_batches_that_are_not_slices_carry_no_body_override():
+def test_sub_batches_that_are_not_slices_carry_no_document_body():
     """Only a slice of an oversized item needs the full body written back.
 
     A packed sub-batch holds its own items whole, so ``documents.original_text`` comes from
@@ -72,7 +72,7 @@ def test_body_is_screened_and_hashed_once_across_every_slice():
     split = collect_sub_batches(contents, 200, chunk_size=500, structured_chunk_size=None)
     # The premise of the test: this body really does slice into many sub-batches.
     assert len(split.sub_batches) > 10
-    assert all(body == _BODY for body in split.document_body_overrides)
+    assert all(body == _BODY for body in split.full_document_bodies)
 
     screened = collect_screened_bodies(contents, 200, chunk_size=500, structured_chunk_size=None, config=_config())
 

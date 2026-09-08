@@ -320,6 +320,18 @@ class MetricsCollectorBase:
         """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
         raise NotImplementedError
 
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """Record one consolidation LLM batch call that failed.
+
+        `failed_consolidation` is a gauge over rows carrying `consolidation_failed_at`,
+        so it reports facts left STUCK — never a call that failed and whose facts the
+        caller's adaptive bisection then rescued. A run can burn dozens of schema-invalid
+        calls, drop every delete they carried, and still end with that gauge at 0 and
+        `observations_deleted` at 0, indistinguishable from a healthy run (#4151, #4152).
+        This counter is the missing signal: it counts calls, not stuck rows.
+        """
+        raise NotImplementedError
+
     def set_db_pool(self, pool: "asyncpg.Pool"):
         """Set the database pool for metrics collection."""
         pass
@@ -392,6 +404,10 @@ class NoOpMetricsCollector(MetricsCollectorBase):
 
     def record_loop_stall(self, stall_seconds: float):
         """No-op loop-stall recording."""
+        pass
+
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """No-op consolidation batch-failure recording."""
         pass
 
 
@@ -541,10 +557,47 @@ class MetricsCollector(MetricsCollectorBase):
             name="hindsight.recall.phase.duration",
             description="Time attributed to one phase of a recall (diagnostic phases are subsets, not siblings)",
             unit="s",
+            # Buckets in SECONDS, sized for phases that take milliseconds. Without them the
+            # SDK default applies -- 0, 5, 10, 25, ... -- which for a unit of seconds means
+            # the first bucket is everything under five seconds. Every recall phase landed
+            # in it, so the histogram could report a mean but no percentile: asked for the
+            # p99 of a phase it answered 2500ms for all fifteen of them, which is simply the
+            # midpoint of that first bucket. A mean cannot explain a tail, and the tail is
+            # what a phase breakdown is for.
+            explicit_bucket_boundaries_advisory=[
+                0.001,
+                0.0025,
+                0.005,
+                0.01,
+                0.025,
+                0.05,
+                0.075,
+                0.1,
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                2.5,
+                5.0,
+                10.0,
+            ],
         )
         self.recall_phase_calls = self.meter.create_counter(
             name="hindsight.recall.phase.calls",
             description="Number of times a recall phase ran",
+            unit="calls",
+        )
+        # Consolidation batch calls that failed. Labelled by failure class so the two
+        # populations stay separable: `retry` is transport-shaped and usually self-heals,
+        # while `fail_fast` is the model emitting something the response schema rejects —
+        # the case that silently drains the delete path (#4152). Neither reaches
+        # `failed_consolidation`, which only counts facts bisection could not rescue.
+        self.consolidation_batch_failures = self.meter.create_counter(
+            name="hindsight.consolidation.batch_failures",
+            description=(
+                "Consolidation LLM batch calls that failed, by failure class -- "
+                "including those whose facts adaptive bisection later rescued"
+            ),
             unit="calls",
         )
         self.event_loop_stalls = self.meter.create_counter(
@@ -828,6 +881,17 @@ class MetricsCollector(MetricsCollectorBase):
         """Record a detected event-loop stall. Called from the watchdog thread."""
         self.event_loop_stalls.add(1)
         self.event_loop_stall_duration.record(stall_seconds)
+
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """Record one failed consolidation LLM batch call.
+
+        Called only on the exception path, so the successful batch costs nothing.
+        `error_type` is the exception class name — `ValidationError` is the #4152
+        signature — and is bounded by the exception types the LLM layer can raise.
+        """
+        self.consolidation_batch_failures.add(
+            1, {"failure_class": failure_class, "error_type": error_type, "tenant": _get_tenant()}
+        )
 
     def _setup_process_metrics(self):
         """Set up observable gauges for process metrics."""

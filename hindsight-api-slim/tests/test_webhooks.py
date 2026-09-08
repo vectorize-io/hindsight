@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +22,7 @@ import pytest_asyncio
 from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.query_analyzer import QueryAnalyzer
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
@@ -37,6 +39,46 @@ from hindsight_api.worker.exceptions import RetryTaskAt
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["postgres", "buffered-store"])
+def retain_count_store(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Exercise counts against both immediate SQL writes and a commit-buffered store."""
+    from hindsight_api.engine.memories import get_memories, set_memories
+    from tests.test_memories_extension import InMemoryMemories
+
+    original_store = get_memories()
+    if request.param == "buffered-store":
+        set_memories(InMemoryMemories({}))
+    try:
+        yield
+    finally:
+        set_memories(original_store)
+
+
+@pytest_asyncio.fixture
+async def retain_count_memory(pg0_db_url: str, query_analyzer: QueryAnalyzer) -> AsyncIterator[MemoryEngine]:
+    """Real retain/outbox persistence with deterministic, torch-free embeddings."""
+    from hindsight_api.engine.task_backend import SyncTaskBackend
+    from tests.test_llm_reasoning_effort_env import DummyCrossEncoder
+    from tests.test_retain_same_document_concurrency import _StubEmbeddings
+
+    memory = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=_StubEmbeddings(),
+        cross_encoder=DummyCrossEncoder(),
+        query_analyzer=query_analyzer,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+    )
+    try:
+        await memory.initialize()
+        yield memory
+    finally:
+        await memory.close()
 
 
 def _make_event(bank_id: str = "bank-1") -> WebhookEvent:
@@ -1685,12 +1727,16 @@ class TestRetainCompletedWebhook:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_retain_completed_payload_carries_memory_unit_count(self, memory: MemoryEngine, request_context):
+    @pytest.mark.parametrize("use_factory", [False, True])
+    async def test_retain_completed_payload_carries_memory_unit_count(
+        self, retain_count_memory: MemoryEngine, request_context, retain_count_store, use_factory: bool
+    ):
         """The event reports how many memory units the document owns afterwards.
 
         Without it a receiver cannot tell a document that produced memories from
         one that produced none — the event body is otherwise identical (#3040).
         """
+        memory = retain_count_memory
         bank_id = f"wh-count-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
         original_manager = memory._webhook_manager
@@ -1710,6 +1756,8 @@ class TestRetainCompletedWebhook:
                 )
 
             contents = [{"content": "Alice works at Google", "document_id": "doc-counted"}]
+            if use_factory:
+                contents.append({"content": "Bob works at Microsoft", "document_id": "doc-counted-other"})
             callback = memory._build_retain_outbox_callback(
                 bank_id=bank_id, contents=contents, operation_id="op-counted"
             )
@@ -1718,19 +1766,28 @@ class TestRetainCompletedWebhook:
                 bank_id=bank_id,
                 contents=contents,
                 request_context=request_context,
-                outbox_callback=callback,
+                outbox_callback=None if use_factory else callback,
+                outbox_callback_factory=(
+                    memory._build_retain_outbox_callback_factory(bank_id, "op-counted") if use_factory else None
+                ),
             )
 
-            stored_units = (
-                await memory.list_memory_units(
-                    bank_id, document_id="doc-counted", limit=1000, request_context=request_context
-                )
-            )["total"]
-            assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
-
             payloads = await self._retain_delivery_payloads(memory._pool, bank_id)
-            assert len(payloads) == 1
-            assert payloads[0]["data"]["memory_unit_count"] == stored_units
+            assert len(payloads) == len(contents)
+            assert {payload["data"]["document_id"] for payload in payloads} == {
+                content["document_id"] for content in contents
+            }
+            for payload in payloads:
+                stored_units = (
+                    await memory.list_memory_units(
+                        bank_id,
+                        document_id=payload["data"]["document_id"],
+                        limit=1000,
+                        request_context=request_context,
+                    )
+                )["total"]
+                assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
+                assert payload["data"]["memory_unit_count"] == stored_units
         finally:
             memory._webhook_manager = original_manager
             async with memory._pool.acquire() as conn:
@@ -1743,7 +1800,7 @@ class TestRetainCompletedWebhook:
 
     @pytest.mark.asyncio
     async def test_retain_completed_payload_reports_zero_for_zero_fact_document(
-        self, memory: MemoryEngine, request_context, monkeypatch
+        self, retain_count_memory: MemoryEngine, request_context, monkeypatch, retain_count_store
     ):
         """A document that extracted nothing must report ``memory_unit_count: 0``.
 
@@ -1756,6 +1813,7 @@ class TestRetainCompletedWebhook:
         from hindsight_api.engine.retain.types import ExtractionResult
 
         bank_id = f"wh-zerocount-{uuid.uuid4().hex[:8]}"
+        memory = retain_count_memory
         webhook_id = uuid.uuid4()
         original_manager = memory._webhook_manager
 
@@ -1805,7 +1863,7 @@ class TestRetainCompletedWebhook:
 
     @pytest.mark.asyncio
     async def test_retain_completed_payload_counts_document_not_units_created(
-        self, memory: MemoryEngine, request_context
+        self, retain_count_memory: MemoryEngine, request_context, retain_count_store
     ):
         """Re-retaining unchanged content must not look like a zero-fact document.
 
@@ -1813,6 +1871,7 @@ class TestRetainCompletedWebhook:
         units while the document keeps every memory it already had. Reporting
         units *created* would raise a false alarm on every idempotent re-submit.
         """
+        memory = retain_count_memory
         bank_id = f"wh-delta-count-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
         original_manager = memory._webhook_manager

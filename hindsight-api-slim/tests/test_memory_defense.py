@@ -759,7 +759,7 @@ async def test_retain_writes_audit_log(api_client, memory) -> None:
 #
 # Regression coverage for the "ghp_AAA... persists in raw documents" leak:
 # per-chunk screen() mutates the chunk content, but the document body is built
-# either from the raw dict or from document_body_override (the FULL original
+# either from the raw dict or from full_document_body (the FULL original
 # body for oversized inputs). Both paths must be scrubbed.
 
 # Mix of secret patterns covered by the redactor (keys, tokens, PII, DB URLs).
@@ -859,7 +859,7 @@ async def test_scrubs_secrets_in_multi_doc_batch(api_client) -> None:
 @pytest.mark.asyncio
 async def test_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
     """A single content item over retain_batch_tokens is chunked and carries the
-    FULL original body in document_body_override, which bypasses per-chunk
+    FULL original body in full_document_body, which bypasses per-chunk
     screen() — the orchestrator must scrub it before persisting."""
     bank = "md-doc-body-oversized"
     await api_client.put(f"/v1/default/banks/{bank}", json={})

@@ -247,6 +247,13 @@ def main():
 
     load_dotenv_for_entrypoint()
 
+    # Arm profiling here, after .env is loaded and before anything starts serving, so a
+    # report covers the run rather than beginning halfway through it. No-op unless
+    # HINDSIGHT_API_PROFILE is set.
+    from hindsight_api.profiling import install as _install_profiling
+
+    _install_profiling()
+
     # Load configuration from environment (for CLI args defaults)
     config = _get_raw_config()
 

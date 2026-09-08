@@ -28,6 +28,7 @@ type DryRunExtractRequest struct {
 	Context *string `json:"context,omitempty"`
 	Timestamp NullableTime `json:"timestamp,omitempty"`
 	AgentName NullableString `json:"agent_name,omitempty"`
+	Strategy NullableString `json:"strategy,omitempty"`
 	RetainMission NullableString `json:"retain_mission,omitempty"`
 	RetainExtractionMode NullableString `json:"retain_extraction_mode,omitempty"`
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
@@ -200,6 +201,48 @@ func (o *DryRunExtractRequest) SetAgentNameNil() {
 // UnsetAgentName ensures that no value is present for AgentName, not even an explicit nil
 func (o *DryRunExtractRequest) UnsetAgentName() {
 	o.AgentName.Unset()
+}
+
+// GetStrategy returns the Strategy field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *DryRunExtractRequest) GetStrategy() string {
+	if o == nil || IsNil(o.Strategy.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Strategy.Get()
+}
+
+// GetStrategyOk returns a tuple with the Strategy field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *DryRunExtractRequest) GetStrategyOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Strategy.Get(), o.Strategy.IsSet()
+}
+
+// HasStrategy returns a boolean if a field has been set.
+func (o *DryRunExtractRequest) HasStrategy() bool {
+	if o != nil && o.Strategy.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetStrategy gets a reference to the given NullableString and assigns it to the Strategy field.
+func (o *DryRunExtractRequest) SetStrategy(v string) {
+	o.Strategy.Set(&v)
+}
+// SetStrategyNil sets the value for Strategy to be an explicit nil
+func (o *DryRunExtractRequest) SetStrategyNil() {
+	o.Strategy.Set(nil)
+}
+
+// UnsetStrategy ensures that no value is present for Strategy, not even an explicit nil
+func (o *DryRunExtractRequest) UnsetStrategy() {
+	o.Strategy.Unset()
 }
 
 // GetRetainMission returns the RetainMission field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -548,6 +591,9 @@ func (o DryRunExtractRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.AgentName.IsSet() {
 		toSerialize["agent_name"] = o.AgentName.Get()
+	}
+	if o.Strategy.IsSet() {
+		toSerialize["strategy"] = o.Strategy.Get()
 	}
 	if o.RetainMission.IsSet() {
 		toSerialize["retain_mission"] = o.RetainMission.Get()

@@ -28,7 +28,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
           actionButton: "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
           cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
           error: "!bg-destructive !text-destructive-foreground !border-destructive",
-          success: "!bg-[oklch(0.7686_0.1647_70.0804)] !text-white !border-[oklch(0.7_0.17_70)]",
+          // Green. This was hue 70 — amber — which reads as a warning next to the
+          // amber `warning` toast three lines down, and every success in the app
+          // shared it. Darker than the old value so white text keeps its contrast at
+          // this hue.
+          success: "!bg-[oklch(0.62_0.15_150)] !text-white !border-[oklch(0.56_0.15_150)]",
           warning: "!bg-[oklch(0.7_0.15_60)] !text-white !border-[oklch(0.65_0.16_55)]",
           info: "!bg-primary !text-primary-foreground !border-primary",
         },

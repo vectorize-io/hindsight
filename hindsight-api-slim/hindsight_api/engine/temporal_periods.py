@@ -152,9 +152,15 @@ def _extract_non_chinese_period(
         query,
         re.IGNORECASE,
     ):
+        # Step back to the Saturday that opened the previous weekend. On a
+        # weekend day the arithmetic lands on the weekend in progress -- 0 days
+        # back on Saturday, 1 on Sunday -- so both roll back a further week.
+        # "last weekend" asked on a Sunday means the one before this one, not
+        # the day before and today. Matches the "last week" rule above, which
+        # already steps a full week past the current one.
         days_since_sat = (reference_date.weekday() + 2) % 7
-        if days_since_sat == 0:
-            days_since_sat = 7
+        if days_since_sat <= 1:
+            days_since_sat += 7
         sat = reference_date - timedelta(days=days_since_sat)
         return _constraint(sat, sat + timedelta(days=1))
 

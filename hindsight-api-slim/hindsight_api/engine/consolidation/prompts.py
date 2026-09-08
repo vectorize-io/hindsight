@@ -140,6 +140,20 @@ Expected output (UPDATE for the state change; CREATE for the unrelated work-hour
   "updates": [{{"text": "Alice owned a 2019 Honda Civic; sold it on March 15, 2025.", "observation_id": "22222222-2222-2222-2222-222222222222", "source_fact_ids": ["c3d4e5f6-a7b8-9012-cdef-123456789012"], "reason": "State change to the existing Honda Civic observation 2222 — UPDATE, not a new sibling."}}],
   "deletes": []}}
 
+### Example 3 — A superseded observation is deleted (note the `observation_id`)
+
+Input facts:
+  [e5f6a7b8-c9d0-1234-efab-345678901234] Bob confirmed the beta waitlist was shut down and replaced by open signup. (occurred_start=2025-06-02, mentioned_at=2025-06-02)
+
+Existing observation:
+  {{"id": "33333333-3333-3333-3333-333333333333", "text": "Bob is on the beta waitlist.", "proof_count": 1}}
+
+Expected output (the waitlist observation is no longer true of anyone and records no significant event, so DELETE it and CREATE the replacement):
+
+{{"creates": [{{"text": "Bob uses the product through open signup; the beta waitlist was shut down.", "source_fact_ids": ["e5f6a7b8-c9d0-1234-efab-345678901234"], "reason": "The waitlist observation is superseded outright rather than amended, so CREATE the replacement and DELETE the old one."}}],
+  "updates": [],
+  "deletes": [{{"observation_id": "33333333-3333-3333-3333-333333333333", "reason": "The waitlist no longer exists — this observation is superseded, not merely out of date."}}]}}
+
 ### Observation text rules
 
 - Write clean prose — NEVER copy raw fact lines or their metadata (temporal fields, "Involving:", "When:" labels, UUIDs).
@@ -152,7 +166,7 @@ Expected output (UPDATE for the state change; CREATE for the unrelated work-hour
 - `observation_id`: copy the EXACT `id` UUID string from existing observations.
 - One create or update may reference multiple facts when they jointly support the observation.
 - **AT MOST ONE UPDATE PER `observation_id`**: if several new facts all update the same existing observation, emit a single `updates` entry that lists all contributing `source_fact_ids` and a single consolidated `text`. Never emit two `updates` entries with the same `observation_id` in one response — they would silently overwrite each other.
-- `deletes`: only when an observation is directly superseded or contradicted by new facts.
+- `deletes`: only when an observation is directly superseded or contradicted by new facts. Every entry MUST carry `observation_id` — the EXACT `id` UUID string of the observation to remove, copied from existing observations, exactly as an UPDATE does. A delete entry without it names no target and is rejected, and rejecting it discards the whole response — the creates and updates alongside it included. Naming the observation in `reason` prose is NOT enough. If you cannot supply the id, emit no delete.
 - `reason`: REQUIRED on every create/update/delete — one sentence explaining the choice. For a CREATE, state which existing observation(s) you considered and why none matched (a near-identical existing observation means you should UPDATE, not CREATE). This is audited to catch duplicate creates.
 - Do NOT include `tags` — handled automatically.
 - Return `{{"creates": [], "updates": [], "deletes": []}}` if nothing durable is found."""
@@ -193,6 +207,17 @@ def build_consolidation_system_prompt(
     return template.format()
 
 
+def build_mission_section(observations_mission: str | None) -> str:
+    """The MISSION section, heading included, as the user message writes it.
+
+    Shared with the prompt preview, which reports this section as the block the
+    ``observations_mission`` setting produces. Rebuilding the heading there left two
+    blocks both called "Mission" — the setting's, and the built-in gap that this
+    ``## MISSION`` heading names too.
+    """
+    return f"## MISSION\n\n{escape_for_prompt(observations_mission or _DEFAULT_MISSION)}"
+
+
 def build_consolidation_input(
     facts_text: str,
     observations_text: str,
@@ -205,8 +230,7 @@ def build_consolidation_input(
     bank-agnostic and one CachedContent serves every bank. The capacity note also
     lives here since it varies as observation slots fill.
     """
-    mission = escape_for_prompt(observations_mission or _DEFAULT_MISSION)
-    mission_section = f"## MISSION\n\n{mission}\n\n"
+    mission_section = f"{build_mission_section(observations_mission)}\n\n"
     capacity_section = ""
     if observation_capacity_note:
         capacity_section = f"## CAPACITY CONSTRAINT\n\n{escape_for_prompt(observation_capacity_note)}\n\n"
