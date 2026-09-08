@@ -297,7 +297,9 @@ def _scoped_truth() -> tuple[list[HardFact], list[HardQuestion]]:
         gold=["scp-001", "scp-002", "scp-003"],
         answer_criteria=(
             "Answers with the regional qualification rather than a flat yes or no: mandatory for EU "
-            "(and UK) accounts, optional for US accounts."
+            "accounts and optional for US accounts. Any accurate treatment of the UK is acceptable — "
+            "the memory says UK accounts are mandatory FROM 2026, so stating it either as mandatory or "
+            "as mandatory starting in 2026 is correct, and so is omitting the UK entirely."
         ),
         must_not_claim="two-factor authentication is mandatory everywhere, with no regional distinction",
     )
