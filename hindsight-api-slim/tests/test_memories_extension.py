@@ -420,6 +420,8 @@ class InMemoryMemories(MemoriesExtension):
     async def list_memory_units(self, *, conn, ops, fq_table, bank_id, limit=100, offset=0, **kwargs):
         self.calls.append("list_memory_units")
         ordered = list(self.rows.values())
+        if kwargs.get("document_id") is not None:
+            ordered = [row for row in ordered if row.document_id == kwargs["document_id"]]
         return {"items": ordered[offset : offset + limit], "total": len(ordered), "limit": limit, "offset": offset}
 
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id, unit_id):
@@ -759,19 +761,40 @@ class _InMemoryRetainSession(RetainSession):
         self._store.calls.append("session.commit")
         unit_ids: dict[str, list[str]] = {}
         for part in self._parts:
-            doc = self._store.documents.setdefault(part.document_id, {"chunks": [], "text": ""})
+            # Session parts carry FactRecord objects and the store's document schema,
+            # not the SQL pipeline's processed facts or an alternate chunks/text shape.
+            if part.document_id not in self._store.documents:
+                await self._store.put_document(
+                    bank_id=self._bank_id,
+                    document_id=part.document_id,
+                    content_hash=part.content_hash,
+                    original_text=part.document_body or "",
+                    chunk_texts=[],
+                    tags=part.tags,
+                    metadata=part.metadata,
+                )
+            doc = self._store.documents[part.document_id]
             if part.document_body is not None:
-                doc["text"] = part.document_body
+                doc["original_text"] = part.document_body
+            doc["content_hash"] = part.content_hash
             if part.chunk_texts:
                 # `chunk_offset` is per document, so a part is placed at its offset rather than
                 # appended — two parts of one document can arrive in either order.
                 needed = part.chunk_offset + len(part.chunk_texts)
-                if len(doc["chunks"]) < needed:
-                    doc["chunks"].extend([""] * (needed - len(doc["chunks"])))
-                doc["chunks"][part.chunk_offset : needed] = list(part.chunk_texts)
+                if len(doc["chunk_texts"]) < needed:
+                    doc["chunk_texts"].extend([""] * (needed - len(doc["chunk_texts"])))
+                doc["chunk_texts"][part.chunk_offset : needed] = list(part.chunk_texts)
             if part.facts:
-                ids = self._store.allocate_unit_ids(len(part.facts))
-                await self._store.index_facts(self._bank_id, ids, part.facts, part.document_id)
+                ids = [fact.unit_id for fact in part.facts]
+                for fact in part.facts:
+                    self._store.rows[fact.unit_id] = StoredMemory(
+                        unit_id=fact.unit_id,
+                        text=fact.text,
+                        fact_type=fact.fact_type,
+                        document_id=part.document_id,
+                        tags=list(fact.tags),
+                        created_at=fact.created_at or datetime.now(timezone.utc),
+                    )
                 unit_ids.setdefault(part.document_id, []).extend(ids)
         self._parts.clear()
         return RetainResult(unit_ids=unit_ids)

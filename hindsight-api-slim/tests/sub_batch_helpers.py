@@ -29,14 +29,14 @@ class CollectedSplit:
     """Every sub-batch of one split, as parallel lists indexed together.
 
     ``sub_batches[i]`` is the content items of sub-batch ``i``; ``origin_indices[i]`` the
-    indices into the submitted contents that fed it; ``document_body_overrides[i]`` the full
+    indices into the submitted contents that fed it; ``full_document_bodies[i]`` the full
     original body when ``i`` is a slice of an oversized item, else ``None``; and
     ``chunk_counts[i]`` how many native chunks it holds.
     """
 
     sub_batches: list[list[RetainContentDict]] = field(default_factory=list)
     origin_indices: list[list[int]] = field(default_factory=list)
-    document_body_overrides: list[str | None] = field(default_factory=list)
+    full_document_bodies: list[str | None] = field(default_factory=list)
     chunk_counts: list[int] = field(default_factory=list)
 
 
@@ -64,7 +64,7 @@ def collect_sub_batches(
     ):
         collected.sub_batches.append(raw.contents)
         collected.origin_indices.append(raw.origins)
-        collected.document_body_overrides.append(raw.body_override)
+        collected.full_document_bodies.append(raw.full_document_body)
         collected.chunk_counts.append(raw.chunk_count)
     return collected
 

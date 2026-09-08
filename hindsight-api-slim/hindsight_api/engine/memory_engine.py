@@ -1052,7 +1052,10 @@ class _RawSubBatch:
 
     contents: list[RetainContentDict]
     origins: list[int]
-    body_override: str | None
+    # The COMPLETE document this slice belongs to — not the slice, and for an append not the
+    # incoming tail either, but the body the retain will produce (stored base + tail). It is
+    # what lands in `documents.original_text`; anything smaller truncates it (#3989).
+    full_document_body: str | None
     chunk_count: int
 
 
@@ -1063,6 +1066,7 @@ def _iter_raw_sub_batches(
     chunk_size: int,
     structured_chunk_size: int | None = None,
     max_attachments_per_chunk: int,
+    append_base_text: dict[str, str] | None = None,
 ) -> Iterator[_RawSubBatch]:
     """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
@@ -1079,6 +1083,7 @@ def _iter_raw_sub_batches(
     already passed.
     """
     from .retain import fact_extraction
+    from .retain.orchestrator import append_document_body
 
     def _chunks_of(text: str) -> Iterator[str]:
         return fact_extraction.iter_chunks(
@@ -1100,7 +1105,7 @@ def _iter_raw_sub_batches(
         flushed = _RawSubBatch(
             contents=current_batch,
             origins=current_batch_origins,
-            body_override=None,
+            full_document_body=None,
             chunk_count=current_batch_chunks,
         )
         current_batch = []
@@ -1137,6 +1142,19 @@ def _iter_raw_sub_batches(
             # cannot advance), so retrying costs a full scan per run. One miss settles it; the
             # rejoin is what handles those shapes anyway.
             span_locatable = True
+            # What every slice of this item reports as the document's body — it is what lands in
+            # `documents.original_text`. For a replace the item IS the document. For an APPEND it
+            # is only the new tail, and the body the retain actually produces is the stored
+            # document with that tail on it (orchestrator.retain_batch prepends it). Reporting the
+            # tail alone truncated the document to it: every earlier turn vanished from
+            # `original_text`, and the NEXT append then diffed against the truncated body and
+            # tombstoned the facts of the content it no longer contained (#3989).
+            _append_base = (append_base_text or {}).get(str(item.get("document_id") or ""))
+            full_document_body = (
+                append_document_body(_append_base, content_str)
+                if _append_base and item.get("update_mode") == "append"
+                else content_str
+            )
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
                 # Prefer the ORIGINAL span over a guessed rejoin: it carries whatever separators
                 # the document actually used, so it reconstructs runs the guessing cannot. Verified
@@ -1165,7 +1183,7 @@ def _iter_raw_sub_batches(
                     yield _RawSubBatch(
                         contents=[chunk_item],
                         origins=[original_idx],
-                        body_override=content_str,
+                        full_document_body=full_document_body,
                         chunk_count=slice_chunk_count,
                     )
             continue
@@ -1191,6 +1209,7 @@ def iter_sub_batches(
     chunk_size: int,
     structured_chunk_size: int | None,
     config: HindsightConfig,
+    append_base_text: dict[str, str] | None = None,
 ) -> Iterator[_SubBatch]:
     """Stream screened, hashed, last-flagged sub-batches ready for the retain loop.
 
@@ -1216,13 +1235,14 @@ def iter_sub_batches(
         chunk_size=chunk_size,
         structured_chunk_size=structured_chunk_size,
         max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
+        append_base_text=append_base_text,
     ):
         if held is not None:
             index += 1
             yield _SubBatch(
                 contents=held.contents,
                 origins=held.origins,
-                document_body=_screen(held.body_override),
+                document_body=_screen(held.full_document_body),
                 chunk_count=held.chunk_count,
                 index=index,
                 is_last=False,
@@ -1233,7 +1253,7 @@ def iter_sub_batches(
         yield _SubBatch(
             contents=held.contents,
             origins=held.origins,
-            document_body=_screen(held.body_override),
+            document_body=_screen(held.full_document_body),
             chunk_count=held.chunk_count,
             index=index,
             is_last=True,
@@ -5773,6 +5793,31 @@ class MemoryEngine(MemoryEngineInterface):
             _session_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
 
+        pending_outbox_callbacks: list[RetainOutboxCallback] = []
+        if retain_session is not None:
+            # A session may buffer all memories until commit. Running the outbox in the
+            # pipeline's SQL transaction used to publish a pre-commit document count (#4189).
+            # Record only callbacks the pipeline actually reaches (including per-document
+            # factories), and run them after the owning session has committed successfully.
+            # Stores without sessions and the SQL path keep their existing transaction boundary.
+            def defer_outbox(callback: RetainOutboxCallback | None) -> RetainOutboxCallback | None:
+                if callback is None:
+                    return None
+
+                async def enqueue(_conn: asyncpg.Connection) -> None:
+                    pending_outbox_callbacks.append(callback)
+
+                return enqueue
+
+            outbox_callback = defer_outbox(outbox_callback)
+            if outbox_callback_factory is not None:
+                original_factory = outbox_callback_factory
+
+                def deferred_factory(callback_contents: list[RetainContentDict]) -> RetainOutboxCallback | None:
+                    return defer_outbox(original_factory(callback_contents))
+
+                outbox_callback_factory = deferred_factory
+
         # A store that owns persistence does NOT sub-batch. Splitting exists to bound what one
         # unit of work holds and to give the sub-batches something to run concurrently over — and
         # neither survives the session: the session buffers until commit either way, so slicing no
@@ -5795,37 +5840,6 @@ class MemoryEngine(MemoryEngineInterface):
             retain_config = await self._resolve_retain_config(bank_id, request_context, strategy)
             chunking_config = self._retain_chunking_config(retain_config)
 
-            # Streamed, not collected: the slices are the document cut up, and holding
-            # them all costs a second copy of it for the whole retain (#3756). Each is
-            # screened, hashed and flagged as it arrives; ``is_last`` comes from a
-            # one-item lookahead inside the generator, because there is no length to
-            # compare ``i`` against any more.
-            sub_batch_stream = iter_sub_batches(
-                contents,
-                tokens_per_batch,
-                chunk_size=chunking_config.chunk_size,
-                structured_chunk_size=chunking_config.structured_chunk_size,
-                config=retain_config,
-            )
-
-            # Preserve the public contract: one result list per input
-            # content. When an oversize single item is chunked across
-            # multiple sub-batches, unit_ids from every chunk get
-            # appended back into that input's result slot.
-            per_input_results: list[list[str]] = [[] for _ in contents]
-
-            # Per-document chunk_index offsets. When an oversized single item is
-            # sliced into several sub-batches that all share one document_id and
-            # run sequentially, each sub-batch must continue the document's
-            # chunk_index sequence rather than restart at 0 — otherwise the
-            # derived chunk_id ({bank}_{doc}_{index}) collides and later
-            # sub-batches overwrite earlier chunks, leaving only one sub-batch's
-            # worth of chunks/memories (issue #1888). The counts come from the
-            # splitter, which cut the slices on those very chunk boundaries.
-            from .retain import fact_extraction, fact_storage
-
-            chunk_offsets: dict[str, int] = {}
-
             # In update_mode="append", retain_batch prepends the existing document
             # body to the FIRST sub-batch as an extra content item before chunking
             # (see orchestrator.retain_batch), consuming chunks(existing_body)
@@ -5834,7 +5848,15 @@ class MemoryEngine(MemoryEngineInterface):
             # overwrites documents.original_text when it commits, so it can't be
             # read back afterwards — and fold it into the offset so later
             # sub-batches continue past the prepended chunks instead of colliding.
+            #
+            # Read BEFORE the splitter, because the splitter needs the base TEXT too: a slice's
+            # `full_document_body` is what lands in `documents.original_text`, and for an
+            # append the incoming item is only the new TAIL. Handing the tail over as the body
+            # truncated the stored document to it, dropping every earlier turn (#3989).
+            from .retain import fact_extraction, fact_storage
+
             append_prepend_chunks: dict[str, int] = {}
+            append_base_text: dict[str, str] = {}
             backend = await self._get_backend()
             append_doc_ids: set[str] = set()
             for item in contents:
@@ -5857,6 +5879,7 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                     existing_text = _rec.get("original_text") if _rec else None
                 if existing_text:
+                    append_base_text[append_doc_id] = existing_text
                     append_prepend_chunks[append_doc_id] = len(
                         fact_extraction.chunk_text(
                             existing_text,
@@ -5865,6 +5888,36 @@ class MemoryEngine(MemoryEngineInterface):
                             max_attachments_per_chunk=chunking_config.max_attachments_per_chunk,
                         )
                     )
+
+            # Streamed, not collected: the slices are the document cut up, and holding
+            # them all costs a second copy of it for the whole retain (#3756). Each is
+            # screened, hashed and flagged as it arrives; ``is_last`` comes from a
+            # one-item lookahead inside the generator, because there is no length to
+            # compare ``i`` against any more.
+            sub_batch_stream = iter_sub_batches(
+                contents,
+                tokens_per_batch,
+                chunk_size=chunking_config.chunk_size,
+                structured_chunk_size=chunking_config.structured_chunk_size,
+                config=retain_config,
+                append_base_text=append_base_text,
+            )
+
+            # Preserve the public contract: one result list per input
+            # content. When an oversize single item is chunked across
+            # multiple sub-batches, unit_ids from every chunk get
+            # appended back into that input's result slot.
+            per_input_results: list[list[str]] = [[] for _ in contents]
+
+            # Per-document chunk_index offsets. When an oversized single item is
+            # sliced into several sub-batches that all share one document_id and
+            # run sequentially, each sub-batch must continue the document's
+            # chunk_index sequence rather than restart at 0 — otherwise the
+            # derived chunk_id ({bank}_{doc}_{index}) collides and later
+            # sub-batches overwrite earlier chunks, leaving only one sub-batch's
+            # worth of chunks/memories (issue #1888). The counts come from the
+            # splitter, which cut the slices on those very chunk boundaries.
+            chunk_offsets: dict[str, int] = {}
 
             sub_batches_run = 0
             # Chunk texts accumulated across the sub-batches of each document, written by
@@ -5913,7 +5966,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # webhook delivery row is committed atomically with the final retain data.
                     outbox_callback=outbox_callback if is_last_ else None,
                     outbox_callback_factory=outbox_callback_factory if is_last_ else None,
-                    document_body_override=body_,
+                    full_document_body=body_,
                     document_body_hash=body_hash_,
                     chunk_index_offset=offset_,
                     body_accum=body_accum,
@@ -6103,6 +6156,31 @@ class MemoryEngine(MemoryEngineInterface):
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 
+        if pending_outbox_callbacks:
+            # Do not hold a SQL connection while committing an external store. The outbox
+            # still lives in SQL, but cannot share a transaction with that store's commit.
+            #
+            # The memories are already committed in the store by the time this runs, so a
+            # failure here cannot be undone by failing the retain — it would only mark a
+            # successful retain as failed and invite the caller to re-submit a document that
+            # is already stored. The event is the lossy side of a boundary that is not
+            # transactional either way (see the deferral note above): log it loudly and let
+            # the retain report the truth, which is that it succeeded.
+            try:
+                backend = await self._get_backend()
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        for callback in pending_outbox_callbacks:
+                            await callback(conn)
+            except Exception:
+                logger.error(
+                    "[BATCH_RETAIN] bank=%s operation=%s retained successfully but the retain.completed "
+                    "outbox write failed; the completion event is lost for this operation",
+                    bank_id,
+                    operation_id,
+                    exc_info=True,
+                )
+
         return _RetainExecutionResult(
             unit_ids=result,
             usage=total_usage,
@@ -6143,7 +6221,7 @@ class MemoryEngine(MemoryEngineInterface):
         outbox_callback: RetainOutboxCallback | None = None,
         outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
         strategy: str | None = None,
-        document_body_override: str | None = None,
+        full_document_body: str | None = None,
         document_body_hash: str | None = None,
         chunk_index_offset: int = 0,
         body_accum: "dict[str, DocumentBodyAccumulator] | None" = None,
@@ -6212,7 +6290,7 @@ class MemoryEngine(MemoryEngineInterface):
                 outbox_callback=outbox_callback,
                 outbox_callback_factory=outbox_callback_factory,
                 db_semaphore=self._db_semaphore_for(bank_id),
-                document_body_override=document_body_override,
+                full_document_body=full_document_body,
                 document_body_hash=document_body_hash,
                 chunk_index_offset=chunk_index_offset,
                 body_accum=body_accum,
@@ -7474,7 +7552,18 @@ class MemoryEngine(MemoryEngineInterface):
         # `enable_trace` -- under `phases_only` the tracer drops those payloads after the caller
         # has paid to construct them. `test_recall_tracer_payload_gating.py` fails on a new
         # `if tracer:`; this has been the same bug three times.
-        tracer = SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match)
+        #
+        # The trace's timestamp is the anchor the ranking was computed against -- the caller's
+        # `question_date` when they supplied one -- not the moment the trace happened to be built.
+        # Reporting wall-clock here made an applied anchor look ignored (#4217).
+        tracer = SearchTracer(
+            query,
+            thinking_budget,
+            max_tokens,
+            tags=tags,
+            tags_match=tags_match,
+            query_timestamp=_recall_scoring_now(question_date),
+        )
         tracer.phases_only = not enable_trace
         tracer.start()
 

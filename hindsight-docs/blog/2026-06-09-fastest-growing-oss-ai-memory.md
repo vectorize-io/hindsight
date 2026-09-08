@@ -146,6 +146,6 @@ API at `http://localhost:8888`, web UI at `http://localhost:9999`. Connect it to
 
 - **Star [the repo](https://github.com/vectorize-io/hindsight)** — the real kind — and help us find out how fast the *next* milestone arrives
 - **Try [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — managed, scaled, usage-based pricing
-- **Join the conversation** — [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions) or [Slack](https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg)
+- **Join the conversation** — [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions) or [Slack](https://vectorize.io/slack)
 
 Seven months, two stars to sixteen thousand — every one of them earned, for the agent memory that learns. Thanks for building with us — let's see where the curve goes next.

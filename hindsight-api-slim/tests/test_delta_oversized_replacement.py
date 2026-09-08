@@ -263,7 +263,7 @@ async def test_oversized_replacement_screens_document_body_once(memory, request_
     """Companion to #3282: the split fallback must not re-run Memory Defense over
     the whole document for every sub-batch.
 
-    Each sub-batch carries ``document_body_override`` (the COMPLETE body, so
+    Each sub-batch carries ``full_document_body`` (the COMPLETE body, so
     ``documents.original_text`` isn't clobbered with a slice), and the retain
     path redaction-scans that override before persisting it. With N sub-batches
     the full body is scanned N times even though only one of them wins the
