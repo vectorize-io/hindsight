@@ -49,6 +49,10 @@ class Question:
     ideal_query: str
     gold: frozenset[str]
     short_circuit: bool
+    # Answer-level labels. Retrieval metrics prove the evidence reached the
+    # model; only these say whether the prose it wrote was right.
+    answer_criteria: str = ""
+    must_not_claim: str = ""
 
 
 @dataclass
@@ -75,6 +79,8 @@ def load_questions() -> list[Question]:
             ideal_query=q["ideal_query"],
             gold=frozenset(q.get("gold") or []),
             short_circuit=bool(q.get("short_circuit", False)),
+            answer_criteria=(q.get("answer_criteria") or "").strip(),
+            must_not_claim=(q.get("must_not_claim") or "").strip(),
         )
         for q in raw["questions"]
     ]

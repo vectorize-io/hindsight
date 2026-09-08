@@ -9,6 +9,16 @@
 #                arm of the floor/ceiling experiment: the best a planner could
 #                plausibly do. The floor arm uses `question` verbatim, which is
 #                what the prelude falls back to when planning fails.
+#   answer_criteria - what a CORRECT final answer must say. Graded by an LLM judge
+#                in answer_eval.py, because reflect's output is prose: retrieval
+#                metrics only prove the evidence reached the model, never that the
+#                answer used it. The mm_stale question is the case in point — the
+#                stale model and the correcting facts can both be retrieved
+#                (recall@k = 1.0) while the answer still repeats the stale claim.
+#   must_not_claim - the specific wrong answer this question baits, when it has
+#                one. Scored separately from the criteria: an answer can be
+#                incomplete without being wrong, and only one of those is a
+#                grounding failure.
 #   short_circuit - whether a fresh, usable mental model should stop the forced
 #                descent. Asserted separately from recall@k because the mental
 #                model query decides it, so a cold query changes the whole
@@ -22,6 +32,9 @@ questions:
     ideal_query: "user answer style preferences formatting conciseness"
     gold: [mm-preferences]
     short_circuit: true
+    answer_criteria: >-
+      States that the user wants short, direct answers without preamble, and that lists/tables
+      are used only when they carry real structure.
 
   # --- mm_stale: the mental model is confidently WRONG and must not end the run ---
   - id: q-billing-provider
@@ -30,6 +43,11 @@ questions:
     ideal_query: "billing payment provider Adyen Stripe migration 2026"
     gold: [fact-vendor-001, fact-vendor-002]
     short_circuit: false
+    answer_criteria: >-
+      Names Adyen as the current payment processor, and does NOT present Stripe as the current
+      one (mentioning Stripe as the former provider is fine).
+    must_not_claim: >-
+      Stripe is the current billing provider
 
   # --- observations_only: no mental model covers it; a consolidated observation does ---
   - id: q-outage-summary
@@ -38,6 +56,9 @@ questions:
     ideal_query: "production outages 2026 causes summary"
     gold: [obs-incident]
     short_circuit: false
+    answer_criteria: >-
+      Describes both 2026 outages: the February one caused by disk exhaustion on the primary,
+      and the April one caused by connection pool exhaustion.
 
   # --- raw_facts_only: the answer is a specific value no summary carries ---
   - id: q-incident-cause
@@ -46,6 +67,11 @@ questions:
     ideal_query: "April 2026 outage connection pool exhaustion 200 connections"
     gold: [fact-incident-001]
     short_circuit: false
+    answer_criteria: >-
+      States that the April outage was caused by connection pool exhaustion and gives the limit
+      as 200 connections.
+    must_not_claim: >-
+      the April outage was caused by a full disk
 
   - id: q-deploy-version
     category: raw_facts_only
@@ -53,6 +79,10 @@ questions:
     ideal_query: "0.9.3 deployed production 2026-03-18"
     gold: [fact-deploy-002]
     short_circuit: false
+    answer_criteria: >-
+      Identifies 0.9.3 as the release deployed to production on 2026-03-18.
+    must_not_claim: >-
+      0.9.4 reached production
 
   # --- multi_layer: the frame is in an observation, the specifics only in raw facts ---
   - id: q-search-owner
@@ -61,6 +91,9 @@ questions:
     ideal_query: "search subsystem ownership retrieval team platform team handover"
     gold: [obs-team, fact-team-001, fact-team-002]
     short_circuit: false
+    answer_criteria: >-
+      States that the retrieval team owns search, and that they took it over from the platform
+      team in January 2026.
 
   # --- near_miss: answerable, but surrounded by close neighbours ---
   - id: q-token-reissue
@@ -69,6 +102,8 @@ questions:
     ideal_query: "reissued stored payment tokens count Adyen migration"
     gold: [fact-vendor-002]
     short_circuit: false
+    answer_criteria: >-
+      Gives the number of reissued payment tokens as 1,840.
 
   # --- absent: the bank genuinely does not hold this ---
   - id: q-absent-headcount
@@ -77,3 +112,8 @@ questions:
     ideal_query: "engineering headcount 2024"
     gold: []
     short_circuit: false
+    answer_criteria: >-
+      Says the memory holds no information about 2024 engineering headcount, rather than
+      giving a number.
+    must_not_claim: >-
+      a specific 2024 headcount figure

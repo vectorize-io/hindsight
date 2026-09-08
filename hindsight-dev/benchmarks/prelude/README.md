@@ -86,11 +86,53 @@ Wording moves retrieval, mostly through **rank** rather than presence. The
 largest single mover is the `mm_stale` question (0.50 → 1.00), which is the case
 where a wrong mental model has to be superseded by raw facts.
 
-## Tier 2 (not built): where does a real planner land?
+## Tier 2 (built): does the ANSWER hold up?
 
-Run the prelude both ways with a real LLM, N times per question, and report
-distributions — where the planner falls between floor and ceiling. Paired on the
-same corpus and model, so most provider noise cancels. Do not put this in CI.
+Retrieval metrics score the evidence set, never the text reflect actually
+returns. That is a *necessary* condition — reflect is grounded, so an unretrieved
+fact cannot be answered — and nowhere near a sufficient one. The blind spot is
+the `mm_stale` question: retrieval can return the stale "Stripe" model AND the
+Adyen facts, score recall@k = 1.0, and the answer can still say Stripe because
+the model trusted the summary. The retrieval tier calls that a pass.
+
+So `answer_eval.py` runs `reflect_async` end to end on a real model and grades
+the prose with an independent judge, scoring two things separately:
+
+- **correct** — meets `answer_criteria`. Missing it can just mean incomplete.
+- **trap** — asserts `must_not_claim`, the specific wrong answer the question
+  baits. This is a grounding failure and the number that actually matters; a
+  confidently wrong answer is worse than a hedged one.
+
+```bash
+./scripts/benchmarks/run-prelude-eval.sh --answers --runs 5
+```
+
+Needs a real reflect model and a judge key. **Set `HINDSIGHT_TEST_JUDGE_MODEL`
+to something other than the reflect model** — the default judge is Gemini and so
+is many local `.env` setups, and a model grading its own output agrees with
+itself. The eval warns when it detects this.
+
+Non-deterministic by construction: every question runs N times and the output is
+a rate. Not for CI.
+
+First run (gemini-2.5-flash-lite reflecting, gemini-2.5-flash judging, 2 runs,
+`budget=low`, on the planned-prelude branch):
+
+```
+overall correct 93.8%   trap rate 0% on every baited question
+multi_layer 50%  — everything else 100%
+```
+
+The `multi_layer` miss is genuine run-to-run variance, not a judge artifact: one
+run named the platform-team handover, the other dropped it. That is the reason
+this tier reports rates over N runs instead of a verdict.
+
+### What this has NOT answered yet
+
+The run above is one arm. To settle the question that started all this, run it
+on `main` and on the branch with the same corpus, model, and N, and compare —
+particularly the `mm_stale` and `raw_facts_only` rows, where a cold query has the
+most to lose.
 
 ## Two findings this already surfaced
 
