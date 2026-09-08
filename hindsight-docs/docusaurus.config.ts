@@ -335,7 +335,7 @@ const config: Config = {
               customProps: { icon: 'lu-book-open' },
             },
             {
-              href: 'https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg',
+              href: 'https://vectorize.io/slack',
               label: 'Community',
               customProps: { icon: 'si-slack' },
             },
@@ -434,7 +434,7 @@ const config: Config = {
             },
             {
               label: 'Slack',
-              href: 'https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg',
+              href: 'https://vectorize.io/slack',
             },
             {
               label: 'Vectorize',

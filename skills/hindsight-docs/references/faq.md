@@ -429,4 +429,4 @@ Yes — by giving the consuming LLM better-grounded context to reason from. Thre
 
 ## Still have questions?
 
-Join our [Slack community](https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg) or report issues on [GitHub](https://github.com/vectorize-io/hindsight/issues).
+Join our [Slack community](https://vectorize.io/slack) or report issues on [GitHub](https://github.com/vectorize-io/hindsight/issues).
