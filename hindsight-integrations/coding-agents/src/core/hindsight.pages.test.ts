@@ -402,6 +402,51 @@ describe("HindsightClient.seedPages", () => {
     }
   });
 
+  /**
+   * The whole point of `H`: one `pageTriggerCron` is copied into every repo's config, so a literal
+   * expression puts all five pages of every bank on the same minute, competing with retain on the
+   * same worker pool. Resolution happens HERE, at page creation, because that is where the page's
+   * identity exists.
+   */
+  it("gives each page its own slot when the cron asks to be hashed", async () => {
+    const seed = async (bank: string) => {
+      const calls: any[] = [];
+      stubFetchRouted(calls, [
+        { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+      ]);
+      const c = new HindsightClient({ apiUrl: "http://x", bank });
+      await c.seedPages(
+        buildPageTrigger(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "H H * * *" }))
+      );
+      return calls
+        .filter((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))
+        .map((k) => k.body.trigger.refresh_cron as string);
+    };
+
+    const a = await seed("repo-a");
+    expect(a).toHaveLength(PAGES.length);
+    // Resolved to plain cron — `H` is this package's syntax and the server would reject it.
+    for (const cron of a) expect(cron).toMatch(/^\d+ \d+ \* \* \*$/);
+    expect(new Set(a).size).toBe(PAGES.length);
+    // Stable across runs, and different in another bank seeded from the same config.
+    expect(await seed("repo-a")).toEqual(a);
+    expect(await seed("repo-b")).not.toEqual(a);
+  });
+
+  it("sends a cron with no H exactly as configured", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages(
+      buildPageTrigger(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" }))
+    );
+    for (const post of calls.filter((k) => k.method === "POST")) {
+      expect(post.body.trigger.refresh_cron).toBe("0 3 * * *");
+    }
+  });
+
   it("falls back to the bank id when no project is supplied, never an unscoped query", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
@@ -562,6 +607,44 @@ describe("HindsightClient.captureInitiative", () => {
     // The returned page id and the id the marker names must be the same (the real page node id).
     expect(item.metadata.relatedPageId).toBe(result.page_id);
     expect(item.context).toContain(`[[page:${result.page_id}]]`);
+  });
+
+  /** An initiative page is one of these pages, so it is staggered on the same terms — seeded by
+   *  its own title rather than a taxonomy name. */
+  it("hashes an initiative page's own schedule", async () => {
+    const capture = async (title: string) => {
+      const calls: any[] = [];
+      stubFetchRouted(calls, [
+        { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
+          json: { id: "folder-abc" },
+        },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
+          json: { page_id: "pg" },
+        },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/memories"),
+          json: { operation_id: "op-1" },
+        },
+      ]);
+      const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+      await c.captureInitiative({
+        title,
+        summary: "…",
+        pageTrigger: buildPageTrigger(
+          resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "H H * * *" })
+        ),
+      });
+      return calls.find((k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages"))!.body
+        .trigger.refresh_cron as string;
+    };
+
+    const one = await capture("Retry backoff for the uploader");
+    expect(one).toMatch(/^\d+ \d+ \* \* \*$/);
+    expect(await capture("Retry backoff for the uploader")).toBe(one);
+    expect(await capture("Typo-tolerant tag matching")).not.toBe(one);
   });
 
   it("enhancement (relatesToPageId): NO page POST; marker names the existing page id", async () => {

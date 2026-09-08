@@ -12,6 +12,7 @@ import {
   PAGE_MAX_TOKENS,
   pagesFor,
   type PageTrigger,
+  pageTriggerFor,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -652,7 +653,9 @@ export class HindsightClient {
         source_query: page.source_query,
         tags: page.tags,
         max_tokens: PAGE_MAX_TOKENS,
-        trigger: pageTrigger,
+        // Resolved HERE, not in `buildPageTrigger`: a hashed cron (`H`) needs the page's identity,
+        // and one trigger is built per session for all of them.
+        trigger: pageTriggerFor(pageTrigger, this.bank, page.name),
       };
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
@@ -751,7 +754,7 @@ export class HindsightClient {
         source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
-        trigger: args.pageTrigger ?? buildPageTrigger(),
+        trigger: pageTriggerFor(args.pageTrigger ?? buildPageTrigger(), this.bank, args.title),
       });
       try {
         const j = (await r.json()) as { page_id?: string; id?: string };
