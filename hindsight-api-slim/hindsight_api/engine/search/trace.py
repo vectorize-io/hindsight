@@ -23,7 +23,9 @@ class QueryInfo(BaseModel):
 
     query_text: str = Field(description="Original query text")
     query_embedding: list[float] = Field(description="Generated query embedding vector")
-    timestamp: datetime = Field(description="When the query was executed")
+    timestamp: datetime = Field(
+        description="As-of anchor the query was resolved against: the caller's query_timestamp when supplied, otherwise the execution time"
+    )
     budget: int = Field(description="Maximum nodes to explore")
     max_tokens: int = Field(description="Maximum tokens to return in results")
     tags: list[str] | None = Field(default=None, description="Tags filter applied to recall")

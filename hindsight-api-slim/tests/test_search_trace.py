@@ -34,6 +34,28 @@ def test_rrf_trace_preserves_flattened_source_ranks():
     assert tracer.rrf_merged[0].source_ranks == {"semantic_rank": 1, "bm25_rank": 2}
 
 
+def test_trace_timestamp_records_the_query_anchor():
+    """The trace reports the as-of anchor the ranking used, not when it was built (#4217)."""
+    anchor = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100, query_timestamp=anchor)
+    tracer.start()
+
+    trace = tracer.finalize([])
+
+    assert trace.query.timestamp == anchor
+
+
+def test_trace_timestamp_falls_back_to_now_without_an_anchor():
+    """With no caller anchor the trace still reports a usable execution time."""
+    before = datetime.now(timezone.utc)
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100)
+    tracer.start()
+
+    trace = tracer.finalize([])
+
+    assert before <= trace.query.timestamp <= datetime.now(timezone.utc)
+
+
 @pytest.mark.asyncio
 async def test_search_with_trace(memory, request_context):
     """Test that search with enable_trace=True returns a valid SearchTrace."""
@@ -61,7 +83,8 @@ async def test_search_with_trace(memory, request_context):
             request_context=request_context,
         )
 
-        # Search with tracing enabled
+        # Search with tracing enabled, anchored to an explicit as-of date
+        question_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
         search_result = await memory.recall_async(
             bank_id=bank_id,
             query="Who works at Google?",
@@ -69,6 +92,7 @@ async def test_search_with_trace(memory, request_context):
             budget=Budget.LOW,  # 20,
             max_tokens=512,
             enable_trace=True,
+            question_date=question_date,
             request_context=request_context,
         )
 
@@ -84,6 +108,8 @@ async def test_search_with_trace(memory, request_context):
         assert trace["query"]["query_text"] == "Who works at Google?"
         assert trace["query"]["budget"] == 100  # Budget.LOW = 100
         assert trace["query"]["max_tokens"] == 512
+        # The anchor the caller asked for, not the moment the trace was built (#4217)
+        assert trace["query"]["timestamp"] == question_date
         assert len(trace["query"]["query_embedding"]) > 0, "Query embedding should be populated"
 
         # Verify entry points

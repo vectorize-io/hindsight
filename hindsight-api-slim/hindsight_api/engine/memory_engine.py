@@ -7468,7 +7468,17 @@ class MemoryEngine(MemoryEngineInterface):
         # handful of floats and they are what makes a recall log account for its own duration --
         # the numbered stages stop at token filtering, so hydration, assembly and entity building
         # were measured and then thrown away unless someone happened to pass `trace=true`.
-        tracer = SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match)
+        # The trace's timestamp is the anchor the ranking was computed against -- the caller's
+        # `question_date` when they supplied one -- not the moment the trace happened to be built.
+        # Reporting wall-clock here made an applied anchor look ignored (#4217).
+        tracer = SearchTracer(
+            query,
+            thinking_budget,
+            max_tokens,
+            tags=tags,
+            tags_match=tags_match,
+            query_timestamp=_recall_scoring_now(question_date),
+        )
         tracer.phases_only = not enable_trace
         tracer.start()
 
