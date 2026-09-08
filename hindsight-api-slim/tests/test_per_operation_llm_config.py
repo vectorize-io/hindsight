@@ -89,6 +89,22 @@ class TestPerOperationLLMConfig:
         assert engine._reflect_llm_config.provider == "mock"
         assert engine._reflect_llm_config.model == "reflect-model"
 
+    def test_all_operation_primaries_share_the_global_member_label(self, monkeypatch):
+        """Operation-specific providers identify the same configured primary profile."""
+        from hindsight_api import MemoryEngine
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_LLM_MEMBER_LABEL", "preferred")
+        clear_config_cache()
+        engine = MemoryEngine(skip_llm_verification=True)
+
+        assert {
+            engine._llm_config.member_label,
+            engine._retain_llm_config.member_label,
+            engine._reflect_llm_config.member_label,
+            engine._consolidation_llm_config.member_label,
+        } == {"preferred"}
+
     def test_groq_openai_service_tier_threaded_into_per_operation_configs(self, monkeypatch):
         """The groq/openai service-tier config knobs must reach every per-operation
         LLM config, like bedrock/gemini already do. Previously they were parsed into

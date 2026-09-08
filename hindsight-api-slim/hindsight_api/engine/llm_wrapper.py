@@ -35,6 +35,7 @@ from ..config import (
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
+    LLMFailureClassification,
     LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
@@ -814,6 +815,10 @@ class LLMProvider:
     Supports OpenAI, Groq, Ollama (OpenAI-compatible), and Gemini.
     """
 
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Delegate provider-specific failure knowledge without leaking SDK types."""
+        return self._provider_impl.classify_failure(exc)
+
     def __init__(
         self,
         provider: str,
@@ -844,6 +849,7 @@ class LLMProvider:
         # callers that pass these positionally would otherwise have one argument
         # land in the wrong slot.
         codex_home: str | None = None,
+        member_label: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -899,6 +905,7 @@ class LLMProvider:
                 uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
                 multi-LLM chain to run two independently authorized ChatGPT profiles, so that
                 failover away from a rate-limited profile actually reaches a different account.
+            member_label: Optional non-secret diagnostic label for this configured member.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -925,6 +932,7 @@ class LLMProvider:
         # Codex credentials directory (openai-codex only). Used verbatim — the caller
         # resolves the server-level default, like the fields around it.
         self.codex_home = codex_home
+        self.member_label = member_label
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
@@ -1691,6 +1699,7 @@ class LLMProvider:
             ENV_LLM_GEMINI_SERVICE_TIER,
             ENV_LLM_GROQ_SERVICE_TIER,
             ENV_LLM_LITELLMROUTER_CONFIG,
+            ENV_LLM_MEMBER_LABEL,
             ENV_LLM_MODEL,
             ENV_LLM_OLLAMA_NUM_CTX,
             ENV_LLM_OPENAI_SERVICE_TIER,
@@ -1704,6 +1713,7 @@ class LLMProvider:
             ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             _get_default_model_for_provider,
             _parse_boolean_env,
+            _parse_llm_member_label,
             _parse_llm_router_config,
             _parse_optional_positive_int,
             parse_gemini_service_tier,
@@ -1755,6 +1765,7 @@ class LLMProvider:
             ollama_num_ctx=_parse_optional_positive_int(ENV_LLM_OLLAMA_NUM_CTX, os.getenv(ENV_LLM_OLLAMA_NUM_CTX)),
             litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             codex_home=os.getenv(ENV_LLM_CODEX_HOME) or None,
+            member_label=_parse_llm_member_label(ENV_LLM_MEMBER_LABEL, os.getenv(ENV_LLM_MEMBER_LABEL)),
             vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
             vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,

@@ -18,11 +18,13 @@ so that future server-side changes affect both clients identically.
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -30,7 +32,10 @@ import httpx
 
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
+    LLMCooldownFailure,
+    LLMFailureClassification,
     LLMInterface,
+    LLMTerminalFailure,
     LLMToolChoice,
     LLMToolChoiceMode,
     ProviderRateLimitResetError,
@@ -50,6 +55,7 @@ from .codex_auth import (
     _CODEX_TERMINAL_REFRESH_ERROR_CODES,
     _CODEX_TOKEN_REFRESH_SKEW_SECONDS,
     CodexAuthManager,
+    CodexReauthenticationRequiredError,
     CodexRefreshExpiredError,
     default_codex_auth_file,
 )
@@ -188,6 +194,35 @@ class CodexLLM(LLMInterface):
     ``auth.json`` (``codex_home`` if given, else ``CODEX_HOME``, else
     ``~/.codex``) and makes API calls to chatgpt.com/backend-api/codex/responses.
     """
+
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Classify only explicit Codex quota and confirmed refresh-token failures."""
+        # Follow only explicit causes: incidental exception context must not turn
+        # an unrelated failure into terminal auth. The bound also makes malformed
+        # cyclic chains harmless.
+        current: BaseException | None = exc
+        for _ in range(8):
+            if current is None:
+                break
+            if isinstance(current, CodexReauthenticationRequiredError):
+                return LLMTerminalFailure()
+            if isinstance(current, httpx.HTTPStatusError) and current.response.status_code == 429:
+                retry_after = current.response.headers.get("Retry-After", "")
+                try:
+                    seconds = float(retry_after)
+                except ValueError:
+                    try:
+                        retry_at = parsedate_to_datetime(retry_after)
+                        if retry_at.tzinfo is None:
+                            retry_at = retry_at.replace(tzinfo=UTC)
+                        seconds = max(0.0, retry_at.timestamp() - time.time())
+                    except (ValueError, TypeError, OverflowError):
+                        seconds = 60.0
+                if not math.isfinite(seconds) or seconds < 0:
+                    seconds = 60.0
+                return LLMCooldownFailure(retry_after_seconds=seconds)
+            current = current.__cause__
+        return None
 
     def __init__(
         self,

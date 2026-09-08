@@ -12,11 +12,36 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Callable, Self
+from typing import Any, Callable, Literal, Self
 
 from .response_models import LLMCallResult, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
+
+
+class LLMFailureCategory(StrEnum):
+    """Provider-neutral failures that change routing beyond generic failover."""
+
+    RATE_LIMIT = "rate_limit"
+    REAUTHENTICATION_REQUIRED = "reauthentication_required"
+
+
+@dataclass(frozen=True, slots=True)
+class LLMCooldownFailure:
+    """Explicit quota exhaustion with an advisory delay before another attempt."""
+
+    category: Literal[LLMFailureCategory.RATE_LIMIT] = LLMFailureCategory.RATE_LIMIT
+    retry_after_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LLMTerminalFailure:
+    """Confirmed broken credentials requiring operator action, not failover."""
+
+    category: Literal[LLMFailureCategory.REAUTHENTICATION_REQUIRED] = LLMFailureCategory.REAUTHENTICATION_REQUIRED
+
+
+LLMFailureClassification = LLMCooldownFailure | LLMTerminalFailure
 
 
 class LLMToolChoiceMode(StrEnum):
@@ -109,6 +134,14 @@ class LLMInterface(ABC):
         # never had the attribute at all, so a runaway response was read until the
         # backend gave up) is indistinguishable from one that honours it.
         self.timeout: float | None = timeout
+
+    def classify_failure(self, exc: BaseException) -> LLMFailureClassification | None:
+        """Classify a completed failed call; ``None`` preserves generic failover.
+
+        Providers opt in narrowly. Classification creates no request or retry;
+        the multi-provider router alone owns any cooldown state.
+        """
+        return None
 
     def _warn_reasoning_effort_unsupported(self) -> None:
         """Report, once at startup, that this provider cannot honour a configured effort.

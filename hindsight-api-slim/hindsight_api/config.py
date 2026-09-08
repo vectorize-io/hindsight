@@ -218,6 +218,7 @@ ENV_LLM_STRATEGY = "HINDSIGHT_API_LLM_STRATEGY"
 ENV_RETAIN_LLM_STRATEGY = "HINDSIGHT_API_RETAIN_LLM_STRATEGY"
 ENV_REFLECT_LLM_STRATEGY = "HINDSIGHT_API_REFLECT_LLM_STRATEGY"
 ENV_CONSOLIDATION_LLM_STRATEGY = "HINDSIGHT_API_CONSOLIDATION_LLM_STRATEGY"
+ENV_LLM_MEMBER_LABEL = "HINDSIGHT_API_LLM_MEMBER_LABEL"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -2186,6 +2187,15 @@ def _parse_llm_router_config(env_var: str) -> dict | None:
         raise ValueError(f"Invalid {env_var}: invalid JSON: {e}") from e
 
 
+def _parse_llm_member_label(env_var: str, raw: str | None) -> str | None:
+    """Parse a bounded non-secret label safe for server-side routing logs."""
+    if raw is None or raw == "":
+        return None
+    if len(raw) > 64 or not all(char.isprintable() for char in raw):
+        raise ValueError(f"{env_var} must be at most 64 printable characters")
+    return raw
+
+
 @dataclass
 class LLMMemberConfig:
     """One extra LLM in a multi-LLM chain, configured via indexed env vars.
@@ -2205,6 +2215,7 @@ class LLMMemberConfig:
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
     cache_affinity: str | None = None
+    member_label: str | None = None
     codex_home: str | None = None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
@@ -2365,6 +2376,11 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
                 default_headers=json.loads(os.getenv(base + "DEFAULT_HEADERS", "null")),
                 cache_affinity=os.getenv(base + "CACHE_AFFINITY") or None,
+                member_label=(
+                    _parse_llm_member_label(base + "MEMBER_LABEL", os.getenv(base + "MEMBER_LABEL"))
+                    if prefix == ""
+                    else None
+                ),
                 bedrock_service_tier=os.getenv(base + "BEDROCK_SERVICE_TIER") or None,
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
@@ -3215,6 +3231,11 @@ class HindsightConfig:
     file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
     file_parser_markitdown_ocr_default_headers: dict | None = None
 
+    # One server-only label for every unindexed primary, including operation
+    # overrides. Operation-specific labels would imply distinct profile state
+    # even when all those providers share the same configured credentials.
+    llm_member_label: str | None = None
+
     # Multi-LLM chains (static, server-level). Index 0 of each chain is the
     # corresponding unindexed/base LLM config above; these hold the extra indexed
     # members and the routing strategy. Per-op members fall back to the global
@@ -3827,6 +3848,7 @@ class HindsightConfig:
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Codex (ChatGPT OAuth) credentials directory
             llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
+            llm_member_label=_parse_llm_member_label(ENV_LLM_MEMBER_LABEL, os.getenv(ENV_LLM_MEMBER_LABEL)),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
