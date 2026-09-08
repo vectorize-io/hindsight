@@ -24,6 +24,12 @@ class Fact(BaseModel):
     where: str = "N/A"
     who: str = "N/A"
     why: str = "N/A"
+    fact_kind: Literal["event", "conversation"] = "conversation"
+    """Whether this is a datable occurrence. Load-bearing: the extraction
+    pipeline only keeps ``occurred_start``/``occurred_end`` for ``event`` facts
+    and discards them for a ``conversation``, so a date without this set is
+    silently dropped."""
+
     fact_type: FactType = "world"
     """The server's own distinction, not the docs' user-facing one: ``world`` covers
     objective facts (including the user's preferences and corrections), ``assistant``
