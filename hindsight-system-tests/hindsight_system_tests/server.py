@@ -143,6 +143,17 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         # deterministic stub the retry cannot change the answer, and the wait
         # turns a fast loud-miss into a 90-second timeout.
         "HINDSIGHT_API_WORKER_MAX_RETRIES": "0",
+        # Bank stats are cached for 60s by default. A test that changes the bank
+        # and then asserts on a counter would be reading a value from before its
+        # own action — racy at best, a minute of waiting at worst.
+        "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS": "0",
+        # Maintenance sweeps are what pick up recovered consolidations, and the
+        # default start jitter spreads them over a minute so a fleet of servers
+        # does not stampede the database on boot. One server in a test has nobody
+        # to stampede, and the jitter is otherwise a minute of a story waiting for
+        # work it already asked for.
+        "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS": "0",
+        "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS": "5",
     }
 
 
