@@ -7822,8 +7822,11 @@ class MemoryEngine(MemoryEngineInterface):
                 start_dt, end_dt = detected_temporal_constraint
                 tracer.record_temporal_constraint(start_dt, end_dt)
 
-            # Record retrieval results for tracer - per fact type
-            if tracer:
+            # Record retrieval results for tracer - per fact type.
+            # `enable_trace`, NOT `if tracer`: the tracer always exists so phase timings are
+            # always collected, but these payloads are built eagerly by the CALLER and then
+            # dropped inside the tracer when phases_only is set -- pure waste on every recall.
+            if enable_trace:
                 # Convert RetrievalResult to old tuple format for tracer
                 def to_tuple_format(results):
                     return [(r.id, r.__dict__) for r in results]
@@ -7902,13 +7905,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # after the trim, because an entry point is a top-10 SEMANTIC result and need not
                 # have survived fusion at all.
                 #
-                # Skipped unless a caller actually asked for a trace. The enclosing guard is
-                # `if tracer:`, and the tracer is now built for EVERY recall so the `[phases]`
-                # accounting has somewhere to write — so this fetch, which costs a round trip per
-                # recall and exists only to fill in text for the graph view, had quietly become
-                # unconditional. `phases_only` is the flag that distinguishes "constructed for
-                # metrics" from "the caller wants a trace".
-                _entry_points = [] if getattr(tracer, "phases_only", False) else semantic_results[:10]
+                # This fetch costs a round trip per recall and exists only to fill in text for
+                # the graph view. It used to sit behind `if tracer:` and so ran on EVERY recall
+                # once the tracer started being built unconditionally (for the `[phases]`
+                # accounting); the enclosing guard is now `enable_trace`, which is the same
+                # condition `phases_only` encoded, so the check that used to be needed here is
+                # implied by getting this far.
+                _entry_points = semantic_results[:10]
                 if _entry_points:
                     from .memories import get_memories as _get_memories_for_trace
 
@@ -7916,23 +7919,23 @@ class MemoryEngine(MemoryEngineInterface):
                 for rank, retrieval in enumerate(_entry_points, start=1):
                     tracer.add_entry_point(retrieval.id, retrieval.text, retrieval.similarity or 0.0, rank)
 
-                tracer.add_phase_metric(
-                    "parallel_retrieval",
-                    step_duration,
-                    {
-                        "semantic_count": len(semantic_results),
-                        "bm25_count": len(bm25_results),
-                        "graph_count": len(graph_results),
-                        "temporal_count": len(temporal_results) if temporal_results else 0,
-                    },
-                )
-                # Also expose each retrieval method as its own phase so
-                # benchmarks can pinpoint which sub-query drives latency. These are
-                # children of parallel_retrieval (marked diagnostic so the phase-coverage
-                # check doesn't double-count them).
-                for _method, _dur in aggregated_timings.items():
-                    if _dur > 0:
-                        tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
+            tracer.add_phase_metric(
+                "parallel_retrieval",
+                step_duration,
+                {
+                    "semantic_count": len(semantic_results),
+                    "bm25_count": len(bm25_results),
+                    "graph_count": len(graph_results),
+                    "temporal_count": len(temporal_results) if temporal_results else 0,
+                },
+            )
+            # Also expose each retrieval method as its own phase so
+            # benchmarks can pinpoint which sub-query drives latency. These are
+            # children of parallel_retrieval (marked diagnostic so the phase-coverage
+            # check doesn't double-count them).
+            for _method, _dur in aggregated_timings.items():
+                if _dur > 0:
+                    tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
 
             # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
             # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
@@ -7966,14 +7969,18 @@ class MemoryEngine(MemoryEngineInterface):
                 fusion_span.set_attribute("hindsight.merged_count", len(merged_candidates))
                 fusion_span.end()
 
-            if tracer:
+            # The payload build is gated on `enable_trace`; the phase metric is not. The
+            # tracer always exists so timings are always collected -- but `tracer_merged`
+            # is built by the CALLER and then dropped inside the tracer when phases_only
+            # is set, so building it unconditionally is pure waste on every recall.
+            if enable_trace:
                 # Convert MergedCandidate to old tuple format for tracer
                 tracer_merged = [
                     (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
                     for mc in merged_candidates
                 ]
                 tracer.add_rrf_merged(tracer_merged)
-                tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
+            tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
 
             # Step 4: Rerank using cross-encoder (MergedCandidate -> ScoredResult)
             step_start = time.time()
@@ -8162,25 +8169,26 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
-            if tracer:
+            # `enable_trace`, NOT `if tracer`: see the retrieval-results guard above.
+            if enable_trace:
                 results_dict = [sr.to_dict() for sr in scored_results]
                 tracer_merged = [
                     (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
                     for mc in merged_candidates
                 ]
                 tracer.add_reranked(results_dict, tracer_merged)
-                tracer.add_phase_metric(
-                    "reranking",
-                    step_duration,
-                    {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
-                )
-                # Combined scoring + additive boosts + final sort, plus the trace
-                # serialization of reranked entries done just above.
-                tracer.add_phase_metric(
-                    "combined_scoring",
-                    time.time() - scoring_start,
-                    {"candidates_scored": len(scored_results)},
-                )
+            tracer.add_phase_metric(
+                "reranking",
+                step_duration,
+                {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
+            )
+            # Combined scoring + additive boosts + final sort, plus -- when a trace was
+            # asked for -- the serialization of reranked entries done just above.
+            tracer.add_phase_metric(
+                "combined_scoring",
+                time.time() - scoring_start,
+                {"candidates_scored": len(scored_results)},
+            )
 
             # Cancellation checkpoint: reranking is done; skip the remaining
             # enrichment (chunk/entity/source-fact fetches, each its own DB work)
