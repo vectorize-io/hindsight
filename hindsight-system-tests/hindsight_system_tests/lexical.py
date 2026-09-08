@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from dataclasses import dataclass
 
 # Matches the server's DEFAULT_EMBEDDING_DIMENSION. The vector columns are
 # created at this width, so the stub must answer with exactly this many floats.
@@ -43,20 +44,31 @@ def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
-def _slots(token: str, dimension: int) -> tuple[int, int]:
-    """Two slots per token, so a single hash collision degrades rather than merges."""
+@dataclass(frozen=True)
+class _Slots:
+    """Where one token lands in the vector.
+
+    Two positions rather than one so a single hash collision degrades the score
+    instead of merging two tokens outright.
+    """
+
+    primary: int
+    secondary: int
+
+
+def _slots(token: str, dimension: int) -> _Slots:
     digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
     value = int.from_bytes(digest, "big")
-    return value % dimension, (value >> 32) % dimension
+    return _Slots(primary=value % dimension, secondary=(value >> 32) % dimension)
 
 
 def lexical_embedding(text: str, dimension: int = EMBEDDING_DIMENSION) -> list[float]:
     """A unit-length vector whose cosine similarity tracks word overlap."""
     vector = [0.0] * dimension
     for token in tokenize(text):
-        primary, secondary = _slots(token, dimension)
-        vector[primary] += 1.0
-        vector[secondary] += 0.5
+        slots = _slots(token, dimension)
+        vector[slots.primary] += 1.0
+        vector[slots.secondary] += 0.5
 
     norm = math.sqrt(sum(component * component for component in vector))
     if norm == 0.0:

@@ -127,14 +127,6 @@ class RuleBuilder:
         """
         return self._register(lambda request: _assistant_message(build(request).model_dump_json()))
 
-    def returns_tool_call(self, tool_name: str, **arguments: Any) -> LLMStub:
-        """Answer by calling a named tool, the way an agentic turn does.
-
-        The reflect loop only advances when the model calls the tool it was
-        offered; a text reply ends the turn, and the loop with it.
-        """
-        return self._register(lambda _request: _tool_call(tool_name, arguments))
-
     def calls_the_offered_tool(self, **arguments: Any) -> LLMStub:
         """Answer a forced-tool turn by calling whichever tool it was offered.
 
@@ -147,30 +139,27 @@ class RuleBuilder:
 
         def respond(request: ChatRequest) -> StubbedReply:
             assert request.tools, "calls_the_offered_tool used on a turn that offered none"
-            return _tool_call(request.tools[0], arguments)
+            tool_name = request.tools[0]
+            return StubbedReply(
+                message={
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{tool_name}",
+                            "type": "function",
+                            "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+                        }
+                    ],
+                },
+                finish_reason="tool_calls",
+            )
 
         return self._register(respond)
 
     def _register(self, respond: Callable[[ChatRequest], StubbedReply]) -> LLMStub:
         self._stub.add_rule(ChatRule(contains=self._contains, respond=respond, tool=self._tool))
         return self._stub
-
-
-def _tool_call(tool_name: str, arguments: dict[str, Any]) -> StubbedReply:
-    return StubbedReply(
-        message={
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": f"call_{tool_name}",
-                    "type": "function",
-                    "function": {"name": tool_name, "arguments": json.dumps(arguments)},
-                }
-            ],
-        },
-        finish_reason="tool_calls",
-    )
 
 
 def _assistant_message(content: str) -> StubbedReply:
