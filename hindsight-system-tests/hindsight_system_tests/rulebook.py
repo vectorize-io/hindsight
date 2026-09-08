@@ -281,6 +281,14 @@ class RerankStub:
         return lexical_relevance(query, document)
 
 
+@dataclass(frozen=True)
+class ReceivedWebhook:
+    """One delivery the stub accepted, kept so a test can assert on it."""
+
+    headers: dict[str, str]
+    body: dict[str, Any]
+
+
 @dataclass
 class Stubs:
     """The three backends a test configures, handed to it as one object."""
@@ -291,11 +299,21 @@ class Stubs:
     rejected_requests: list[str] = field(default_factory=list)
     """Requests the stub refused as malformed — see ``validation.py``."""
 
+    webhooks: list[ReceivedWebhook] = field(default_factory=list)
+    """Webhook deliveries the stub received, in arrival order.
+
+    The stub is the only receiver a hermetic test can offer, so it doubles as the
+    customer endpoint: without somewhere for a delivery to land, "the webhook
+    fired" can only be read off the server's own delivery log, which proves it
+    tried rather than that anything arrived.
+    """
+
     def reset(self) -> None:
         """Between tests. The embedding and rerank stubs are pure, so only the
         rulebook and the rejection log carry state worth clearing."""
         self.llm.reset()
         self.rejected_requests.clear()
+        self.webhooks.clear()
 
 
 def _as_tuple(value: str | list[str] | None) -> tuple[str, ...]:

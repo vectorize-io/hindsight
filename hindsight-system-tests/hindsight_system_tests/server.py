@@ -153,6 +153,12 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         # to stampede, and the jitter is otherwise a minute of a story waiting for
         # work it already asked for.
         "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS": "0",
+        # Webhook destinations are SSRF-checked, and loopback is refused — the
+        # right default, and story 64 asserts it. But the only receiver a
+        # hermetic test can offer *is* on loopback, so the stub's host is
+        # allowlisted explicitly. Nothing else is: a webhook aimed anywhere else
+        # private still fails, which is what keeps the guard under test.
+        "HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS": "127.0.0.1",
         "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS": "5",
     }
 
