@@ -17,7 +17,18 @@ if [ "${1:-}" = "--answers" ]; then
     shift
 fi
 
-export HINDSIGHT_API_DATABASE_URL="${HINDSIGHT_API_DATABASE_URL:-pg0}"
+# A DEDICATED pg0 instance, not the shared default. The eval builds ~1000 rows
+# and holds a pool while it does; sharing an instance with other sessions gets it
+# "sorry, too many clients already" partway through a build, or a start race when
+# two things call ensure_running at once. Override to point at a real database.
+# Remember what the CALLER chose, before .env gets a say below. Anything set on
+# the command line has to survive sourcing .env — comparing two reflect models is
+# the whole point of the answer tier, and a .env value silently winning means you
+# benchmark the same model twice and never notice.
+_CALLER_DB="${HINDSIGHT_API_DATABASE_URL:-}"
+_CALLER_MODEL="${HINDSIGHT_API_LLM_MODEL:-}"
+_CALLER_PROVIDER="${HINDSIGHT_API_LLM_PROVIDER:-}"
+export HINDSIGHT_API_DATABASE_URL="${_CALLER_DB:-pg0://prelude-eval}"
 
 if [ "$MODE" = "answers" ]; then
     # Needs a real reflect model AND a judge key, so .env matters here. The corpus
@@ -30,6 +41,14 @@ if [ "$MODE" = "answers" ]; then
         source "$REPO_ROOT/.env"
         set +a
         echo "Loaded environment from .env"
+        # .env is for the LLM credentials, not the database. It typically points
+        # at a shared pg0 that other sessions are using, and this eval builds
+        # hundreds of rows while holding a pool — which is how the shared
+        # instance ends up refusing connections mid-build. The caller's explicit
+        # choice wins; otherwise go back to the dedicated instance.
+        export HINDSIGHT_API_DATABASE_URL="${_CALLER_DB:-pg0://prelude-eval}"
+        [ -n "$_CALLER_MODEL" ] && export HINDSIGHT_API_LLM_MODEL="$_CALLER_MODEL"
+        [ -n "$_CALLER_PROVIDER" ] && export HINDSIGHT_API_LLM_PROVIDER="$_CALLER_PROVIDER"
     fi
     echo "Running prelude ANSWER eval (real reflect + LLM judge):"
     echo "  db=${HINDSIGHT_API_DATABASE_URL}"

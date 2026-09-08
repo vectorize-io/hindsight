@@ -50,7 +50,7 @@ from hindsight_api.models import RequestContext
 from rich.console import Console
 from rich.table import Table
 
-from benchmarks.prelude.fixture import Corpus, Question, build_corpus
+from benchmarks.prelude.fixture import Corpus, Question, build_corpus, build_hard_corpus
 
 console = Console()
 
@@ -74,6 +74,7 @@ class ArmResult:
     gold_total: int
     n_retrieved: int
     short_circuit: bool
+    ballast_above_gold: int = 0
 
     @property
     def recall_at_k(self) -> float:
@@ -97,6 +98,17 @@ class QuestionResult:
     floor: ArmResult
     ceiling: ArmResult
     short_circuit_expected: bool
+
+    @property
+    def contamination(self) -> int:
+        """Filler rows that out-ranked the last gold row, on either arm.
+
+        Ballast is supposed to be irrelevant. One that beats the labelled
+        evidence is an unlabelled distractor, and the gold for this question is
+        no longer trustworthy — a corpus bug, reported rather than silently
+        averaged into the score.
+        """
+        return max(self.floor.ballast_above_gold, self.ceiling.ballast_above_gold)
 
 
 async def _run_layers(
@@ -155,6 +167,22 @@ async def _run_layers(
     return by_layer, False
 
 
+def _lexical_rank(query: str, texts: dict[str, str], ids: list[str]) -> list[str]:
+    """Rank ``ids`` by naive word overlap with the query — the control arm.
+
+    Deliberately stupid: no embeddings, no BM25 weighting, no reranker, just how
+    many query words appear in the row. If this scores as well as the real
+    pipeline, the corpus is too easy and its numbers say nothing about Hindsight.
+    """
+    words = {w.strip(".,?").lower() for w in query.split() if len(w) > 2}
+
+    def overlap(row_id: str) -> int:
+        text = texts.get(row_id, "").lower()
+        return sum(1 for w in words if w in text)
+
+    return sorted(ids, key=lambda i: -overlap(i))
+
+
 async def _score(
     memory: MemoryEngine, corpus: Corpus, ctx: RequestContext, question: Question, arm: str, query: str
 ) -> ArmResult:
@@ -168,14 +196,26 @@ async def _score(
                 return ids.index(row_id) + 1
         return -1
 
+    ranks = [_rank(g) for g in sorted(gold)]
+    # Ballast that beat the deepest gold row in the layer where the gold lives.
+    hits = [r for r in ranks if r > 0]
+    contaminating = 0
+    if hits:
+        deepest = max(hits)
+        for ids in by_layer.values():
+            if any(g in ids for g in gold):
+                contaminating = sum(1 for i in ids[: deepest - 1] if i in corpus.ballast_ids)
+                break
+
     return ArmResult(
         arm=arm,
         query=query,
         retrieved=[i for ids in by_layer.values() for i in ids],
-        gold_ranks=[_rank(g) for g in sorted(gold)],
+        gold_ranks=ranks,
         gold_total=len(gold),
         n_retrieved=sum(len(v) for v in by_layer.values()),
         short_circuit=short_circuit,
+        ballast_above_gold=contaminating,
     )
 
 
@@ -250,6 +290,18 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="write raw per-question results here")
     parser.add_argument("--bank-id", help="reuse an existing fixture bank instead of building one")
+    parser.add_argument(
+        "--corpus",
+        choices=("hard", "ballast"),
+        default="hard",
+        help="hard: dense same-topic near-misses (default). ballast: the old big-but-inert corpus.",
+    )
+    parser.add_argument(
+        "--ballast",
+        type=int,
+        default=1000,
+        help="irrelevant filler memories, so the recall budget actually truncates (default 1000; 0 disables)",
+    )
     args = parser.parse_args()
 
     # The corpus must be authored, not extracted — see fixture.py.
@@ -267,8 +319,15 @@ async def main() -> None:
 
     ctx = RequestContext()
     try:
-        corpus = await build_corpus(memory, bank_id=args.bank_id)
-        console.print(f"bank={corpus.bank_id} rows={len(corpus.stored_ids)} questions={len(corpus.questions)}\n")
+        if args.corpus == "hard":
+            corpus = await build_hard_corpus(memory, bank_id=args.bank_id)
+        else:
+            corpus = await build_corpus(memory, bank_id=args.bank_id, ballast=args.ballast)
+        labelled = len(corpus.stored_ids) - len(corpus.ballast_ids)
+        console.print(
+            f"bank={corpus.bank_id} rows={len(corpus.stored_ids)} "
+            f"({labelled} labelled + {len(corpus.ballast_ids)} ballast) questions={len(corpus.questions)}\n"
+        )
 
         results: list[QuestionResult] = []
         for q in corpus.questions:

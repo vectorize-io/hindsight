@@ -36,7 +36,15 @@ import yaml
 from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
 from hindsight_api.models import RequestContext
 
+from benchmarks.prelude import hard_corpus
+from benchmarks.prelude.ballast import generate as ballast_rows
+
 CORPUS_DIR = Path(__file__).parent / "corpus"
+
+# Batch size for the filler rows. One batch is one embedding round-trip, but the
+# whole batch also lands in one transaction, so this trades round-trips against
+# transaction size rather than being a pure "bigger is better".
+_BALLAST_BATCH = 100
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,8 @@ class Corpus:
     # authored id (fact-deploy-001, obs-team, mm-billing) -> id of the row it became
     stored_ids: dict[str, str] = field(default_factory=dict)
     bank_id: str = ""
+    # Stored ids of the filler rows, so contamination can be reported by name.
+    ballast_ids: set[str] = field(default_factory=set)
 
     def gold_row_ids(self, question: Question) -> set[str]:
         """Gold ids translated into the ids retrieval will actually return."""
@@ -115,19 +125,97 @@ def _scripted_extraction(text: str, fact_type: str):
     return _callback
 
 
+def _batch_extraction(by_text: dict[str, str]):
+    """A callback for a BATCH retain: one fact per content, text preserved.
+
+    A batch fires one extraction call per content item, and the callback only
+    sees the assembled prompt, not the bare content. The prompt embeds the
+    content verbatim, so the row is identified by finding which of the batch's
+    texts it contains — longest first, so a text that is a prefix of another
+    cannot win. Ballast sentences are unique by construction (``ballast.generate``
+    dedupes), so the match is unambiguous.
+    """
+    ordered = sorted(by_text, key=len, reverse=True)
+
+    def _callback(messages: list[dict], scope: str) -> Any:
+        if scope != "retain_extract_facts":
+            return None
+        prompt = " ".join(str(m.get("content", "")) for m in messages if m.get("role") == "user")
+        text = next((t for t in ordered if t in prompt), None)
+        if text is None:
+            raise RuntimeError("Batch extraction saw a prompt carrying none of the batch's authored texts")
+        return {
+            "facts": [
+                {
+                    "what": text,
+                    "when": "N/A",
+                    "where": "N/A",
+                    "who": "N/A",
+                    "why": "N/A",
+                    "fact_kind": "conversation",
+                    "fact_type": by_text[text],
+                    "entities": [],
+                }
+            ]
+        }
+
+    return _callback
+
+
+async def _retain_many(
+    memory: MemoryEngine, bank_id: str, ctx: RequestContext, rows: list[tuple[str, str]], fact_type: str
+) -> dict[str, str]:
+    """Retain many authored rows in ONE batch; return authored id -> stored id.
+
+    Sequential ``retain_async`` costs one embedding round-trip per row, which is
+    minutes at corpus scale. ``retain_batch_async`` embeds the whole batch in one
+    call.
+    """
+    impl = _require_mock(memory)
+    by_text = {text: fact_type for _, text in rows}
+    impl.set_response_callback(_batch_extraction(by_text))
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": text} for _, text in rows],
+            request_context=ctx,
+        )
+    finally:
+        impl.clear_mock_calls()
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        found = await conn.fetch(
+            f"SELECT id, text FROM {fq_table('memory_units')} WHERE bank_id = $1 AND text = ANY($2::text[])",
+            bank_id,
+            [text for _, text in rows],
+        )
+    by_stored = {r["text"]: str(r["id"]) for r in found}
+    missing = [aid for aid, text in rows if text not in by_stored]
+    if missing:
+        raise RuntimeError(f"Batch retain stored {len(by_stored)}/{len(rows)} rows; missing {missing[:5]}")
+    return {aid: by_stored[text] for aid, text in rows}
+
+
 def _mock_impl(memory: MemoryEngine):
     """The MockLLM behind the retain LLM config, or None if not using the mock provider."""
     return getattr(memory._retain_llm_config, "_provider_impl", None)
 
 
-async def _retain_one(memory: MemoryEngine, bank_id: str, ctx: RequestContext, text: str, fact_type: str) -> str:
-    """Retain one authored row and return the id it was stored under."""
+def _require_mock(memory: MemoryEngine):
+    """The MockLLM behind retain, or a clear error explaining why it is required."""
     impl = _mock_impl(memory)
     if impl is None or not hasattr(impl, "set_response_callback"):
         raise RuntimeError(
-            "The prelude fixture requires the mock LLM provider "
-            "(HINDSIGHT_API_LLM_PROVIDER=mock); corpus text must be authored, not extracted."
+            "The prelude fixture requires the mock LLM provider for RETAIN "
+            "(memory_llm_provider='mock'); corpus text must be authored, not extracted."
         )
+    return impl
+
+
+async def _retain_one(memory: MemoryEngine, bank_id: str, ctx: RequestContext, text: str, fact_type: str) -> str:
+    """Retain one authored row and return the id it was stored under."""
+    impl = _require_mock(memory)
     impl.set_response_callback(_scripted_extraction(text, fact_type))
     try:
         await memory.retain_async(bank_id=bank_id, content=text, request_context=ctx)
@@ -147,7 +235,45 @@ async def _retain_one(memory: MemoryEngine, bank_id: str, ctx: RequestContext, t
     return str(row["id"])
 
 
-async def build_corpus(memory: MemoryEngine, *, bank_id: str | None = None) -> Corpus:
+async def build_hard_corpus(memory: MemoryEngine, *, bank_id: str | None = None) -> Corpus:
+    """Build the HARD corpus: dense same-topic near-misses, no inert filler.
+
+    Every row here is in a question's own topic and vocabulary, so nothing is
+    separable by similarity alone — unlike the ballast corpus, whose filler came
+    from unrelated domains and turned out to be inert.
+    """
+    bank_id = bank_id or f"prelude-hard-{uuid.uuid4().hex[:8]}"
+    ctx = RequestContext()
+    await memory.get_bank_profile(bank_id=bank_id, request_context=ctx)
+    await memory._config_resolver.update_bank_config(bank_id, {"enable_auto_consolidation": False}, ctx)
+
+    facts, questions = hard_corpus.build()
+    corpus = Corpus(
+        questions=[
+            Question(
+                id=q.id,
+                category=q.category,
+                question=q.question,
+                ideal_query=q.ideal_query,
+                gold=frozenset(q.gold),
+                short_circuit=q.short_circuit,
+                answer_criteria=q.answer_criteria,
+                must_not_claim=q.must_not_claim,
+            )
+            for q in questions
+        ],
+        bank_id=bank_id,
+    )
+
+    rows = [(f.id, f.text) for f in facts]
+    for start in range(0, len(rows), _BALLAST_BATCH):
+        corpus.stored_ids.update(
+            await _retain_many(memory, bank_id, ctx, rows[start : start + _BALLAST_BATCH], "world")
+        )
+    return corpus
+
+
+async def build_corpus(memory: MemoryEngine, *, bank_id: str | None = None, ballast: int = 0) -> Corpus:
     """Build the fixture bank and return the corpus with its id mapping.
 
     Ordering is load-bearing: stale mental models must exist before the facts
@@ -181,6 +307,16 @@ async def build_corpus(memory: MemoryEngine, *, bank_id: str | None = None) -> C
     for obs in layers.get("observations") or []:
         text = " ".join(obs["text"].split())
         corpus.stored_ids[obs["id"]] = await _retain_one(memory, bank_id, ctx, text, "observation")
+
+    # 2b. Ballast. Irrelevant filler that makes the bank big enough for the recall
+    # token budget to actually truncate — at ~30 rows every query returns
+    # everything, so a bad query can only reorder evidence, never lose it.
+    if ballast:
+        rows = ballast_rows(ballast)
+        for start in range(0, len(rows), _BALLAST_BATCH):
+            chunk = rows[start : start + _BALLAST_BATCH]
+            corpus.stored_ids.update(await _retain_many(memory, bank_id, ctx, chunk, "world"))
+        corpus.ballast_ids = {corpus.stored_ids[aid] for aid, _ in rows}
 
     # 3. Fresh mental models last, so no in-scope memory post-dates them.
     #

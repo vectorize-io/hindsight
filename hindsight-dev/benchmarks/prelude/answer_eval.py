@@ -45,14 +45,14 @@ from rich.console import Console
 from rich.table import Table
 
 from benchmarks.prelude import judge
-from benchmarks.prelude.fixture import Question, build_corpus
+from benchmarks.prelude.fixture import Question, build_corpus, build_hard_corpus
 
 console = Console()
 
 
 @dataclass
 class RunResult:
-    """One reflect call, graded."""
+    """One reflect call, graded, with enough of its trace to attribute a failure."""
 
     answer: str
     correct: bool
@@ -60,6 +60,26 @@ class RunResult:
     hit_trap: bool
     trap_reason: str
     error: str = ""
+    # What reflect actually did, so a wrong answer can be blamed on the right thing.
+    queries: list[str] = field(default_factory=list)
+    gold_retrieved: int = 0
+    gold_total: int = 0
+
+    @property
+    def blame(self) -> str:
+        """Why this run failed: the evidence never arrived, or it did and was misused.
+
+        This is the question a score alone can never answer, and the two have
+        opposite fixes — a retrieval miss is a query/ranking problem, a reasoning
+        miss is a prompt/model problem.
+        """
+        if self.error:
+            return "error"
+        if self.correct and not self.hit_trap:
+            return "ok"
+        if self.gold_total and self.gold_retrieved < self.gold_total:
+            return f"RETRIEVAL ({self.gold_retrieved}/{self.gold_total} gold reached the model)"
+        return "REASONING (all gold was retrieved)"
 
 
 @dataclass
@@ -79,10 +99,31 @@ class QuestionResult:
         return sum(1 for r in ok if r.hit_trap) / len(ok) if ok else 0.0
 
 
-async def _one_run(memory: MemoryEngine, bank_id: str, ctx: RequestContext, q: Question, budget: str) -> RunResult:
+def _trace_evidence(result: Any, gold: set[str]) -> tuple[list[str], int]:
+    """The queries reflect issued, and how many gold rows its tools actually returned.
+
+    Walks ``tool_trace`` rather than ``based_on``: based_on is what the model
+    *declared it used*, which is downstream of the thing being diagnosed. The
+    tool outputs are what it was handed.
+    """
+    queries: list[str] = []
+    seen: set[str] = set()
+    for call in result.tool_trace or []:
+        query = (call.input or {}).get("query")
+        if query:
+            queries.append(f"{call.tool}({query})")
+        payload = json.dumps(call.output or {}, default=str)
+        seen.update(g for g in gold if g in payload)
+    return queries, len(seen)
+
+
+async def _one_run(
+    memory: MemoryEngine, bank_id: str, ctx: RequestContext, q: Question, budget: str, gold: set[str]
+) -> RunResult:
     try:
         result = await memory.reflect_async(bank_id=bank_id, query=q.question, budget=budget, request_context=ctx)
         answer = (result.text or "").strip()
+        queries, gold_hits = _trace_evidence(result, gold)
     except Exception as exc:  # a failed reflect is a data point, not a crash
         return RunResult(answer="", correct=False, correct_reason="", hit_trap=False, trap_reason="", error=str(exc))
 
@@ -102,6 +143,9 @@ async def _one_run(memory: MemoryEngine, bank_id: str, ctx: RequestContext, q: Q
         correct_reason=correct.reasoning,
         hit_trap=bool(trap and trap.meets_criteria),
         trap_reason=trap.reasoning if trap else "",
+        queries=queries,
+        gold_retrieved=gold_hits,
+        gold_total=len(gold),
     )
 
 
@@ -112,18 +156,21 @@ def _display(results: list[QuestionResult], runs: int) -> None:
     table.add_column("correct", justify="right")
     table.add_column("hit trap", justify="right")
     table.add_column("errors", justify="right")
+    table.add_column("why it failed", justify="left")
 
     for r in results:
         errors = sum(1 for x in r.runs if x.error)
         trap_cell = "—" if not any(x.trap_reason for x in r.runs) else f"{r.trap_rate:.0%}"
         if r.trap_rate > 0:
             trap_cell = f"[red]{trap_cell}[/red]"
+        blames = sorted({x.blame for x in r.runs if x.blame not in ("ok", "error")})
         table.add_row(
             r.id,
             r.category,
             f"{r.correct_rate:.0%}" if r.correct_rate == 1.0 else f"[yellow]{r.correct_rate:.0%}[/yellow]",
             trap_cell,
             f"[red]{errors}[/red]" if errors else "0",
+            "; ".join(blames) or "—",
         )
     console.print(table)
 
@@ -149,6 +196,12 @@ def _display(results: list[QuestionResult], runs: int) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=3, help="reflect calls per question (default 3)")
+    parser.add_argument(
+        "--corpus",
+        choices=("hard", "authored"),
+        default="hard",
+        help="hard: dense same-topic near-misses incl. reasoning categories (default). authored: the small corpus.",
+    )
     parser.add_argument("--budget", default="low", help="reflect budget: low, medium or high")
     parser.add_argument("--json", type=Path, help="write raw per-run results (including answers) here")
     args = parser.parse_args()
@@ -183,7 +236,7 @@ async def main() -> None:
 
     ctx = RequestContext()
     try:
-        corpus = await build_corpus(memory)
+        corpus = await (build_hard_corpus(memory) if args.corpus == "hard" else build_corpus(memory))
         console.print(
             f"bank={corpus.bank_id} questions={len(corpus.questions)} "
             f"reflect={provider}/{os.getenv('HINDSIGHT_API_LLM_MODEL', '?')} "
@@ -193,8 +246,9 @@ async def main() -> None:
         results: list[QuestionResult] = []
         for q in corpus.questions:
             qr = QuestionResult(id=q.id, category=q.category)
+            gold = corpus.gold_row_ids(q)
             for _ in range(args.runs):
-                qr.runs.append(await _one_run(memory, corpus.bank_id, ctx, q, args.budget))
+                qr.runs.append(await _one_run(memory, corpus.bank_id, ctx, q, args.budget, gold))
             results.append(qr)
             console.print(f"  {q.id:<24} correct={qr.correct_rate:.0%} trap={qr.trap_rate:.0%}")
     finally:
