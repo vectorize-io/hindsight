@@ -215,6 +215,14 @@ class LLMStub:
     def __init__(self) -> None:
         self._rules: list[ChatRule] = []
         self.unmatched: list[UnmatchedCall] = []
+        self.calls: list[ChatRequest] = []
+        """Every call the stub answered, in order.
+
+        For the stories whose subject is what the server *sent*: that a directive
+        reached the reflect prompt, that a disposition changed it. Prompt assembly
+        is deterministic even though the model's reading of it is not, so it can be
+        asserted directly rather than judged.
+        """
         self._install_builtins()
 
     def _install_builtins(self) -> None:
@@ -244,6 +252,7 @@ class LLMStub:
 
     def resolve(self, request: ChatRequest) -> StubbedReply | None:
         """The reply to answer with, or ``None`` when nothing matched."""
+        self.calls.append(request)
         for rule in self._rules:
             if rule.matches(request):
                 return rule.respond(request)
@@ -251,9 +260,17 @@ class LLMStub:
         self.unmatched.append(UnmatchedCall(tools=request.tools, prompt=request.all_text))
         return None
 
+    def prompts_for(self, step: str) -> list[str]:
+        """Every prompt sent to one named step, for asserting what was assembled."""
+        from .steps import anchor_for
+
+        anchor = anchor_for(step)
+        return [call.all_text for call in self.calls if anchor in call.all_text]
+
     def reset(self) -> None:
         self._rules.clear()
         self.unmatched.clear()
+        self.calls.clear()
         self._install_builtins()
 
 
