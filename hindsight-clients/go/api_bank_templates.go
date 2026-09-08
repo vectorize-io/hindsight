@@ -248,8 +248,14 @@ type ApiImportBankTemplateRequest struct {
 	ctx context.Context
 	ApiService *BankTemplatesAPIService
 	bankId string
+	bankTemplateManifest *BankTemplateManifest
 	dryRun *bool
 	authorization *string
+}
+
+func (r ApiImportBankTemplateRequest) BankTemplateManifest(bankTemplateManifest BankTemplateManifest) ApiImportBankTemplateRequest {
+	r.bankTemplateManifest = &bankTemplateManifest
+	return r
 }
 
 // Validate only, do not apply changes
@@ -305,6 +311,9 @@ func (a *BankTemplatesAPIService) ImportBankTemplateExecute(r ApiImportBankTempl
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
+	if r.bankTemplateManifest == nil {
+		return localVarReturnValue, nil, reportError("bankTemplateManifest is required and must be specified")
+	}
 
 	if r.dryRun != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "dry_run", r.dryRun, "form", "")
@@ -313,7 +322,7 @@ func (a *BankTemplatesAPIService) ImportBankTemplateExecute(r ApiImportBankTempl
 		r.dryRun = &defaultValue
 	}
 	// to determine the Content-Type header
-	localVarHTTPContentTypes := []string{}
+	localVarHTTPContentTypes := []string{"application/json"}
 
 	// set Content-Type header
 	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
@@ -332,6 +341,8 @@ func (a *BankTemplatesAPIService) ImportBankTemplateExecute(r ApiImportBankTempl
 	if r.authorization != nil {
 		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
 	}
+	// body params
+	localVarPostBody = r.bankTemplateManifest
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err

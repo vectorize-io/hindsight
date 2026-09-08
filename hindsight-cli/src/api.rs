@@ -1443,9 +1443,11 @@ impl ApiClient {
         })
     }
 
-    /// Import a bank template manifest. The OpenAPI spec does not declare a
-    /// request body for this endpoint, so the progenitor-generated client does
-    /// not expose one — we POST the manifest JSON via raw HTTP instead.
+    /// Import a bank template manifest via the JSON endpoint.
+    ///
+    /// The CLI keeps using its direct HTTP path here so it can accept the
+    /// manifest as an untyped JSON value; the generated Rust client now also
+    /// exposes the typed request body from the OpenAPI schema.
     pub fn import_bank_template(
         &self,
         bank_id: &str,

@@ -1,6 +1,7 @@
 """Integration tests for bank template import/export endpoints."""
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -70,6 +71,29 @@ def sample_template():
 
 class TestImportValidation:
     """Test template manifest validation."""
+
+    def test_import_openapi_declares_manifest_request_body(self):
+        """The import operation publishes its manifest body for generated SDKs."""
+        app = create_app(SimpleNamespace(audit_logger=None), initialize_memory=False)
+        operation = app.openapi()["paths"]["/v1/default/banks/{bank_id}/import"]["post"]
+        request_body = operation["requestBody"]
+        assert request_body["required"] is True
+        assert (
+            request_body["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/BankTemplateManifest"
+        )
+
+    @pytest.mark.asyncio
+    async def test_import_malformed_json_returns_bad_request(self):
+        """Malformed JSON keeps the endpoint's established 400 response."""
+        app = create_app(SimpleNamespace(audit_logger=None), initialize_memory=False)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/v1/default/banks/malformed-json/import",
+                content=b'{"bank":',
+                headers={"content-type": "application/json"},
+            )
+        assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_import_dry_run_valid(self, api_client, bank_id, sample_template):

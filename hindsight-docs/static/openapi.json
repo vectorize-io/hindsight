@@ -4822,6 +4822,18 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "Bank template manifest",
+                "title": "Manifest",
+                "$ref": "#/components/schemas/BankTemplateManifest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",

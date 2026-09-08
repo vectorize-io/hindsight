@@ -9211,7 +9211,12 @@ export type CreateOrUpdateBankResponse =
   CreateOrUpdateBankResponses[keyof CreateOrUpdateBankResponses];
 
 export type ImportBankTemplateData = {
-  body?: never;
+  /**
+   * Manifest
+   *
+   * Bank template manifest
+   */
+  body: BankTemplateManifest;
   headers?: {
     /**
      * Authorization

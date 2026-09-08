@@ -3349,6 +3349,12 @@ paths:
           nullable: true
           type: string
         style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BankTemplateManifest'
+        required: true
       responses:
         "200":
           content:
