@@ -359,16 +359,27 @@ def _numeric_precision() -> tuple[list[HardFact], list[HardQuestion]]:
         "a memory leak",
         "DNS misconfiguration",
     ]
+    # Each outage must own its (month, year). The first version cycled months with
+    # `i % 12` and years with `i // 12`, which produced a SECOND "April 2026
+    # outage" carrying different values — so the question had two contradictory
+    # answers, and reflect reporting a conflict was correct while the corpus was
+    # wrong. Near-misses must differ in their VALUES, never in what they claim to
+    # be. April 2026 is reserved for the gold row.
+    slots = [(m, y) for y in (2024, 2025, 2026) for m in _MONTHS if not (m == "April" and y == 2026)]
+    if len(causes) > len(slots):
+        raise RuntimeError("More outages than distinct (month, year) slots — they would collide")
     for i, cause in enumerate(causes):
         fid = f"num-{i:03d}"
         limit = 100 + i * 50
-        month = _MONTHS[i % 12]
-        year = 2025 + i // 12
+        month, year = slots[i]
         text = (
             f"The {month} {year} outage was caused by {cause} at {limit} connections and lasted {12 + i * 5} minutes."
         )
         if fid == gold_id:
-            text = "The April 2026 outage was caused by connection pool exhaustion at 200 connections and lasted 47 minutes."
+            text = (
+                "The April 2026 outage was caused by connection pool exhaustion at 200 connections "
+                "and lasted 47 minutes."
+            )
         facts.append(HardFact(fid, text, "numeric_precision"))
 
     q = HardQuestion(
@@ -414,4 +425,41 @@ def build() -> tuple[list[HardFact], list[HardQuestion]]:
         missing = [g for g in q.gold if g not in known]
         if missing:
             raise RuntimeError(f"{q.id} references unknown gold ids: {missing}")
+
+    _assert_subjects_are_unique(facts)
     return facts, questions
+
+
+#: Phrases that name a single real-world thing. Two rows opening with the same
+#: one are not near-misses, they are a contradiction: the question then has two
+#: incompatible answers and a correct "the data conflicts" reply gets scored
+#: wrong. This is exactly how the corpus once grew a second "April 2026 outage"
+#: with different values and made reflect look broken. Near-misses must differ in
+#: what they ASSERT, never in what they claim to BE.
+_SUBJECT_PATTERNS = (
+    ("numeric_precision", r"^The (\w+ \d{4}) outage"),
+    ("releases", r"^Release (\S+) was (\w+(?: \w+)?) (production|staging|canary) on (\S+)\."),
+    ("supersession", r"^Ownership of (the [\w ]+?) passed to ([\w ]+?) in"),
+)
+
+
+def _assert_subjects_are_unique(facts: list[HardFact]) -> None:
+    """Fail the build when two rows in a cluster claim to describe the same thing."""
+    import re
+
+    for cluster, pattern in _SUBJECT_PATTERNS:
+        seen: dict[tuple[str, ...], str] = {}
+        for fact in facts:
+            if fact.cluster != cluster:
+                continue
+            match = re.match(pattern, fact.text)
+            if match is None:
+                continue
+            key = match.groups()
+            if key in seen:
+                raise RuntimeError(
+                    f"{cluster}: {fact.id} and {seen[key]} both describe {key!r}. "
+                    "Two rows describing the same subject contradict rather than compete — "
+                    "vary the values, not the identity."
+                )
+            seen[key] = fact.id
