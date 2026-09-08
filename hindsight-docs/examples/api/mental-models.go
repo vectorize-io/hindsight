@@ -111,8 +111,9 @@ func main() {
 	time.Sleep(5 * time.Second)
 
 	// [docs:list-mental-models]
-	// List all mental models in a bank
-	mentalModels, _, _ := client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Execute()
+	// List all mental models in a bank. The list returns metadata by default;
+	// Detail("content") adds source_query/content/trigger.
+	mentalModels, _, _ := client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
 
 	for _, mm := range mentalModels.GetItems() {
 		fmt.Printf("- %s: %s\n", mm.GetName(), mm.GetSourceQuery())

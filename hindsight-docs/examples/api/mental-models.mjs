@@ -83,8 +83,9 @@ console.log(`Operation ID: ${result3.operation_id}`);
 await new Promise(r => setTimeout(r, 5000));
 
 // [docs:list-mental-models]
-// List all mental models in a bank
-const mentalModels = await client.listMentalModels(BANK_ID);
+// List all mental models in a bank. The list returns metadata by default;
+// detail: "content" adds source_query/content/trigger.
+const mentalModels = await client.listMentalModels(BANK_ID, { detail: "content" });
 
 for (const mm of mentalModels.items) {
     console.log(`- ${mm.name}: ${mm.source_query}`);

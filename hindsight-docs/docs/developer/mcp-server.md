@@ -326,6 +326,9 @@ Content generation runs asynchronously. The response includes an `operation_id` 
 
 List all mental models in a bank, optionally filtered by tags.
 
+Returns metadata only — `id`, `name`, `tags`, `is_stale` and timestamps. To read a
+model's synthesized content, call `get_mental_model` with an id from this list.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tags` | list[string] | No | Filter models by tags |

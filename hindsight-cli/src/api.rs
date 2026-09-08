@@ -897,12 +897,21 @@ impl ApiClient {
     pub fn list_mental_models(
         &self,
         bank_id: &str,
-        _verbose: bool,
+        verbose: bool,
     ) -> Result<types::MentalModelListResponse> {
+        // The endpoint defaults to `metadata`, which omits the content this
+        // command previews (and that scripts read out of `--output json`), so
+        // ask for it explicitly. `--verbose` additionally pulls the heavyweight
+        // reflect_response provenance chains.
+        let detail = if verbose {
+            types::Detail::Full
+        } else {
+            types::Detail::Content
+        };
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_mental_models(bank_id, None, None, None, None, None, None)
+                .list_mental_models(bank_id, Some(detail), None, None, None, None, None)
                 .humanized()
                 .await?;
             Ok(response.into_inner())

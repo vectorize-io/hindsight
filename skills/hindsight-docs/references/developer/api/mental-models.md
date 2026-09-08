@@ -370,8 +370,9 @@ Enable automatic refresh for mental models that need to stay current. Disable it
 ### Python
 
 ```python
-# List all mental models in a bank
-mental_models = client.list_mental_models(bank_id=BANK_ID)
+# List all mental models in a bank. The list returns metadata by default;
+# detail="content" adds source_query/content/trigger.
+mental_models = client.list_mental_models(bank_id=BANK_ID, detail="content")
 
 for mental_model in mental_models.items:
     print(f"- {mental_model.name}: {mental_model.source_query}")
@@ -380,8 +381,9 @@ for mental_model in mental_models.items:
 ### Node.js
 
 ```javascript
-// List all mental models in a bank
-const mentalModels = await client.listMentalModels(BANK_ID);
+// List all mental models in a bank. The list returns metadata by default;
+// detail: "content" adds source_query/content/trigger.
+const mentalModels = await client.listMentalModels(BANK_ID, { detail: "content" });
 
 for (const mm of mentalModels.items) {
     console.log(`- ${mm.name}: ${mm.source_query}`);
@@ -440,30 +442,37 @@ Both **List** and **Get** endpoints accept an optional `detail` query parameter 
 
 | Level | Fields Returned | Use Case |
 |-------|----------------|----------|
-| `metadata` | `id`, `bank_id`, `name`, `tags`, `last_refreshed_at`, `last_memory_seen_at`, `created_at` | Inventory — "what models exist?" |
+| `metadata` | `id`, `bank_id`, `name`, `tags`, `is_stale`, `last_refreshed_at`, `last_memory_seen_at`, `created_at` | Inventory — "what models exist?" |
 | `content` | All metadata fields + `source_query`, `content`, `max_tokens`, `trigger` | Agent boot — "what do the models say?" |
-| `full` (default) | All fields including `reflect_response` | Deep inspection — "what evidence backs this model?" |
+| `full` | All fields including `reflect_response` | Deep inspection — "what evidence backs this model?" |
+
+The two endpoints default differently:
+
+- **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
+- **Get** defaults to `full`. You already named the one model you want.
 
 ```bash
-# List only names and tags (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=metadata"
+# List: metadata only, the default (smallest response)
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
 
-# List with content but without provenance chains
+# List with content but without provenance chains (opt-in)
 curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
 
-# Get full detail (default behavior)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID?detail=full"
+# Get one model — full detail is the default here
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
 ```
 
-The `detail` parameter is also available in the MCP tools:
-
-```json
-{"bank_id": "my-bank", "detail": "metadata"}
-```
+The `detail` parameter is available on the `get_mental_model` MCP tool. The
+`list_mental_models` MCP tool does not take it: it always returns metadata
+(including `is_stale`), and an agent reads a specific model's content with
+`get_mental_model`.
 
 > **💡 Tip**
 >
-Use `detail=content` for agent orientation flows. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
+Use `detail=content` on the List endpoint for agent orientation flows that genuinely need every model's text. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
+> **📝 Upgrading**
+>
+The List endpoint previously defaulted to `full`. A caller that omits `detail` and reads `content`, `source_query`, `max_tokens` or `trigger` off the listed items now gets `null` — pass `detail=content` explicitly.
 ### Response Fields
 
 | Field | Type | Detail Level | Description |

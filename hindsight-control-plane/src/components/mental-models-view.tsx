@@ -154,8 +154,8 @@ export function MentalModelsView() {
     return (
       m.id.toLowerCase().includes(query) ||
       m.name.toLowerCase().includes(query) ||
-      m.source_query.toLowerCase().includes(query) ||
-      m.content.toLowerCase().includes(query)
+      (m.source_query?.toLowerCase().includes(query) ?? false) ||
+      (m.content?.toLowerCase().includes(query) ?? false)
     );
   });
 
@@ -165,9 +165,13 @@ export function MentalModelsView() {
     setLoading(true);
     try {
       // The API caps each response, so page through to the reported total.
+      // detail=content is explicit: the list endpoint defaults to metadata, and
+      // this view renders the content preview, source query and trigger, and
+      // seeds the update dialog from the listed row.
       const all = await client.listAllMentalModels(currentBank, {
         tags: selectedTags.length > 0 ? selectedTags : undefined,
         tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
+        detail: "content",
       });
       setMentalModels(all);
     } catch (error) {

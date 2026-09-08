@@ -5878,9 +5878,13 @@ def _register_routes(app: FastAPI):
         Content is now opt-in via ``detail=content``/``full`` rather than the
         default: returning every model's synthesized content by default bloated
         callers' context and let a single list pull a whole bank's synthesized
-        knowledge in bulk. When content is requested it is delivered — and
-        metered — the same as a single-model read. To read one model, prefer
+        knowledge in bulk. To read one model, prefer
         GET .../mental-models/{id} (get_mental_model).
+
+        Note that ``detail=content``/``full`` still validates as one
+        ``LIST_MENTAL_MODELS`` bank read, not as one read per returned model —
+        the default is what keeps bulk content off the wire, not the
+        authorization surface.
         """
         try:
             page = await app.state.memory.list_mental_models(

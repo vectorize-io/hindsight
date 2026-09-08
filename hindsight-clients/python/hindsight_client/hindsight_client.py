@@ -1356,10 +1356,11 @@ class Hindsight:
             bank_id: The memory bank ID
             tags: Optional tags to filter by
             tags_match: How to match tags ("any", "all", or "exact")
-            detail: Detail level — "metadata" (names/tags only), "content" (adds
-                content/config), or "full" (includes the large reflect_response
-                provenance chains). Defaults server-side to "full"; pass a lighter
-                level to avoid pulling large payloads you don't need.
+            detail: Detail level — "metadata" (names/tags/staleness), "content"
+                (adds content/config), or "full" (includes the large
+                reflect_response provenance chains). Defaults server-side to
+                "metadata"; pass "content" or "full" when you need the models'
+                text, or read a single model with get_mental_model.
             limit: Maximum number of mental models to return
             offset: Number of mental models to skip (for pagination)
 

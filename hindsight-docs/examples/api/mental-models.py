@@ -90,8 +90,9 @@ print(f"Operation ID: {result.operation_id}")
 time.sleep(5)
 
 # [docs:list-mental-models]
-# List all mental models in a bank
-mental_models = client.list_mental_models(bank_id=BANK_ID)
+# List all mental models in a bank. The list returns metadata by default;
+# detail="content" adds source_query/content/trigger.
+mental_models = client.list_mental_models(bank_id=BANK_ID, detail="content")
 
 for mental_model in mental_models.items:
     print(f"- {mental_model.name}: {mental_model.source_query}")

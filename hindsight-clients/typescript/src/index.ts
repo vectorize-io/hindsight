@@ -1146,6 +1146,9 @@ export class HindsightClient {
 
   /**
    * List all mental models in a bank.
+   *
+   * The endpoint defaults to `detail: "metadata"`, so `content`, `source_query`,
+   * `max_tokens` and `trigger` come back null unless you ask for them.
    */
   async listMentalModels(
     bankId: string,

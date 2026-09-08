@@ -1561,8 +1561,9 @@ export class ControlPlaneClient {
       params.append("offset", String(options.offset));
     }
     const query = params.toString();
-    // Shape of the default detail="full"; lighter levels omit the fields below
-    // last_refreshed_at, so narrow the result when you ask for one.
+    // Shape of detail="full"; the endpoint DEFAULTS to "metadata", which omits
+    // source_query/content/max_tokens/trigger (they come back null), so pass
+    // detail explicitly when you need any of the fields below last_refreshed_at.
     return this.fetchApi<{
       items: Array<{
         id: string;
