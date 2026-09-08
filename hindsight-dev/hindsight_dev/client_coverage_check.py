@@ -265,7 +265,10 @@ def extract_config_method(source: str, client_name: str) -> str:
     config method does not actually accept it.
     """
     if client_name == "python":
-        start = re.search(r"^    def update_bank_config\(", source, re.M)
+        # The async twin, not the sync one: since #4221 every convenience method's
+        # body lives on ``a<name>`` and the sync method is a thin forwarder, so the
+        # enumerated updates dict this check reads is in ``aupdate_bank_config``.
+        start = re.search(r"^    async def aupdate_bank_config\(", source, re.M)
         end_pat = r"^    (?:async )?def "
     else:
         start = re.search(r"^  async updateBankConfig\(", source, re.M)
