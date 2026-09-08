@@ -6131,11 +6131,27 @@ class MemoryEngine(MemoryEngineInterface):
         if pending_outbox_callbacks:
             # Do not hold a SQL connection while committing an external store. The outbox
             # still lives in SQL, but cannot share a transaction with that store's commit.
-            backend = await self._get_backend()
-            async with acquire_with_retry(backend) as conn:
-                async with conn.transaction():
-                    for callback in pending_outbox_callbacks:
-                        await callback(conn)
+            #
+            # The memories are already committed in the store by the time this runs, so a
+            # failure here cannot be undone by failing the retain — it would only mark a
+            # successful retain as failed and invite the caller to re-submit a document that
+            # is already stored. The event is the lossy side of a boundary that is not
+            # transactional either way (see the deferral note above): log it loudly and let
+            # the retain report the truth, which is that it succeeded.
+            try:
+                backend = await self._get_backend()
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        for callback in pending_outbox_callbacks:
+                            await callback(conn)
+            except Exception:
+                logger.error(
+                    "[BATCH_RETAIN] bank=%s operation=%s retained successfully but the retain.completed "
+                    "outbox write failed; the completion event is lost for this operation",
+                    bank_id,
+                    operation_id,
+                    exc_info=True,
+                )
 
         return _RetainExecutionResult(
             unit_ids=result,

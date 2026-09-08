@@ -1,5 +1,6 @@
 """Completion events must observe committed store-owned memories."""
 
+import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,16 +17,18 @@ from hindsight_api.engine.retain.types import RetainBatchResult, RetainContentDi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_factory", [False, True])
 @pytest.mark.parametrize("previous_count,committed_count", [(0, 4), (4, 4), (0, 0)])
-@pytest.mark.parametrize("failure", [None, "commit", "retain"])
+@pytest.mark.parametrize("failure", [None, "commit", "retain", "outbox"])
 async def test_completion_counts_committed_document(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     use_factory: bool,
     previous_count: int,
     committed_count: int,
     failure: str | None,
 ) -> None:
     engine = MemoryEngine.__new__(MemoryEngine)
-    engine._webhook_manager = MagicMock(fire_event_with_conn=AsyncMock())
+    fire_event = AsyncMock(side_effect=RuntimeError("outbox failed") if failure == "outbox" else None)
+    engine._webhook_manager = MagicMock(fire_event_with_conn=fire_event)
     engine._resolve_retain_config = AsyncMock()
     # Tokenization is unrelated to completion ordering; keep this unit test offline.
     monkeypatch.setattr("hindsight_api.engine.memory_engine.count_tokens", lambda text: 1)
@@ -90,6 +93,18 @@ async def test_completion_counts_committed_document(
         outbox_callback_factory=factory if use_factory else None,
         start_time=time.time(),
     )
+
+    if failure == "outbox":
+        # The store has already committed by the time the outbox runs, so a failed
+        # delivery-row write cannot be undone by failing the retain — that would only
+        # report a stored document as lost and invite a duplicate re-submit. The retain
+        # succeeds and the dropped event is logged.
+        with caplog.at_level(logging.ERROR, logger="hindsight_api.engine.memory_engine"):
+            await execution
+        assert steps == ["commit", "count"]
+        assert "outbox write failed" in caplog.text
+        assert "test-operation" in caplog.text
+        return
 
     if failure:
         with pytest.raises(RuntimeError, match=f"{failure} failed"):
