@@ -240,6 +240,8 @@ def build_system_prompt_for_tools(
             "- Be a thoughtful interpreter, not just a literal repeater",
             "- When the exact answer isn't stated, use what IS stated to give a best-effort answer AND surface any uncertainty — never invent confidence the data doesn't support.",
             "",
+            _GROUNDING_BOUNDARY,
+            "",
             "## Temporal Reasoning",
             "Every memory and observation carries temporal fields in the JSON tool result:",
             "- `mentioned_at` — when the user retained the fact (always set).",
@@ -547,11 +549,49 @@ _SPLIT_SYNTHESIS_WARN_CHUNKS = 4
 #: safe for any real model, so the floor caps fan-out without dropping data.
 _MIN_SPLIT_CHUNK_TOKENS = 1024
 
+#: The line between synthesis and invention, shared by every path that writes an
+#: answer (the tool-loop system prompt, the forced-synthesis system prompt, and
+#: the final-synthesis instructions) so they cannot drift apart.
+#:
+#: Reflect is told throughout to infer rather than repeat literally, which is
+#: what makes it useful. But "if the exact answer isn't stated, use what IS
+#: stated" has no floor: asked for a headcount in a year the bank does not cover,
+#: a model extrapolated backwards from the following year's growth trend and
+#: reported a specific number as "reliably deduced". That is not a hedge — it is
+#: a fabricated data point wearing the language of certainty, and it is worse
+#: than "not recorded" because a reader cannot tell the difference.
+#:
+#: The distinction that holds: inference may CHARACTERISE what the data covers;
+#: it may not MANUFACTURE a value for something the data does not cover.
+_GROUNDING_BOUNDARY = (
+    "## What Counts As Inference\n"
+    "Inference means drawing a conclusion about what the retrieved data COVERS: summarising it, "
+    "combining facts, reading an implication, characterising a trend you can see.\n"
+    "\n"
+    "It does NOT mean producing a value for a period, entity or person the data does not cover. "
+    "Extrapolating a number backwards or forwards from a trend, interpolating a value between two "
+    "dated facts, or carrying a value across from a similar entity is INVENTION, however plausible "
+    "the arithmetic looks.\n"
+    "\n"
+    "So when the question asks for a specific value — a number, date, name, status, amount — and no "
+    "retrieved fact states it FOR THE THING ASKED ABOUT:\n"
+    "- Say plainly that the data does not record it. This is a complete, successful answer.\n"
+    "- You may then give what the data DOES record, clearly labelled with the period or entity it "
+    "actually belongs to.\n"
+    "- Never present a derived value as the answer, and never describe one as `exact`, `reliable`, "
+    "`deduced` or `confirmed`. If you show a derivation at all, label it an estimate and say which "
+    "facts it was computed from.\n"
+    "\n"
+    "Qualitative inference is unaffected: concluding someone likely enjoyed an activity they did "
+    "repeatedly is reading the data, not inventing it."
+)
+
 _FINAL_INSTRUCTIONS = (
     "Provide a thoughtful answer by synthesizing and reasoning from the retrieved data above. "
     "You can make reasonable inferences from the memories, but don't completely fabricate information. "
-    "If the exact answer isn't stated, use what IS stated to give the best possible answer. "
-    "Only say 'I don't have information' if the retrieved data is truly unrelated to the question.\n\n"
+    "If the exact answer isn't stated, use what IS stated to give the best possible answer.\n\n"
+    + _GROUNDING_BOUNDARY
+    + "\n\n"
     "IMPORTANT: Output ONLY the final answer. Do NOT include meta-commentary like "
     '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
     "Just provide the direct synthesized answer."
@@ -874,7 +914,7 @@ Your approach:
 - Be helpful - if you have related information, use it to give the best possible answer
 - ONLY use information from tool results - no external knowledge or guessing
 
-Only say "I don't have information" if the retrieved data is truly unrelated to the question.
+{grounding_boundary}
 
 FORMATTING: Use proper markdown formatting in your answer:
 - Headers (##, ###) for sections
@@ -942,7 +982,7 @@ def build_final_system_prompt(
     role_section = escape_for_prompt(mission.strip()) if mission else _DEFAULT_FINAL_ROLE
 
     parts = [build_directives_section(directives) if directives else ""]
-    parts.append(_FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section))
+    parts.append(_FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section, grounding_boundary=_GROUNDING_BOUNDARY))
     parts.append(default_language_section(_FINAL_LANGUAGE_RULE, llm_output_language))
     parts.append(build_directives_reminder(directives) if directives else "")
     # Volatile "now" reference last, so the static/per-bank instructions above
