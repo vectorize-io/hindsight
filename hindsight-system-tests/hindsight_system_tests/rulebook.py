@@ -77,6 +77,15 @@ class StubbedReply:
 class ChatRule:
     contains: tuple[str, ...]
     respond: Callable[[ChatRequest], StubbedReply]
+    requires_tools: bool = False
+    """When set, match only a turn that offers at least one tool.
+
+    The reflect loop's search turns and its answering turn share a system prompt,
+    so a substring cannot tell them apart — but only the search turns carry
+    tools. Without this, a rule meant for the ladder also swallows the turn that
+    was supposed to write the answer.
+    """
+
     tool: str | None = None
     """When set, match only a turn that offers this tool.
 
@@ -86,6 +95,8 @@ class ChatRule:
     """
 
     def matches(self, request: ChatRequest) -> bool:
+        if self.requires_tools and not request.tools:
+            return False
         if self.tool is not None and self.tool not in request.tools:
             return False
         return all(needle in request.all_text for needle in self.contains)
@@ -127,6 +138,19 @@ class RuleBuilder:
         """
         return self._register(lambda request: _assistant_message(build(request).model_dump_json()))
 
+    def returns_tool_call(self, tool_name: str, **arguments: Any) -> LLMStub:
+        """Answer by calling one named tool with specific arguments.
+
+        Needed where the arguments matter — `done` carries the reflect answer in
+        its own argument, so calling it with the wrong shape ends the loop with
+        "the done tool returned no answer".
+        """
+
+        def respond(_request: ChatRequest) -> StubbedReply:
+            return _tool_call(tool_name, arguments)
+
+        return self._register(respond, requires_tools=True)
+
     def calls_the_offered_tool(self, **arguments: Any) -> LLMStub:
         """Answer a forced-tool turn by calling whichever tool it was offered.
 
@@ -138,28 +162,32 @@ class RuleBuilder:
         """
 
         def respond(request: ChatRequest) -> StubbedReply:
-            assert request.tools, "calls_the_offered_tool used on a turn that offered none"
-            tool_name = request.tools[0]
-            return StubbedReply(
-                message={
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": f"call_{tool_name}",
-                            "type": "function",
-                            "function": {"name": tool_name, "arguments": json.dumps(arguments)},
-                        }
-                    ],
-                },
-                finish_reason="tool_calls",
-            )
+            return _tool_call(request.tools[0], arguments)
 
-        return self._register(respond)
+        return self._register(respond, requires_tools=True)
 
-    def _register(self, respond: Callable[[ChatRequest], StubbedReply]) -> LLMStub:
-        self._stub.add_rule(ChatRule(contains=self._contains, respond=respond, tool=self._tool))
+    def _register(self, respond: Callable[[ChatRequest], StubbedReply], *, requires_tools: bool = False) -> LLMStub:
+        self._stub.add_rule(
+            ChatRule(contains=self._contains, respond=respond, tool=self._tool, requires_tools=requires_tools)
+        )
         return self._stub
+
+
+def _tool_call(tool_name: str, arguments: dict[str, Any]) -> StubbedReply:
+    return StubbedReply(
+        message={
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call_{tool_name}",
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+                }
+            ],
+        },
+        finish_reason="tool_calls",
+    )
 
 
 def _assistant_message(content: str) -> StubbedReply:
