@@ -54,7 +54,7 @@ async def main():
     # List memory units in a bank. Invalidated rows are included by default.
     memories = await client.memory.list_memories(bank_id=BANK_ID)
     for unit in memories.items:
-        print(f"- [{unit['fact_type']}] {unit['text']}")
+        print(f"- [{unit.fact_type}] {unit.text}")
 
     # Filter to only the invalidated facts (e.g. to review duplicates).
     invalidated = await client.memory.list_memories(bank_id=BANK_ID, state="invalidated")
@@ -65,23 +65,23 @@ async def main():
     # it here, before the edit/invalidate/restore below: any update_memory call
     # re-consolidates and recreates observations with new ids, so an id captured
     # before those steps is stale afterward (get_observation_history would 404).
-    observation = next((u for u in memories.items if u["fact_type"] == "observation"), None)
+    observation = next((u for u in memories.items if u.fact_type == "observation"), None)
     if observation is not None:
         # [docs:observation-history]
         # Get the refresh history of a derived observation.
         history = await client.memory.get_observation_history(
-            bank_id=BANK_ID, memory_id=observation["id"]
+            bank_id=BANK_ID, memory_id=observation.id
         )
         print(f"Observation history entries: {len(history)}")
         # [/docs:observation-history]
 
     # Grab a raw fact (world/experience) to curate in the examples below.
-    fact = next((u for u in memories.items if u["fact_type"] in ("world", "experience")), None)
+    fact = next((u for u in memories.items if u.fact_type in ("world", "experience")), None)
     if fact is None:
         await client.adelete_bank(bank_id=BANK_ID)
         print("memories.py: All examples passed (no facts extracted yet)")
         return
-    memory_id = fact["id"]
+    memory_id = fact.id
 
     # [docs:get-memory]
     # Fetch a single memory unit (includes metadata, entities, dates, and state).

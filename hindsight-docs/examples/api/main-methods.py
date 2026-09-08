@@ -133,7 +133,7 @@ memories = client.list_memories(
 )
 
 for memory in memories.items:
-    print(f"- [{memory['fact_type']}] {memory['text']}")
+    print(f"- [{memory.fact_type}] {memory.text}")
 
 # Filter by type
 world_facts = client.list_memories(

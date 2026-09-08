@@ -49,7 +49,7 @@ func main() {
 	// List memory units in a bank. Invalidated rows are included by default.
 	memories, _, _ := client.MemoryAPI.ListMemories(ctx, memBankID).Execute()
 	for _, unit := range memories.GetItems() {
-		fmt.Printf("- [%v] %v\n", unit["fact_type"], unit["text"])
+		fmt.Printf("- [%v] %v\n", unit.GetFactType(), unit.GetText())
 	}
 
 	// Filter to only the invalidated facts (e.g. to review duplicates).
@@ -60,8 +60,8 @@ func main() {
 	// Pick a raw fact (world/experience) to curate below.
 	var memoryID string
 	for _, unit := range memories.GetItems() {
-		if ft, _ := unit["fact_type"].(string); ft == "world" || ft == "experience" {
-			memoryID, _ = unit["id"].(string)
+		if ft := unit.GetFactType(); ft == "world" || ft == "experience" {
+			memoryID = unit.Id
 			break
 		}
 	}
@@ -119,8 +119,8 @@ func main() {
 	// An observation (derived) exposes how it evolved as sources arrived.
 	var observationID string
 	for _, unit := range memories.GetItems() {
-		if ft, _ := unit["fact_type"].(string); ft == "observation" {
-			observationID, _ = unit["id"].(string)
+		if unit.GetFactType() == "observation" {
+			observationID = unit.Id
 			break
 		}
 	}
