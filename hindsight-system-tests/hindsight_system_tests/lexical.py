@@ -23,12 +23,24 @@ import re
 # created at this width, so the stub must answer with exactly this many floats.
 EMBEDDING_DIMENSION = 384
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
+# Latin/digit runs are one token each; every CJK codepoint is a token on its own.
+# Chinese and Japanese are not space-delimited, so an alphanumeric-only pattern
+# silently drops them entirely — the query and the memory both tokenize to
+# nothing, land on the same fallback vector, and retrieval becomes meaningless.
+# Per-character tokens are roughly what a real CJK analyser does at the unigram
+# level and are enough to make overlap track relatedness.
+_CJK = (
+    r"\u4e00-\u9fff"  # CJK unified ideographs
+    r"\u3040-\u309f"  # hiragana
+    r"\u30a0-\u30ff"  # katakana
+    r"\uac00-\ud7af"  # hangul syllables
+)
+_TOKEN_RE = re.compile(rf"[a-z0-9]+|[{_CJK}]")
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase word tokens. Deliberately crude — determinism beats linguistics."""
-    return _WORD_RE.findall(text.lower())
+    """Lowercase tokens. Deliberately crude — determinism beats linguistics."""
+    return _TOKEN_RE.findall(text.lower())
 
 
 def _slots(token: str, dimension: int) -> tuple[int, int]:
