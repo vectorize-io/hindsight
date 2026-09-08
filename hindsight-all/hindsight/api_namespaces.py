@@ -73,10 +73,14 @@ class MentalModelsAPI:
             tags=tags,
         )
 
-    def list(self, bank_id: str, tags: list[str] | None = None):
-        """List all mental models for a bank."""
+    def list(self, bank_id: str, tags: list[str] | None = None, detail: str | None = None):
+        """List all mental models for a bank.
+
+        The list returns metadata by default; pass ``detail="content"`` for the
+        models' text, or read a single model with ``get()``.
+        """
         self._embedded._ensure_started()
-        return self._embedded._client.list_mental_models(bank_id=bank_id, tags=tags)
+        return self._embedded._client.list_mental_models(bank_id=bank_id, tags=tags, detail=detail)
 
     def get(self, bank_id: str, mental_model_id: str):
         """Get a specific mental model."""

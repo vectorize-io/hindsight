@@ -126,17 +126,27 @@ class MentalModelsAPI:
             tags=tags,
         )
 
-    def list(self, bank_id: str, tags: list[str] | None = None) -> Any:
+    def list(
+        self,
+        bank_id: str,
+        tags: list[str] | None = None,
+        detail: str | None = None,
+    ) -> Any:
         """List all mental models for a bank.
         
         Args:
             bank_id: The ID of the bank.
             tags: Optional filter by tags.
+            detail: How much of each model to return — "metadata" (the server
+                default: names/tags/staleness), "content" (adds
+                source_query/content/trigger), or "full" (adds reflect_response).
             
         Returns:
-            List of mental models.
+            List of mental models. Without ``detail``, the content fields come
+            back empty — read one model with ``get()``, or pass
+            ``detail="content"``.
         """
-        return self._client.list_mental_models(bank_id=bank_id, tags=tags)
+        return self._client.list_mental_models(bank_id=bank_id, tags=tags, detail=detail)
 
     def get(self, bank_id: str, mental_model_id: str) -> Any:
         """Get a specific mental model.
