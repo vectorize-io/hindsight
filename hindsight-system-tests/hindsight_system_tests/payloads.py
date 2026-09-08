@@ -9,9 +9,13 @@ unusable", which is a long walk back to a typo.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from .rulebook import ChatRequest
 
 FactType = Literal["world", "assistant"]
 
@@ -95,3 +99,33 @@ def consolidation(
     deletes: list[ObservationDelete] | None = None,
 ) -> Consolidation:
     return Consolidation(creates=creates or [], updates=updates or [], deletes=deletes or [])
+
+
+FACT_ID_IN_PROMPT = re.compile(r"\[([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]")
+
+
+def fact_ids_in(prompt: str) -> list[str]:
+    """The fact ids the consolidation prompt is asking about.
+
+    Consolidation must cite the facts it drew on by id, and those ids are minted
+    by the server during the retain that just happened — a test cannot write them
+    down in advance. They arrive in the prompt as ``[uuid] fact text``, so a rule
+    reads them back out of the request it is answering.
+    """
+    return FACT_ID_IN_PROMPT.findall(prompt)
+
+
+def observes(text: str) -> Callable[["ChatRequest"], Consolidation]:
+    """A consolidation reply drawing one observation from every fact in the prompt.
+
+    Pair with ``llm.on_step("consolidate").answers_with(...)``. The ids have to be
+    read out of the request because the server minted them during the retain that
+    triggered this call.
+    """
+
+    def build(request: ChatRequest) -> Consolidation:
+        return Consolidation(
+            creates=[Observation(text=text, source_fact_ids=fact_ids_in(request.all_text), reason="system test")]
+        )
+
+    return build

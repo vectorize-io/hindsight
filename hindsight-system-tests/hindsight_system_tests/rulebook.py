@@ -101,6 +101,20 @@ class RuleBuilder:
     def returns_text(self, text: str) -> LLMStub:
         return self._register(lambda _request: _assistant_message(text))
 
+    def answers_with(self, build: Callable[[ChatRequest], BaseModel]) -> LLMStub:
+        """Compute the reply from the request that triggered it.
+
+        Needed where the answer must contain identifiers the server minted at run
+        time and the test cannot know in advance — consolidation is the case:
+        an observation has to cite the `source_fact_ids` of facts created moments
+        earlier, which arrive in the prompt.
+
+        Still deterministic: the same prompt yields the same reply. Prefer
+        ``returns`` wherever a literal payload will do, since a rule that computes
+        its answer can hide a wrong one.
+        """
+        return self._register(lambda request: _assistant_message(build(request).model_dump_json()))
+
     def _register(self, respond: Callable[[ChatRequest], StubbedReply]) -> LLMStub:
         self._stub.add_rule(ChatRule(contains=self._contains, respond=respond))
         return self._stub
