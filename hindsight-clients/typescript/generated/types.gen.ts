@@ -6611,7 +6611,7 @@ export type ListMentalModelsData = {
     /**
      * Detail
      *
-     * Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+     * Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
      */
     detail?: "metadata" | "content" | "full";
     /**

@@ -673,28 +673,24 @@ class TestGetMentalModel:
 
 
 @pytest.mark.asyncio
-class TestListMentalModelsDetail:
-    """Test the detail parameter for list_mental_models."""
+class TestListMentalModelsMetadataOnly:
+    """list_mental_models is metadata-only: it never returns synthesized content.
 
-    async def test_list_detail_full_includes_reflect_response(self, mcp_server_with_mental_models, mock_memory):
-        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn(detail="full")
-        parsed = json.loads(result)
-        item = parsed["items"][0]
-        assert "reflect_response" in item
-        assert "content" in item
-        assert "source_query" in item
+    Listing used to default to full content, which bloated an agent's context and
+    let one call pull a whole bank's synthesized knowledge in bulk. The tool now
+    returns metadata (id/name/tags/staleness); content comes from get_mental_model.
+    """
 
-    async def test_list_detail_content_excludes_reflect_response(self, mcp_server_with_mental_models, mock_memory):
-        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn(detail="content")
-        parsed = json.loads(result)
-        item = parsed["items"][0]
-        assert "reflect_response" not in item
-        assert "content" in item
-        assert "source_query" in item
-        assert "trigger" in item
+    async def test_list_has_no_detail_param(self, mcp_server_with_mental_models):
+        # The content-listing capability is gone: there is no way to ask the tool
+        # for content, so an agent cannot bulk-read a bank via the list tool.
+        import inspect
 
-    async def test_list_detail_metadata_only_has_core_fields(self, mcp_server_with_mental_models, mock_memory):
-        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn(detail="metadata")
+        fn = _tools(mcp_server_with_mental_models)["list_mental_models"].fn
+        assert "detail" not in inspect.signature(fn).parameters
+
+    async def test_list_returns_metadata_only(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn()
         parsed = json.loads(result)
         item = parsed["items"][0]
         assert item["id"] == "mm-1"
@@ -705,14 +701,14 @@ class TestListMentalModelsDetail:
         assert "reflect_response" not in item
         assert "trigger" not in item
 
-    async def test_list_detail_default_is_full(self, mcp_server_with_mental_models, mock_memory):
-        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn()
-        parsed = json.loads(result)
-        item = parsed["items"][0]
-        assert "reflect_response" in item
+    async def test_list_requests_metadata_and_staleness_from_engine(self, mcp_server_with_mental_models, mock_memory):
+        await _tools(mcp_server_with_mental_models)["list_mental_models"].fn()
+        kwargs = mock_memory.list_mental_models.await_args.kwargs
+        assert kwargs["detail"] == "metadata"
+        assert kwargs["with_staleness"] is True
 
-    async def test_list_detail_single_bank_metadata(self, mcp_server_single_bank, mock_memory):
-        result = await _tools(mcp_server_single_bank)["list_mental_models"].fn(detail="metadata")
+    async def test_list_single_bank_metadata_only(self, mcp_server_single_bank, mock_memory):
+        result = await _tools(mcp_server_single_bank)["list_mental_models"].fn()
         assert isinstance(result, dict)
         item = result["items"][0]
         assert "id" in item

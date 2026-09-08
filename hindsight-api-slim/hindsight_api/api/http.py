@@ -5861,14 +5861,27 @@ def _register_routes(app: FastAPI):
         tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
         tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
         detail: Literal["metadata", "content", "full"] = Query(
-            "full",
-            description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+            "metadata",
+            description=(
+                "Detail level: 'metadata' (names/tags/staleness — the default), "
+                "'content' (adds content/config), 'full' (includes reflect_response). "
+                "Content is opt-in: it is returned only when explicitly requested."
+            ),
         ),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """List mental models for a bank."""
+        """List mental models for a bank.
+
+        Defaults to metadata only (id, name, tags, staleness, timestamps).
+        Content is now opt-in via ``detail=content``/``full`` rather than the
+        default: returning every model's synthesized content by default bloated
+        callers' context and let a single list pull a whole bank's synthesized
+        knowledge in bulk. When content is requested it is delivered — and
+        metered — the same as a single-model read. To read one model, prefer
+        GET .../mental-models/{id} (get_mental_model).
+        """
         try:
             page = await app.state.memory.list_mental_models(
                 bank_id=bank_id,

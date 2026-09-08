@@ -1384,6 +1384,46 @@ class TestMentalModelStaleness:
             assert by_id[mm_id]["is_stale"] == single["is_stale"]
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_list_defaults_to_metadata_content_is_opt_in(self, memory: MemoryEngine, api_client, request_context):
+        """`GET /mental-models` defaults to metadata; content is opt-in.
+
+        Listing used to return every model's synthesized content by default
+        (bloating a caller's context and letting one request pull a whole bank's
+        synthesized knowledge in bulk). The default is now metadata; content is
+        returned only when explicitly requested via ``detail=content``, and is
+        metered the same as a single-model read.
+        """
+        bank_id = f"test-mm-list-default-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="prefs",
+            source_query="q",
+            content="SECRET SYNTHESIZED CONTENT",
+            request_context=request_context,
+        )
+        quoted = urllib.parse.quote(bank_id, safe="")
+
+        # Default: metadata only — no content in the payload.
+        resp = await api_client.get(f"/v1/default/banks/{quoted}/mental-models")
+        assert resp.status_code == 200, resp.text
+        item = next(m for m in resp.json()["items"] if m["id"] == mm["id"])
+        assert item["name"] == "prefs"  # metadata present
+        assert item.get("content") is None
+        assert item.get("source_query") is None
+
+        # Opt-in: detail=content still returns content (and is metered).
+        resp2 = await api_client.get(f"/v1/default/banks/{quoted}/mental-models", params={"detail": "content"})
+        item2 = next(m for m in resp2.json()["items"] if m["id"] == mm["id"])
+        assert item2["content"].strip() == "SECRET SYNTHESIZED CONTENT"
+
+        # The single-model read returns the content.
+        single = await api_client.get(f"/v1/default/banks/{quoted}/mental-models/{mm['id']}")
+        assert single.status_code == 200, single.text
+        assert single.json()["content"].strip() == "SECRET SYNTHESIZED CONTENT"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     @pytest.mark.memory_backend_incompatible
     async def test_batched_staleness_matches_the_single_model_answer(self, memory: MemoryEngine, request_context):
         """The batched check is the same question, asked once for many models.

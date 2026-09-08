@@ -828,7 +828,7 @@ func (r ApiListMentalModelsRequest) TagsMatch(tagsMatch string) ApiListMentalMod
 	return r
 }
 
-// Detail level: &#39;metadata&#39; (names/tags only), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response)
+// Detail level: &#39;metadata&#39; (names/tags/staleness — the default), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
 func (r ApiListMentalModelsRequest) Detail(detail string) ApiListMentalModelsRequest {
 	r.detail = &detail
 	return r
@@ -912,7 +912,7 @@ func (a *MentalModelsAPIService) ListMentalModelsExecute(r ApiListMentalModelsRe
 	if r.detail != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "detail", r.detail, "form", "")
 	} else {
-		var defaultValue string = "full"
+		var defaultValue string = "metadata"
 		r.detail = &defaultValue
 	}
 	if r.limit != nil {

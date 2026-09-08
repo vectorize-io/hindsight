@@ -1672,13 +1672,20 @@ def _validate_mental_model_inputs(
 def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the list_mental_models tool."""
 
-    async def _run(target_bank: str, tags: list[str] | None, detail: str, limit: int, offset: int) -> Any:
+    async def _run(target_bank: str, tags: list[str] | None, limit: int, offset: int) -> Any:
+        # Listing returns metadata only (id, name, tags, staleness) — never the
+        # synthesized content. Returning every model's content in a list wastes
+        # an agent's context and let one call pull a whole bank's synthesized
+        # knowledge; agents read a specific model's content with get_mental_model
+        # instead. Staleness is included so an agent can tell which models are
+        # out of date without reading them.
         page = await memory.list_mental_models(
             bank_id=target_bank,
             tags=tags,
-            detail=detail,
+            detail="metadata",
             limit=limit,
             offset=offset,
+            with_staleness=True,
             request_context=_get_request_context(config),
         )
         return {"items": page.items, "total": page.total}
@@ -1688,7 +1695,6 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            detail: str = "full",
             limit: int = 100,
             offset: int = 0,
             bank_id: str | None = None,
@@ -1696,13 +1702,15 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
             """
             List mental models (pinned reflections) for a memory bank.
 
+            Returns metadata only (id, name, tags, staleness). To read a model's
+            synthesized content, call get_mental_model with the id from this list.
+
             Mental models are living documents that stay current by periodically re-running
             a source query through reflect. Use them to maintain up-to-date summaries,
             preferences, or synthesized knowledge.
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
@@ -1712,7 +1720,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 bank_id=bank_id,
                 as_json=True,
                 action="listing mental models",
-                run=lambda target_bank: _run(target_bank, tags, detail, limit, offset),
+                run=lambda target_bank: _run(target_bank, tags, limit, offset),
                 error_extra={"items": []},
             )
 
@@ -1721,12 +1729,14 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            detail: str = "full",
             limit: int = 100,
             offset: int = 0,
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
+
+            Returns metadata only (id, name, tags, staleness). To read a model's
+            synthesized content, call get_mental_model with the id from this list.
 
             Mental models are living documents that stay current by periodically re-running
             a source query through reflect. Use them to maintain up-to-date summaries,
@@ -1734,7 +1744,6 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
@@ -1743,7 +1752,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 bank_id=None,
                 as_json=False,
                 action="listing mental models",
-                run=lambda target_bank: _run(target_bank, tags, detail, limit, offset),
+                run=lambda target_bank: _run(target_bank, tags, limit, offset),
                 error_extra={"items": []},
             )
 

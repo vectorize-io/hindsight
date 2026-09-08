@@ -1085,16 +1085,18 @@ paths:
           title: Tags Match
           type: string
         style: form
-      - description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-          \ content/config), 'full' (includes reflect_response)"
+      - description: "Detail level: 'metadata' (names/tags/staleness — the default),\
+          \ 'content' (adds content/config), 'full' (includes reflect_response). Content\
+          \ is opt-in: it is returned only when explicitly requested."
         explode: true
         in: query
         name: detail
         required: false
         schema:
-          default: full
-          description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-            \ content/config), 'full' (includes reflect_response)"
+          default: metadata
+          description: "Detail level: 'metadata' (names/tags/staleness — the default),\
+            \ 'content' (adds content/config), 'full' (includes reflect_response).\
+            \ Content is opt-in: it is returned only when explicitly requested."
           enum:
           - metadata
           - content
