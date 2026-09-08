@@ -46,26 +46,11 @@ pub fn list(
                     agent_id, docs_response.total
                 ));
                 for doc in &docs_response.items {
-                    let id = doc.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let created = doc
-                        .get("created_at")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let updated = doc
-                        .get("updated_at")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let text_len = doc.get("text_length").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let mem_count = doc
-                        .get("memory_unit_count")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-
-                    println!("\n  Document ID: {}", id);
-                    println!("    Created: {}", created);
-                    println!("    Updated: {}", updated);
-                    println!("    Text Length: {}", text_len);
-                    println!("    Memory Units: {}", mem_count);
+                    println!("\n  Document ID: {}", doc.id);
+                    println!("    Created: {}", doc.created_at);
+                    println!("    Updated: {}", doc.updated_at);
+                    println!("    Text Length: {}", doc.text_length);
+                    println!("    Memory Units: {}", doc.memory_unit_count);
                 }
             } else {
                 output::print_output(&docs_response, output_format)?;
@@ -176,9 +161,8 @@ fn fetch_all_documents(
             break;
         }
 
-        // Convert Map<String, Value> to Value for each item
-        for item in response.items {
-            all_docs.push(serde_json::Value::Object(item));
+        for item in &response.items {
+            all_docs.push(serde_json::to_value(item)?);
         }
 
         offset += limit;

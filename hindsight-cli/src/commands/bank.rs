@@ -446,15 +446,15 @@ pub fn graph(
                 if !result.nodes.is_empty() {
                     println!("{}", ui::gradient_text("─── Sample Nodes ───"));
                     for node in result.nodes.iter().take(5) {
-                        let fact_type = node
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let id = node.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        println!("  {} [{}]", ui::dim(id), fact_type);
-                        if let Some(text) = node.get("text").and_then(|v| v.as_str()) {
-                            let preview: String = text.chars().take(60).collect();
-                            let ellipsis = if text.len() > 60 { "..." } else { "" };
+                        // The graph wraps every node in a Cytoscape `data` envelope, and it
+                        // carries no fact type — the old lookups (`node["type"]`,
+                        // `node["id"]`) read the envelope, so this always printed
+                        // "unknown [unknown]" with no text.
+                        let data = &node.data;
+                        println!("  {}", ui::dim(&data.id));
+                        if !data.text.is_empty() {
+                            let preview: String = data.text.chars().take(60).collect();
+                            let ellipsis = if data.text.len() > 60 { "..." } else { "" };
                             println!("    {}{}", preview, ellipsis);
                         }
                     }

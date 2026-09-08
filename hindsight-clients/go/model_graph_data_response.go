@@ -21,9 +21,9 @@ var _ MappedNullable = &GraphDataResponse{}
 
 // GraphDataResponse Response model for graph data endpoint.
 type GraphDataResponse struct {
-	Nodes []map[string]interface{} `json:"nodes"`
-	Edges []map[string]interface{} `json:"edges"`
-	TableRows []map[string]interface{} `json:"table_rows"`
+	Nodes []MemoryGraphNode `json:"nodes"`
+	Edges []MemoryGraphEdge `json:"edges"`
+	TableRows []MemoryGraphTableRow `json:"table_rows"`
 	TotalUnits int32 `json:"total_units"`
 	Limit int32 `json:"limit"`
 }
@@ -34,7 +34,7 @@ type _GraphDataResponse GraphDataResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewGraphDataResponse(nodes []map[string]interface{}, edges []map[string]interface{}, tableRows []map[string]interface{}, totalUnits int32, limit int32) *GraphDataResponse {
+func NewGraphDataResponse(nodes []MemoryGraphNode, edges []MemoryGraphEdge, tableRows []MemoryGraphTableRow, totalUnits int32, limit int32) *GraphDataResponse {
 	this := GraphDataResponse{}
 	this.Nodes = nodes
 	this.Edges = edges
@@ -53,9 +53,9 @@ func NewGraphDataResponseWithDefaults() *GraphDataResponse {
 }
 
 // GetNodes returns the Nodes field value
-func (o *GraphDataResponse) GetNodes() []map[string]interface{} {
+func (o *GraphDataResponse) GetNodes() []MemoryGraphNode {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []MemoryGraphNode
 		return ret
 	}
 
@@ -64,7 +64,7 @@ func (o *GraphDataResponse) GetNodes() []map[string]interface{} {
 
 // GetNodesOk returns a tuple with the Nodes field value
 // and a boolean to check if the value has been set.
-func (o *GraphDataResponse) GetNodesOk() ([]map[string]interface{}, bool) {
+func (o *GraphDataResponse) GetNodesOk() ([]MemoryGraphNode, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -72,14 +72,14 @@ func (o *GraphDataResponse) GetNodesOk() ([]map[string]interface{}, bool) {
 }
 
 // SetNodes sets field value
-func (o *GraphDataResponse) SetNodes(v []map[string]interface{}) {
+func (o *GraphDataResponse) SetNodes(v []MemoryGraphNode) {
 	o.Nodes = v
 }
 
 // GetEdges returns the Edges field value
-func (o *GraphDataResponse) GetEdges() []map[string]interface{} {
+func (o *GraphDataResponse) GetEdges() []MemoryGraphEdge {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []MemoryGraphEdge
 		return ret
 	}
 
@@ -88,7 +88,7 @@ func (o *GraphDataResponse) GetEdges() []map[string]interface{} {
 
 // GetEdgesOk returns a tuple with the Edges field value
 // and a boolean to check if the value has been set.
-func (o *GraphDataResponse) GetEdgesOk() ([]map[string]interface{}, bool) {
+func (o *GraphDataResponse) GetEdgesOk() ([]MemoryGraphEdge, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -96,14 +96,14 @@ func (o *GraphDataResponse) GetEdgesOk() ([]map[string]interface{}, bool) {
 }
 
 // SetEdges sets field value
-func (o *GraphDataResponse) SetEdges(v []map[string]interface{}) {
+func (o *GraphDataResponse) SetEdges(v []MemoryGraphEdge) {
 	o.Edges = v
 }
 
 // GetTableRows returns the TableRows field value
-func (o *GraphDataResponse) GetTableRows() []map[string]interface{} {
+func (o *GraphDataResponse) GetTableRows() []MemoryGraphTableRow {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []MemoryGraphTableRow
 		return ret
 	}
 
@@ -112,7 +112,7 @@ func (o *GraphDataResponse) GetTableRows() []map[string]interface{} {
 
 // GetTableRowsOk returns a tuple with the TableRows field value
 // and a boolean to check if the value has been set.
-func (o *GraphDataResponse) GetTableRowsOk() ([]map[string]interface{}, bool) {
+func (o *GraphDataResponse) GetTableRowsOk() ([]MemoryGraphTableRow, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -120,7 +120,7 @@ func (o *GraphDataResponse) GetTableRowsOk() ([]map[string]interface{}, bool) {
 }
 
 // SetTableRows sets field value
-func (o *GraphDataResponse) SetTableRows(v []map[string]interface{}) {
+func (o *GraphDataResponse) SetTableRows(v []MemoryGraphTableRow) {
 	o.TableRows = v
 }
 

@@ -19,6 +19,8 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.entity_graph_edge import EntityGraphEdge
+from hindsight_client_api.models.entity_graph_node import EntityGraphNode
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,8 +28,8 @@ class EntityGraphResponse(BaseModel):
     """
     Response model for entity co-occurrence graph endpoint.
     """ # noqa: E501
-    nodes: List[Dict[str, Any]]
-    edges: List[Dict[str, Any]]
+    nodes: List[EntityGraphNode]
+    edges: List[EntityGraphEdge]
     total_entities: StrictInt
     total_edges: StrictInt
     limit: StrictInt
@@ -72,6 +74,20 @@ class EntityGraphResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in nodes (list)
+        _items = []
+        if self.nodes:
+            for _item_nodes in self.nodes:
+                if _item_nodes:
+                    _items.append(_item_nodes.to_dict())
+            _dict['nodes'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in edges (list)
+        _items = []
+        if self.edges:
+            for _item_edges in self.edges:
+                if _item_edges:
+                    _items.append(_item_edges.to_dict())
+            _dict['edges'] = _items
         return _dict
 
     @classmethod
@@ -84,8 +100,8 @@ class EntityGraphResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "nodes": obj.get("nodes"),
-            "edges": obj.get("edges"),
+            "nodes": [EntityGraphNode.from_dict(_item) for _item in obj["nodes"]] if obj.get("nodes") is not None else None,
+            "edges": [EntityGraphEdge.from_dict(_item) for _item in obj["edges"]] if obj.get("edges") is not None else None,
             "total_entities": obj.get("total_entities"),
             "total_edges": obj.get("total_edges"),
             "limit": obj.get("limit")

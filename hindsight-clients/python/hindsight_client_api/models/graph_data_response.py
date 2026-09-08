@@ -19,6 +19,9 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.memory_graph_edge import MemoryGraphEdge
+from hindsight_client_api.models.memory_graph_node import MemoryGraphNode
+from hindsight_client_api.models.memory_graph_table_row import MemoryGraphTableRow
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,9 +29,9 @@ class GraphDataResponse(BaseModel):
     """
     Response model for graph data endpoint.
     """ # noqa: E501
-    nodes: List[Dict[str, Any]]
-    edges: List[Dict[str, Any]]
-    table_rows: List[Dict[str, Any]]
+    nodes: List[MemoryGraphNode]
+    edges: List[MemoryGraphEdge]
+    table_rows: List[MemoryGraphTableRow]
     total_units: StrictInt
     limit: StrictInt
     __properties: ClassVar[List[str]] = ["nodes", "edges", "table_rows", "total_units", "limit"]
@@ -72,6 +75,27 @@ class GraphDataResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in nodes (list)
+        _items = []
+        if self.nodes:
+            for _item_nodes in self.nodes:
+                if _item_nodes:
+                    _items.append(_item_nodes.to_dict())
+            _dict['nodes'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in edges (list)
+        _items = []
+        if self.edges:
+            for _item_edges in self.edges:
+                if _item_edges:
+                    _items.append(_item_edges.to_dict())
+            _dict['edges'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in table_rows (list)
+        _items = []
+        if self.table_rows:
+            for _item_table_rows in self.table_rows:
+                if _item_table_rows:
+                    _items.append(_item_table_rows.to_dict())
+            _dict['table_rows'] = _items
         return _dict
 
     @classmethod
@@ -84,9 +108,9 @@ class GraphDataResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "nodes": obj.get("nodes"),
-            "edges": obj.get("edges"),
-            "table_rows": obj.get("table_rows"),
+            "nodes": [MemoryGraphNode.from_dict(_item) for _item in obj["nodes"]] if obj.get("nodes") is not None else None,
+            "edges": [MemoryGraphEdge.from_dict(_item) for _item in obj["edges"]] if obj.get("edges") is not None else None,
+            "table_rows": [MemoryGraphTableRow.from_dict(_item) for _item in obj["table_rows"]] if obj.get("table_rows") is not None else None,
             "total_units": obj.get("total_units"),
             "limit": obj.get("limit")
         })

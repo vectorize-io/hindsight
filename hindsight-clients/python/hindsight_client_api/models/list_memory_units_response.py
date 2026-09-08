@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.memory_unit_list_item import MemoryUnitListItem
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,7 +27,7 @@ class ListMemoryUnitsResponse(BaseModel):
     """
     Response model for list memory units endpoint.
     """ # noqa: E501
-    items: List[Dict[str, Any]]
+    items: List[MemoryUnitListItem]
     total: StrictInt
     limit: StrictInt
     offset: StrictInt
@@ -71,6 +72,13 @@ class ListMemoryUnitsResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in items (list)
+        _items = []
+        if self.items:
+            for _item_items in self.items:
+                if _item_items:
+                    _items.append(_item_items.to_dict())
+            _dict['items'] = _items
         return _dict
 
     @classmethod
@@ -83,7 +91,7 @@ class ListMemoryUnitsResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "items": obj.get("items"),
+            "items": [MemoryUnitListItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
             "total": obj.get("total"),
             "limit": obj.get("limit"),
             "offset": obj.get("offset")

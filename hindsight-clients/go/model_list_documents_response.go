@@ -21,7 +21,7 @@ var _ MappedNullable = &ListDocumentsResponse{}
 
 // ListDocumentsResponse Response model for list documents endpoint.
 type ListDocumentsResponse struct {
-	Items []map[string]interface{} `json:"items"`
+	Items []DocumentListItem `json:"items"`
 	Total int32 `json:"total"`
 	Limit int32 `json:"limit"`
 	Offset int32 `json:"offset"`
@@ -33,7 +33,7 @@ type _ListDocumentsResponse ListDocumentsResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewListDocumentsResponse(items []map[string]interface{}, total int32, limit int32, offset int32) *ListDocumentsResponse {
+func NewListDocumentsResponse(items []DocumentListItem, total int32, limit int32, offset int32) *ListDocumentsResponse {
 	this := ListDocumentsResponse{}
 	this.Items = items
 	this.Total = total
@@ -51,9 +51,9 @@ func NewListDocumentsResponseWithDefaults() *ListDocumentsResponse {
 }
 
 // GetItems returns the Items field value
-func (o *ListDocumentsResponse) GetItems() []map[string]interface{} {
+func (o *ListDocumentsResponse) GetItems() []DocumentListItem {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []DocumentListItem
 		return ret
 	}
 
@@ -62,7 +62,7 @@ func (o *ListDocumentsResponse) GetItems() []map[string]interface{} {
 
 // GetItemsOk returns a tuple with the Items field value
 // and a boolean to check if the value has been set.
-func (o *ListDocumentsResponse) GetItemsOk() ([]map[string]interface{}, bool) {
+func (o *ListDocumentsResponse) GetItemsOk() ([]DocumentListItem, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -70,7 +70,7 @@ func (o *ListDocumentsResponse) GetItemsOk() ([]map[string]interface{}, bool) {
 }
 
 // SetItems sets field value
-func (o *ListDocumentsResponse) SetItems(v []map[string]interface{}) {
+func (o *ListDocumentsResponse) SetItems(v []DocumentListItem) {
 	o.Items = v
 }
 

@@ -1762,6 +1762,81 @@ export type DocumentImportSubmitResponse = {
 };
 
 /**
+ * DocumentListItem
+ *
+ * One row of the document listing — a document's metadata without its text.
+ *
+ * Extra keys are allowed and passed through: the rows used to be an open object, and
+ * typing them must not drop a field an older or newer server also returns.
+ */
+export type DocumentListItem = {
+  /**
+   * Id
+   *
+   * Document ID
+   */
+  id: string;
+  /**
+   * Bank Id
+   *
+   * Bank the document belongs to
+   */
+  bank_id?: string;
+  /**
+   * Content Hash
+   *
+   * Hash of the document text, for idempotent retain
+   */
+  content_hash?: string | null;
+  /**
+   * Created At
+   *
+   * When the document was first retained (ISO 8601)
+   */
+  created_at?: string;
+  /**
+   * Updated At
+   *
+   * When the document was last written (ISO 8601)
+   */
+  updated_at?: string;
+  /**
+   * Text Length
+   *
+   * Length of the stored document text in characters
+   */
+  text_length?: number;
+  /**
+   * Memory Unit Count
+   *
+   * Number of memory units extracted from this document
+   */
+  memory_unit_count?: number;
+  /**
+   * Retain Params
+   *
+   * Parameters used during retain
+   */
+  retain_params?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Document Metadata
+   *
+   * Document metadata
+   */
+  document_metadata?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Tags
+   *
+   * Tags associated with this document
+   */
+  tags?: Array<string>;
+};
+
+/**
  * DocumentResponse
  *
  * Response model for get document endpoint.
@@ -1981,6 +2056,115 @@ export type EntityDetailResponse = {
 };
 
 /**
+ * EntityGraphEdge
+ *
+ * A co-occurrence edge, in the Cytoscape ``{"data": {...}}`` envelope the graph uses.
+ */
+export type EntityGraphEdge = {
+  data: EntityGraphEdgeData;
+};
+
+/**
+ * EntityGraphEdgeData
+ *
+ * The payload of one co-occurrence edge.
+ */
+export type EntityGraphEdgeData = {
+  /**
+   * Id
+   *
+   * Edge ID (``<source>-<target>``)
+   */
+  id: string;
+  /**
+   * Source
+   *
+   * Source entity ID
+   */
+  source: string;
+  /**
+   * Target
+   *
+   * Target entity ID
+   */
+  target: string;
+  /**
+   * Linktype
+   *
+   * Kind of relationship this edge represents
+   */
+  linkType?: string;
+  /**
+   * Weight
+   *
+   * Number of co-occurrences between the two entities
+   */
+  weight?: number;
+  /**
+   * Color
+   *
+   * Suggested edge colour for rendering
+   */
+  color?: string | null;
+  /**
+   * Linestyle
+   *
+   * Suggested edge line style for rendering
+   */
+  lineStyle?: string | null;
+  /**
+   * Lastcooccurred
+   *
+   * ISO 8601 timestamp of the most recent co-occurrence
+   */
+  lastCooccurred?: string | null;
+};
+
+/**
+ * EntityGraphNode
+ *
+ * An entity node, in the Cytoscape ``{"data": {...}}`` envelope the graph uses.
+ */
+export type EntityGraphNode = {
+  data: EntityGraphNodeData;
+};
+
+/**
+ * EntityGraphNodeData
+ *
+ * The payload of one entity node in the co-occurrence graph.
+ *
+ * Extra keys are allowed and passed through: the graph payload has always been an open
+ * object, and typing it must not drop a field an older or newer server also returns.
+ */
+export type EntityGraphNodeData = {
+  /**
+   * Id
+   *
+   * Entity ID
+   */
+  id: string;
+  /**
+   * Label
+   *
+   * Entity canonical name
+   */
+  label?: string;
+  /**
+   * Mentioncount
+   *
+   * How many times this entity was mentioned
+   */
+  mentionCount?: number;
+  /**
+   * Color
+   *
+   * Suggested node colour for rendering
+   */
+  color?: string | null;
+};
+
+/**
  * EntityGraphResponse
  *
  * Response model for entity co-occurrence graph endpoint.
@@ -1989,15 +2173,11 @@ export type EntityGraphResponse = {
   /**
    * Nodes
    */
-  nodes: Array<{
-    [key: string]: unknown;
-  }>;
+  nodes: Array<EntityGraphNode>;
   /**
    * Edges
    */
-  edges: Array<{
-    [key: string]: unknown;
-  }>;
+  edges: Array<EntityGraphEdge>;
   /**
    * Total Entities
    */
@@ -2338,21 +2518,15 @@ export type GraphDataResponse = {
   /**
    * Nodes
    */
-  nodes: Array<{
-    [key: string]: unknown;
-  }>;
+  nodes: Array<MemoryGraphNode>;
   /**
    * Edges
    */
-  edges: Array<{
-    [key: string]: unknown;
-  }>;
+  edges: Array<MemoryGraphEdge>;
   /**
    * Table Rows
    */
-  table_rows: Array<{
-    [key: string]: unknown;
-  }>;
+  table_rows: Array<MemoryGraphTableRow>;
   /**
    * Total Units
    */
@@ -2962,9 +3136,7 @@ export type ListDocumentsResponse = {
   /**
    * Items
    */
-  items: Array<{
-    [key: string]: unknown;
-  }>;
+  items: Array<DocumentListItem>;
   /**
    * Total
    */
@@ -2988,9 +3160,7 @@ export type ListMemoryUnitsResponse = {
   /**
    * Items
    */
-  items: Array<{
-    [key: string]: unknown;
-  }>;
+  items: Array<MemoryUnitListItem>;
   /**
    * Total
    */
@@ -3177,6 +3347,225 @@ export type MemoriesTimeseriesResponse = {
 };
 
 /**
+ * MemoryGraphEdge
+ *
+ * An edge between two memory units, in the Cytoscape ``{"data": {...}}`` envelope.
+ */
+export type MemoryGraphEdge = {
+  data: MemoryGraphEdgeData;
+};
+
+/**
+ * MemoryGraphEdgeData
+ *
+ * The payload of one edge between two memory units.
+ */
+export type MemoryGraphEdgeData = {
+  /**
+   * Id
+   *
+   * Edge ID (``<source>-<target>-<linkType>``)
+   */
+  id: string;
+  /**
+   * Source
+   *
+   * Source memory unit ID
+   */
+  source: string;
+  /**
+   * Target
+   *
+   * Target memory unit ID
+   */
+  target: string;
+  /**
+   * Linktype
+   *
+   * Link kind: 'entity', 'semantic', 'temporal', ...
+   */
+  linkType?: string;
+  /**
+   * Weight
+   *
+   * Link strength
+   */
+  weight?: number;
+  /**
+   * Entityname
+   *
+   * Shared entity for an 'entity' link, empty otherwise
+   */
+  entityName?: string;
+  /**
+   * Color
+   *
+   * Suggested edge colour for rendering
+   */
+  color?: string | null;
+  /**
+   * Linestyle
+   *
+   * Suggested edge line style for rendering
+   */
+  lineStyle?: string | null;
+};
+
+/**
+ * MemoryGraphNode
+ *
+ * A memory-unit node, in the Cytoscape ``{"data": {...}}`` envelope the graph uses.
+ */
+export type MemoryGraphNode = {
+  data: MemoryGraphNodeData;
+};
+
+/**
+ * MemoryGraphNodeData
+ *
+ * The payload of one memory-unit node in the memory graph.
+ *
+ * Extra keys are allowed and passed through, so typing this never drops a field the
+ * server also returns.
+ */
+export type MemoryGraphNodeData = {
+  /**
+   * Id
+   *
+   * Memory unit ID
+   */
+  id: string;
+  /**
+   * Label
+   *
+   * Short display label (the text, truncated)
+   */
+  label?: string;
+  /**
+   * Text
+   *
+   * Full memory unit text
+   */
+  text?: string;
+  /**
+   * Date
+   *
+   * Event date (ISO 8601), empty when unknown
+   */
+  date?: string;
+  /**
+   * Context
+   *
+   * Context the memory was captured in
+   */
+  context?: string;
+  /**
+   * Entities
+   *
+   * Comma-separated entity names, 'None' when there are none
+   */
+  entities?: string;
+  /**
+   * Color
+   *
+   * Suggested node colour for rendering
+   */
+  color?: string | null;
+};
+
+/**
+ * MemoryGraphTableRow
+ *
+ * One row of the flat table view that accompanies the memory graph.
+ */
+export type MemoryGraphTableRow = {
+  /**
+   * Id
+   *
+   * Memory unit ID
+   */
+  id: string;
+  /**
+   * Text
+   *
+   * Memory unit text
+   */
+  text?: string;
+  /**
+   * Context
+   *
+   * Context the memory was captured in ('N/A' when absent)
+   */
+  context?: string;
+  /**
+   * Occurred Start
+   *
+   * Start of the event interval (ISO 8601)
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * End of the event interval (ISO 8601)
+   */
+  occurred_end?: string | null;
+  /**
+   * Mentioned At
+   *
+   * When the memory was mentioned (ISO 8601)
+   */
+  mentioned_at?: string | null;
+  /**
+   * Date
+   *
+   * Deprecated: formatted event date, kept for backwards compatibility
+   */
+  date?: string | null;
+  /**
+   * Entities
+   *
+   * Comma-separated entity names, 'None' when there are none
+   */
+  entities?: string;
+  /**
+   * Document Id
+   *
+   * Source document ID
+   */
+  document_id?: string | null;
+  /**
+   * Chunk Id
+   *
+   * Source chunk ID
+   */
+  chunk_id?: string | null;
+  /**
+   * Fact Type
+   *
+   * Fact type: world, experience or observation
+   */
+  fact_type?: string | null;
+  /**
+   * Tags
+   *
+   * Tags on this memory unit
+   */
+  tags?: Array<string>;
+  /**
+   * Created At
+   *
+   * When the memory unit was created (ISO 8601)
+   */
+  created_at?: string | null;
+  /**
+   * Proof Count
+   *
+   * How many times the fact was independently seen
+   */
+  proof_count?: number | null;
+};
+
+/**
  * MemoryItem
  *
  * Single memory item for retain.
@@ -3302,6 +3691,151 @@ export type MemoryTimeseriesBucket = {
    * Observations recorded in this bucket.
    */
   observation?: number;
+};
+
+/**
+ * MemoryUnitListItem
+ *
+ * One row of the memory-unit listing.
+ *
+ * Extra keys are allowed and passed through: the rows used to be an open object, and
+ * typing them must not drop a field an older or newer server also returns.
+ */
+export type MemoryUnitListItem = {
+  /**
+   * Id
+   *
+   * Memory unit ID
+   */
+  id: string;
+  /**
+   * Text
+   *
+   * The fact text
+   */
+  text?: string;
+  /**
+   * Context
+   *
+   * Context the memory was captured in
+   */
+  context?: string;
+  /**
+   * Date
+   *
+   * Event date (ISO 8601), empty when unknown
+   */
+  date?: string;
+  /**
+   * Fact Type
+   *
+   * Fact type: world, experience or observation
+   */
+  fact_type?: string | null;
+  /**
+   * Document Id
+   *
+   * Source document ID
+   */
+  document_id?: string | null;
+  /**
+   * Mentioned At
+   *
+   * When the memory was mentioned (ISO 8601)
+   */
+  mentioned_at?: string | null;
+  /**
+   * Occurred Start
+   *
+   * Start of the event interval (ISO 8601)
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * End of the event interval (ISO 8601)
+   */
+  occurred_end?: string | null;
+  /**
+   * Entities
+   *
+   * Comma-separated canonical entity names
+   */
+  entities?: string;
+  /**
+   * Chunk Id
+   *
+   * Source chunk ID
+   */
+  chunk_id?: string | null;
+  /**
+   * Proof Count
+   *
+   * How many times the fact was independently seen
+   */
+  proof_count?: number;
+  /**
+   * Tags
+   *
+   * Tags on this memory unit
+   */
+  tags?: Array<string>;
+  /**
+   * Metadata
+   *
+   * Arbitrary metadata stored with the memory
+   */
+  metadata?: {
+    [key: string]: unknown;
+  };
+  /**
+   * Consolidated At
+   *
+   * When consolidation last succeeded (ISO 8601)
+   */
+  consolidated_at?: string | null;
+  /**
+   * Consolidation Failed At
+   *
+   * When consolidation last failed permanently (ISO 8601)
+   */
+  consolidation_failed_at?: string | null;
+  /**
+   * State
+   *
+   * Curation state: 'valid' or 'invalidated'
+   */
+  state?: string;
+  /**
+   * Invalidation Reason
+   *
+   * Why the fact was invalidated, if it was
+   */
+  invalidation_reason?: string | null;
+  /**
+   * Invalidated At
+   *
+   * When the fact was invalidated (ISO 8601)
+   */
+  invalidated_at?: string | null;
+  /**
+   * Edited At
+   *
+   * When the fact was last edited by hand (ISO 8601)
+   */
+  edited_at?: string | null;
+  /**
+   * Updated At
+   *
+   * Write watermark for this row (ISO 8601)
+   */
+  updated_at?: string | null;
+  /**
+   * Source Memory Ids
+   *
+   * An observation's source facts; empty for a source fact
+   */
+  source_memory_ids?: Array<string>;
 };
 
 /**

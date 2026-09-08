@@ -17,21 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict
 from typing import Any, ClassVar, Dict, List
-from hindsight_client_api.models.document_list_item import DocumentListItem
+from hindsight_client_api.models.entity_graph_node_data import EntityGraphNodeData
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ListDocumentsResponse(BaseModel):
+class EntityGraphNode(BaseModel):
     """
-    Response model for list documents endpoint.
+    An entity node, in the Cytoscape ``{\"data\": {...}}`` envelope the graph uses.
     """ # noqa: E501
-    items: List[DocumentListItem]
-    total: StrictInt
-    limit: StrictInt
-    offset: StrictInt
-    __properties: ClassVar[List[str]] = ["items", "total", "limit", "offset"]
+    data: EntityGraphNodeData
+    __properties: ClassVar[List[str]] = ["data"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -51,7 +48,7 @@ class ListDocumentsResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ListDocumentsResponse from a JSON string"""
+        """Create an instance of EntityGraphNode from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,18 +69,14 @@ class ListDocumentsResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in items (list)
-        _items = []
-        if self.items:
-            for _item_items in self.items:
-                if _item_items:
-                    _items.append(_item_items.to_dict())
-            _dict['items'] = _items
+        # override the default output from pydantic by calling `to_dict()` of data
+        if self.data:
+            _dict['data'] = self.data.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ListDocumentsResponse from a dict"""
+        """Create an instance of EntityGraphNode from a dict"""
         if obj is None:
             return None
 
@@ -91,10 +84,7 @@ class ListDocumentsResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "items": [DocumentListItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
-            "total": obj.get("total"),
-            "limit": obj.get("limit"),
-            "offset": obj.get("offset")
+            "data": EntityGraphNodeData.from_dict(obj["data"]) if obj.get("data") is not None else None
         })
         return _obj
 

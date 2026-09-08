@@ -149,10 +149,7 @@ pub fn list(
                     println!("  {}", ui::dim("No memories found."));
                 } else {
                     for item in &result.items {
-                        let fact_type = item
-                            .get("fact_type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
+                        let fact_type = item.fact_type.as_deref().unwrap_or("unknown");
                         let type_t = match fact_type {
                             "world" => 0.0,
                             "experience" => 0.5,
@@ -161,22 +158,20 @@ pub fn list(
                             _ => 0.5,
                         };
 
-                        let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-
                         println!(
                             "  {} {}",
                             ui::gradient(&format!("[{}]", fact_type.to_uppercase()), type_t),
-                            ui::dim(id)
+                            ui::dim(&item.id)
                         );
 
                         // Truncate text if too long
-                        if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                            let text_preview: String = text.chars().take(100).collect();
-                            let ellipsis = if text.len() > 100 { "..." } else { "" };
+                        if !item.text.is_empty() {
+                            let text_preview: String = item.text.chars().take(100).collect();
+                            let ellipsis = if item.text.len() > 100 { "..." } else { "" };
                             println!("    {}{}", text_preview, ellipsis);
                         }
 
-                        if let Some(doc_id) = item.get("document_id").and_then(|v| v.as_str()) {
+                        if let Some(doc_id) = item.document_id.as_deref() {
                             println!("    {} {}", ui::dim("doc:"), ui::dim(doc_id));
                         }
                         println!();

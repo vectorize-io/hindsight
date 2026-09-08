@@ -21,7 +21,7 @@ var _ MappedNullable = &ListMemoryUnitsResponse{}
 
 // ListMemoryUnitsResponse Response model for list memory units endpoint.
 type ListMemoryUnitsResponse struct {
-	Items []map[string]interface{} `json:"items"`
+	Items []MemoryUnitListItem `json:"items"`
 	Total int32 `json:"total"`
 	Limit int32 `json:"limit"`
 	Offset int32 `json:"offset"`
@@ -33,7 +33,7 @@ type _ListMemoryUnitsResponse ListMemoryUnitsResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewListMemoryUnitsResponse(items []map[string]interface{}, total int32, limit int32, offset int32) *ListMemoryUnitsResponse {
+func NewListMemoryUnitsResponse(items []MemoryUnitListItem, total int32, limit int32, offset int32) *ListMemoryUnitsResponse {
 	this := ListMemoryUnitsResponse{}
 	this.Items = items
 	this.Total = total
@@ -51,9 +51,9 @@ func NewListMemoryUnitsResponseWithDefaults() *ListMemoryUnitsResponse {
 }
 
 // GetItems returns the Items field value
-func (o *ListMemoryUnitsResponse) GetItems() []map[string]interface{} {
+func (o *ListMemoryUnitsResponse) GetItems() []MemoryUnitListItem {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []MemoryUnitListItem
 		return ret
 	}
 
@@ -62,7 +62,7 @@ func (o *ListMemoryUnitsResponse) GetItems() []map[string]interface{} {
 
 // GetItemsOk returns a tuple with the Items field value
 // and a boolean to check if the value has been set.
-func (o *ListMemoryUnitsResponse) GetItemsOk() ([]map[string]interface{}, bool) {
+func (o *ListMemoryUnitsResponse) GetItemsOk() ([]MemoryUnitListItem, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -70,7 +70,7 @@ func (o *ListMemoryUnitsResponse) GetItemsOk() ([]map[string]interface{}, bool) 
 }
 
 // SetItems sets field value
-func (o *ListMemoryUnitsResponse) SetItems(v []map[string]interface{}) {
+func (o *ListMemoryUnitsResponse) SetItems(v []MemoryUnitListItem) {
 	o.Items = v
 }
 

@@ -21,8 +21,8 @@ var _ MappedNullable = &EntityGraphResponse{}
 
 // EntityGraphResponse Response model for entity co-occurrence graph endpoint.
 type EntityGraphResponse struct {
-	Nodes []map[string]interface{} `json:"nodes"`
-	Edges []map[string]interface{} `json:"edges"`
+	Nodes []EntityGraphNode `json:"nodes"`
+	Edges []EntityGraphEdge `json:"edges"`
 	TotalEntities int32 `json:"total_entities"`
 	TotalEdges int32 `json:"total_edges"`
 	Limit int32 `json:"limit"`
@@ -34,7 +34,7 @@ type _EntityGraphResponse EntityGraphResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewEntityGraphResponse(nodes []map[string]interface{}, edges []map[string]interface{}, totalEntities int32, totalEdges int32, limit int32) *EntityGraphResponse {
+func NewEntityGraphResponse(nodes []EntityGraphNode, edges []EntityGraphEdge, totalEntities int32, totalEdges int32, limit int32) *EntityGraphResponse {
 	this := EntityGraphResponse{}
 	this.Nodes = nodes
 	this.Edges = edges
@@ -53,9 +53,9 @@ func NewEntityGraphResponseWithDefaults() *EntityGraphResponse {
 }
 
 // GetNodes returns the Nodes field value
-func (o *EntityGraphResponse) GetNodes() []map[string]interface{} {
+func (o *EntityGraphResponse) GetNodes() []EntityGraphNode {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []EntityGraphNode
 		return ret
 	}
 
@@ -64,7 +64,7 @@ func (o *EntityGraphResponse) GetNodes() []map[string]interface{} {
 
 // GetNodesOk returns a tuple with the Nodes field value
 // and a boolean to check if the value has been set.
-func (o *EntityGraphResponse) GetNodesOk() ([]map[string]interface{}, bool) {
+func (o *EntityGraphResponse) GetNodesOk() ([]EntityGraphNode, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -72,14 +72,14 @@ func (o *EntityGraphResponse) GetNodesOk() ([]map[string]interface{}, bool) {
 }
 
 // SetNodes sets field value
-func (o *EntityGraphResponse) SetNodes(v []map[string]interface{}) {
+func (o *EntityGraphResponse) SetNodes(v []EntityGraphNode) {
 	o.Nodes = v
 }
 
 // GetEdges returns the Edges field value
-func (o *EntityGraphResponse) GetEdges() []map[string]interface{} {
+func (o *EntityGraphResponse) GetEdges() []EntityGraphEdge {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []EntityGraphEdge
 		return ret
 	}
 
@@ -88,7 +88,7 @@ func (o *EntityGraphResponse) GetEdges() []map[string]interface{} {
 
 // GetEdgesOk returns a tuple with the Edges field value
 // and a boolean to check if the value has been set.
-func (o *EntityGraphResponse) GetEdgesOk() ([]map[string]interface{}, bool) {
+func (o *EntityGraphResponse) GetEdgesOk() ([]EntityGraphEdge, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -96,7 +96,7 @@ func (o *EntityGraphResponse) GetEdgesOk() ([]map[string]interface{}, bool) {
 }
 
 // SetEdges sets field value
-func (o *EntityGraphResponse) SetEdges(v []map[string]interface{}) {
+func (o *EntityGraphResponse) SetEdges(v []EntityGraphEdge) {
 	o.Edges = v
 }
 

@@ -6598,6 +6598,60 @@ components:
       required:
       - operation_id
       title: DocumentImportSubmitResponse
+    DocumentListItem:
+      description: |-
+        One row of the document listing — a document's metadata without its text.
+
+        Extra keys are allowed and passed through: the rows used to be an open object, and
+        typing them must not drop a field an older or newer server also returns.
+      properties:
+        id:
+          description: Document ID
+          title: Id
+          type: string
+        bank_id:
+          default: ""
+          description: Bank the document belongs to
+          title: Bank Id
+          type: string
+        content_hash:
+          nullable: true
+          type: string
+        created_at:
+          default: ""
+          description: When the document was first retained (ISO 8601)
+          title: Created At
+          type: string
+        updated_at:
+          default: ""
+          description: When the document was last written (ISO 8601)
+          title: Updated At
+          type: string
+        text_length:
+          default: 0
+          description: Length of the stored document text in characters
+          title: Text Length
+          type: integer
+        memory_unit_count:
+          default: 0
+          description: Number of memory units extracted from this document
+          title: Memory Unit Count
+          type: integer
+        retain_params:
+          additionalProperties: {}
+          nullable: true
+        document_metadata:
+          additionalProperties: {}
+          nullable: true
+        tags:
+          default: []
+          description: Tags associated with this document
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      title: DocumentListItem
     DocumentResponse:
       description: Response model for get document endpoint.
       example:
@@ -6870,6 +6924,90 @@ components:
       - mention_count
       - observations
       title: EntityDetailResponse
+    EntityGraphEdge:
+      description: "A co-occurrence edge, in the Cytoscape ``{\"data\": {...}}`` envelope\
+        \ the graph uses."
+      properties:
+        data:
+          $ref: '#/components/schemas/EntityGraphEdgeData'
+      required:
+      - data
+      title: EntityGraphEdge
+    EntityGraphEdgeData:
+      description: The payload of one co-occurrence edge.
+      properties:
+        id:
+          description: Edge ID (``<source>-<target>``)
+          title: Id
+          type: string
+        source:
+          description: Source entity ID
+          title: Source
+          type: string
+        target:
+          description: Target entity ID
+          title: Target
+          type: string
+        linkType:
+          default: cooccurrence
+          description: Kind of relationship this edge represents
+          title: Linktype
+          type: string
+        weight:
+          default: 0
+          description: Number of co-occurrences between the two entities
+          title: Weight
+          type: integer
+        color:
+          nullable: true
+          type: string
+        lineStyle:
+          nullable: true
+          type: string
+        lastCooccurred:
+          nullable: true
+          type: string
+      required:
+      - id
+      - source
+      - target
+      title: EntityGraphEdgeData
+    EntityGraphNode:
+      description: "An entity node, in the Cytoscape ``{\"data\": {...}}`` envelope\
+        \ the graph uses."
+      properties:
+        data:
+          $ref: '#/components/schemas/EntityGraphNodeData'
+      required:
+      - data
+      title: EntityGraphNode
+    EntityGraphNodeData:
+      description: |-
+        The payload of one entity node in the co-occurrence graph.
+
+        Extra keys are allowed and passed through: the graph payload has always been an open
+        object, and typing it must not drop a field an older or newer server also returns.
+      properties:
+        id:
+          description: Entity ID
+          title: Id
+          type: string
+        label:
+          default: ""
+          description: Entity canonical name
+          title: Label
+          type: string
+        mentionCount:
+          default: 0
+          description: How many times this entity was mentioned
+          title: Mentioncount
+          type: integer
+        color:
+          nullable: true
+          type: string
+      required:
+      - id
+      title: EntityGraphNodeData
     EntityGraphResponse:
       description: Response model for entity co-occurrence graph endpoint.
       example:
@@ -6900,11 +7038,11 @@ components:
       properties:
         nodes:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/EntityGraphNode'
           type: array
         edges:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/EntityGraphEdge'
           type: array
         total_entities:
           title: Total Entities
@@ -7210,18 +7348,22 @@ components:
       description: Response model for graph data endpoint.
       example:
         edges:
-        - from: "1"
-          to: "2"
-          type: semantic
-          weight: 0.8
+        - data:
+            id: 1-2-semantic
+            linkType: semantic
+            source: "1"
+            target: "2"
+            weight: 0.8
         limit: 1000
         nodes:
-        - id: "1"
-          label: Alice works at Google
-          type: world
-        - id: "2"
-          label: Bob went hiking
-          type: world
+        - data:
+            id: "1"
+            label: Alice works at Google
+            text: Alice works at Google
+        - data:
+            id: "2"
+            label: Bob went hiking
+            text: Bob went hiking
         table_rows:
         - context: Work info
           date: 2024-01-15 10:30
@@ -7232,15 +7374,15 @@ components:
       properties:
         nodes:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/MemoryGraphNode'
           type: array
         edges:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/MemoryGraphEdge'
           type: array
         table_rows:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/MemoryGraphTableRow'
           type: array
         total_units:
           title: Total Units
@@ -8146,7 +8288,7 @@ components:
       properties:
         items:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/DocumentListItem'
           type: array
         total:
           title: Total
@@ -8169,20 +8311,23 @@ components:
         items:
         - context: Work conversation
           date: 2024-01-15T10:30:00Z
-          entities: "Alice (PERSON), Google (ORGANIZATION)"
+          entities: "Alice, Google"
+          fact_type: world
           id: 550e8400-e29b-41d4-a716-446655440000
           metadata:
             channel: engineering
             source: slack
+          state: valid
+          tags:
+          - user:alice
           text: Alice works at Google on the AI team
-          type: world
         limit: 100
         offset: 0
         total: 150
       properties:
         items:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/MemoryUnitListItem'
           type: array
         total:
           title: Total
@@ -8409,6 +8554,165 @@ components:
       - period
       - trunc
       title: MemoriesTimeseriesResponse
+    MemoryGraphEdge:
+      description: "An edge between two memory units, in the Cytoscape ``{\"data\"\
+        : {...}}`` envelope."
+      properties:
+        data:
+          $ref: '#/components/schemas/MemoryGraphEdgeData'
+      required:
+      - data
+      title: MemoryGraphEdge
+    MemoryGraphEdgeData:
+      description: The payload of one edge between two memory units.
+      properties:
+        id:
+          description: Edge ID (``<source>-<target>-<linkType>``)
+          title: Id
+          type: string
+        source:
+          description: Source memory unit ID
+          title: Source
+          type: string
+        target:
+          description: Target memory unit ID
+          title: Target
+          type: string
+        linkType:
+          default: ""
+          description: "Link kind: 'entity', 'semantic', 'temporal', ..."
+          title: Linktype
+          type: string
+        weight:
+          default: 0.0
+          description: Link strength
+          title: Weight
+          type: number
+        entityName:
+          default: ""
+          description: "Shared entity for an 'entity' link, empty otherwise"
+          title: Entityname
+          type: string
+        color:
+          nullable: true
+          type: string
+        lineStyle:
+          nullable: true
+          type: string
+      required:
+      - id
+      - source
+      - target
+      title: MemoryGraphEdgeData
+    MemoryGraphNode:
+      description: "A memory-unit node, in the Cytoscape ``{\"data\": {...}}`` envelope\
+        \ the graph uses."
+      properties:
+        data:
+          $ref: '#/components/schemas/MemoryGraphNodeData'
+      required:
+      - data
+      title: MemoryGraphNode
+    MemoryGraphNodeData:
+      description: |-
+        The payload of one memory-unit node in the memory graph.
+
+        Extra keys are allowed and passed through, so typing this never drops a field the
+        server also returns.
+      properties:
+        id:
+          description: Memory unit ID
+          title: Id
+          type: string
+        label:
+          default: ""
+          description: "Short display label (the text, truncated)"
+          title: Label
+          type: string
+        text:
+          default: ""
+          description: Full memory unit text
+          title: Text
+          type: string
+        date:
+          default: ""
+          description: "Event date (ISO 8601), empty when unknown"
+          title: Date
+          type: string
+        context:
+          default: ""
+          description: Context the memory was captured in
+          title: Context
+          type: string
+        entities:
+          default: ""
+          description: "Comma-separated entity names, 'None' when there are none"
+          title: Entities
+          type: string
+        color:
+          nullable: true
+          type: string
+      required:
+      - id
+      title: MemoryGraphNodeData
+    MemoryGraphTableRow:
+      description: One row of the flat table view that accompanies the memory graph.
+      properties:
+        id:
+          description: Memory unit ID
+          title: Id
+          type: string
+        text:
+          default: ""
+          description: Memory unit text
+          title: Text
+          type: string
+        context:
+          default: ""
+          description: Context the memory was captured in ('N/A' when absent)
+          title: Context
+          type: string
+        occurred_start:
+          nullable: true
+          type: string
+        occurred_end:
+          nullable: true
+          type: string
+        mentioned_at:
+          nullable: true
+          type: string
+        date:
+          nullable: true
+          type: string
+        entities:
+          default: ""
+          description: "Comma-separated entity names, 'None' when there are none"
+          title: Entities
+          type: string
+        document_id:
+          nullable: true
+          type: string
+        chunk_id:
+          nullable: true
+          type: string
+        fact_type:
+          nullable: true
+          type: string
+        tags:
+          default: []
+          description: Tags on this memory unit
+          items:
+            type: string
+          type: array
+        created_at:
+          nullable: true
+          type: string
+        proof_count:
+          nullable: true
+          type: integer
+      required:
+      - id
+      title: MemoryGraphTableRow
     MemoryItem:
       description: Single memory item for retain.
       example:
@@ -8509,6 +8813,103 @@ components:
       required:
       - time
       title: MemoryTimeseriesBucket
+    MemoryUnitListItem:
+      description: |-
+        One row of the memory-unit listing.
+
+        Extra keys are allowed and passed through: the rows used to be an open object, and
+        typing them must not drop a field an older or newer server also returns.
+      properties:
+        id:
+          description: Memory unit ID
+          title: Id
+          type: string
+        text:
+          default: ""
+          description: The fact text
+          title: Text
+          type: string
+        context:
+          default: ""
+          description: Context the memory was captured in
+          title: Context
+          type: string
+        date:
+          default: ""
+          description: "Event date (ISO 8601), empty when unknown"
+          title: Date
+          type: string
+        fact_type:
+          nullable: true
+          type: string
+        document_id:
+          nullable: true
+          type: string
+        mentioned_at:
+          nullable: true
+          type: string
+        occurred_start:
+          nullable: true
+          type: string
+        occurred_end:
+          nullable: true
+          type: string
+        entities:
+          default: ""
+          description: Comma-separated canonical entity names
+          title: Entities
+          type: string
+        chunk_id:
+          nullable: true
+          type: string
+        proof_count:
+          default: 1
+          description: How many times the fact was independently seen
+          title: Proof Count
+          type: integer
+        tags:
+          default: []
+          description: Tags on this memory unit
+          items:
+            type: string
+          type: array
+        metadata:
+          additionalProperties: {}
+          default: {}
+          description: Arbitrary metadata stored with the memory
+          title: Metadata
+        consolidated_at:
+          nullable: true
+          type: string
+        consolidation_failed_at:
+          nullable: true
+          type: string
+        state:
+          default: valid
+          description: "Curation state: 'valid' or 'invalidated'"
+          title: State
+          type: string
+        invalidation_reason:
+          nullable: true
+          type: string
+        invalidated_at:
+          nullable: true
+          type: string
+        edited_at:
+          nullable: true
+          type: string
+        updated_at:
+          nullable: true
+          type: string
+        source_memory_ids:
+          default: []
+          description: An observation's source facts; empty for a source fact
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      title: MemoryUnitListItem
     MentalModelDeltaOperations:
       description: Structured operations a delta refresh emitted against the existing
         document.

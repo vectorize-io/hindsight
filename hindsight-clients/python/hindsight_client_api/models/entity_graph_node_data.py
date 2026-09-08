@@ -17,21 +17,20 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt
-from typing import Any, ClassVar, Dict, List
-from hindsight_client_api.models.document_list_item import DocumentListItem
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ListDocumentsResponse(BaseModel):
+class EntityGraphNodeData(BaseModel):
     """
-    Response model for list documents endpoint.
+    The payload of one entity node in the co-occurrence graph.  Extra keys are allowed and passed through: the graph payload has always been an open object, and typing it must not drop a field an older or newer server also returns.
     """ # noqa: E501
-    items: List[DocumentListItem]
-    total: StrictInt
-    limit: StrictInt
-    offset: StrictInt
-    __properties: ClassVar[List[str]] = ["items", "total", "limit", "offset"]
+    id: StrictStr = Field(description="Entity ID")
+    label: Optional[StrictStr] = Field(default='', description="Entity canonical name")
+    mention_count: Optional[StrictInt] = Field(default=0, description="How many times this entity was mentioned", alias="mentionCount")
+    color: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["id", "label", "mentionCount", "color"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -51,7 +50,7 @@ class ListDocumentsResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ListDocumentsResponse from a JSON string"""
+        """Create an instance of EntityGraphNodeData from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,18 +71,16 @@ class ListDocumentsResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in items (list)
-        _items = []
-        if self.items:
-            for _item_items in self.items:
-                if _item_items:
-                    _items.append(_item_items.to_dict())
-            _dict['items'] = _items
+        # set to None if color (nullable) is None
+        # and model_fields_set contains the field
+        if self.color is None and "color" in self.model_fields_set:
+            _dict['color'] = None
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ListDocumentsResponse from a dict"""
+        """Create an instance of EntityGraphNodeData from a dict"""
         if obj is None:
             return None
 
@@ -91,10 +88,10 @@ class ListDocumentsResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "items": [DocumentListItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
-            "total": obj.get("total"),
-            "limit": obj.get("limit"),
-            "offset": obj.get("offset")
+            "id": obj.get("id"),
+            "label": obj.get("label") if obj.get("label") is not None else '',
+            "mentionCount": obj.get("mentionCount") if obj.get("mentionCount") is not None else 0,
+            "color": obj.get("color")
         })
         return _obj
 

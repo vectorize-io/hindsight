@@ -242,7 +242,7 @@ impl App {
             Some(self.memories_offset),
             false,
         )?;
-        self.memories = response.items;
+        self.memories = rows_as_maps(&response.items)?;
 
         normalize_headered_selection(&mut self.memories_state, self.memories.len());
 
@@ -287,7 +287,7 @@ impl App {
         let response = self
             .client
             .list_documents(bank_id, None, Some(100), Some(0), false)?;
-        self.documents = response.items;
+        self.documents = rows_as_maps(&response.items)?;
 
         normalize_headered_selection(&mut self.documents_state, self.documents.len());
 
@@ -656,6 +656,16 @@ impl App {
         }
         Ok(())
     }
+}
+
+/// Render typed API rows back into the loose maps the TUI's table/detail views read.
+///
+/// The list endpoints return typed rows (#4218); the views index them by column name and
+/// dump the whole row in the detail pane, which stays simplest over a map.
+fn rows_as_maps<T: serde::Serialize>(rows: &[T]) -> Result<Vec<Map<String, Value>>> {
+    rows.iter()
+        .map(|row| Ok(serde_json::from_value(serde_json::to_value(row)?)?))
+        .collect()
 }
 
 fn normalize_headered_selection(state: &mut ListState, data_len: usize) {
