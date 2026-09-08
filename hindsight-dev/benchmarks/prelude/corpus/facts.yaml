@@ -1,0 +1,79 @@
+# Raw facts for the prelude retrieval corpus.
+#
+# Each entry becomes ONE memory unit with exactly the text given. Nothing is
+# extracted or paraphrased: the fixture scripts MockLLM so the stored fact text
+# is byte-identical to `text` here, which is what makes gold labelling possible.
+#
+# The corpus is deliberately built around NEAR MISSES. A retrieval eval over a
+# corpus of unrelated facts scores 1.0 for any query and measures nothing, so
+# every answerable question has several plausible-but-wrong neighbours that only
+# a well-targeted query separates. `distractor_for` records which question a
+# fact is designed to compete with, so a corpus edit that accidentally removes
+# the competition is visible in review.
+
+facts:
+  # --- Deploy / release history (dense cluster of similar dates and versions) ---
+  - id: fact-deploy-001
+    text: "The 0.9.2 release was deployed to production on 2026-03-04."
+  - id: fact-deploy-002
+    text: "The 0.9.3 release was deployed to production on 2026-03-18."
+    distractor_for: q-deploy-version
+  - id: fact-deploy-003
+    text: "The 0.9.2 release was rolled back on 2026-03-05 after a migration failure."
+    distractor_for: q-deploy-version
+  - id: fact-deploy-004
+    text: "The 0.9.4 release was deployed to staging on 2026-03-18 but never promoted."
+    distractor_for: q-deploy-version
+  - id: fact-deploy-005
+    text: "Release 0.9.3 was cut by the release script at 14:20 UTC."
+    distractor_for: q-deploy-version
+
+  # --- Database incident (the answer lives in a specific number) ---
+  - id: fact-incident-001
+    text: "The 2026-04-11 outage was caused by connection pool exhaustion at 200 connections."
+  - id: fact-incident-002
+    text: "The 2026-04-11 outage lasted 47 minutes."
+  - id: fact-incident-003
+    text: "The 2026-02-08 outage was caused by a full disk on the primary database."
+    distractor_for: q-incident-cause
+  - id: fact-incident-004
+    text: "A connection pool warning fired on 2026-01-30 but did not cause an outage."
+    distractor_for: q-incident-cause
+  - id: fact-incident-005
+    text: "The connection pool limit was raised to 500 connections after the incident."
+    distractor_for: q-incident-cause
+
+  # --- Team / ownership (entity-heavy; rewards naming the right person) ---
+  - id: fact-team-001
+    text: "The search subsystem is owned by the retrieval team."
+  - id: fact-team-002
+    text: "The retrieval team took over search ownership from the platform team in January 2026."
+    distractor_for: q-search-owner
+  - id: fact-team-003
+    text: "The platform team owns the ingestion subsystem."
+    distractor_for: q-search-owner
+  - id: fact-team-004
+    text: "The retrieval team also maintains the reranker service."
+    distractor_for: q-search-owner
+
+  # --- Preferences (the kind of thing a mental model consolidates) ---
+  - id: fact-pref-001
+    text: "The user prefers concise answers with no preamble."
+  - id: fact-pref-002
+    text: "The user asked for code comments to match the surrounding file's density."
+  - id: fact-pref-003
+    text: "The user dislikes bullet lists used purely as decoration."
+  - id: fact-pref-004
+    text: "The user prefers tables when comparing more than two options."
+
+  # --- Vendor migration (only raw facts carry the specifics) ---
+  - id: fact-vendor-001
+    text: "The billing provider was switched from Stripe to Adyen on 2026-05-02."
+  - id: fact-vendor-002
+    text: "The Adyen migration required reissuing 1,840 stored payment tokens."
+  - id: fact-vendor-003
+    text: "An evaluation of Braintree was abandoned in 2025 on pricing grounds."
+    distractor_for: q-billing-provider
+  - id: fact-vendor-004
+    text: "Stripe remained the billing provider for the EU region until 2026-06-01."
+    distractor_for: q-billing-provider

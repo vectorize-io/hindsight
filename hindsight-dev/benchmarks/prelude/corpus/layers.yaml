@@ -1,0 +1,58 @@
+# The upper two retrieval layers: observations (auto-synthesized) and mental
+# models (curated). Both are authored verbatim, like facts.yaml.
+#
+# Staleness is NOT a field you set. `tool_search_mental_models` derives it from
+# whether in-scope memories were ingested since the model's last refresh, so the
+# fixture controls it by ORDER: a mental model listed with `stale: true` is
+# created before the second retain wave, and one with `stale: false` after it.
+# See fixture.py::build_corpus.
+
+observations:
+  - id: obs-deploy
+    text: >-
+      Release cadence through March 2026 was roughly fortnightly. 0.9.2 shipped on
+      2026-03-04 and was rolled back the following day after a migration failure;
+      0.9.3 shipped on 2026-03-18 and held.
+  - id: obs-incident
+    text: >-
+      Two production outages occurred in the first half of 2026. The February
+      outage traced to disk exhaustion on the primary; the April outage traced to
+      connection pool exhaustion and prompted raising the pool limit.
+  - id: obs-team
+    text: >-
+      Subsystem ownership shifted in early 2026: the retrieval team picked up
+      search from the platform team, and also runs the reranker. Platform retained
+      ingestion.
+
+mental_models:
+  # Fresh + directly answering: the short-circuit SHOULD fire here.
+  - id: mm-preferences
+    name: "User answer-style preferences"
+    source_query: "How does the user want answers written?"
+    stale: false
+    content: >-
+      The user wants answers short and direct: no preamble, no closing recap. Lists
+      are for real structure only, never decoration; tables are preferred once more
+      than two options are being compared. Code comments should match the density of
+      the file they are added to.
+
+  # Fresh, but about a neighbouring topic — must NOT be treated as answering the
+  # deploy questions just because it retrieves for them.
+  - id: mm-engineering-process
+    name: "Engineering process"
+    source_query: "How does the team ship and review changes?"
+    stale: false
+    content: >-
+      Changes ship behind the release script rather than by hand, and every release
+      is expected to be revertible. Reviews block on correctness and test coverage.
+      This model covers process, not the history of any individual release.
+
+  # Stale: created before the second retain wave, so newer in-scope memories exist
+  # and `is_stale` comes back True. The forced path must continue past it.
+  - id: mm-billing
+    name: "Billing provider"
+    source_query: "Who processes payments?"
+    stale: true
+    content: >-
+      Payments are processed by Stripe across all regions. A migration away from
+      Stripe was evaluated but not carried out.

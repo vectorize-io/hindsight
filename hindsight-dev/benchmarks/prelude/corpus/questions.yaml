@@ -1,0 +1,79 @@
+# Questions, grouped by which layer of the hierarchy should answer them.
+#
+# Fields:
+#   category   - which layer SHOULD carry the answer (see README for the taxonomy)
+#   question   - asked verbatim, exactly as a caller would
+#   gold       - ids that must appear in the end-of-prelude evidence set. Empty
+#                means the correct outcome is retrieving nothing relevant.
+#   ideal_query- a hand-written, well-targeted search string. This is the CEILING
+#                arm of the floor/ceiling experiment: the best a planner could
+#                plausibly do. The floor arm uses `question` verbatim, which is
+#                what the prelude falls back to when planning fails.
+#   short_circuit - whether a fresh, usable mental model should stop the forced
+#                descent. Asserted separately from recall@k because the mental
+#                model query decides it, so a cold query changes the whole
+#                evidence set and not just one search.
+
+questions:
+  # --- mm_only: a fresh mental model fully answers; descending is wasted work ---
+  - id: q-answer-style
+    category: mm_only
+    question: "How should answers be formatted for this user?"
+    ideal_query: "user answer style preferences formatting conciseness"
+    gold: [mm-preferences]
+    short_circuit: true
+
+  # --- mm_stale: the mental model is confidently WRONG and must not end the run ---
+  - id: q-billing-provider
+    category: mm_stale
+    question: "Who processes our payments now?"
+    ideal_query: "billing payment provider Adyen Stripe migration 2026"
+    gold: [fact-vendor-001, fact-vendor-002]
+    short_circuit: false
+
+  # --- observations_only: no mental model covers it; a consolidated observation does ---
+  - id: q-outage-summary
+    category: observations_only
+    question: "What production outages have we had this year?"
+    ideal_query: "production outages 2026 causes summary"
+    gold: [obs-incident]
+    short_circuit: false
+
+  # --- raw_facts_only: the answer is a specific value no summary carries ---
+  - id: q-incident-cause
+    category: raw_facts_only
+    question: "What exactly caused the April outage and at what limit?"
+    ideal_query: "April 2026 outage connection pool exhaustion 200 connections"
+    gold: [fact-incident-001]
+    short_circuit: false
+
+  - id: q-deploy-version
+    category: raw_facts_only
+    question: "Which release actually made it to production in the second half of March?"
+    ideal_query: "0.9.3 deployed production 2026-03-18"
+    gold: [fact-deploy-002]
+    short_circuit: false
+
+  # --- multi_layer: the frame is in an observation, the specifics only in raw facts ---
+  - id: q-search-owner
+    category: multi_layer
+    question: "Who owns search, and how long have they owned it?"
+    ideal_query: "search subsystem ownership retrieval team platform team handover"
+    gold: [obs-team, fact-team-001, fact-team-002]
+    short_circuit: false
+
+  # --- near_miss: answerable, but surrounded by close neighbours ---
+  - id: q-token-reissue
+    category: near_miss
+    question: "How many payment tokens did we have to reissue?"
+    ideal_query: "reissued stored payment tokens count Adyen migration"
+    gold: [fact-vendor-002]
+    short_circuit: false
+
+  # --- absent: the bank genuinely does not hold this ---
+  - id: q-absent-headcount
+    category: absent
+    question: "What was the engineering headcount in 2024?"
+    ideal_query: "engineering headcount 2024"
+    gold: []
+    short_circuit: false
