@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from ...config import _get_raw_config
+from ..chunk_id import build_chunk_id
 from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
@@ -286,7 +287,7 @@ async def store_chunks_batch(
     chunk_id_map = {}
 
     for chunk in chunks:
-        chunk_id = f"{bank_id}_{document_id}_{chunk.chunk_index}"
+        chunk_id = build_chunk_id(bank_id, document_id, chunk.chunk_index)
         chunk_ids.append(chunk_id)
         chunk_texts.append(chunk.chunk_text if store_text else "")
         chunk_indices.append(chunk.chunk_index)

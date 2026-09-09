@@ -197,6 +197,7 @@ async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(
 
         chunks = await memory.list_document_chunks(dst, document_id, limit=10, request_context=request_context)
         assert sorted(chunk["chunk_index"] for chunk in chunks["items"]) == [0, 1, 2, 3]
+        chunk_id_by_index = {chunk["chunk_index"]: chunk["chunk_id"] for chunk in chunks["items"]}
 
         backend = await memory._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -217,9 +218,9 @@ async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(
 
         units_by_text = {unit["text"]: unit for unit in units}
         assert "..." not in units_by_text
-        assert units_by_text[initial_text]["chunk_id"] == f"{dst}_{document_id}_0"
-        assert units_by_text[middle_text]["chunk_id"] == f"{dst}_{document_id}_2"
-        assert units_by_text[later_text]["chunk_id"] == f"{dst}_{document_id}_3"
+        assert units_by_text[initial_text]["chunk_id"] == chunk_id_by_index[0]
+        assert units_by_text[middle_text]["chunk_id"] == chunk_id_by_index[2]
+        assert units_by_text[later_text]["chunk_id"] == chunk_id_by_index[3]
         assert {str(source_id) for source_id in units_by_text[observation_text]["source_memory_ids"]} == {
             str(units_by_text[later_text]["id"])
         }

@@ -23,6 +23,7 @@ from uuid import UUID
 import anyio.to_thread
 
 from ..causal_links import CAUSAL_LINK_TYPES
+from ..chunk_id import parse_chunk_id
 from ..db_utils import acquire_with_retry
 from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
@@ -170,17 +171,9 @@ def _as_jsonb(value: Any) -> Any:
 
 
 def _chunk_index_from_chunk_id(chunk_id: str | None) -> int | None:
-    """Recover the chunk ordinal from a ``{bank_id}_{document_id}_{index}`` chunk_id.
-
-    The index is always the final underscore-delimited segment, so rsplit is
-    correct even when bank/document ids themselves contain underscores.
-    """
-    if not chunk_id:
-        return None
-    try:
-        return int(chunk_id.rsplit("_", 1)[1])
-    except (IndexError, ValueError):
-        return None
+    """Recover the chunk ordinal from a current or legacy chunk id."""
+    address = parse_chunk_id(chunk_id)
+    return address.chunk_index if address is not None else None
 
 
 def _resolve_memories(memories: Any) -> Any:
