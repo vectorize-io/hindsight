@@ -5273,6 +5273,12 @@ export type RecallResult = {
    */
   source_fact_ids?: Array<string> | null;
   scores?: RecallScores | null;
+  /**
+   * Attachments
+   *
+   * Attachments this fact was drawn from, as recorded per fact at extraction time — the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**

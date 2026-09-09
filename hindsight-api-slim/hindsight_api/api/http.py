@@ -516,6 +516,14 @@ class RecallResult(BaseModel):
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
     scores: RecallScores | None = None  # Per-stage recall scores (final/reranker/semantic/text)
+    attachments: list["ChunkAttachment"] | None = Field(
+        default=None,
+        description=(
+            "Attachments this fact was drawn from, as recorded per fact at extraction time — the "
+            "same edge the memory read endpoints return, not everything its chunk happened to "
+            "carry. A fact stated in prose reports none. Omitted when there are none."
+        ),
+    )
 
 
 class EntityObservationResponse(BaseModel):
@@ -909,7 +917,7 @@ def chunk_attachments_of(
     return list(seen.values()) or None
 
 
-def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict[str, Any]:
+def _attachment_model(bank_id: str, record: "StoredAttachment") -> ChunkAttachment:
     """One attachment, in the shape every read surface returns."""
     return ChunkAttachment(
         id=record.short_id,
@@ -919,7 +927,12 @@ def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict[str, A
         byte_size=record.byte_size,
         filename=record.filename,
         url=bank_attachment_url(bank_id, record.short_id),
-    ).model_dump()
+    )
+
+
+def _attachment_payload(bank_id: str, record: "StoredAttachment") -> dict[str, Any]:
+    """The same attachment as a plain dict, for the endpoints that return one."""
+    return _attachment_model(bank_id, record).model_dump()
 
 
 async def _attach_to_memories(
@@ -948,6 +961,36 @@ async def _attach_to_memories(
         records = by_unit.get(str(item.get("id"))) if isinstance(item, dict) else None
         if records:
             item["attachments"] = [_attachment_payload(bank_id, record) for record in records]
+
+
+async def _attach_to_recall_results(
+    memory_app: "MemoryEngine",
+    bank_id: str,
+    results: "list[RecallResult]",
+    request_context: RequestContext,
+) -> None:
+    """Add ``attachments`` to recall results — the same per-fact edge as :func:`_attach_to_memories`.
+
+    Recall already reports the chunk each fact came from, and a chunk lists every
+    attachment its text references; that is strictly coarser. A chunk holding a
+    screenshot also holds the prose around it, so going through the chunk shows
+    the screenshot against the paragraph that never mentioned it. This reads the
+    edge the extractor recorded instead.
+
+    One lookup for the whole page. For a bank that has retained no attachments it
+    is a single indexed read of the ids column that returns nothing to resolve,
+    which is why this is unconditional rather than another `include` flag.
+    """
+    unit_ids = [result.id for result in results if result.id]
+    if not unit_ids:
+        return
+    by_unit = await memory_app.attachments_for_memories(bank_id, unit_ids, request_context)
+    if not by_unit:
+        return
+    for result in results:
+        records = by_unit.get(str(result.id))
+        if records:
+            result.attachments = [_attachment_model(bank_id, record) for record in records]
 
 
 def canonicalize_item_content(
@@ -5676,6 +5719,7 @@ def _register_routes(app: FastAPI):
                 )
 
             recall_results = [_fact_to_result(fact) for fact in core_result.results]
+            await _attach_to_recall_results(app.state.memory, bank_id, recall_results, request_context)
 
             # Convert chunks from engine to HTTP API format
             chunks_response = None

@@ -10535,6 +10535,11 @@ components:
           type: array
         scores:
           $ref: '#/components/schemas/RecallScores'
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - id
       - text
