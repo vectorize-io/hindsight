@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from ..chunk_ids import chunk_index_in
+from ..chunk_ids import resolve_chunk_id_in
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -516,9 +516,10 @@ async def tool_expand(
                 continue
             if cid in _seen_chunks:
                 continue
-            index = chunk_index_in(cid, bank_id, did)
-            if index is None:
+            ref = resolve_chunk_id_in(cid, bank_id)
+            if ref is None or ref.document_id != did:
                 continue
+            index = ref.chunk_index
             _seen_chunks.add(cid)
             refs.append((did, index))
             ref_owner.append({"chunk_id": cid, "document_id": did, "chunk_index": index})

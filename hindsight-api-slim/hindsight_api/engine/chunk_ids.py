@@ -95,26 +95,15 @@ def parse_chunk_id(chunk_id: str | None) -> ChunkRef | None:
     return ChunkRef(_unescape(bank_id), _unescape(document_id), index)
 
 
-def chunk_index_in(chunk_id: str, bank_id: str, document_id: str) -> int | None:
-    """The ordinal of ``chunk_id`` within this bank's document, or ``None`` if it is not one.
-
-    Anchored on the known bank and document rather than split on ``_``, so it is exact even
-    for the ambiguous ids written before #4244 — hence the legacy, unescaped prefix is tried
-    too (the two prefixes coincide when neither component carries a separator).
-    """
-    for prefix in (f"{_escape(bank_id)}_{_escape(document_id)}_", f"{bank_id}_{document_id}_"):
-        suffix = chunk_id.removeprefix(prefix)
-        if suffix != chunk_id and suffix.isdigit():
-            return int(suffix)
-    return None
-
-
 def resolve_chunk_id_in(chunk_id: str, bank_id: str) -> ChunkRef | None:
     """Split ``chunk_id`` into its triple given the bank that owns it.
 
-    For a bank whose documents live outside SQL there is no ``chunks`` row to read the pair
-    off, and the id is the only thing carrying it. Knowing the bank removes the guesswork the
-    bare :func:`parse_chunk_id` has to do about where the bank id ends.
+    For a bank whose documents live outside SQL there is no ``chunks`` row to read the
+    document and index off, and the id is the only thing carrying them. Knowing the bank
+    removes the guesswork the bare :func:`parse_chunk_id` has to do about where the bank id
+    ends, so this is exact even for the ambiguous ids written before #4244 -- hence the
+    legacy, unescaped prefix is tried too (the two coincide when the bank id carries no
+    separator).
     """
     for prefix, escaped in ((f"{_escape(bank_id)}_", True), (f"{bank_id}_", False)):
         rest = chunk_id.removeprefix(prefix)
