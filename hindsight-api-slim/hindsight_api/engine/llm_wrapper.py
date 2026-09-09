@@ -475,6 +475,7 @@ def create_llm_provider(
     # tests/test_llm_wrapper.py), so a parameter added mid-list silently steals
     # another one's slot. New parameters go at the end.
     codex_home: str | None = None,
+    cache_affinity_header: str | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -507,8 +508,9 @@ def create_llm_provider(
         cache_affinity: Backend prompt-cache pinning mode, forwarded to the
             ``OpenAICompatibleLLM`` branch, ``fireworks`` and ``nous`` (all three share the
             OpenAI-compatible wire format): "none" (default), "xai_conv_id",
-            "openai_prompt_cache_key", or "auto". Providers on other branches do their own
+            "header", "openai_prompt_cache_key", or "auto". Providers on other branches do their own
             cache work or none at all. See ``engine/cache_affinity.py``.
+        cache_affinity_header: HTTP header name required for explicit ``header`` mode.
         structured_output_forced_tool: Ask the LiteLLM-backed providers (``litellm``,
             ``litellmrouter``, ``bedrock``) for structured output via a forced tool call
             instead of ``response_format``. For backends that reject the response_format
@@ -716,6 +718,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            cache_affinity_header=cache_affinity_header,
             timeout=timeout,
         )
 
@@ -736,6 +739,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            cache_affinity_header=cache_affinity_header,
             timeout=timeout,
         )
 
@@ -799,6 +803,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            cache_affinity_header=cache_affinity_header,
             ollama_num_ctx=ollama_num_ctx,
             timeout=timeout,
         )
@@ -844,6 +849,7 @@ class LLMProvider:
         # callers that pass these positionally would otherwise have one argument
         # land in the wrong slot.
         codex_home: str | None = None,
+        cache_affinity_header: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -867,10 +873,11 @@ class LLMProvider:
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware.
             cache_affinity: Backend prompt-cache pinning mode for the OpenAI-compatible and
-                Fireworks providers ("none", "xai_conv_id", "openai_prompt_cache_key",
+                Fireworks providers ("none", "xai_conv_id", "header", "openai_prompt_cache_key",
                 "auto"). Validated here for every provider so a typo never fails silently;
                 providers on other factory branches ignore it. Used verbatim — callers
                 resolve the per-operation/global fallback.
+            cache_affinity_header: HTTP header name required for explicit ``header`` mode.
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
@@ -952,6 +959,7 @@ class LLMProvider:
         # it — the setting has no visible effect in the response, so a silent
         # fallback to "none" would be indistinguishable from it working.
         self.cache_affinity = parse_cache_affinity(cache_affinity).value
+        self.cache_affinity_header = cache_affinity_header
 
         # Validate provider
         valid_providers = [
@@ -1093,6 +1101,7 @@ class LLMProvider:
             ollama_num_ctx=self.ollama_num_ctx,
             timeout=self.timeout,
             cache_affinity=self.cache_affinity,
+            cache_affinity_header=self.cache_affinity_header,
             structured_output_forced_tool=self.structured_output_forced_tool,
         )
 
@@ -1684,6 +1693,7 @@ class LLMProvider:
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_CACHE_AFFINITY,
+            ENV_LLM_CACHE_AFFINITY_HEADER,
             ENV_LLM_CODEX_HOME,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
@@ -1724,6 +1734,7 @@ class LLMProvider:
         # Same default as HindsightConfig.from_env: this entry point must not
         # resolve to a different mode than the engine's own config path.
         cache_affinity = os.getenv(ENV_LLM_CACHE_AFFINITY, DEFAULT_LLM_CACHE_AFFINITY) or None
+        cache_affinity_header = os.getenv(ENV_LLM_CACHE_AFFINITY_HEADER) or None
         prompt_cache_enabled = os.getenv(
             ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
         ).lower() in (
@@ -1742,6 +1753,7 @@ class LLMProvider:
             extra_body=extra_body,
             default_headers=default_headers,
             cache_affinity=cache_affinity,
+            cache_affinity_header=cache_affinity_header,
             groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,

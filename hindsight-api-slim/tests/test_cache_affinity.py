@@ -153,6 +153,38 @@ async def test_xai_header_differs_across_trace_contexts():
     assert first != second
 
 
+# ── Generic header mode: operation identity ──────────────────────────────────────────
+
+
+async def test_session_id_header_is_stable_within_one_trace_context():
+    """Related calls share the operation identity even as their prompts change."""
+    llm = _llm("header", cache_affinity_header="x-session-id")
+    create = AsyncMock(return_value=_chat_response())
+    with _bound_trace("11111111-1111-1111-1111-111111111111"):
+        await _call(llm, create)
+        first = create.call_args.kwargs["extra_headers"]["x-session-id"]
+        llm._client.chat.completions.create = create
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            await llm.call(messages=[{"role": "user", "content": "a different prompt"}], max_retries=0)
+        second = create.call_args.kwargs["extra_headers"]["x-session-id"]
+
+    assert _HEX32.match(first)
+    assert first == second
+
+
+async def test_session_id_header_differs_across_trace_contexts():
+    llm = _llm("header", cache_affinity_header="x-session-id")
+    create = AsyncMock(return_value=_chat_response())
+    with _bound_trace("11111111-1111-1111-1111-111111111111"):
+        await _call(llm, create)
+        first = create.call_args.kwargs["extra_headers"]["x-session-id"]
+    with _bound_trace("22222222-2222-2222-2222-222222222222"):
+        await _call(llm, create)
+        second = create.call_args.kwargs["extra_headers"]["x-session-id"]
+
+    assert first != second
+
+
 # ── AC2: openai_prompt_cache_key ──────────────────────────────────────────────
 
 
@@ -192,6 +224,7 @@ async def test_no_affinity_key_by_default(mode):
     assert "extra_headers" not in kwargs
     assert OPENAI_PROMPT_CACHE_KEY_PARAM not in kwargs
     assert XAI_CONV_ID_HEADER not in str(kwargs)
+    assert "x-session-id" not in str(kwargs)
 
 
 def test_invalid_mode_raises():
@@ -233,7 +266,7 @@ def test_auto_resolves_once_at_construction():
     assert llm._cache_affinity is CacheAffinityMode.XAI_CONV_ID
 
 
-@pytest.mark.parametrize("mode", ["none", "xai_conv_id", "openai_prompt_cache_key"])
+@pytest.mark.parametrize("mode", ["none", "xai_conv_id", "header", "openai_prompt_cache_key"])
 def test_explicit_modes_are_not_re_resolved(mode):
     parsed = parse_cache_affinity(mode)
     assert resolve_cache_affinity(parsed, "openai", "https://api.x.ai/v1") is parsed
@@ -288,6 +321,12 @@ async def test_tools_path_sends_xai_header():
     llm = _llm("xai_conv_id")
     create = await _call_with_tools(llm, AsyncMock(return_value=_chat_response("done")))
     assert _HEX32.match(create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER])
+
+
+async def test_tools_path_sends_session_id_header():
+    llm = _llm("header", cache_affinity_header="x-session-id")
+    create = await _call_with_tools(llm, AsyncMock(return_value=_chat_response("done")))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"]["x-session-id"])
 
 
 async def test_tools_path_sends_prompt_cache_key():
@@ -553,6 +592,24 @@ def test_preset_conv_id_header_is_not_clobbered():
     assert request["extra_headers"][XAI_CONV_ID_HEADER] == "caller-pinned"
 
 
+@pytest.mark.parametrize("header_name", ["x-session-id", "X-Session-ID"])
+def test_preset_session_id_header_is_not_clobbered_case_insensitively(header_name):
+    request = {
+        "messages": [{"role": "user", "content": "ping"}],
+        "extra_headers": {header_name: "caller-pinned"},
+    }
+    apply_cache_affinity(request, CacheAffinityMode.HEADER, header_name="x-session-id")
+    assert request["extra_headers"] == {header_name: "caller-pinned"}
+
+
+async def test_default_session_id_header_is_not_clobbered_case_insensitively():
+    llm = _llm("header", cache_affinity_header="x-session-id", default_headers={"X-Session-ID": "operator-pinned"})
+    create = await _call(llm, AsyncMock(return_value=_chat_response()))
+
+    assert "extra_headers" not in create.call_args.kwargs
+    assert llm._client.default_headers["X-Session-ID"] == "operator-pinned"
+
+
 def test_other_extra_headers_are_preserved():
     request = {"messages": [{"role": "user", "content": "ping"}], "extra_headers": {"x-other": "keep"}}
     apply_cache_affinity(request, CacheAffinityMode.XAI_CONV_ID)
@@ -613,6 +670,29 @@ async def test_end_to_end_reflect_lane_sends_the_affinity_header(clean_llm_env):
     assert _HEX32.match(create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER])
 
 
+async def test_end_to_end_reflect_lane_sends_session_id_header(clean_llm_env):
+    """The explicit env mode reaches the wire on the production reflect path."""
+    from hindsight_api import MemoryEngine
+
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://llm.internal.example/v1")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY", "header")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY_HEADER", "x-session-id")
+
+    engine = MemoryEngine(skip_llm_verification=True)
+    reflect_llm = engine._reflect_llm_config
+    create = AsyncMock(return_value=_chat_response())
+    reflect_llm._provider_impl._client.chat.completions.create = create
+
+    configured = reflect_llm.with_config(
+        SimpleNamespace(llm_gemini_safety_settings=None), bank_id="bank-e2e", operation="reflect"
+    )
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await configured.call(messages=[{"role": "user", "content": "ping"}], max_retries=0)
+
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"]["x-session-id"])
+
+
 async def test_end_to_end_failover_member_sends_the_affinity_header(clean_llm_env):
     """Same production path for an indexed chain member, which is built by
     `_member_to_llm` rather than the per-operation base build. Without that leg,
@@ -640,3 +720,89 @@ async def test_end_to_end_failover_member_sends_the_affinity_header(clean_llm_en
         await member.call(messages=[{"role": "user", "content": "ping"}], max_retries=0)
 
     assert _HEX32.match(create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER])
+
+
+@pytest.mark.parametrize("header_name", [None, "", "bad name", "x-header\r\nInjected", "x-header:", "x-ä"])
+def test_header_mode_requires_valid_header_name(header_name):
+    with pytest.raises(ValueError, match="valid HTTP header name"):
+        _llm("header", cache_affinity_header=header_name)
+
+
+@pytest.mark.parametrize("header_name", ["x-session-id", "x-opencode-session", "X-Gateway-Conversation"])
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_generic_header_name_reaches_both_call_paths(header_name, with_tools):
+    llm = _llm("header", cache_affinity_header=header_name)
+    call = _call_with_tools if with_tools else _call
+    create = await call(llm, AsyncMock(return_value=_chat_response()))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"][header_name])
+
+
+async def test_xai_mode_keeps_existing_default_header_behavior():
+    llm = _llm("xai_conv_id", default_headers={XAI_CONV_ID_HEADER: "operator-default"})
+    create = await _call(llm, AsyncMock(return_value=_chat_response()))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER])
+
+
+async def test_header_mode_coexists_with_required_opencode_header():
+    from hindsight_api.engine.cache_affinity import OPENCODE_SESSION_HEADER
+
+    llm = _llm("header", provider="opencode-go", cache_affinity_header="x-session-id")
+    create = await _call(llm, AsyncMock(return_value=_chat_response()))
+    headers = create.call_args.kwargs["extra_headers"]
+    assert headers["x-session-id"] == headers[OPENCODE_SESSION_HEADER]
+
+
+async def test_header_name_from_env_reaches_provider(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY", "header")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY_HEADER", "X-Gateway-Session")
+    llm = LLMProvider.from_env()
+    create = await _call(llm._provider_impl, AsyncMock(return_value=_chat_response()))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"]["X-Gateway-Session"])
+
+
+@pytest.mark.parametrize("provider", ["openai", "fireworks", "nous"])
+async def test_factory_forwards_generic_header_for_compatible_family(provider):
+    if provider == "nous":
+        llm = _nous_llm("header", cache_affinity_header="X-Gateway-Session")
+    else:
+        llm = create_llm_provider(
+            provider=provider,
+            api_key="test",
+            base_url="https://example.test/v1",
+            model="test",
+            reasoning_effort=None,
+            cache_affinity="header",
+            cache_affinity_header="X-Gateway-Session",
+        )
+    create = await _call(llm, AsyncMock(return_value=_chat_response()))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"]["X-Gateway-Session"])
+
+
+async def test_engine_resolves_header_names_for_operations_and_members(clean_llm_env):
+    from hindsight_api import MemoryEngine
+
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY", "header")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CACHE_AFFINITY_HEADER", "X-Global-Session")
+    clean_llm_env.setenv("HINDSIGHT_API_RETAIN_LLM_CACHE_AFFINITY_HEADER", "X-Retain-Session")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY_HEADER", "X-Reflect-Session")
+    clean_llm_env.setenv("HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY_HEADER", "X-Consolidation-Session")
+    for index in (1, 2):
+        clean_llm_env.setenv(f"HINDSIGHT_API_REFLECT_LLM_{index}_PROVIDER", "openai")
+        clean_llm_env.setenv(f"HINDSIGHT_API_REFLECT_LLM_{index}_MODEL", "gpt-4o-mini")
+        clean_llm_env.setenv(f"HINDSIGHT_API_REFLECT_LLM_{index}_API_KEY", "test")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_CACHE_AFFINITY_HEADER", "X-Member-Session")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_STRATEGY", '{"mode": "failover"}')
+    engine = MemoryEngine(skip_llm_verification=True)
+    lanes = {
+        "X-Global-Session": engine._llm_config,
+        "X-Retain-Session": engine._retain_llm_config,
+        "X-Reflect-Session": engine._reflect_llm_config._members[0],
+        "X-Consolidation-Session": engine._consolidation_llm_config,
+        "X-Member-Session": engine._reflect_llm_config._members[1],
+    }
+    for header_name, llm in lanes.items():
+        create = await _call(llm._provider_impl, AsyncMock(return_value=_chat_response()))
+        assert _HEX32.match(create.call_args.kwargs["extra_headers"][header_name])
+    inherited = engine._reflect_llm_config._members[2]
+    create = await _call(inherited._provider_impl, AsyncMock(return_value=_chat_response()))
+    assert _HEX32.match(create.call_args.kwargs["extra_headers"]["X-Global-Session"])

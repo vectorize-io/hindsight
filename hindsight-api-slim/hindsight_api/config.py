@@ -170,6 +170,8 @@ ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 # "openai_prompt_cache_key" sends OpenAI's prompt_cache_key field. See
 # engine/cache_affinity.py. Per-operation variants override the global one.
 ENV_LLM_CACHE_AFFINITY = "HINDSIGHT_API_LLM_CACHE_AFFINITY"
+# "header" sends the operation id under this operator-configured header name.
+ENV_LLM_CACHE_AFFINITY_HEADER = "HINDSIGHT_API_LLM_CACHE_AFFINITY_HEADER"
 # Grammar-enforced structured output. The global flag applies to every internal
 # LLM call; the per-operation variants override it for a single operation, so an
 # operator can enable strict schema where it fixes malformed/truncated JSON
@@ -374,6 +376,7 @@ ENV_RETAIN_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CO
 ENV_RETAIN_LLM_REASONING_EFFORT = "HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT"
 ENV_RETAIN_LLM_EXTRA_BODY = "HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY"
 ENV_RETAIN_LLM_CACHE_AFFINITY = "HINDSIGHT_API_RETAIN_LLM_CACHE_AFFINITY"
+ENV_RETAIN_LLM_CACHE_AFFINITY_HEADER = "HINDSIGHT_API_RETAIN_LLM_CACHE_AFFINITY_HEADER"
 
 # Fireworks AI batch inference. Fireworks' batch API is a proprietary
 # account-scoped dataset/job REST API on a control-plane host, distinct from the
@@ -399,6 +402,7 @@ ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_
 ENV_REFLECT_LLM_REASONING_EFFORT = "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"
 ENV_REFLECT_LLM_EXTRA_BODY = "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"
 ENV_REFLECT_LLM_CACHE_AFFINITY = "HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY"
+ENV_REFLECT_LLM_CACHE_AFFINITY_HEADER = "HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY_HEADER"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -413,6 +417,7 @@ ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LI
 ENV_CONSOLIDATION_LLM_REASONING_EFFORT = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
 ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 ENV_CONSOLIDATION_LLM_CACHE_AFFINITY = "HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY"
+ENV_CONSOLIDATION_LLM_CACHE_AFFINITY_HEADER = "HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY_HEADER"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 # Provider-agnostic asymmetric prefixes: applied client-side by every provider that
@@ -2210,6 +2215,7 @@ class LLMMemberConfig:
     vertexai_region: str | None = None
     vertexai_service_account_key: str | None = None
     litellmrouter_config: dict | None = None
+    cache_affinity_header: str | None = None
 
 
 # Valid multi-LLM strategy modes.
@@ -2365,6 +2371,7 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
                 default_headers=json.loads(os.getenv(base + "DEFAULT_HEADERS", "null")),
                 cache_affinity=os.getenv(base + "CACHE_AFFINITY") or None,
+                cache_affinity_header=os.getenv(base + "CACHE_AFFINITY_HEADER") or None,
                 bedrock_service_tier=os.getenv(base + "BEDROCK_SERVICE_TIER") or None,
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
@@ -2687,10 +2694,11 @@ class HindsightConfig:
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
     # Backend prompt-cache pinning for the OpenAI-compatible providers and Fireworks:
     # "none" (default),
-    # "xai_conv_id", "openai_prompt_cache_key" or "auto". Static (server-level) like the
+    # "xai_conv_id", "header", "openai_prompt_cache_key" or "auto". Static (server-level) like the
     # two fields above -- it is a transport detail of the configured endpoint, not a
     # per-bank behaviour. See ENV_LLM_CACHE_AFFINITY and engine/cache_affinity.py.
     llm_cache_affinity: str | None
+    llm_cache_affinity_header: str | None
     llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
     # Per-operation strict-schema overrides. Resolved from the per-operation env
     # var, falling back to llm_strict_schema's global env var. See
@@ -2788,6 +2796,7 @@ class HindsightConfig:
     retain_llm_reasoning_effort: str | None
     retain_llm_extra_body: dict | None
     retain_llm_cache_affinity: str | None
+    retain_llm_cache_affinity_header: str | None
 
     # Fireworks AI batch inference (static, server-level)
     fireworks_account_id: str | None
@@ -2807,6 +2816,7 @@ class HindsightConfig:
     reflect_llm_reasoning_effort: str | None
     reflect_llm_extra_body: dict | None
     reflect_llm_cache_affinity: str | None
+    reflect_llm_cache_affinity_header: str | None
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -2821,6 +2831,7 @@ class HindsightConfig:
     consolidation_llm_reasoning_effort: str | None
     consolidation_llm_extra_body: dict | None
     consolidation_llm_cache_affinity: str | None
+    consolidation_llm_cache_affinity_header: str | None
 
     # Embeddings
     embeddings_provider: str
@@ -3789,6 +3800,7 @@ class HindsightConfig:
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_cache_affinity=os.getenv(ENV_LLM_CACHE_AFFINITY, DEFAULT_LLM_CACHE_AFFINITY) or None,
+            llm_cache_affinity_header=os.getenv(ENV_LLM_CACHE_AFFINITY_HEADER) or None,
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
@@ -3885,6 +3897,7 @@ class HindsightConfig:
             retain_llm_reasoning_effort=os.getenv(ENV_RETAIN_LLM_REASONING_EFFORT) or None,
             retain_llm_extra_body=json.loads(os.getenv(ENV_RETAIN_LLM_EXTRA_BODY, "null")),
             retain_llm_cache_affinity=os.getenv(ENV_RETAIN_LLM_CACHE_AFFINITY) or None,
+            retain_llm_cache_affinity_header=os.getenv(ENV_RETAIN_LLM_CACHE_AFFINITY_HEADER) or None,
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
             reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
@@ -3911,6 +3924,7 @@ class HindsightConfig:
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
             reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
             reflect_llm_cache_affinity=os.getenv(ENV_REFLECT_LLM_CACHE_AFFINITY) or None,
+            reflect_llm_cache_affinity_header=os.getenv(ENV_REFLECT_LLM_CACHE_AFFINITY_HEADER) or None,
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
@@ -3939,6 +3953,7 @@ class HindsightConfig:
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
             consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             consolidation_llm_cache_affinity=os.getenv(ENV_CONSOLIDATION_LLM_CACHE_AFFINITY) or None,
+            consolidation_llm_cache_affinity_header=os.getenv(ENV_CONSOLIDATION_LLM_CACHE_AFFINITY_HEADER) or None,
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
