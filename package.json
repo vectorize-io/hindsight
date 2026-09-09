@@ -20,7 +20,7 @@
     "flatted": ">=3.4.2",
     "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
     "yaml": ">=1.10.3",
-    "svgo": ">=4.0.2",
+    "svgo": ">=4.1.0",
     "dompurify": ">=3.4.13",
     "@redocly/openapi-core": {
       "minimatch": "^5.1.8"
@@ -38,21 +38,21 @@
     "mermaid": ">=11.16.1",
     "websocket-driver": ">=0.7.5",
     "http-proxy-middleware": ">=2.0.10 <3",
-    "next": ">=16.2.11 <17",
+    "next": ">=16.3.3 <17",
     "fast-uri": ">=3.1.6 <4",
-    "sharp": ">=0.35.0",
+    "sharp": ">=0.35.4",
     "shell-quote": ">=1.9.0",
     "@istanbuljs/load-nyc-config": {
-      "js-yaml": "^3.15.1"
+      "js-yaml": "^3.15.2"
     },
     "gray-matter": {
-      "js-yaml": "^3.15.1"
+      "js-yaml": "^3.15.2"
     },
     "sockjs": {
       "uuid": "^11.1.1"
     },
     "postcss": ">=8.5.23",
-    "js-yaml": ">=3.15.1 <4.0.0 || >=4.3.1 <5.0.0",
+    "js-yaml": ">=3.15.2 <4.0.0 || >=4.3.2 <5.0.0",
     "nanoid": ">=3.3.18 <4.0.0",
     "webpack-dev-server": ">=5.2.6 <6.0.0",
     "esbuild": ">=0.28.1 <0.29.0",
@@ -79,6 +79,8 @@
     },
     "@tailwindcss/typography": {
       "postcss-selector-parser": "6.0.10"
-    }
+    },
+    "colord": ">=2.9.4 <3.0.0",
+    "joi": ">=17.13.6 <18.0.0"
   }
 }

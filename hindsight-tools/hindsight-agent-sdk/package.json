@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "typescript": "^5.4",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "postcss": ">=8.5.23 <9.0.0"
