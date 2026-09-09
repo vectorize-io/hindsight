@@ -25,6 +25,7 @@ from ...extensions.memory_defense import (
 )
 from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
+from ..chunk_ids import build_chunk_id
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
 
@@ -754,7 +755,7 @@ async def _streaming_session_retain(
     chunk_id_by_index = {}
     if batch_chunk_meta:
         chunk_id_by_index = {
-            cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in batch_chunk_meta
+            cm.chunk_index: build_chunk_id(bank_id, effective_doc_id, cm.chunk_index) for cm in batch_chunk_meta
         }
     for fact, processed_fact in zip(batch_extracted, batch_processed, strict=True):
         processed_fact.document_id = effective_doc_id
@@ -869,7 +870,7 @@ async def _streaming_store_owned_retain(
     chunk_id_by_index = {}
     if batch_chunk_meta:
         chunk_id_by_index = {
-            cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in batch_chunk_meta
+            cm.chunk_index: build_chunk_id(bank_id, effective_doc_id, cm.chunk_index) for cm in batch_chunk_meta
         }
     for fact, processed_fact in zip(batch_extracted, batch_processed):
         processed_fact.document_id = effective_doc_id
@@ -1029,7 +1030,7 @@ async def _delta_store_owned_write(
     # Deterministic chunk ids for the new/changed chunks, after the delta remap, so a fact's
     # chunk_id matches the chunk that carries it.
     chunk_id_by_index = {
-        cm.chunk_index: f"{bank_id}_{effective_doc_id}_{cm.chunk_index}" for cm in (new_chunk_metadata or [])
+        cm.chunk_index: build_chunk_id(bank_id, effective_doc_id, cm.chunk_index) for cm in (new_chunk_metadata or [])
     }
     for ef, pf in zip(extracted_facts, processed_facts):
         pf.document_id = effective_doc_id
@@ -3631,7 +3632,7 @@ async def _try_delta_retain(
         # arrive at a value the first read already had.
         existing_chunks = [
             chunk_storage.ExistingChunk(
-                chunk_id=f"{bank_id}_{effective_doc_id}_{index}",
+                chunk_id=build_chunk_id(bank_id, effective_doc_id, index),
                 chunk_index=index,
                 content_hash=chunk_hash,
             )

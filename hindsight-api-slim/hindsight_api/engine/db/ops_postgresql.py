@@ -9,6 +9,7 @@ from datetime import datetime
 
 from .base import DatabaseConnection
 from .ops import (
+    ChunkIdOwnedByAnotherBank,
     ClaimedOperations,
     DataAccessOps,
     LinkExpansionRows,
@@ -93,7 +94,12 @@ class PostgreSQLOps(DataAccessOps):
         chunk_indices: list[int],
         content_hashes: list[str],
     ) -> None:
-        await conn.execute(
+        # The DO UPDATE is guarded on the conflicting row belonging to the SAME bank.
+        # `chunks` is keyed on chunk_id alone, so without the predicate an id that collides
+        # with another bank's row would silently overwrite that bank's chunk text (#4244).
+        # `chunk_ids` builds ids that cannot collide, but rows written before that fix can,
+        # so refuse the write rather than corrupt the other bank.
+        written = await conn.fetch(
             f"""
             INSERT INTO {table} (chunk_id, document_id, bank_id, chunk_text, chunk_index, content_hash)
             SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::integer[], $6::text[])
@@ -101,6 +107,8 @@ class PostgreSQLOps(DataAccessOps):
                 chunk_text = EXCLUDED.chunk_text,
                 chunk_index = EXCLUDED.chunk_index,
                 content_hash = EXCLUDED.content_hash
+            WHERE {table}.bank_id = EXCLUDED.bank_id
+            RETURNING chunk_id
             """,
             chunk_ids,
             document_ids,
@@ -109,6 +117,9 @@ class PostgreSQLOps(DataAccessOps):
             chunk_indices,
             content_hashes,
         )
+        if len(written) != len(chunk_ids):
+            skipped = sorted(set(chunk_ids) - {row["chunk_id"] for row in written})
+            raise ChunkIdOwnedByAnotherBank(skipped)
 
     async def lock_document_for_write(
         self,
