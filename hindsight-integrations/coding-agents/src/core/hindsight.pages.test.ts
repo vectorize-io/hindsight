@@ -5,6 +5,7 @@ import {
   KNOWLEDGE_LABELS,
   PAGE_MAX_TOKENS,
   pagesFor,
+  pageScopeRule,
   pageTriggerFor,
   RETAIN_STRATEGIES,
 } from "./missions";
@@ -685,6 +686,35 @@ describe("HindsightClient.ensureFolder", () => {
 });
 
 describe("HindsightClient.captureInitiative", () => {
+  // The subject is a property of the BANK (`project` when it is one repo's, the bank id otherwise
+  // — #4146), exactly as it is for the seeded pages.
+  it("names the repository, not the bank, when the client knows one", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+      {
+        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
+        json: { id: "folder-abc" },
+      },
+      {
+        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
+        json: { page_id: "pg" },
+      },
+      { match: (m, u) => m === "POST" && u.endsWith("/memories"), json: { operation_id: "op-1" } },
+    ]);
+    const c = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "coding-agent::dotfiles",
+      project: "dotfiles",
+    });
+    await c.captureInitiative({ title: "Retry backoff", summary: "..." });
+
+    const pagePost = calls.find(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(pagePost.body.source_query).toContain(pageScopeRule("dotfiles"));
+  });
+
   it("new initiative: POSTs a per-initiative page + a marker retain naming the same page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
@@ -721,6 +751,12 @@ describe("HindsightClient.captureInitiative", () => {
     expect(pagePost.body.name).toBe("Retry backoff for the uploader");
     expect(pagePost.body.parent_id).toBe("folder-abc");
     expect(pagePost.body.tags).toEqual(["knowledge:feature-work"]);
+    // Same subject scoping and budget as a seeded page: the bank also holds facts about the
+    // dependencies this repo merely uses, and "the project's memory" never said which project
+    // (#3476). No `project` was given, so the subject is the bank — as in `seedPages`.
+    expect(pagePost.body.source_query).toContain('Summarize the "Retry backoff for the uploader"');
+    expect(pagePost.body.source_query).toContain(pageScopeRule("repo-a"));
+    expect(pagePost.body.max_tokens).toBe(PAGE_MAX_TOKENS);
 
     // Marker retain POST to /memories. The page id rides on the metadata and on the context —
     // NEVER on a tag: tags are matched with exact set-ops against a fixed vocabulary, and one

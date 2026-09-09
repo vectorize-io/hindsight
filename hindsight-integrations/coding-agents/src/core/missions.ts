@@ -196,7 +196,8 @@ export interface KnowledgePage {
 }
 
 /**
- * The subject-scoping clause every seeded page's query carries, naming the subject it is about.
+ * The subject-scoping clause every page this plugin creates carries, naming the subject it is
+ * about — the seeded taxonomy (through `pagesFor`) and each captured initiative alike.
  *
  * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
  * several repos share has no repo to name, and naming whichever one seeded last made the sentence
@@ -219,7 +220,7 @@ export interface KnowledgePage {
  * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
-function pageScopeRule(project: string): string {
+export function pageScopeRule(project: string): string {
   return (
     ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
     `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +

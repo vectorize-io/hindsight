@@ -12,6 +12,7 @@ import {
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
   pagesFor,
+  pageScopeRule,
   type PageTrigger,
   pageTriggerDrifted,
   pageTriggerFor,
@@ -795,11 +796,21 @@ export class HindsightClient {
     let pageId = args.relatesToPageId;
     if (!pageId) {
       const folderId = await this.ensureFolder("Initiatives");
+      // Same subject scoping and budget as the seeded pages: an initiative page synthesizes from
+      // the same bank, which also holds facts about the dependencies this repo merely uses, and
+      // "the project's memory" alone never said WHICH project (#3476). `max_tokens` is stated for
+      // the same reason `seedPages` states it — leaving it implicit pins these pages to whatever
+      // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
+      const subject = this.project ?? this.bank;
       const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), {
         name: args.title,
-        source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
+        source_query:
+          `Summarize the "${args.title}" initiative: what is being built or changed and why, ` +
+          `and its current state — drawn from the project's memory.` +
+          pageScopeRule(subject),
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
+        max_tokens: PAGE_MAX_TOKENS,
         trigger: pageTriggerFor(args.pageTrigger ?? buildPageTrigger(), this.bank, args.title),
       });
       try {
