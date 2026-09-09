@@ -7,11 +7,11 @@ response produced by an exception handler above it, which is why the route stash
 the names on the scope and this middleware attaches them.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from hindsight_api.api.observability import SCOPE_IGNORED_PARAMS, HttpObservabilityMiddleware
-from hindsight_api.api.unknown_params import UnknownParamsRoute
+from hindsight_api.api.unknown_params import UnknownParamsRoute, adopt_included_routes
 
 
 def _app() -> FastAPI:
@@ -80,3 +80,38 @@ def test_metrics_are_recorded_for_each_request():
         collector.record_http_request = original  # type: ignore[method-assign]
 
     assert ("GET", "/ok") in calls
+
+
+def test_hostile_param_names_do_not_break_the_response():
+    """The names are client-controlled, so they cannot be trusted as a header value.
+
+    A non-latin-1 name is unencodable in a header and a name carrying CR/LF would
+    split the response; either one used to happen inside `send`, turning a typo'd
+    query param into a 500.
+    """
+    client = TestClient(_app())
+    response = client.get("/ok", params={"\u65e5\u672c": 1, "a\r\nX-Evil: 1": 2})
+    assert response.status_code == 200
+    value = response.headers["X-Ignored-Params"]
+    assert "\r" not in value and "\n" not in value
+    assert "X-Evil" not in response.headers
+
+
+def test_routes_from_an_included_router_still_report_unknown_params():
+    """`include_router` keeps the source route's class; adopt_included_routes fixes it."""
+    app = FastAPI()
+    app.router.route_class = UnknownParamsRoute
+
+    sub = APIRouter()
+
+    @sub.get("/thing")
+    async def thing(limit: int = 10):
+        return {"limit": limit}
+
+    app.include_router(sub, prefix="/ext")
+    adopt_included_routes(app)
+    app.add_middleware(HttpObservabilityMiddleware)
+
+    response = TestClient(app).get("/ext/thing", params={"nope": 1})
+    assert response.status_code == 200
+    assert response.headers["X-Ignored-Params"] == "nope"

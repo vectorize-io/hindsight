@@ -28,7 +28,7 @@ from hindsight_api.api import page_markdown
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
-from hindsight_api.api.unknown_params import UnknownParamsRoute
+from hindsight_api.api.unknown_params import UnknownParamsRoute, adopt_included_routes
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.audit import (
     AuditEntry,
@@ -4641,6 +4641,11 @@ def create_app(
         if root_router:
             app.include_router(root_router)
             logging.info("HTTP extension root router mounted")
+
+        # include_router preserves each source route's class, so the extension's
+        # routes arrive as plain APIRoute and would otherwise lose the unknown-param
+        # reporting the old middleware gave them (it sat above the router).
+        adopt_included_routes(app)
 
     # Client-disconnect cancellation for recall/reflect. Added LAST so it sits
     # OUTSIDE the @app.middleware("http") (BaseHTTPMiddleware) layers above —

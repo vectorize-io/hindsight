@@ -107,6 +107,12 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - Engine methods return typed models (Pydantic/dataclass), not raw dicts (see Type Safety).
 - **Every list endpoint paginates, following the existing ones.** A `GET` that returns a collection whose size grows with the data (banks, documents, memories, entities, operations, webhook deliveries, audit logs, …) must take `limit`/`offset` and bound its result — an unbounded list is an unbounded payload plus unbounded per-row work (per-item counts, config resolution, embedding hydration). Copy the shape `list_documents` uses, don't invent a new one: `limit: int = Query(default=100, ge=0)` and `offset: int = Query(default=0, ge=0)` on the handler, matching keyword args on the engine method, and a response carrying the page **plus `total`, `limit`, `offset`** so a client knows when to stop. Add a `q` search param when the collection is something a user picks from in a UI — client-side filtering only ever sees the loaded page. Bounded-by-construction endpoints are the exception, not the rule: a tree/export that is whole-structure by design, or a table capped at write time (e.g. `observation_history` / `mental_model_history`, trimmed to `*_max_entries` on insert). If it isn't bounded, paginate it.
 
+### HTTP Middleware
+- **Never add a `BaseHTTPMiddleware`** — that means no `@app.middleware("http")` (the decorator installs one) and no `add_middleware(SomethingSubclassingBaseHTTPMiddleware)`. Starlette runs each such middleware's downstream app in a **child task**, piping the request and response through a pair of anyio memory-object streams. That costs a task spawn plus several scheduling hops per request, and because the cost is *scheduling*, it grows exactly when the event loop is already contended: removing the API's two of them took `/health/live` from ~2.4k to ~7.9k rps and p99 from ~107ms to ~18ms at the same concurrency (#4235). It also breaks `Request.is_disconnected()` for everything underneath it — the `http.disconnect` event never reaches the route (#2122) — and swallows `BackgroundTask` / streaming semantics in subtle ways.
+- **Write a pure-ASGI middleware instead**: a class with `__init__(self, app)` and `async def __call__(self, scope, receive, send)` that passes straight through for `scope["type"] != "http"` and wraps `send` when it needs to observe the response (read the status off the `http.response.start` message, append headers to `message["headers"]` as raw byte pairs). One `await` in the same task, no hops. `hindsight_api/api/observability.py` and `api/disconnect.py` are the models to copy.
+- **Prefer moving the work down a layer when it needs routing context.** Anything that has to know which endpoint was hit — its parameters, its signature, its body model — belongs in an `APIRoute` subclass (`app.router.route_class = ...`), not in a middleware that re-derives the route by walking `app.routes` and calling `route.matches()`. The route is already resolved there, and per-route facts can be computed once at startup instead of per request. See `api/unknown_params.py`. Note that `include_router` preserves each source route's class, so routes from an included/extension router need `adopt_included_routes(app)` after the include.
+- **Header values built from client input must be sanitised** before they reach `message["headers"]`: query-param and body-field names are percent-decoded attacker input, so a non-latin-1 name raises mid-`send` (a 500 from a typo) and a name containing CR/LF splits the response.
+
 ### Bank/Tenant Isolation in Queries
 - **Bank isolation is a hard security invariant: no query may read, count, update, or delete another bank's rows.** Tenant isolation is enforced at the schema level (the resolved `search_path` / `fq_table(...)` qualifier, gated by `_authenticate_tenant`); bank isolation is enforced *within* a schema by a `bank_id` predicate on every statement that touches a multi-bank table.
 - **Every SQL statement against a multi-bank table must be constrained by `bank_id`** — directly in the `WHERE`, or transitively (see below). Multi-bank tables carry a `bank_id` column: `memory_units`, `documents`, `entities`, `entity_links`, `mental_models`, `knowledge_pages`, `memory_links`, `observation_history`, and similar.
@@ -398,6 +404,17 @@ Grep the diff for `advisory` (`git diff main...HEAD | grep -in advisory`). Any n
 `pg_advisory_unlock` call is a **must fix** — see Database Locking above. Point the
 author at the alternatives (per-process objects, idempotent DDL, row-level
 constraints) rather than just asking them to drop the lock.
+
+### 11e. Check for BaseHTTPMiddleware
+
+```bash
+git diff main...HEAD -- '*.py' | grep -nE "@app\.middleware\(|BaseHTTPMiddleware"
+```
+
+Any new `@app.middleware("http")` or `BaseHTTPMiddleware` subclass is a **must fix** —
+see "HTTP Middleware" above. Ask for a pure-ASGI middleware (or an `APIRoute` subclass
+if the logic needs routing context), and check that a `send` wrapper sanitises any
+header value derived from client input.
 
 ### 11d. Check concurrency primitives and free-threading safety
 

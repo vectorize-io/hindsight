@@ -37,6 +37,18 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 SCOPE_IGNORED_PARAMS = "hindsight.ignored_params"
 
 
+def _header_safe(value: str) -> bytes:
+    """Encode an attacker-supplied string for use as a header value.
+
+    The names in this header come straight from the client's query string and JSON
+    body, percent-decoded — so they can carry anything, including CR/LF (response
+    splitting) and non-latin-1 characters, which are simply not encodable in a
+    header and would otherwise raise mid-``send`` and turn a harmless typo'd query
+    param into a 500. Keep printable ASCII, drop the rest.
+    """
+    return "".join(ch if " " <= ch <= "~" else "?" for ch in value).encode("ascii")
+
+
 class HttpObservabilityMiddleware:
     """Record per-request metrics and inject ``X-Ignored-Params``."""
 
@@ -65,7 +77,7 @@ class HttpObservabilityMiddleware:
                 if ignored:
                     # Headers are a raw list of byte pairs at this layer; the route
                     # has already joined and logged the names.
-                    message.setdefault("headers", []).append((b"x-ignored-params", ignored.encode("latin-1")))
+                    message.setdefault("headers", []).append((b"x-ignored-params", _header_safe(ignored)))
             await send(message)
 
         with metrics_collector.record_http_request(method, path, lambda: status_code[0]):
