@@ -37,6 +37,7 @@ import {
   writeSessionCache,
   type SessionCache,
 } from "./session-cache";
+import { appendJournalTurn, journalPath } from "./turn-journal";
 
 export interface HookEventFields {
   prompt?: string;
@@ -52,6 +53,10 @@ export interface HookSpec {
   /** Some hosts execute hook commands from their global config directory. Those hosts must provide
    * a workspace path in the event; falling back to process.cwd() would create a bank for config. */
   requireCwd?: boolean;
+  /** Record this prompt in the session's own turn journal (core/turn-journal.ts). Set ONLY by the
+   *  harnesses whose host keeps no durable transcript, because for them the journal IS the
+   *  transcript their Stop hook retains — see the ZCode entry in harness/hook-lifecycle.ts. */
+  journalPrompt?: boolean;
   /** Wrap injected context (and an optional user-facing notice) in the harness's native
    *  hook-output schema. Harnesses whose schema has no user-visible channel ignore `notice`. */
   emit(context: string, notice?: string, event?: Record<string, unknown>): unknown;
@@ -235,6 +240,14 @@ export async function runHook(
   if (cfg.disabled) {
     log.debug(spec.harness, "hook skipped: disabled");
     return;
+  }
+
+  // Before any network work, and deliberately before the bank is resolved: the journal is this
+  // session's only record of what the user said, and a slow or unreachable server must not be able
+  // to cost the turn. Journaling under `retainSessions: false` writes a temp file nothing reads,
+  // which is cheaper than threading that decision through two processes to find out.
+  if (spec.journalPrompt) {
+    appendJournalTurn(journalPath(spec.harness, sessionId), { role: "user", content: prompt });
   }
 
   const out = (context: string | undefined, notice?: string) =>

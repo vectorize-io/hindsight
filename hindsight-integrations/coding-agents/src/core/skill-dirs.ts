@@ -25,6 +25,11 @@ export const SKILL_DIRS: Record<string, string[]> = {
   "cline-cli": [".cline", "data", "settings", "skills"],
   "qwen-code": [".qwen", "skills"], // Qwen's user-level skills root (Storage.getUserSkillsDirs)
   "factory-droid": [".factory", "skills"], // Droid's user-level skills root
+  // ZCode scans TWO user roots by default (its resolveDefaultSkillRoots): `~/.zcode/skills` and the
+  // shared agentskills `~/.agents/skills`. Write its OWN, for the same reason the pi family does —
+  // skill removal is by fixed directory name, so installing into the shared root would make
+  // `uninstall zcode` take Codex's and dsh's copy with it.
+  zcode: [".zcode", "skills"],
   // The pi family reads the shared ~/.agents/skills too, but writes its OWN root: skill removal is
   // by fixed directory name, so installing to the shared one would make `uninstall pi` take Codex's
   // and dsh's copy with it.

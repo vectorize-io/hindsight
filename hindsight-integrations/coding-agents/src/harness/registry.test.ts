@@ -25,9 +25,10 @@ describe("HARNESS_NAMES", () => {
         "grok-build",
         "qwen-code",
         "factory-droid",
+        "zcode",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(17);
+    expect(HARNESS_NAMES).toHaveLength(18);
   });
 });
 

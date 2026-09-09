@@ -57,6 +57,7 @@ describe("resolveHarnessLogo", () => {
     "pi",
     "prime-agent",
     "qwen-code",
+    "zcode",
   ];
   // Ids the integration used to emit. Kept so documents already retained under
   // them keep their logo; a new id never belongs here.

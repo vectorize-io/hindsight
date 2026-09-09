@@ -1,0 +1,11 @@
+FROM hindsight-coding-agents-e2e-base
+ARG VERSION=latest
+# ZCode Desktop is a GUI app, so the container uses zcode-app-cli: it vendors the SAME agent
+# runtime the desktop ships (resources/glm) and exposes it as a headless `zcode` binary. That is
+# what makes this harness containerisable at all.
+RUN npm install --global "zcode-app-cli@${VERSION}" \
+    && command -v zcode
+# The model route: ZCode reads its provider from ~/.zcode/cli/config.json only, and that is the
+# file the installer also owns — see the script's header for why it merges.
+COPY zcode-e2e-exec.sh /usr/local/bin/hindsight-zcode-e2e-exec
+RUN chmod 755 /usr/local/bin/hindsight-zcode-e2e-exec
