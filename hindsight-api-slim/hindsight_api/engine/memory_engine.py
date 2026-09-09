@@ -59,6 +59,7 @@ from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
+from .chunk_id import build_chunk_id, parse_chunk_id
 from .db import DatabaseBackend, DatabaseConnection, ResultRow, create_database_backend
 from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
@@ -211,32 +212,6 @@ def _bind_bank_id(
 def count_tokens(text: str) -> int:
     """Count tokens in text under the configured encoding (see engine/token_encoding.py)."""
     return _token_encoding_count(text)
-
-
-def _parse_chunk_id(chunk_id: str | None) -> "tuple[str, str, int] | None":
-    """Split a ``{bank_id}_{document_id}_{index}`` chunk_id into its parts.
-
-    Retain builds chunk ids in exactly this shape (see ``retain/chunk_storage.py``), which makes
-    them self-describing — the addressed chunk route has no bank in its path and normally recovers
-    it from the SQL row, but a store that owns the document store has no such row. Both splits are
-    from the RIGHT: the index is the final segment, and the document id before it is a UUID, which
-    contains no underscore. A bank id containing underscores is therefore still parsed correctly.
-
-    Returns ``None`` when the id is not in that shape, so the caller falls through to the SQL
-    lookup rather than guessing.
-    """
-    if not chunk_id:
-        return None
-    head, _, idx_s = chunk_id.rpartition("_")
-    if not head or not idx_s:
-        return None
-    bank_id, _, document_id = head.rpartition("_")
-    if not bank_id or not document_id:
-        return None
-    try:
-        return bank_id, document_id, int(idx_s)
-    except ValueError:
-        return None
 
 
 def _epoch_ms_to_datetime(value: Any) -> datetime | None:
@@ -5902,7 +5877,7 @@ class MemoryEngine(MemoryEngineInterface):
             # sliced into several sub-batches that all share one document_id and
             # run sequentially, each sub-batch must continue the document's
             # chunk_index sequence rather than restart at 0 — otherwise the
-            # derived chunk_id ({bank}_{doc}_{index}) collides and later
+            # derived chunk IDs collide and later
             # sub-batches overwrite earlier chunks, leaving only one sub-batch's
             # worth of chunks/memories (issue #1888). The counts come from the
             # splitter, which cut the slices on those very chunk boundaries.
@@ -8486,26 +8461,22 @@ class MemoryEngine(MemoryEngineInterface):
                     if _owns_docs and not chunks_rows:
                         # A store that owns the document store AND wrote no SQL chunks row (PG-free
                         # retain) leaves the chunks table empty, so the query above found nothing.
-                        # Synthesize the metadata from the chunk_ids themselves — a chunk_id is
-                        # ``{bank_id}_{document_id}_{chunk_index}`` and bank_id is known, so the last
-                        # ``_``-segment is the index and everything between is the document_id — then
-                        # let the overlay below fill in the text from the store. Independent of the
+                        # Synthesize the metadata from the self-describing chunk_ids, then let the
+                        # overlay below fill in the text from the store. Independent of the
                         # per-request capability flags: it fires whenever docs are owned and SQL is
                         # empty, which is exactly the PG-free case.
-                        _pfx = f"{bank_id}_"
                         chunks_rows = []
                         for _cid in chunk_ids_ordered:
-                            if not _cid.startswith(_pfx):
-                                continue
-                            _doc, _, _idx_s = _cid[len(_pfx) :].rpartition("_")
-                            if not _doc:
-                                continue
-                            try:
-                                _idx = int(_idx_s)
-                            except ValueError:
+                            address = parse_chunk_id(_cid)
+                            if address is None or address.bank_id != bank_id:
                                 continue
                             chunks_rows.append(
-                                {"chunk_id": _cid, "chunk_text": "", "chunk_index": _idx, "document_id": _doc}
+                                {
+                                    "chunk_id": _cid,
+                                    "chunk_text": "",
+                                    "chunk_index": address.chunk_index,
+                                    "document_id": address.document_id,
+                                }
                             )
 
                     if _owns_docs:
@@ -12274,7 +12245,7 @@ class MemoryEngine(MemoryEngineInterface):
         Get a specific chunk by its ID.
 
         Args:
-            chunk_id: Chunk ID (format: bank_id_document_id_chunk_index)
+            chunk_id: Self-describing chunk ID returned by the retain or document APIs
             request_context: Request context for authentication.
 
         Returns:
@@ -12283,12 +12254,14 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
 
         # A store that owns the document store keeps no SQL `chunks` row to look this id up in.
-        # The id is self-describing — retain builds it as `{bank_id}_{document_id}_{index}` — so
+        # The id is self-describing, so
         # the bank and document are recoverable from it without a row. Attempted before touching
         # SQL because for such a bank the SELECT below can only ever miss.
-        _parsed = _parse_chunk_id(chunk_id)
+        _parsed = parse_chunk_id(chunk_id)
         if _parsed is not None:
-            _cbank, _cdoc, _cidx = _parsed
+            _cbank = _parsed.bank_id
+            _cdoc = _parsed.document_id
+            _cidx = _parsed.chunk_index
             from .memories import get_memories
 
             _chunk_store = get_memories()
@@ -12410,10 +12383,9 @@ class MemoryEngine(MemoryEngineInterface):
             return {
                 "items": [
                     {
-                        # Rebuilt to the same shape retain writes
-                        # (chunk_storage.py: f"{bank_id}_{document_id}_{index}") so an id from
+                        # Rebuilt to the same shape retain writes, so an id from
                         # this route is accepted by the addressed chunk route.
-                        "chunk_id": f"{bank_id}_{document_id}_{idx}",
+                        "chunk_id": build_chunk_id(bank_id, document_id, idx),
                         "document_id": document_id,
                         "bank_id": bank_id,
                         "chunk_index": idx,
