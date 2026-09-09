@@ -40,7 +40,7 @@
     "brace-expansion@^1.0.0": "^1.1.18",
     "brace-expansion@^2.0.0": "^2.1.4",
     "brace-expansion@^5.0.0": "^5.0.9",
-    "js-yaml": ">=4.3.1 <5.0.0",
+    "js-yaml": ">=4.3.2 <5.0.0",
     "ip-address": ">=10.3.1 <11.0.0",
     "undici": ">=6.28.0 <7.0.0",
     "browserslist": ">=4.28.7 <5.0.0"
