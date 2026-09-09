@@ -7274,7 +7274,11 @@ class MemoryEngine(MemoryEngineInterface):
                 tags_match=tags_match,
                 tag_groups=tag_groups,
             )
+            _t0 = time.time()
             result = await self._validate_operation(self._operation_validator.validate_recall(ctx))
+            _d = time.time() - _t0
+            if _d > 0.025:
+                logger.info('[RECALL PHASE] validate_pre=%.3fs bank=%s', _d, bank_id)
             if result:
                 if result.tags is not None:
                     tags = result.tags
@@ -7285,12 +7289,20 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
         # the validator so a validator-supplied tag_groups is resolved too.
+        _t0 = time.time()
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        _d = time.time() - _t0
+        if _d > 0.025:
+            logger.info('[RECALL PHASE] fuzzy_tags=%.3fs bank=%s', _d, bank_id)
 
         # Map budget enum to thinking_budget number using bank-resolved config.
         # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
         # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
+        _t0 = time.time()
         budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
+        _d = time.time() - _t0
+        if _d > 0.025:
+            logger.info('[RECALL PHASE] bank_config=%.3fs bank=%s', _d, bank_id)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
         # Reranker candidate cap, optionally scaled by the same budget level (env-configured,
         # 0/unset → flat reranker_max_candidates). Static config, so read from get_config().
@@ -7411,7 +7423,11 @@ class MemoryEngine(MemoryEngineInterface):
                                     error=error_msg,
                                 )
                                 try:
+                                    _t0 = time.time()
                                     await self._operation_validator.on_recall_complete(result_ctx)
+                                    _d = time.time() - _t0
+                                    if _d > 0.025:
+                                        logger.info('[RECALL PHASE] validate_post=%.3fs bank=%s', _d, bank_id)
                                 except Exception as hook_err:
                                     logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
                             raise
