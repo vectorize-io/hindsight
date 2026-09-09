@@ -10845,6 +10845,9 @@ components:
         structured_output:
           additionalProperties: {}
           nullable: true
+        structured_output_error:
+          nullable: true
+          type: string
         usage:
           $ref: '#/components/schemas/TokenUsage'
         trace:

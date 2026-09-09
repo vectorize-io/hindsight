@@ -5579,6 +5579,12 @@ export type ReflectResponse = {
     [key: string]: unknown;
   } | null;
   /**
+   * Structured Output Error
+   *
+   * Why structured output could not be produced. Present only when a response_schema was given and the extraction call failed (provider error, timeout, unparseable output). A missing structured_output *without* this field means the answer held nothing matching the schema — the reflect itself still succeeded either way.
+   */
+  structured_output_error?: string | null;
+  /**
    * Token usage metrics for LLM calls during reflection.
    */
   usage?: TokenUsage | null;

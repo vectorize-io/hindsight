@@ -102,6 +102,13 @@ class StructuredOutputResult(BaseModel):
     structured_output: dict[str, Any] | None = Field(
         default=None, description="Generated structured output, or None if generation failed"
     )
+    error: str | None = Field(
+        default=None,
+        description=(
+            "Why the extraction call produced no structured output, when it failed. None on success. "
+            "Callers cannot otherwise tell a failed extraction from one that had nothing to extract."
+        ),
+    )
     input_tokens: int = Field(default=0, description="Input tokens used")
     output_tokens: int = Field(default=0, description="Visible output tokens used")
     cached_tokens: int = Field(default=0, description="Cached prefix tokens. Subset of input_tokens.")
@@ -141,6 +148,14 @@ class ReflectAgentResult(BaseModel):
     )
     structured_output: dict[str, Any] | None = Field(
         default=None, description="Structured output parsed according to provided response_schema"
+    )
+    structured_output_error: str | None = Field(
+        default=None,
+        description=(
+            "Why the structured-output extraction failed, when a response_schema was given and the "
+            "extraction call errored or returned unparseable output. None when it succeeded or when "
+            "no schema was requested."
+        ),
     )
     iterations: int = Field(default=0, description="Number of iterations taken")
     tools_called: int = Field(default=0, description="Total number of tool calls made")

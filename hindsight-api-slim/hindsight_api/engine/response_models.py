@@ -550,6 +550,14 @@ class ReflectResult(BaseModel):
         default=None,
         description="Structured output parsed according to the provided response schema. Only present when response_schema was provided.",
     )
+    structured_output_error: str | None = Field(
+        default=None,
+        description=(
+            "Why structured output could not be produced, when a response_schema was provided and the "
+            "extraction call failed. Absent when extraction succeeded, so a null structured_output "
+            "without this field means the answer held nothing matching the schema."
+        ),
+    )
     usage: TokenUsage | None = Field(
         default=None,
         description="Token usage metrics for the LLM calls made during this reflect operation.",

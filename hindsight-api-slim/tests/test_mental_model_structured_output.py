@@ -9,7 +9,6 @@ modes. These are deterministic tests: reflect_async, the delta-ops LLM call, and
 the structured-output extractor are all mocked (no real LLM).
 """
 
-import types
 import uuid
 
 import pytest
@@ -18,6 +17,7 @@ from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.memory_engine import MentalModelRefreshError
 from hindsight_api.engine.reflect import agent as reflect_agent
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+from hindsight_api.engine.reflect.models import StructuredOutputResult
 from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
 from tests.conftest import stub_refresh_has_sources
 
@@ -43,18 +43,19 @@ def _canned_reflect_result(text: str, facts: list[dict] | None = None) -> Reflec
     )
 
 
-def _patch_structured_output(monkeypatch, returns: dict) -> list[str]:
-    """Patch _generate_structured_output; record the content it was asked to parse."""
+def _patch_structured_output(monkeypatch, returns: dict | None) -> list[str]:
+    """Patch _generate_structured_output; record the content it was asked to parse.
+
+    ``returns=None`` stands for a failed extraction, which carries the reason in
+    ``error`` the way the real helper does (#4230).
+    """
     calls: list[str] = []
 
     async def fake(answer, response_schema, llm_config, reflect_id, max_tokens=None):
         calls.append(answer)
-        return types.SimpleNamespace(
+        return StructuredOutputResult(
             structured_output=returns,
-            input_tokens=0,
-            output_tokens=0,
-            cached_tokens=0,
-            thoughts_tokens=0,
+            error=None if returns is not None else "RuntimeError: simulated extraction failure",
         )
 
     monkeypatch.setattr(reflect_agent, "_generate_structured_output", fake)

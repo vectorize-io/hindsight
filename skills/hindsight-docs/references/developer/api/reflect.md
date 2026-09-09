@@ -361,6 +361,10 @@ The synthesized answer as a well-formatted markdown string. This is the primary 
 
 The LLM's response parsed according to the `response_schema` provided in the request. Only present when `response_schema` was set. `null` otherwise.
 
+### structured_output_error
+
+Why the structured view could not be produced. Present only when a `response_schema` was given and the extraction pass failed — a provider error, a timeout, or output that would not parse. The reflect itself still succeeds: you get `200` and the markdown `text`, and this field tells you the machine-readable half is missing because something broke, not because the answer held nothing matching your schema. A missing `structured_output` **without** this field is the latter, ordinary case (the endpoint omits null fields). Treat its presence as retryable, and as the signal to alert on if structured output stops working.
+
 ### based_on
 
 The sources the agent used to construct the answer. Only present when `include.facts` was enabled. Contains three fields:

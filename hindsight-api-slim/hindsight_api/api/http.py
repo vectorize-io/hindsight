@@ -1596,6 +1596,15 @@ class ReflectResponse(BaseModel):
         default=None,
         description="Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request.",
     )
+    structured_output_error: str | None = Field(
+        default=None,
+        description=(
+            "Why structured output could not be produced. Present only when a response_schema was "
+            "given and the extraction call failed (provider error, timeout, unparseable output). "
+            "A missing structured_output *without* this field means the answer held nothing "
+            "matching the schema — the reflect itself still succeeded either way."
+        ),
+    )
     usage: TokenUsage | None = Field(
         default=None,
         description="Token usage metrics for LLM calls during reflection.",
@@ -5880,6 +5889,7 @@ def _register_routes(app: FastAPI):
                 text=core_result.text,
                 based_on=based_on_result,
                 structured_output=core_result.structured_output,
+                structured_output_error=core_result.structured_output_error,
                 usage=core_result.usage,
                 trace=trace_result,
             )

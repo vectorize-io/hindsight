@@ -558,6 +558,7 @@ from .mental_model_refresh import (
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import ReflectNoAnswerError, ReflectToolExecutionError, run_reflect_agent
+from .reflect.models import StructuredOutputResult
 from .reflect.retractions import (
     RetractedGrounding,
     based_on_fact_ids,
@@ -14443,6 +14444,7 @@ class MemoryEngine(MemoryEngineInterface):
                 document=agent_result.document,
                 based_on=based_on,
                 structured_output=agent_result.structured_output,
+                structured_output_error=agent_result.structured_output_error,
                 usage=usage,
                 tool_trace=tool_trace_result,
                 llm_trace=llm_trace_result,
@@ -16940,19 +16942,18 @@ class MemoryEngine(MemoryEngineInterface):
             response_schema = (mental_model.get("trigger") or {}).get("response_schema")
             prev_structured_output = (mental_model.get("reflect_response") or {}).get("structured_output")
 
-            async def _structured_output_for(content_text: str) -> dict[str, Any] | None:
+            async def _structured_output_for(content_text: str) -> StructuredOutputResult:
                 if not response_schema or not content_text.strip():
-                    return None
+                    return StructuredOutputResult(error="no response_schema, or the content was empty")
                 from .reflect.agent import _generate_structured_output
 
-                result = await _generate_structured_output(
+                return await _generate_structured_output(
                     content_text,
                     response_schema,
                     self._reflect_llm_config,
                     f"mm-{mental_model_id[:8]}",
                     mental_model.get("max_tokens"),
                 )
-                return result.structured_output
 
             if run.outcome == "content_preserved_no_new_facts":
                 logger.info(
@@ -17040,14 +17041,17 @@ class MemoryEngine(MemoryEngineInterface):
             # previously-stored value); failing here leaves content/structured untouched,
             # so the prior content and structured_output are preserved for retry.
             if response_schema:
-                structured_output = await _structured_output_for(run.final_content)
-                if structured_output is None:
+                structured = await _structured_output_for(run.final_content)
+                if structured.structured_output is None:
                     await _preserve_and_fail(
                         reason="structured_output_failed",
                         outcome="refresh_failed_structured_output",
-                        detail="structured output extraction failed while a response_schema is configured.",
+                        detail=(
+                            "structured output extraction failed while a response_schema is configured"
+                            f" ({structured.error})."
+                        ),
                     )
-                reflect_response_payload["structured_output"] = structured_output
+                reflect_response_payload["structured_output"] = structured.structured_output
 
             # Update the mental model with new content and reflect_response.
             # Passing last_refreshed_source_query records the query used for this

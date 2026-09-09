@@ -25,6 +25,7 @@ type ReflectResponse struct {
 	Text string `json:"text"`
 	BasedOn NullableReflectBasedOn `json:"based_on,omitempty"`
 	StructuredOutput map[string]interface{} `json:"structured_output,omitempty"`
+	StructuredOutputError NullableString `json:"structured_output_error,omitempty"`
 	Usage NullableTokenUsage `json:"usage,omitempty"`
 	Trace NullableReflectTrace `json:"trace,omitempty"`
 }
@@ -148,6 +149,48 @@ func (o *ReflectResponse) SetStructuredOutput(v map[string]interface{}) {
 	o.StructuredOutput = v
 }
 
+// GetStructuredOutputError returns the StructuredOutputError field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectResponse) GetStructuredOutputError() string {
+	if o == nil || IsNil(o.StructuredOutputError.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.StructuredOutputError.Get()
+}
+
+// GetStructuredOutputErrorOk returns a tuple with the StructuredOutputError field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectResponse) GetStructuredOutputErrorOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.StructuredOutputError.Get(), o.StructuredOutputError.IsSet()
+}
+
+// HasStructuredOutputError returns a boolean if a field has been set.
+func (o *ReflectResponse) HasStructuredOutputError() bool {
+	if o != nil && o.StructuredOutputError.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetStructuredOutputError gets a reference to the given NullableString and assigns it to the StructuredOutputError field.
+func (o *ReflectResponse) SetStructuredOutputError(v string) {
+	o.StructuredOutputError.Set(&v)
+}
+// SetStructuredOutputErrorNil sets the value for StructuredOutputError to be an explicit nil
+func (o *ReflectResponse) SetStructuredOutputErrorNil() {
+	o.StructuredOutputError.Set(nil)
+}
+
+// UnsetStructuredOutputError ensures that no value is present for StructuredOutputError, not even an explicit nil
+func (o *ReflectResponse) UnsetStructuredOutputError() {
+	o.StructuredOutputError.Unset()
+}
+
 // GetUsage returns the Usage field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *ReflectResponse) GetUsage() TokenUsage {
 	if o == nil || IsNil(o.Usage.Get()) {
@@ -248,6 +291,9 @@ func (o ReflectResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.StructuredOutput != nil {
 		toSerialize["structured_output"] = o.StructuredOutput
+	}
+	if o.StructuredOutputError.IsSet() {
+		toSerialize["structured_output_error"] = o.StructuredOutputError.Get()
 	}
 	if o.Usage.IsSet() {
 		toSerialize["usage"] = o.Usage.Get()

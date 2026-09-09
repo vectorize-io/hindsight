@@ -979,6 +979,48 @@ async def test_reflect_structured_output(api_client):
 
 
 @pytest.mark.asyncio
+async def test_reflect_structured_output_failure_is_reported(api_client, monkeypatch):
+    """A failed extraction pass still returns 200 with the text answer, but says so.
+
+    Before #4230 the failure was swallowed: the caller got structured_output: null
+    with nothing distinguishing a broken extraction call (retryable) from an answer
+    that held nothing matching the schema.
+    """
+    from hindsight_api.engine.reflect import agent as reflect_agent
+    from hindsight_api.engine.reflect.models import StructuredOutputResult
+
+    async def _failing_extraction(*args, **kwargs):
+        return StructuredOutputResult(error="RuntimeError: provider is down")
+
+    monkeypatch.setattr(reflect_agent, "_generate_structured_output", _failing_extraction)
+
+    test_bank_id = f"reflect_structured_err_test_{datetime.now().timestamp()}"
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={"items": [{"content": "Alice lives in Berlin.", "context": "team member info"}]},
+    )
+    assert response.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "Where does Alice live?",
+            "response_schema": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    assert result["text"]
+    assert result.get("structured_output") is None
+    assert result.get("structured_output_error") == "RuntimeError: provider is down"
+
+
+@pytest.mark.asyncio
 async def test_reflect_without_structured_output(api_client):
     """Test that reflect works normally without response_schema.
 

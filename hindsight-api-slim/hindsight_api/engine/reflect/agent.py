@@ -191,8 +191,10 @@ async def _generate_structured_output(
             JSON (finish_reason=length, empty content -> issue #2431)
 
     Returns:
-        A StructuredOutputResult carrying the structured output (None if
-        generation fails) and the call's token usage.
+        A StructuredOutputResult carrying the structured output and the call's
+        token usage. On failure ``structured_output`` is None and ``error``
+        says why, so a caller can tell a broken extraction (retryable) from an
+        answer that genuinely held nothing to extract (issue #4230).
     """
     try:
         from typing import Any as TypingAny
@@ -241,7 +243,7 @@ async def _generate_structured_output(
 
         if not schema_props:
             logger.warning(f"[REFLECT {reflect_id}] No fields found in response_schema, skipping structured output")
-            return StructuredOutputResult()
+            return StructuredOutputResult(error="response_schema declares no properties")
 
         DynamicModel = _model_for(response_schema, "StructuredResponse")
 
@@ -333,7 +335,7 @@ OUTPUT:"""
 
     except Exception as e:
         logger.warning(f"[REFLECT {reflect_id}] Failed to generate structured output: {e}")
-        return StructuredOutputResult()
+        return StructuredOutputResult(error=f"{type(e).__name__}: {e}")
 
 
 def _count_messages_tokens(messages: list[dict[str, Any]]) -> int:
@@ -864,10 +866,12 @@ async def _run_reflect_agent_inner(
             )
 
         structured_output = None
+        structured_output_error = None
         # ``answer`` is non-empty past the guard above, so only the schema gates this.
         if response_schema:
             struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
             structured_output = struct.structured_output
+            structured_output_error = struct.error
             total_input_tokens += struct.input_tokens
             total_output_tokens += struct.output_tokens
             total_cached_tokens += struct.cached_tokens
@@ -877,6 +881,7 @@ async def _run_reflect_agent_inner(
         return ReflectAgentResult(
             text=answer,
             structured_output=structured_output,
+            structured_output_error=structured_output_error,
             iterations=iterations_completed,
             tools_called=total_tools_called,
             tool_trace=tool_trace,
@@ -1524,9 +1529,11 @@ async def _process_done_tool(
 
     # Generate structured output if schema provided
     structured_output = None
+    structured_output_error = None
     if response_schema and llm_config and answer:
         struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
         structured_output = struct.structured_output
+        structured_output_error = struct.error
         # Add structured output tokens to usage
         final_usage = TokenUsageSummary(
             input_tokens=final_usage.input_tokens + struct.input_tokens,
@@ -1541,6 +1548,7 @@ async def _process_done_tool(
         text=answer,
         document=document,
         structured_output=structured_output,
+        structured_output_error=structured_output_error,
         iterations=iterations,
         tools_called=total_tools_called,
         tool_trace=tool_trace,

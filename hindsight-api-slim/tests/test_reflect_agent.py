@@ -147,6 +147,7 @@ class TestReflectStructuredOutput:
         )
 
         assert result.structured_output is None
+        assert result.error is not None
         call_kwargs = llm.call.await_args.kwargs
         assert call_kwargs["scope"] == "reflect_structured"
         assert call_kwargs["max_retries"] == 1
@@ -220,6 +221,52 @@ class TestReflectStructuredOutput:
         )
 
         assert llm.call.await_args.kwargs.get("max_completion_tokens") is None
+
+    @pytest.mark.asyncio
+    async def test_failed_extraction_reports_why(self):
+        """A failed extraction carries the reason, so a caller can tell it apart from
+        an answer that simply held nothing matching the schema (issue #4230)."""
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("provider is down"))
+
+        result = await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert result.structured_output is None
+        assert result.error == "RuntimeError: provider is down"
+
+    @pytest.mark.asyncio
+    async def test_successful_extraction_reports_no_error(self):
+        """The success path leaves ``error`` unset, so its presence alone means failure."""
+        llm = MagicMock()
+        llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content={"summary": "Alice likes short updates."},
+                usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            )
+        )
+
+        result = await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert result.structured_output == {"summary": "Alice likes short updates."}
+        assert result.error is None
 
 
 class TestReflectAgentMocked:

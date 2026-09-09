@@ -272,6 +272,11 @@ extracts that answer into JSON matching your schema. `structured_output` is ther
 faithful projection of `text` — you get the readable answer **and** a typed object to program
 against, never one instead of the other.
 
+**When extraction fails.** The reflect still returns `200` with the prose answer, no
+`structured_output`, and a `structured_output_error` field saying why (a provider error, a timeout,
+unparseable output). A missing `structured_output` *without* that field means the answer simply held
+nothing matching your schema — so you can retry the broken case without retrying the ordinary one.
+
 **Schema rules.** The schema must be an object with at least one property. Each property's `type`
 is one of `string`, `number`, `integer`, `boolean`, `array`, or `object`, and `required` lists
 property names. Invalid schemas are rejected before the call runs, so a malformed schema fails

@@ -32,9 +32,10 @@ class ReflectResponse(BaseModel):
     text: StrictStr = Field(description="The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)")
     based_on: Optional[ReflectBasedOn] = None
     structured_output: Optional[Dict[str, Any]] = None
+    structured_output_error: Optional[StrictStr] = None
     usage: Optional[TokenUsage] = None
     trace: Optional[ReflectTrace] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage", "trace"]
+    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "structured_output_error", "usage", "trace"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -94,6 +95,11 @@ class ReflectResponse(BaseModel):
         if self.structured_output is None and "structured_output" in self.model_fields_set:
             _dict['structured_output'] = None
 
+        # set to None if structured_output_error (nullable) is None
+        # and model_fields_set contains the field
+        if self.structured_output_error is None and "structured_output_error" in self.model_fields_set:
+            _dict['structured_output_error'] = None
+
         # set to None if usage (nullable) is None
         # and model_fields_set contains the field
         if self.usage is None and "usage" in self.model_fields_set:
@@ -119,6 +125,7 @@ class ReflectResponse(BaseModel):
             "text": obj.get("text"),
             "based_on": ReflectBasedOn.from_dict(obj["based_on"]) if obj.get("based_on") is not None else None,
             "structured_output": obj.get("structured_output"),
+            "structured_output_error": obj.get("structured_output_error"),
             "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None,
             "trace": ReflectTrace.from_dict(obj["trace"]) if obj.get("trace") is not None else None
         })

@@ -16189,6 +16189,18 @@
             "title": "Structured Output",
             "description": "Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request."
           },
+          "structured_output_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured Output Error",
+            "description": "Why structured output could not be produced. Present only when a response_schema was given and the extraction call failed (provider error, timeout, unparseable output). A missing structured_output *without* this field means the answer held nothing matching the schema \u2014 the reflect itself still succeeded either way."
+          },
           "usage": {
             "anyOf": [
               {
