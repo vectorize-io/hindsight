@@ -15649,6 +15649,21 @@
                 "type": "null"
               }
             ]
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments this fact was drawn from, as recorded per fact at extraction time \u2014 the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none."
           }
         },
         "type": "object",
