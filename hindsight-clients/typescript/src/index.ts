@@ -85,6 +85,51 @@ export const CLIENT_VERSION: string =
   typeof __CLIENT_VERSION__ !== "undefined" ? __CLIENT_VERSION__ : "0.0.0-dev";
 export const DEFAULT_USER_AGENT = `hindsight-client-typescript/${CLIENT_VERSION}`;
 
+/** Attempts a retryable call makes in total, including the first. */
+export const DEFAULT_MAX_ATTEMPTS = 3;
+
+/** Fallback backoff when the server sends 503 without a usable `Retry-After`. */
+const FALLBACK_BACKOFF_MS = 500;
+
+/** Parse `Retry-After` (delta-seconds form) into milliseconds, if present. */
+export function retryAfterMs(response: Response | undefined): number | null {
+  const raw = response?.headers?.get("retry-after");
+  if (raw === null || raw === undefined) return null;
+  const seconds = Number(raw);
+  // The HTTP-date form is legal but rare; the caller's backoff beats parsing dates.
+  if (!Number.isFinite(seconds)) return null;
+  return Math.max(0, seconds * 1000);
+}
+
+/**
+ * Run `send`, retrying while the server reports it is at capacity (429/503).
+ *
+ * Only for **idempotent** operations. Recall and reflect are reads, so a repeat is
+ * free; synchronous retain is not, and is deliberately excluded — its
+ * `operation_id` is ignored there, so a retry could duplicate a write.
+ *
+ * Two things matter more than the retry itself. `Retry-After` is honoured, because
+ * the server sends it knowing how long its own queue is. And the wait is
+ * **jittered**: a burst of clients that all receive `Retry-After: 1` and obey it
+ * exactly return in lockstep and rebuild the spike that caused the rejection.
+ */
+export async function retryOnCapacity<T extends { response?: Response }>(
+  send: () => Promise<T>,
+  maxAttempts: number,
+  random: () => number = Math.random
+): Promise<T> {
+  let result = await send();
+  for (let attempt = 1; attempt < maxAttempts; attempt++) {
+    const status = result.response?.status;
+    if (status !== 429 && status !== 503) return result;
+    const wait = retryAfterMs(result.response) ?? FALLBACK_BACKOFF_MS * 2 ** (attempt - 1);
+    // Full jitter: sleep somewhere in [0, wait] so a synchronised burst spreads out.
+    await new Promise((resolve) => setTimeout(resolve, random() * wait));
+    result = await send();
+  }
+  return result;
+}
+
 export interface HindsightClientOptions {
   baseUrl: string;
   /**
@@ -100,6 +145,12 @@ export interface HindsightClientOptions {
   userAgent?: string;
   /** Optional headers sent with every request. */
   headers?: Record<string, string>;
+  /**
+   * Total attempts for *idempotent* calls (recall, reflect) when the server reports
+   * it is at capacity (429/503). 1 disables retrying. Waits honour `Retry-After`
+   * and are jittered; writes are never retried.
+   */
+  maxAttempts?: number;
 }
 
 /**
@@ -236,6 +287,7 @@ function warnIfOperationIdDropped(
 
 export class HindsightClient {
   private client: Client;
+  private maxAttempts: number;
 
   constructor(options: HindsightClientOptions) {
     const headers: Record<string, string> = {
@@ -251,6 +303,7 @@ export class HindsightClient {
         headers,
       })
     );
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
   }
 
   /**
@@ -478,39 +531,43 @@ export class HindsightClient {
       signal?: AbortSignal;
     }
   ): Promise<RecallResponse> {
-    const response = await sdk.recallMemories({
-      client: this.client,
-      path: { bank_id: bankId },
-      body: {
-        query,
-        types: options?.types,
-        prefer_observations: options?.preferObservations,
-        max_tokens: options?.maxTokens,
-        budget: options?.budget || "mid",
-        trace: options?.trace,
-        query_timestamp: options?.queryTimestamp,
-        include: {
-          entities:
-            options?.includeEntities === false
-              ? null
-              : options?.includeEntities
-                ? { max_tokens: options?.maxEntityTokens ?? 500 }
+    const response = await retryOnCapacity(
+      () =>
+        sdk.recallMemories({
+          client: this.client,
+          path: { bank_id: bankId },
+          body: {
+            query,
+            types: options?.types,
+            prefer_observations: options?.preferObservations,
+            max_tokens: options?.maxTokens,
+            budget: options?.budget || "mid",
+            trace: options?.trace,
+            query_timestamp: options?.queryTimestamp,
+            include: {
+              entities:
+                options?.includeEntities === false
+                  ? null
+                  : options?.includeEntities
+                    ? { max_tokens: options?.maxEntityTokens ?? 500 }
+                    : undefined,
+              chunks: options?.includeChunks
+                ? { max_tokens: options?.maxChunkTokens ?? 8192 }
                 : undefined,
-          chunks: options?.includeChunks
-            ? { max_tokens: options?.maxChunkTokens ?? 8192 }
-            : undefined,
-          source_facts: options?.includeSourceFacts
-            ? { max_tokens: options?.maxSourceFactsTokens ?? 4096 }
-            : undefined,
-        },
-        tags: options?.tags,
-        tags_match: options?.tagsMatch,
-        tag_groups: options?.tagGroups,
-        min_scores: options?.minScores,
-        temporal_window: options?.temporalWindow,
-      },
-      signal: options?.signal,
-    });
+              source_facts: options?.includeSourceFacts
+                ? { max_tokens: options?.maxSourceFactsTokens ?? 4096 }
+                : undefined,
+            },
+            tags: options?.tags,
+            tags_match: options?.tagsMatch,
+            tag_groups: options?.tagGroups,
+            min_scores: options?.minScores,
+            temporal_window: options?.temporalWindow,
+          },
+          signal: options?.signal,
+        }),
+      this.maxAttempts
+    );
 
     return this.validateResponse(response, "recall");
   }
@@ -558,25 +615,29 @@ export class HindsightClient {
               : undefined,
           }
         : undefined;
-    const response = await sdk.reflect({
-      client: this.client,
-      path: { bank_id: bankId },
-      body: {
-        query,
-        context: options?.context,
-        budget: options?.budget || "low",
-        tags: options?.tags,
-        tags_match: options?.tagsMatch,
-        tag_groups: options?.tagGroups,
-        apply_all_directives: options?.applyAllDirectives,
-        response_schema: options?.responseSchema,
-        fact_types: options?.factTypes,
-        exclude_mental_models: options?.excludeMentalModels,
-        exclude_mental_model_ids: options?.excludeMentalModelIds,
-        include,
-      },
-      signal: options?.signal,
-    });
+    const response = await retryOnCapacity(
+      () =>
+        sdk.reflect({
+          client: this.client,
+          path: { bank_id: bankId },
+          body: {
+            query,
+            context: options?.context,
+            budget: options?.budget || "low",
+            tags: options?.tags,
+            tags_match: options?.tagsMatch,
+            tag_groups: options?.tagGroups,
+            apply_all_directives: options?.applyAllDirectives,
+            response_schema: options?.responseSchema,
+            fact_types: options?.factTypes,
+            exclude_mental_models: options?.excludeMentalModels,
+            exclude_mental_model_ids: options?.excludeMentalModelIds,
+            include,
+          },
+          signal: options?.signal,
+        }),
+      this.maxAttempts
+    );
 
     return this.validateResponse(response, "reflect");
   }
