@@ -276,7 +276,7 @@ class ConfigResolver:
         ``cached`` defaults to True because this is ALSO on the hot path: ``recall_async`` and
         ``retain_batch_async`` call it per request, and forcing a read there costs a pool acquire
         each time — which is more than the query it carries, since the pool runs five
-        ``set_config`` calls on checkout and a ``RESET ALL`` on release.
+        ``set_config`` calls on checkout.
 
         The endpoint a user reads a bank's config back through passes ``cached=False``, and must:
         the cache is per PROCESS, so a cached read there answers a successful write with the

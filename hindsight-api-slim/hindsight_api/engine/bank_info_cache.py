@@ -7,8 +7,8 @@ connection anyway was two reads that are the same on every call for the life of 
     SELECT config FROM {fq_table("banks")} WHERE bank_id = $1                      -- its config
 
 Neither is free. Each is a pool acquire, and an acquire costs more than the query it carries:
-the pool runs five ``set_config`` calls on checkout and a full ``RESET ALL`` on release, so one
-cached read removes roughly three statements, not one. Removing both is what lets such a retain
+the pool runs five ``set_config`` calls on checkout, so one cached read removes several statements,
+not one. Removing both is what lets such a retain
 run without touching the database at all.
 
 **This is a real consistency trade, not a free win.** A bank edited in ANOTHER process is not

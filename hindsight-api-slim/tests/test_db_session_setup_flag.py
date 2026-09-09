@@ -1,11 +1,12 @@
 """``HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE`` controls the per-acquire hook.
 
-asyncpg runs ``RESET ALL`` on release, so the session GUCs the init callback
-applies are gone by the next acquire — hence the callback is wired as ``setup=``
-as well as ``init=`` by default. Deployments that pin those GUCs on the role or
-database get them back from ``RESET ALL`` anyway, making the re-apply a pure
-round trip per acquire (and, behind a transaction-mode pooler, a transaction of
-its own — #3499). This flag lets them drop it.
+The callback is wired as ``setup=`` as well as ``init=`` by default because
+behind a transaction-mode pooler an acquire can be linked to a server connection
+that never saw the init callback. On a direct connection it is redundant now that
+the pool skips asyncpg's release-time ``RESET ALL`` (see test_db_pool_reset.py),
+and deployments that pin those GUCs on the role or database do not need it at all
+— for them it is a pure round trip per acquire, and behind a pooler a transaction
+of its own (#3499). This flag lets them drop it.
 
 ``application_name`` is deliberately *not* part of the trade-off: pgbouncer never
 re-issues it after ``RESET ALL`` (#3491), so its per-acquire hook stays either

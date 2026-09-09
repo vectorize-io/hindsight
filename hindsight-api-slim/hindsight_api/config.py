@@ -1587,9 +1587,12 @@ DEFAULT_DB_MAX_PARALLEL_WORKERS_PER_GATHER: int | None = None
 # search_path) is re-applied on every pool acquire, not just when a connection is
 # first opened.
 #
-# True (default) is the correct setting for a plain asyncpg pool: releasing a
-# connection runs RESET ALL, which wipes every SET the init callback applied, so
-# without the re-apply a reused connection silently runs with server defaults.
+# True (default) is the correct setting behind a transaction-mode pooler, where an
+# acquire may be linked to a server connection that never saw the init callback.
+# On a direct connection it is now redundant: the pool no longer sends asyncpg's
+# release-time RESET ALL (see engine/db/postgresql.py), so the GUCs the callback
+# applied survive into the next acquire. Kept on by default because the pooled
+# topology is the one that breaks without it.
 #
 # Set False only when those settings are already pinned server-side — ALTER ROLE
 # / ALTER DATABASE ... SET — because RESET ALL then restores them to exactly the

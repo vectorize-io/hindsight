@@ -1816,7 +1816,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "alembic", specifier = ">=1.17.1" },
     { name = "anthropic", specifier = ">=0.40.0" },
-    { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "authlib", specifier = ">=1.6.9" },
     { name = "boto3", specifier = ">=1.42.74" },
     { name = "claude-agent-sdk", specifier = ">=0.2.82" },

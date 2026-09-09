@@ -253,9 +253,14 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
 
         async def semantic_rows(iterative: bool) -> int:
             ann_config("ann_iterative_scan", iterative)
-            # The pool re-applies its session settings on every acquire, so a fresh
-            # connection resolves the flag again rather than inheriting the value the
-            # process started with.
+            # The pool's setup can only ADD a session GUC: it stops *sending*
+            # hnsw.iterative_scan when the flag goes off, and nothing unsets it on an
+            # already-open connection, because the pool no longer runs asyncpg's
+            # release-time RESET ALL (see tests/test_db_pool_reset.py). Production
+            # never notices — the flag is process-static, so every connection in a
+            # pool agrees — but this test rewrites it mid-process, so it has to ask
+            # for connections that were opened after the rewrite.
+            await pool.expire_connections()
             async with pool.acquire() as conn:
                 # The property under test belongs to the ANN scan, not to the planner's
                 # choice: on a table this size a full scan plus a sort is genuinely
