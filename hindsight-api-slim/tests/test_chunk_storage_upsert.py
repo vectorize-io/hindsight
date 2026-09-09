@@ -149,3 +149,117 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
             await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_chunk_ids_do_not_collide_across_banks(memory):
+    """
+    Regression for #4244.
+
+    ``a`` + ``b_c`` and ``a_b`` + ``c`` used to produce the same chunk id
+    (``a_b_c_0``), so a retain in the second bank overwrote the first bank's
+    chunk row. Bank ids and document ids are arbitrary user-supplied strings,
+    so the collision is reachable from the public API.
+    """
+    prefix = f"t{int(_ts() * 1000)}"
+    bank_a, doc_a = prefix, "b_c"
+    bank_b, doc_b = f"{prefix}_b", "c"
+
+    backend = await memory._get_backend()
+    ops = backend.ops
+    try:
+        async with backend.acquire() as conn:
+            await _seed_bank_and_document(conn, bank_a, doc_a)
+            await _seed_bank_and_document(conn, bank_b, doc_b)
+
+            map_a = await chunk_storage.store_chunks_batch(
+                conn,
+                bank_a,
+                doc_a,
+                [ChunkMetadata(chunk_text="bank-a-secret", fact_count=1, content_index=0, chunk_index=0)],
+                ops=ops,
+            )
+            map_b = await chunk_storage.store_chunks_batch(
+                conn,
+                bank_b,
+                doc_b,
+                [ChunkMetadata(chunk_text="bank-b-text", fact_count=1, content_index=0, chunk_index=0)],
+                ops=ops,
+            )
+
+            assert map_a[0] != map_b[0], "Distinct bank/document pairs must not share a chunk id"
+
+            text_a = await conn.fetchval(
+                "SELECT chunk_text FROM chunks WHERE bank_id = $1 AND document_id = $2 AND chunk_index = 0",
+                bank_a,
+                doc_a,
+            )
+            assert text_a == "bank-a-secret", "A retain in another bank must not modify this bank's chunk"
+
+            rows = await conn.fetch(
+                "SELECT bank_id FROM chunks WHERE bank_id = ANY($1::text[])",
+                [bank_a, bank_b],
+            )
+            assert sorted(r["bank_id"] for r in rows) == sorted([bank_a, bank_b])
+    finally:
+        async with backend.acquire() as conn:
+            for bank_id in (bank_a, bank_b):
+                await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
+                await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
+                await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_upsert_refuses_a_chunk_id_owned_by_another_bank(memory):
+    """
+    Second half of #4244: ids written before the fix can still collide, so the upsert
+    itself refuses a conflicting row that belongs to a different bank rather than
+    overwriting it.
+    """
+    from hindsight_api.engine.db.ops import ChunkIdOwnedByAnotherBank
+
+    prefix = f"t{int(_ts() * 1000)}o"
+    bank_a, bank_b = prefix, f"{prefix}_other"
+    document_id = "doc"
+    legacy_chunk_id = f"{bank_a}_legacy_0"
+
+    backend = await memory._get_backend()
+    ops = backend.ops
+    try:
+        async with backend.acquire() as conn:
+            await _seed_bank_and_document(conn, bank_a, document_id)
+            await _seed_bank_and_document(conn, bank_b, document_id)
+
+            await conn.execute(
+                """
+                INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_text, chunk_index, content_hash)
+                VALUES ($1, $2, $3, 'bank-a-secret', 0, 'h')
+                """,
+                legacy_chunk_id,
+                document_id,
+                bank_a,
+            )
+
+            with pytest.raises(ChunkIdOwnedByAnotherBank):
+                await ops.bulk_upsert_chunks(
+                    conn,
+                    "chunks",
+                    [legacy_chunk_id],
+                    [document_id],
+                    [bank_b],
+                    ["bank-b-text"],
+                    [0],
+                    ["h2"],
+                )
+
+        async with backend.acquire() as conn:
+            text = await conn.fetchval("SELECT chunk_text FROM chunks WHERE chunk_id = $1", legacy_chunk_id)
+            assert text == "bank-a-secret", "The other bank's chunk text must survive"
+    finally:
+        async with backend.acquire() as conn:
+            for bank_id in (bank_a, bank_b):
+                await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
+                await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
+                await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)

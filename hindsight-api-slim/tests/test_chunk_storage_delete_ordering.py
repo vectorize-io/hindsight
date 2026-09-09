@@ -29,8 +29,10 @@ async def test_delete_chunks_by_ids_predeletes_links_before_chunks():
     link_sql, link_args = conn.calls[0]
     chunk_sql, chunk_args = conn.calls[1]
 
-    assert link_args == (chunk_ids,)
-    assert chunk_args == (chunk_ids,)
+    # Both statements carry the bank alongside the ids: the delete is bank-scoped when
+    # the caller names one, so a colliding legacy chunk id cannot reach another bank (#4244).
+    assert link_args == (chunk_ids, None)
+    assert chunk_args == (chunk_ids, None)
 
     assert "DELETE FROM" in link_sql
     assert "memory_links" in link_sql
