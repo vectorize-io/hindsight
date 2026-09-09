@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 import traceback
 import uuid
 from collections.abc import Awaitable
@@ -5029,7 +5030,9 @@ def _register_routes(app: FastAPI):
                 return
             from hindsight_api.extensions import PrecheckContext
 
+            _t0_dep_auth = time.time()
             await app.state.memory._authenticate_tenant(request_context)
+            get_metrics_collector().record_recall_phase("dep_auth", time.time() - _t0_dep_auth)
             cl_header = request.headers.get("content-length")
             content_length: int | None = None
             if cl_header is not None:
@@ -5045,7 +5048,9 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
                 content_length=content_length,
             )
+            _t0_dep_precheck = time.time()
             result = await validator.precheck(ctx)
+            get_metrics_collector().record_recall_phase("dep_precheck", time.time() - _t0_dep_precheck)
             if not result.allowed:
                 raise HTTPException(
                     status_code=result.status_code,

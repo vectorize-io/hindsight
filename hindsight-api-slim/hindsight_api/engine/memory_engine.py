@@ -7587,6 +7587,7 @@ class MemoryEngine(MemoryEngineInterface):
         tracer.start()
 
         backend_acquire_start = time.time()
+        _t0_swr = time.time()
         backend = await self._get_read_backend()
         tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
         recall_start = time.time()
@@ -7616,6 +7617,7 @@ class MemoryEngine(MemoryEngineInterface):
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
+                get_metrics_collector().record_recall_phase("swr_prelude", time.time() - _t0_swr)
                 query_embeddings = await embedding_utils.generate_embeddings_batch(
                     self.embeddings,
                     [query],
@@ -7709,11 +7711,13 @@ class MemoryEngine(MemoryEngineInterface):
             )
             if _store_result is not None:
                 _full_elapsed = time.time() - _full_start
+                _t0_tail = time.time()
                 log_buffer.append(
                     f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
                 )
                 if not quiet:
                     logger.info("\n" + "\n".join(log_buffer))
+                    get_metrics_collector().record_recall_phase("store_branch_tail", time.time() - _t0_tail)
                 # The store's own per-stage timings become this recall's phase breakdown.
                 # Without this the trace goes dark exactly where the work moved to, and the
                 # only thing left to compare between the two paths is a total.
