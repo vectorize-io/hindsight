@@ -79,18 +79,17 @@ async def test_a_template_leaves_untouched_settings_unset(client, configured_ban
     assert template.bank.retain_mission is None
 
 
-@pytest.mark.skip(reason="#4232 — import_bank_template cannot send the manifest from any SDK")
 async def test_a_template_applied_to_a_new_bank_reproduces_the_configuration(client, configured_bank, fresh_bank):
     """The round trip that makes templates worth having: configure once, stamp
     out many.
 
-    Skipped rather than deleted, and skipped rather than rewritten against raw
-    HTTP. The import handler reads its body off the raw request, so the spec
-    declares no `requestBody` and every generated client's
-    `import_bank_template` has no parameter to put the manifest in (#4232).
-    Reaching around the client to make this pass would hide exactly the defect a
-    suite driven through the published client exists to surface — the export
-    half works and returns a typed manifest with nowhere to send it.
+    Failing today, deliberately (#4232). The import handler reads its body off
+    the raw request, so the spec declares no `requestBody` and every generated
+    client's `import_bank_template` has no parameter to put the manifest in.
+
+    Not rewritten against raw HTTP: reaching around the client would hide exactly
+    the defect a client-driven suite exists to surface — the export half works
+    and hands you a typed manifest with nowhere to send it.
     """
     template = await _templates(client).export_bank_template(configured_bank)
 
@@ -102,7 +101,6 @@ async def test_a_template_applied_to_a_new_bank_reproduces_the_configuration(cli
     assert config["disposition_skepticism"] == 5
 
 
-@pytest.mark.skip(reason="#4232 — import_bank_template cannot send the manifest from any SDK")
 async def test_a_template_carries_no_memories(client, llm, configured_bank, fresh_bank, settled):
     """Configuration, not content. A template that dragged the source bank's
     memories along would leak one tenant's data into every bank stamped from it.

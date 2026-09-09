@@ -85,23 +85,17 @@ async def test_no_extraction_call_happens_without_a_schema(client, llm, bank_wit
     assert llm.prompts_for("reflect_structured") == []
 
 
-async def test_an_extraction_that_fails_is_reported_as_nothing_extracted(client, llm, bank_with_facts):
-    """Current behaviour, pinned so a fix is visible — see #4230.
+async def test_a_failed_extraction_still_returns_the_prose_answer(client, llm, bank_with_facts):
+    """Degrading rather than failing the whole reflect is right: the answer is
+    useful even when the machine-readable half is not available.
 
-    When the extraction call returns something unparseable the failure is
-    swallowed: the caller gets 200, the prose answer, and `structured_output:
-    null` with no indication that the half they asked for did not happen. That is
-    indistinguishable from an answer that legitimately contained nothing to
-    extract, so a caller cannot tell a retryable failure from a normal empty
-    result.
-
-    Answering with the prose rather than failing the whole reflect is the right
-    call; the missing piece is saying so. When #4230 lands, this test should need
-    updating — which is the point of writing it down.
+    That the failure is *reported* is a separate contract, and one the product
+    does not honour yet — asserted in `test_99_open_defects.py` against #4230
+    rather than pinned here, so a fix turns a red test green instead of breaking
+    a green one.
     """
     llm.on_step("reflect_structured").returns_text("absolutely not json")
 
     response = await client.areflect(bank_id=bank_with_facts, query=QUERY, response_schema=SCHEMA)
 
     assert response.text == ANSWER
-    assert response.structured_output is None
