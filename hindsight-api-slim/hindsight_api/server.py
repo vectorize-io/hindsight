@@ -26,6 +26,19 @@ from hindsight_api.config import get_config, load_dotenv_for_entrypoint
 
 load_dotenv_for_entrypoint()
 
+# Arm profiling in THIS process, which is where the requests are served.
+#
+# `main()` arms it too, but with `--workers N` uvicorn's supervisor spawns children that re-import
+# this module and never run `main()` — so the only profiler was the one in the supervisor, and its
+# report was `keep_subprocess_alive`/`ping` at 0.01 cores while the workers did all the work. A
+# profile that cannot see the request path is worse than none: it looks like an answer.
+#
+# Safe to call twice: cProfile is a process-wide tool since 3.12, and `install()` is a no-op when
+# HINDSIGHT_API_PROFILE is unset and idempotent within a process.
+from hindsight_api.profiling import install as _install_profiling
+
+_install_profiling()
+
 # Disable tokenizers parallelism to avoid warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

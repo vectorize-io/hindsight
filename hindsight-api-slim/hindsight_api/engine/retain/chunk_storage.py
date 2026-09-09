@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from ...config import _get_raw_config
+from ..chunk_ids import build_chunk_id
 from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
@@ -192,6 +193,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             SELECT id
             FROM {fq_table("memory_units")}
             WHERE chunk_id = ANY($1::text[])
+              AND ($2::text IS NULL OR bank_id = $2)
         ),
         matched_links AS MATERIALIZED (
             SELECT ml.ctid AS link_ctid
@@ -218,13 +220,19 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
         WHERE ml.ctid = ol.ctid
         """,
         chunk_ids,
+        bank_id,
     )
+    # Both deletes are scoped to the bank when the caller names one. `chunks` is keyed on
+    # chunk_id alone, so an id that collides with another bank's row (possible for rows
+    # written before the escaping in `chunk_ids.py` — see #4244) would otherwise let a delta
+    # retain here cascade that bank's facts away.
     await conn.execute(
         f"""
         WITH ordered_chunks AS MATERIALIZED (
             SELECT chunk_id
             FROM {fq_table("chunks")}
             WHERE chunk_id = ANY($1::text[])
+              AND ($2::text IS NULL OR bank_id = $2)
             ORDER BY chunk_id
             FOR UPDATE
         )
@@ -233,6 +241,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
         WHERE c.chunk_id = oc.chunk_id
         """,
         chunk_ids,
+        bank_id,
     )
     return invalidated
 
@@ -286,7 +295,7 @@ async def store_chunks_batch(
     chunk_id_map = {}
 
     for chunk in chunks:
-        chunk_id = f"{bank_id}_{document_id}_{chunk.chunk_index}"
+        chunk_id = build_chunk_id(bank_id, document_id, chunk.chunk_index)
         chunk_ids.append(chunk_id)
         chunk_texts.append(chunk.chunk_text if store_text else "")
         chunk_indices.append(chunk.chunk_index)

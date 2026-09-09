@@ -24,6 +24,20 @@ from typing import Any
 from .base import DatabaseConnection
 from .result import ResultRow
 
+
+class ChunkIdOwnedByAnotherBank(Exception):
+    """A chunk upsert hit a ``chunks`` row that belongs to a different bank.
+
+    ``chunks`` is keyed on ``chunk_id`` alone, so the row can only be one bank's. Ids
+    built by ``engine/chunk_ids.py`` cannot collide across banks; ones written before
+    that fix can, and overwriting is how #4244 leaked one bank's chunk into another.
+    """
+
+    def __init__(self, chunk_ids: list[str]) -> None:
+        self.chunk_ids = chunk_ids
+        super().__init__(f"Chunk id(s) already owned by another bank, refusing to overwrite: {chunk_ids}")
+
+
 #: The ``memory_units`` columns every link-expansion arm projects, in the order the
 #: arms are ``UNION ALL``-ed together.  Order is part of the contract, not a style
 #: choice: the arms are combined positionally, so two arms listing the same columns
@@ -345,6 +359,10 @@ class DataAccessOps(ABC):
 
         PG uses INSERT ... SELECT FROM unnest() with ON CONFLICT DO UPDATE.
         Non-PG uses bulk_insert_from_arrays (executemany).
+
+        A conflicting row belonging to a DIFFERENT bank is never overwritten: PG raises
+        :class:`ChunkIdOwnedByAnotherBank`, and the plain insert other backends use raises
+        their unique-violation error. See ``engine/chunk_ids.py`` and #4244.
         """
         ...
 

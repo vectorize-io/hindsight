@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.consolidation.consolidator import (
     _apply_create_observation,
     _embed_observation_text,
@@ -217,9 +218,9 @@ async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(
 
         units_by_text = {unit["text"]: unit for unit in units}
         assert "..." not in units_by_text
-        assert units_by_text[initial_text]["chunk_id"] == f"{dst}_{document_id}_0"
-        assert units_by_text[middle_text]["chunk_id"] == f"{dst}_{document_id}_2"
-        assert units_by_text[later_text]["chunk_id"] == f"{dst}_{document_id}_3"
+        assert units_by_text[initial_text]["chunk_id"] == build_chunk_id(dst, document_id, 0)
+        assert units_by_text[middle_text]["chunk_id"] == build_chunk_id(dst, document_id, 2)
+        assert units_by_text[later_text]["chunk_id"] == build_chunk_id(dst, document_id, 3)
         assert {str(source_id) for source_id in units_by_text[observation_text]["source_memory_ids"]} == {
             str(units_by_text[later_text]["id"])
         }
