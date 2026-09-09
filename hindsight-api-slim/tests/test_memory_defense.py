@@ -38,6 +38,9 @@ _BOUNDARY_REDACTION_SAMPLES = {
     "google_oauth_token": "ya29." + "A" * 20,
     "xai_key": "xai-" + "A" * 40,
     "groq_key": "gsk_" + "A" * 20,
+    # 32 hex from token_hex(16) plus a hex signature; hsk_sys_ is covered by
+    # test_hindsight_system_key_is_redacted below.
+    "hindsight_key": "hsk_" + "a" * 32 + "_" + "b" * 16,
     "huggingface_token": "hf_" + "A" * 30,
     "replicate_token": "r8_" + "A" * 30,
     "perplexity_key": "pplx-" + "A" * 40,
