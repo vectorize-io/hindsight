@@ -25,6 +25,7 @@ from . import __version__
 from .banner import print_banner
 from .config import (
     DEFAULT_ACCESS_LOG,
+    DEFAULT_HOST,
     DEFAULT_WORKERS,
     ENV_ACCESS_LOG,
     ENV_WORKERS,
@@ -150,7 +151,9 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser.add_argument(
         "--host",
         default=argparse.SUPPRESS,
-        help=f"Host to bind to (default: {config.host}, env: HINDSIGHT_API_HOST)",
+        # config.host is None when nothing configured one; show the address that will
+        # actually be bound, not the sentinel that stands for "operator said nothing".
+        help=f"Host to bind to (default: {config.host or DEFAULT_HOST}, env: HINDSIGHT_API_HOST)",
     )
     parser.add_argument(
         "--port",

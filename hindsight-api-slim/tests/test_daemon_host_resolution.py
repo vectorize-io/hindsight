@@ -24,6 +24,39 @@ class _Config:
     access_log = False
 
 
+class TestParseCliArgsHostDefault:
+    """`_parse_cli_args` applies the bind default when nothing configured a host.
+
+    `config.host` is None when HINDSIGHT_API_HOST is unset — the state that lets daemon
+    mode tell an operator-chosen host from an unstated one. Every other test here hands
+    `_parse_cli_args` a config whose `host` is already a string, so the `or DEFAULT_HOST`
+    branch went unexercised and shipped a NameError that only a real server start caught.
+    """
+
+    def test_unset_host_falls_back_to_the_bind_default(self):
+        from hindsight_api.config import DEFAULT_HOST as CONFIG_DEFAULT_HOST
+        from hindsight_api.main import _parse_cli_args
+
+        class _UnsetHostConfig(_Config):
+            host = None
+
+        parsed = _parse_cli_args([], _UnsetHostConfig())
+
+        assert parsed.args.host == CONFIG_DEFAULT_HOST
+        assert parsed.explicit_host is False
+
+    def test_configured_host_is_used_verbatim(self):
+        from hindsight_api.main import _parse_cli_args
+
+        class _ConfiguredHostConfig(_Config):
+            host = "10.0.0.5"
+
+        parsed = _parse_cli_args([], _ConfiguredHostConfig())
+
+        assert parsed.args.host == "10.0.0.5"
+        assert parsed.explicit_host is False
+
+
 class TestResolveDaemonHostPort:
     """Test resolve_daemon_host_port under various override scenarios."""
 

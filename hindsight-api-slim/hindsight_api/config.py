@@ -38,8 +38,18 @@ def load_dotenv_for_entrypoint() -> None:
     is authoritative over the ambient process environment). Because a library
     import never reaches this code path, that precedence no longer leaks into
     embedders.
+
+    The cache clear matters as much as the load. ``HindsightConfig`` is built once and
+    cached for the process, and an entry point imports its whole module graph before
+    ``main()`` reaches this call — so a module that reads the config at import scope
+    (``llm_wrapper`` sizes its semaphores there, for one) has already frozen a config
+    built from an environment the ``.env`` had not been applied to. Leaving that in
+    place makes the discovered ``.env`` silently ineffective for every later reader.
+    Clearing here means the next read rebuilds against the environment this function
+    just finished assembling.
     """
     load_dotenv(find_dotenv(usecwd=True), override=True)
+    clear_config_cache()
 
 
 class ConfigFieldAccessError(AttributeError):

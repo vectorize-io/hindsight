@@ -13,7 +13,7 @@ def test_daemonize_parent_reexecs_via_popen(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["hindsight-api", "--daemon", "--port", "9999"])
 
     log_path = tmp_path / "daemon.log"
-    monkeypatch.setattr("hindsight_api.daemon.DAEMON_LOG_PATH", log_path)
+    monkeypatch.setattr("hindsight_api.daemon.daemon_log_path", lambda: log_path)
 
     captured: dict = {}
 
@@ -59,7 +59,7 @@ def test_daemonize_child_does_not_reexec(monkeypatch, tmp_path):
     monkeypatch.setenv("_HINDSIGHT_DAEMON_CHILD", "1")
 
     log_path = tmp_path / "daemon.log"
-    monkeypatch.setattr("hindsight_api.daemon.DAEMON_LOG_PATH", log_path)
+    monkeypatch.setattr("hindsight_api.daemon.daemon_log_path", lambda: log_path)
 
     with (
         patch("hindsight_api.daemon.subprocess.Popen") as mock_popen,
@@ -77,7 +77,7 @@ def test_daemonize_windows_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "win32")
 
     log_path = tmp_path / "subdir" / "daemon.log"
-    monkeypatch.setattr("hindsight_api.daemon.DAEMON_LOG_PATH", log_path)
+    monkeypatch.setattr("hindsight_api.daemon.daemon_log_path", lambda: log_path)
 
     with patch("hindsight_api.daemon.subprocess.Popen") as mock_popen:
         from hindsight_api.daemon import daemonize
