@@ -11,7 +11,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from hindsight_api.api.observability import HttpObservabilityMiddleware
-from hindsight_api.api.unknown_params import UnknownParamsRoute, adopt_included_routes
+from hindsight_api.api.unknown_params import UnknownParamsRoute, use_unknown_params_routes
 
 
 def _app() -> FastAPI:
@@ -91,7 +91,7 @@ def test_hostile_param_names_do_not_break_the_response():
 
 
 def test_routes_from_an_included_router_still_report_unknown_params():
-    """`include_router` keeps the source route's class; adopt_included_routes fixes it."""
+    """`include_router` does not apply the app's route_class; the helper does."""
     app = FastAPI()
     app.router.route_class = UnknownParamsRoute
 
@@ -101,8 +101,8 @@ def test_routes_from_an_included_router_still_report_unknown_params():
     async def thing(limit: int = 10):
         return {"limit": limit}
 
+    use_unknown_params_routes(sub)
     app.include_router(sub, prefix="/ext")
-    adopt_included_routes(app)
     app.add_middleware(HttpObservabilityMiddleware)
 
     response = TestClient(app).get("/ext/thing", params={"nope": 1})

@@ -32,7 +32,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, Request, Response
 from fastapi.routing import APIRoute, request_response
 from pydantic import BaseModel
 
@@ -131,24 +131,31 @@ class UnknownParamsRoute(APIRoute):
         return ignored
 
 
-def adopt_included_routes(app: FastAPI) -> None:
-    """Retrofit this route class onto routes contributed by an included router.
+def use_unknown_params_routes(router: APIRouter) -> None:
+    """Make an about-to-be-included router contribute ``UnknownParamsRoute`` routes.
 
-    Setting ``app.router.route_class`` only covers routes declared directly on the
-    app: FastAPI's ``include_router`` re-registers each source route with
-    ``route_class_override=type(route)``, so routes an HTTP extension hands over
-    arrive as plain ``APIRoute`` and would silently lose unknown-param reporting
-    that the old middleware — which sat above the router — did cover.
+    ``app.router.route_class`` only covers routes declared directly on the app.
+    Routes an HTTP extension hands over via ``include_router`` would otherwise
+    arrive as plain ``APIRoute`` and silently lose unknown-param reporting, which
+    the old middleware — sitting above the router — did cover.
 
-    Re-class them in place and redo the two things ``APIRoute.__init__`` derives
-    from the class: the cached parameter sets, and the ASGI app wrapping the route
-    handler (which is where ``get_route_handler`` is baked in) -- FastAPI's own
-    ``request_response``, not Starlette's, since it also opens the per-request
-    dependency ``AsyncExitStack``.
+    FastAPI resolves the class of an included route in two different ways
+    depending on version, so both are covered here:
 
-    Call after every ``include_router``, before the app starts serving.
+    * <= 0.140 builds the sub-router's routes eagerly and re-registers each one
+      with ``route_class_override=type(route)``, so the *existing objects* decide.
+      Re-class them, and redo the two things ``APIRoute.__init__`` derives from the
+      class: the cached parameter sets and the ASGI app wrapping the route handler
+      (FastAPI's ``request_response``, not Starlette's — it also opens the
+      per-request dependency ``AsyncExitStack``).
+    * >= 0.141 keeps the included router lazily and materialises its routes later
+      from ``router.route_class``, so the *attribute* decides.
+
+    Call before ``include_router``; if neither path applies on a future version
+    the routes merely lose the header again, which a test guards against.
     """
-    for route in app.router.routes:
+    router.route_class = UnknownParamsRoute
+    for route in router.routes:
         if type(route) is not APIRoute:
             continue
         route.__class__ = UnknownParamsRoute
