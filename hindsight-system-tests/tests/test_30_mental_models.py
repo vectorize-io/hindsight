@@ -118,6 +118,6 @@ async def test_deleting_a_model_leaves_the_facts_alone(client, bank_with_facts, 
 
     assert (await client.mental_models.list_mental_models(bank_with_facts)).items == []
     memories = await client.memory.list_memories(bank_with_facts, limit=100)
-    assert sorted(m["text"] for m in memories.items) == sorted(
+    assert sorted(m.text for m in memories.items) == sorted(
         ["Alice moved to Berlin | Involving: Alice", "Alice renewed her Berlin lease | Involving: Alice"]
     )

@@ -121,5 +121,4 @@ async def test_the_previous_answer_is_kept_in_history(client, llm, bank_id, mode
     await settled(bank_id)
 
     history = await client.mental_models.get_mental_model_history(bank_id, model)
-    # History entries are untyped dicts — see #4218.
     assert any(entry["previous_content"].strip() == FIRST_ANSWER for entry in history)

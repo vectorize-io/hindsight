@@ -41,16 +41,16 @@ async def consolidated_bank(client, llm, bank_id, settled) -> str:
 
 async def test_the_observation_is_written(client, consolidated_bank):
     memories = await client.memory.list_memories(consolidated_bank, limit=100)
-    observations = [m for m in memories.items if m["fact_type"] == "observation"]
+    observations = [m for m in memories.items if m.fact_type == "observation"]
 
-    assert [o["text"] for o in observations] == [OBSERVATION]
+    assert [o.text for o in observations] == [OBSERVATION]
 
 
 async def test_the_facts_behind_it_survive(client, consolidated_bank):
     """The regression that matters. A summary is not a replacement for its
     evidence, and losing the evidence cannot be undone."""
     memories = await client.memory.list_memories(consolidated_bank, limit=100)
-    raw = sorted(m["text"] for m in memories.items if m["fact_type"] != "observation")
+    raw = sorted(m.text for m in memories.items if m.fact_type != "observation")
 
     assert raw == sorted([BERLIN, STAYED])
 
@@ -59,13 +59,13 @@ async def test_the_observation_cites_evidence_that_resolves(client, consolidated
     """Every cited id must name a fact that is actually there. An observation
     whose evidence dangles cannot be justified to anyone asking why."""
     memories = await client.memory.list_memories(consolidated_bank, limit=100)
-    by_id = {m["id"]: m for m in memories.items}
-    observation = next(m for m in memories.items if m["fact_type"] == "observation")
+    by_id = {m.id: m for m in memories.items}
+    observation = next(m for m in memories.items if m.fact_type == "observation")
 
-    assert observation["source_memory_ids"], "an observation with no evidence is an unfalsifiable claim"
-    for source_id in observation["source_memory_ids"]:
+    assert observation.source_memory_ids, "an observation with no evidence is an unfalsifiable claim"
+    for source_id in observation.source_memory_ids:
         assert source_id in by_id
-        assert by_id[source_id]["fact_type"] != "observation"
+        assert by_id[source_id].fact_type != "observation"
 
 
 async def test_an_observation_is_recallable_on_its_own(client, consolidated_bank):

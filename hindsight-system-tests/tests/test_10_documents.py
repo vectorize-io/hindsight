@@ -51,12 +51,18 @@ async def test_the_document_keeps_the_id_and_text_it_was_given(client, bank_with
 
 
 async def test_the_document_appears_in_the_bank_listing(client, bank_with_document):
+    """Typed rows, like the single fetch.
+
+    The two used to disagree — `get_document` returned a model and
+    `list_documents` returned dicts, so `items[0].id` raised and a field renamed
+    server-side was a compile error on one path and a runtime KeyError on the
+    other (#4218). Attribute access here is the assertion.
+    """
     listing = await client.documents.list_documents(bank_with_document)
 
     assert listing.total == 1
-    # List rows are untyped dicts while `get_document` returns a model — see #4218.
-    assert [d["id"] for d in listing.items] == [DOCUMENT_ID]
-    assert listing.items[0]["memory_unit_count"] == 2
+    assert [d.id for d in listing.items] == [DOCUMENT_ID]
+    assert listing.items[0].memory_unit_count == 2
 
 
 async def test_the_chunk_is_addressable_by_its_composite_id(client, bank_with_document):
@@ -79,5 +85,5 @@ async def test_every_fact_points_back_at_the_document_it_came_from(client, bank_
 
     assert memories.total == 2
     for item in memories.items:
-        assert item["document_id"] == DOCUMENT_ID
-        assert item["chunk_id"] == f"{bank_with_document}_{DOCUMENT_ID}_0"
+        assert item.document_id == DOCUMENT_ID
+        assert item.chunk_id == f"{bank_with_document}_{DOCUMENT_ID}_0"

@@ -85,17 +85,19 @@ async def test_no_extraction_call_happens_without_a_schema(client, llm, bank_wit
     assert llm.prompts_for("reflect_structured") == []
 
 
-async def test_a_failed_extraction_still_returns_the_prose_answer(client, llm, bank_with_facts):
-    """Degrading rather than failing the whole reflect is right: the answer is
-    useful even when the machine-readable half is not available.
+async def test_a_failed_extraction_degrades_but_says_so(client, llm, bank_with_facts):
+    """Two halves of one contract.
 
-    That the failure is *reported* is a separate contract, and one the product
-    does not honour yet — asserted in `test_99_open_defects.py` against #4230
-    rather than pinned here, so a fix turns a red test green instead of breaking
-    a green one.
+    Returning the prose rather than failing the whole reflect is right — the
+    answer is useful even when the machine-readable half is not. But `null` on
+    its own meant three different things (the call errored, the output would not
+    parse, or there was genuinely nothing to extract), and only the first two are
+    worth retrying or alerting on. #4230 made the failure distinguishable.
     """
     llm.on_step("reflect_structured").returns_text("absolutely not json")
 
     response = await client.areflect(bank_id=bank_with_facts, query=QUERY, response_schema=SCHEMA)
 
     assert response.text == ANSWER
+    assert response.structured_output is None
+    assert response.structured_output_error, "a failed extraction must not look like an empty one"

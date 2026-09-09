@@ -105,4 +105,4 @@ async def test_deleting_a_page_leaves_the_facts_alone(client, bank_id, bank_with
     assert [node.id for node in tree.roots] == []
 
     memories = await client.memory.list_memories(bank_id, limit=100)
-    assert [m["text"] for m in memories.items] == ["Alice moved to Berlin | Involving: Alice"]
+    assert [m.text for m in memories.items] == ["Alice moved to Berlin | Involving: Alice"]

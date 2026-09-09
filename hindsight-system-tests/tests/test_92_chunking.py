@@ -118,7 +118,7 @@ async def test_facts_from_every_part_of_the_document_are_recallable(client, chun
     last_marker = _MARKER.findall(SENTENCES[-1])[0]
 
     memories = await client.memory.list_memories(chunked_document, limit=200)
-    seen = {marker for item in memories.items for marker in _MARKER.findall(item["text"])}
+    seen = {marker for item in memories.items for marker in _MARKER.findall(item.text)}
 
     assert last_marker in seen or any(int(m) > 40 for m in seen), (
         "no fact came from the end of the document — the tail was never extracted"

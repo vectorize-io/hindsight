@@ -59,7 +59,7 @@ async def colliding_banks(client, llm, settled) -> AsyncIterator[tuple[str, str]
 
 async def _fact_texts(client, bank: str) -> list[str]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return sorted(m["text"] for m in memories.items if m["state"] == "valid")
+    return sorted(m.text for m in memories.items if m.state == "valid")
 
 
 async def test_reading_a_shared_document_id_returns_only_this_banks_copy(client, colliding_banks):

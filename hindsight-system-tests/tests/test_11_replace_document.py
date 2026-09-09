@@ -33,7 +33,7 @@ CELLO = "Alice plays cello | Involving: Alice"
 
 async def _fact_texts(client, bank: str) -> list[str]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return sorted(item["text"] for item in memories.items if item["state"] == "valid")
+    return sorted(item.text for item in memories.items if item.state == "valid")
 
 
 @pytest.fixture
@@ -105,4 +105,4 @@ async def test_replacing_does_not_multiply_the_document(client, bank_id, retaine
 
     listing = await client.documents.list_documents(bank_id)
     assert listing.total == 1
-    assert listing.items[0]["id"] == DOCUMENT_ID
+    assert listing.items[0].id == DOCUMENT_ID

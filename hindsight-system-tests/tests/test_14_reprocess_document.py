@@ -32,7 +32,7 @@ IMPROVED_FACT = "Alice relocated to Berlin, Germany | Involving: Alice"
 
 async def _fact_texts(client, bank: str) -> list[str]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return sorted(item["text"] for item in memories.items if item["state"] == "valid")
+    return sorted(item.text for item in memories.items if item.state == "valid")
 
 
 async def test_reprocessing_picks_up_a_changed_extraction(client, llm, bank_id, settled):

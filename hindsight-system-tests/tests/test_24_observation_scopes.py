@@ -60,7 +60,7 @@ async def _retain(client, bank: str, settled, **item) -> None:
 async def _observation_tags(client, bank: str) -> list[list[str]]:
     memories = await client.memory.list_memories(bank, limit=100)
     return sorted(
-        (sorted(m["tags"]) for m in memories.items if m["fact_type"] == "observation"),
+        (sorted(m.tags) for m in memories.items if m.fact_type == "observation"),
         key=lambda tags: tags,
     )
 

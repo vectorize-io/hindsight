@@ -136,3 +136,25 @@ async def test_query_timestamp_moves_the_now_that_decay_is_measured_from(client,
     assert then_anchored[RECENT_EVENT] == pytest.approx(1.0, abs=1e-6)
 
     assert set(then_anchored) == {OLD_EVENT, RECENT_EVENT, UNDATED}
+
+
+async def test_the_trace_reports_the_anchor_the_query_actually_used(client, llm, bank_id, settled):
+    """A trace exists to explain a ranking, so it reports the inputs that produced
+    it — including the anchor, not the moment the trace was built.
+
+    It used to stamp `datetime.now(UTC)` (#4217), which pointed anyone debugging
+    "why did my 2019 memory rank low when I asked as of 2020?" at today's date
+    and the wrong conclusion.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
+    await settled(bank_id)
+
+    response = await client.arecall(
+        bank_id=bank_id, query="Where does Alice live?", query_timestamp="2020-01-01T00:00:00", trace=True
+    )
+
+    assert response.trace["query"]["timestamp"].startswith("2020-01-01")

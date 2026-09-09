@@ -28,8 +28,8 @@ LEASE = "Alice renewed her Berlin lease | Involving: Alice"
 
 async def _facts_and_observations(client, bank: str) -> tuple[list[str], list[str]]:
     memories = await client.memory.list_memories(bank, limit=100)
-    raw = sorted(m["text"] for m in memories.items if m["fact_type"] != "observation")
-    observations = sorted(m["text"] for m in memories.items if m["fact_type"] == "observation")
+    raw = sorted(m.text for m in memories.items if m.fact_type != "observation")
+    observations = sorted(m.text for m in memories.items if m.fact_type == "observation")
     return raw, observations
 
 

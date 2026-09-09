@@ -34,7 +34,7 @@ NEW_OBSERVATION = "Alice has moved to Lisbon"
 
 async def _observations(client, bank: str) -> list[dict]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return [m for m in memories.items if m["fact_type"] == "observation"]
+    return [m for m in memories.items if m.fact_type == "observation"]
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ async def superseded_bank(client, llm, bank_id, settled) -> str:
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
     await settled(bank_id)
 
-    stale = (await _observations(client, bank_id))[0]["id"]
+    stale = (await _observations(client, bank_id))[0].id
 
     llm.reset()
     llm.on_step("extract_facts", contains="Lisbon").returns(
@@ -76,7 +76,7 @@ async def superseded_bank(client, llm, bank_id, settled) -> str:
 async def test_only_the_current_observation_remains(client, superseded_bank):
     observations = await _observations(client, superseded_bank)
 
-    assert [o["text"] for o in observations] == [NEW_OBSERVATION]
+    assert [o.text for o in observations] == [NEW_OBSERVATION]
 
 
 async def test_a_recall_does_not_return_both_sides_of_the_contradiction(client, superseded_bank):
@@ -95,6 +95,6 @@ async def test_retiring_an_observation_does_not_retire_its_evidence(client, supe
     to survive the observation that summarised it.
     """
     memories = await client.memory.list_memories(superseded_bank, limit=100)
-    raw = sorted(m["text"] for m in memories.items if m["fact_type"] != "observation")
+    raw = sorted(m.text for m in memories.items if m.fact_type != "observation")
 
     assert raw == sorted(["Alice moved to Berlin | Involving: Alice", "Alice moved to Lisbon | Involving: Alice"])

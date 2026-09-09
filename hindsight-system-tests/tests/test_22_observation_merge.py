@@ -33,7 +33,7 @@ MERGED_OBSERVATION = "Alice has been settled in Berlin for two years"
 
 async def _observations(client, bank: str) -> list[dict]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return [m for m in memories.items if m["fact_type"] == "observation"]
+    return [m for m in memories.items if m.fact_type == "observation"]
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ async def merged_bank(client, llm, bank_id, settled) -> str:
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
     await settled(bank_id)
 
-    existing = (await _observations(client, bank_id))[0]["id"]
+    existing = (await _observations(client, bank_id))[0].id
 
     llm.reset()
     llm.on_step("extract_facts", contains="lease").returns(
@@ -77,7 +77,7 @@ async def merged_bank(client, llm, bank_id, settled) -> str:
 async def test_the_bank_holds_one_observation_not_two(client, merged_bank):
     observations = await _observations(client, merged_bank)
 
-    assert [o["text"] for o in observations] == [MERGED_OBSERVATION]
+    assert [o.text for o in observations] == [MERGED_OBSERVATION]
 
 
 async def test_the_evidence_accumulates_across_rounds(client, merged_bank):
@@ -86,13 +86,13 @@ async def test_the_evidence_accumulates_across_rounds(client, merged_bank):
     observation looking as thin as a brand new one."""
     observation = (await _observations(client, merged_bank))[0]
 
-    assert observation["proof_count"] == 2
-    assert len(observation["source_memory_ids"]) == 2
+    assert observation.proof_count == 2
+    assert len(observation.source_memory_ids) == 2
 
 
 async def test_both_rounds_of_facts_are_still_there(client, merged_bank):
     memories = await client.memory.list_memories(merged_bank, limit=100)
-    raw = sorted(m["text"] for m in memories.items if m["fact_type"] != "observation")
+    raw = sorted(m.text for m in memories.items if m.fact_type != "observation")
 
     assert raw == sorted(
         ["Alice moved to Berlin | Involving: Alice", "Alice renewed her Berlin lease | Involving: Alice"]

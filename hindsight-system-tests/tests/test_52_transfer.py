@@ -94,7 +94,7 @@ async def test_the_facts_arrive(client, llm, source_bank, destination, settled):
     await _import(client, llm, destination, archive)
     await settled(destination)
 
-    texts = sorted(m["text"] for m in await _memories(client, destination))
+    texts = sorted(m.text for m in await _memories(client, destination))
     assert texts == sorted([BERLIN, LEASE])
 
 
@@ -106,7 +106,7 @@ async def test_the_derived_layers_are_left_behind_unless_asked_for(client, llm, 
     await _import(client, llm, destination, archive)
     await settled(destination)
 
-    assert [m for m in await _memories(client, destination) if m["fact_type"] == "observation"] == []
+    assert [m for m in await _memories(client, destination) if m.fact_type == "observation"] == []
     assert (await client.knowledge_base.get_knowledge_base_tree(destination)).roots == []
 
 
@@ -115,8 +115,8 @@ async def test_observations_come_across_when_requested(client, llm, source_bank,
     await _import(client, llm, destination, archive)
     await settled(destination)
 
-    observations = [m for m in await _memories(client, destination) if m["fact_type"] == "observation"]
-    assert [o["text"] for o in observations] == [OBSERVATION]
+    observations = [m for m in await _memories(client, destination) if m.fact_type == "observation"]
+    assert [o.text for o in observations] == [OBSERVATION]
 
 
 async def test_an_imported_observation_still_points_at_its_evidence(client, llm, source_bank, destination, settled):
@@ -133,13 +133,13 @@ async def test_an_imported_observation_still_points_at_its_evidence(client, llm,
     await settled(destination)
 
     memories = await _memories(client, destination)
-    by_id = {m["id"]: m for m in memories}
-    observation = next(m for m in memories if m["fact_type"] == "observation")
+    by_id = {m.id: m for m in memories}
+    observation = next(m for m in memories if m.fact_type == "observation")
 
-    assert observation["source_memory_ids"], "the imported observation lost its evidence entirely"
-    for source_id in observation["source_memory_ids"]:
+    assert observation.source_memory_ids, "the imported observation lost its evidence entirely"
+    for source_id in observation.source_memory_ids:
         assert source_id in by_id, "an imported observation cites a fact id that does not exist in this bank"
-        assert by_id[source_id]["fact_type"] != "observation"
+        assert by_id[source_id].fact_type != "observation"
 
 
 async def test_knowledge_pages_come_across_when_requested(client, llm, source_bank, destination, settled):
@@ -176,5 +176,5 @@ async def test_importing_does_not_touch_the_source(client, llm, source_bank, des
     await _import(client, llm, destination, archive)
     await settled(destination)
 
-    texts = sorted(m["text"] for m in await _memories(client, source_bank))
+    texts = sorted(m.text for m in await _memories(client, source_bank))
     assert texts == sorted([BERLIN, LEASE, OBSERVATION])

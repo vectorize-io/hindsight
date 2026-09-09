@@ -33,7 +33,7 @@ LISBON = "Bob moved to Lisbon | Involving: Bob"
 
 async def _fact_texts(client, bank: str) -> list[str]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return sorted(item["text"] for item in memories.items if item["state"] == "valid")
+    return sorted(item.text for item in memories.items if item.state == "valid")
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ async def test_deleting_a_document_removes_only_its_own_facts(client, two_docume
     assert await _fact_texts(client, two_documents) == [CELLO]
 
     listing = await client.documents.list_documents(two_documents)
-    assert [d["id"] for d in listing.items] == ["d-music"]
+    assert [d.id for d in listing.items] == ["d-music"]
 
 
 async def test_a_deleted_fact_stops_answering_recalls(client, two_documents, settled):

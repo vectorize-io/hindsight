@@ -25,7 +25,7 @@ OBSERVATION = "Alice is settled in Berlin"
 
 async def _observations(client, bank: str) -> list[dict]:
     memories = await client.memory.list_memories(bank, limit=100)
-    return [m for m in memories.items if m["fact_type"] == "observation"]
+    return [m for m in memories.items if m.fact_type == "observation"]
 
 
 async def test_a_trigger_reports_the_operation_it_started(client, llm, bank_id, settled):
@@ -86,10 +86,10 @@ async def test_a_trigger_over_an_already_consolidated_bank_is_harmless(client, l
 
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
     await settled(bank_id)
-    before = sorted(m["text"] for m in (await client.memory.list_memories(bank_id, limit=100)).items)
+    before = sorted(m.text for m in (await client.memory.list_memories(bank_id, limit=100)).items)
 
     await client.banks.trigger_consolidation(bank_id)
     await settled(bank_id)
 
-    after = sorted(m["text"] for m in (await client.memory.list_memories(bank_id, limit=100)).items)
+    after = sorted(m.text for m in (await client.memory.list_memories(bank_id, limit=100)).items)
     assert after == before

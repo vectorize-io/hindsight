@@ -68,7 +68,7 @@ async def test_the_work_really_happened(client, bank_id, settled):
     await settled(bank_id)
 
     memories = await client.memory.list_memories(bank_id, limit=100)
-    assert [m["text"] for m in memories.items] == [BERLIN]
+    assert [m.text for m in memories.items] == [BERLIN]
 
 
 async def test_replaying_an_operation_id_does_not_store_it_twice(client, bank_id, settled):
@@ -88,7 +88,7 @@ async def test_replaying_an_operation_id_does_not_store_it_twice(client, bank_id
     assert first.operation_id == second.operation_id == operation_id
 
     memories = await client.memory.list_memories(bank_id, limit=100)
-    assert [m["text"] for m in memories.items] == [BERLIN]
+    assert [m.text for m in memories.items] == [BERLIN]
 
 
 async def test_two_different_ids_are_two_different_operations(client, bank_id, settled):

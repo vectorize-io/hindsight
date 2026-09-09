@@ -44,7 +44,6 @@ async def test_every_named_entity_is_recorded(client, linked_bank):
     listing = await client.entities.list_entities(linked_bank)
 
     assert listing.total == 3
-    # Entity rows are typed here, while document and memory rows are dicts — see #4218.
     assert sorted(e.canonical_name for e in listing.items) == ["Alice", "Berlin", "cello"]
 
 
@@ -87,7 +86,6 @@ async def test_the_entity_graph_exposes_the_link_a_traversal_follows(client, lin
     see whether the path exists rather than inferring it from what came back."""
     graph = await client.entities.get_entity_graph(linked_bank, limit=50)
 
-    # ...and graph nodes are dicts again, in the same resource. Also #4218.
-    labels = {node["data"]["label"] for node in graph.nodes}
+    labels = {node.data.label for node in graph.nodes}
     assert labels == {"Alice", "Berlin", "cello"}
     assert graph.edges, "co-occurring entities produced no edges"
