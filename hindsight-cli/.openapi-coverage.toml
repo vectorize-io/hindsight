@@ -138,6 +138,12 @@ enable_reranking = "Set via `bank set-config` (hierarchical config)."
 [fields.update_bank_config]
 updates = "Flattened into per-setting flags (--llm-provider, --llm-model, etc) on `bank set-config`."
 
+[fields.import_bank_template]
+version = "Supplied in the JSON manifest file passed to `bank import-template`."
+bank = "Supplied in the JSON manifest file passed to `bank import-template`."
+mental_models = "Supplied in the JSON manifest file passed to `bank import-template`."
+directives = "Supplied in the JSON manifest file passed to `bank import-template`."
+
 [fields.create_webhook]
 http_config = "Advanced HTTP customisation (headers/method/timeout/params) is not exposed in the CLI yet; use the JSON API if needed."
 
