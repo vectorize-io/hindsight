@@ -43,17 +43,25 @@ async def _ensure_bank(pool, bank_id: str) -> None:
     )
 
 
-async def _insert_operation(pool, bank_id: str, status: str) -> str:
-    """Insert a test operation with the given status and return its ID."""
+async def _insert_operation(
+    pool, bank_id: str, status: str, operation_type: str = "retain", result_metadata: str = "{}"
+) -> str:
+    """Insert a test operation with the given status and return its ID.
+
+    ``result_metadata`` is the column a batch parent is marked in (``is_parent``), which is
+    what exclude_parents filters on.
+    """
     op_id = uuid.uuid4()
     await pool.execute(
         """
-        INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
-        VALUES ($1, $2, 'retain', $3, '{"test": true}'::jsonb)
+        INSERT INTO async_operations (operation_id, bank_id, status, operation_type, task_payload, result_metadata)
+        VALUES ($1, $2, $3, $4, '{"test": true}'::jsonb, $5::jsonb)
         """,
         op_id,
         bank_id,
         status,
+        operation_type,
+        result_metadata,
     )
     return str(op_id)
 
@@ -116,6 +124,63 @@ async def test_list_operations_filter_by_pending_excludes_processing(api_client,
     assert len(ops) == 1
     assert ops[0]["id"] == pending_id
     assert ops[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_list_operations_active_only_totals_every_non_terminal_row(api_client, memory, test_bank_id):
+    """`total` counts every non-terminal row, not the one-row page it returns.
+
+    A leaked terminal row would keep a client waiting on work that already finished.
+    """
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    for status in ("pending", "pending", "pending", "processing", "processing"):
+        await _insert_operation(pool, test_bank_id, status)
+    for status in ("completed", "completed", "failed", "cancelled"):
+        await _insert_operation(pool, test_bank_id, status)
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/operations",
+        params={"active_only": "true", "limit": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 5
+    assert len(body["operations"]) == 1
+    assert body["operations"][0]["status"] in ("pending", "processing")
+
+
+@pytest.mark.asyncio
+async def test_list_operations_active_only_conjoins_with_the_other_filters(api_client, memory, test_bank_id):
+    """active_only narrows the WHERE clause the other filters share; it never replaces one.
+
+    Winning over status, type or exclude_parents would report a backlog nobody asked about.
+    """
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    await _insert_operation(pool, test_bank_id, "pending", "batch_retain", '{"is_parent": true}')
+    pending_retain = await _insert_operation(pool, test_bank_id, "pending")
+    processing_retain = await _insert_operation(pool, test_bank_id, "processing")
+    await _insert_operation(pool, test_bank_id, "completed")
+    pending_consolidation = await _insert_operation(pool, test_bank_id, "pending", "consolidation")
+    await _insert_operation(pool, test_bank_id, "failed", "consolidation")
+
+    url = f"/v1/default/banks/{test_bank_id}/operations"
+    narrowed = await api_client.get(
+        url,
+        params={"active_only": "true", "status": "pending", "type": "retain", "exclude_parents": "true"},
+    )
+    assert narrowed.status_code == 200
+    body = narrowed.json()
+    assert body["total"] == 1
+    assert [op["id"] for op in body["operations"]] == [pending_retain]
+
+    active_leaves = await api_client.get(url, params={"active_only": "true", "exclude_parents": "true"})
+    body = active_leaves.json()
+    assert body["total"] == 3
+    assert {op["id"] for op in body["operations"]} == {pending_retain, processing_retain, pending_consolidation}
 
 
 @pytest.mark.asyncio

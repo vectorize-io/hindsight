@@ -27,6 +27,9 @@ export interface KnowledgeNode {
   /** The page's EFFECTIVE refresh policy, on servers new enough to report it (#3572). Absent
    *  everywhere else, which `seedPages()` reads as "unknown, leave it alone". */
   trigger?: { tags_match?: string };
+  /** Pages only: an in-scope memory was written since the page last read them, so the server
+   *  already knows the document is behind its corpus. Absent on folders and on older servers. */
+  is_stale?: boolean | null;
   children?: KnowledgeNode[];
 }
 
@@ -440,20 +443,15 @@ export class HindsightClient {
     await this.req("DELETE", this.bankUrl(`/documents/${encodeURIComponent(documentId)}`));
   }
 
-  /** Count of operations still ACTIVE on this bank — the list includes terminal ops (completed/
-   *  failed/cancelled), so filter by status. Powers syncStatus's "extractions drained" check. */
+  /** Count all pending/processing operations from the server's filtered total, not one page.
+   *  An unavailable count rejects rather than inventing a confirmed zero. */
   async activeOperations(): Promise<number> {
-    const r = await this.req("GET", this.bankUrl("/operations"));
-    try {
-      const j = (await r.json()) as {
-        operations?: { status?: string }[];
-        items?: { status?: string }[];
-      };
-      const ops = j.operations ?? j.items ?? [];
-      return ops.filter((o) => !TERMINAL.has((o?.status || "").toLowerCase())).length;
-    } catch {
-      return 0;
-    }
+    const r = await this.req("GET", this.bankUrl("/operations?active_only=true&limit=1"));
+    if (!r.ok) throw new Error(`Operation count unavailable: HTTP ${r.status}`);
+    const { total } = (await r.json()) as { total?: unknown };
+    if (typeof total !== "number" || !Number.isSafeInteger(total) || total < 0)
+      throw new Error("Invalid operation count");
+    return total;
   }
 
   /**
@@ -558,7 +556,13 @@ export class HindsightClient {
    * here, from `searchKnowledgePages`, or from a `[[page:<id>]]` link all resolve identically.
    */
   async listPages(): Promise<unknown> {
-    const items: { id: string; name: string; description?: string; folder?: string }[] = [];
+    const items: {
+      id: string;
+      name: string;
+      description?: string;
+      folder?: string;
+      is_stale?: boolean;
+    }[] = [];
     const walk = (nodes: KnowledgeNode[], folder?: string): void => {
       for (const n of nodes) {
         if (!n?.id || !n?.name) continue;
@@ -568,6 +572,9 @@ export class HindsightClient {
             name: n.name,
             ...(n.description ? { description: n.description } : {}),
             ...(folder ? { folder } : {}),
+            // Absent rather than false where the server said nothing: "unknown" must not render
+            // as "current" in the roster this feeds.
+            ...(typeof n.is_stale === "boolean" ? { is_stale: n.is_stale } : {}),
           });
         }
         if (n.children?.length) walk(n.children, n.kind === "folder" ? n.name : folder);

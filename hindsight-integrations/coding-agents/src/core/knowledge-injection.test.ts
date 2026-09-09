@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { HindsightClient } from "./hindsight";
 import { parsePageList, buildKnowledgePreamble, buildRosterRefresh } from "./knowledge-injection";
 
 describe("parsePageList", () => {
@@ -91,5 +92,44 @@ describe("buildRosterRefresh", () => {
     expect(out).toContain("hindsight_ingest_document");
     // No roster block when there are no pages.
     expect(out).not.toContain("Current Hindsight knowledge pages");
+  });
+});
+
+describe("freshness from the server tree", () => {
+  it("marks stale pages in both injected rosters and removes the mark after refresh", async () => {
+    let stale = true;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        roots: [
+          { id: "p1", kind: "page", name: "Component map", is_stale: stale },
+          { id: "p2", kind: "page", name: "Core concepts", is_stale: false },
+          { id: "p3", kind: "page", name: "Key decisions" },
+          { id: "p4", kind: "page", name: "Conventions", is_stale: "yes" },
+          {
+            id: "folder",
+            kind: "folder",
+            name: "Initiatives",
+            children: [{ id: "p5", kind: "page", name: "Retry backoff", is_stale: stale }],
+          },
+        ],
+      })
+    );
+    const client = new HindsightClient({ apiUrl: "http://server", bank: "repo" });
+    try {
+      const pages = parsePageList(await client.listPages());
+      for (const render of [buildKnowledgePreamble, buildRosterRefresh]) {
+        const output = render(pages);
+        expect(output).toContain("- Component map (p1) — STALE");
+        expect(output).toContain("- Retry backoff (p5) — STALE");
+        expect(output).not.toMatch(/(?:Core concepts|Key decisions|Conventions).*STALE/);
+      }
+      stale = false;
+      const refreshed = parsePageList(await client.listPages());
+      for (const render of [buildKnowledgePreamble, buildRosterRefresh]) {
+        expect(render(refreshed)).not.toContain("STALE");
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

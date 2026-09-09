@@ -8796,6 +8796,12 @@ export type ListOperationsData = {
      * Exclude parent batch operations from results
      */
     exclude_parents?: boolean;
+    /**
+     * Active Only
+     *
+     * Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.
+     */
+    active_only?: boolean;
   };
   url: "/v1/default/banks/{bank_id}/operations";
 };

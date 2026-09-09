@@ -392,7 +392,7 @@ impl ApiClient {
             loop {
                 let response = self
                     .client
-                    .list_operations(agent_id, None, None, None, None, None, None)
+                    .list_operations(agent_id, None, None, None, None, None, None, None)
                     .humanized()
                     .await?;
                 let ops = response.into_inner();
@@ -532,7 +532,7 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_operations(agent_id, None, None, None, None, None, None)
+                .list_operations(agent_id, None, None, None, None, None, None, None)
                 .humanized()
                 .await?;
             let value = response.into_inner();

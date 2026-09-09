@@ -948,6 +948,7 @@ class OperationsApi:
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
+        active_only: Annotated[Optional[StrictBool], Field(description="Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -978,6 +979,8 @@ class OperationsApi:
         :type offset: int
         :param exclude_parents: Exclude parent batch operations from results
         :type exclude_parents: bool
+        :param active_only: Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.
+        :type active_only: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1009,6 +1012,7 @@ class OperationsApi:
             limit=limit,
             offset=offset,
             exclude_parents=exclude_parents,
+            active_only=active_only,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1041,6 +1045,7 @@ class OperationsApi:
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
+        active_only: Annotated[Optional[StrictBool], Field(description="Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1071,6 +1076,8 @@ class OperationsApi:
         :type offset: int
         :param exclude_parents: Exclude parent batch operations from results
         :type exclude_parents: bool
+        :param active_only: Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.
+        :type active_only: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1102,6 +1109,7 @@ class OperationsApi:
             limit=limit,
             offset=offset,
             exclude_parents=exclude_parents,
+            active_only=active_only,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1134,6 +1142,7 @@ class OperationsApi:
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
+        active_only: Annotated[Optional[StrictBool], Field(description="Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1164,6 +1173,8 @@ class OperationsApi:
         :type offset: int
         :param exclude_parents: Exclude parent batch operations from results
         :type exclude_parents: bool
+        :param active_only: Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.
+        :type active_only: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1195,6 +1206,7 @@ class OperationsApi:
             limit=limit,
             offset=offset,
             exclude_parents=exclude_parents,
+            active_only=active_only,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1222,6 +1234,7 @@ class OperationsApi:
         limit,
         offset,
         exclude_parents,
+        active_only,
         authorization,
         _request_auth,
         _content_type,
@@ -1266,6 +1279,10 @@ class OperationsApi:
         if exclude_parents is not None:
             
             _query_params.append(('exclude_parents', exclude_parents))
+            
+        if active_only is not None:
+            
+            _query_params.append(('active_only', active_only))
             
         # process the header parameters
         if authorization is not None:

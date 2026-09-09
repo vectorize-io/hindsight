@@ -567,6 +567,7 @@ List async operations (retain processing, mental model refresh, etc.) with optio
 |-----------|------|----------|-------------|
 | `status` | string | No | Filter by status: `pending`, `running`, `completed`, `failed`, `cancelled` |
 | `limit` | integer | No | Maximum number of results (default: 100) |
+| `active_only` | boolean | No | Only operations that have not reached a terminal state (`pending` or `processing`). The reported `total` counts the same set, so it reports the whole active backlog even when `limit` returns fewer rows |
 
 ---
 

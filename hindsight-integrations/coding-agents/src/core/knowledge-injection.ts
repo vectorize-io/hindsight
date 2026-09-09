@@ -1,6 +1,9 @@
 export interface PageRef {
   id: string;
   title: string;
+  /** The server's own staleness verdict: in-scope memories written since the page was rebuilt.
+   *  Undefined means the server did not say — rendered as nothing, never as "current". */
+  stale?: boolean;
 }
 
 /** Defensive parse of HindsightClient.listPages() ({items:[{id,name}]}, flattened from the
@@ -13,13 +16,27 @@ export function parsePageList(raw: unknown): PageRef[] {
   for (const it of items) {
     const id = (it as { id?: unknown })?.id;
     const name = (it as { name?: unknown })?.name;
-    if (typeof id === "string" && typeof name === "string") out.push({ id, title: name });
+    if (typeof id === "string" && typeof name === "string") {
+      const stale = (it as { is_stale?: unknown })?.is_stale;
+      out.push({ id, title: name, ...(typeof stale === "boolean" ? { stale } : {}) });
+    }
   }
   return out;
 }
 
+/** The staleness legend, emitted only when the roster actually flags something — a standing
+ *  caveat on every page in every session would be read as boilerplate and stop meaning anything. */
+const STALE_LEGEND =
+  "Pages marked STALE have had memories written in their scope since they were last rebuilt: the " +
+  "server already knows the page is behind this repository. Read them for orientation, and verify " +
+  "any specific claim — counts, inventories, file lists — against the code before relying on it.";
+
 function roster(pages: PageRef[]): string {
-  return pages.map((p) => `- ${p.title} (${p.id})`).join("\n");
+  return pages.map((p) => `- ${p.title} (${p.id})${p.stale ? " — STALE" : ""}`).join("\n");
+}
+
+function rosterWithLegend(pages: PageRef[]): string {
+  return pages.some((p) => p.stale) ? `${roster(pages)}\n${STALE_LEGEND}` : roster(pages);
 }
 
 /**
@@ -71,7 +88,7 @@ function toolGuide(opts?: ToolGuideOpts): string {
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
   const body = pages.length
-    ? `Knowledge pages currently in this repository:\n${roster(pages)}`
+    ? `Knowledge pages currently in this repository:\n${rosterWithLegend(pages)}`
     : "No knowledge pages yet — Hindsight is still learning this repo; they'll appear as it processes.";
   return (
     "<hindsight_knowledge>\n" +
@@ -95,7 +112,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  */
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
   const rosterBlock = pages.length
-    ? `Current Hindsight knowledge pages (may have changed):\n${roster(pages)}\n`
+    ? `Current Hindsight knowledge pages (may have changed):\n${rosterWithLegend(pages)}\n`
     : "";
   return (
     "<hindsight_knowledge_refresh>\n" +

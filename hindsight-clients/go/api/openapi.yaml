@@ -2822,6 +2822,21 @@ paths:
           title: Exclude Parents
           type: boolean
         style: form
+      - description: "Return only operations that are not yet terminal (status pending\
+          \ or processing). The reported total counts the same filtered set, so one\
+          \ limit=1 request yields the exact active backlog."
+        explode: true
+        in: query
+        name: active_only
+        required: false
+        schema:
+          default: false
+          description: "Return only operations that are not yet terminal (status pending\
+            \ or processing). The reported total counts the same filtered set, so\
+            \ one limit=1 request yields the exact active backlog."
+          title: Active Only
+          type: boolean
+        style: form
       - explode: false
         in: header
         name: authorization

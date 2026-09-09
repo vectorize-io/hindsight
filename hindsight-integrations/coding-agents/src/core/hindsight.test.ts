@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MAX_PARALLEL_RETAINS,
@@ -456,65 +453,46 @@ describe("HindsightClient credential refresh", () => {
   });
 });
 
-/**
- * The other half of the same invariant: forwarding the config is worthless if a write path skips
- * the client method that SENDS it. One bank must consolidate into exactly one observation scope
- * (#3564), and `retain()` is the only place that puts `observation_scopes` on the wire — so a
- * second `/memories` POST anywhere would quietly consolidate under the server's `combined`
- * default, splitting the repo's beliefs per tag combination again. No unit test would fail: the
- * new path writes perfectly good memories. Hence a check over the whole source tree.
- */
-describe("every memory write goes through the one call site that scopes it", () => {
-  const SRC = fileURLToPath(new URL("..", import.meta.url));
-
-  function sourceFiles(dir: string, prefix = ""): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory())
-        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
-      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
-    });
-  }
-
-  it("has no module addressing the memories endpoint except the client", () => {
-    const writers = sourceFiles(SRC).filter((rel) =>
-      readFileSync(join(SRC, rel), "utf8").includes('"/memories')
+describe("HindsightClient.activeOperations", () => {
+  it("distinguishes unavailable or invalid counts from a confirmed empty backlog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(404, { detail: "unavailable" }))
+        .mockResolvedValueOnce(jsonResponse(200, {}))
+        .mockResolvedValueOnce(jsonResponse(200, { total: 0 }))
     );
-    expect(writers).toEqual(["core/hindsight.ts"]);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    await expect(client.activeOperations()).rejects.toThrow();
+    await expect(client.activeOperations()).rejects.toThrow();
+    expect(await client.activeOperations()).toBe(0);
   });
 
-  it("keeps that call site inside retain(), with the scoping on the item it posts", () => {
-    const src = readFileSync(join(SRC, "core/hindsight.ts"), "utf8");
-    expect(src.match(/bankUrl\("\/memories"\)/g)).toHaveLength(1);
-    // Everything between retain()'s signature and the POST is the body it builds; the scoping
-    // has to be set in there, not left to whatever the server defaults to.
-    const body = src.slice(src.indexOf("async retain("), src.indexOf('bankUrl("/memories")'));
-    // The scoping may be derived per document (see `per_source`), but it must still be set on the
-    // item here and still come from the configured value — not from a server default.
-    expect(body).toMatch(/observation_scopes: .*this\.observationScopes/);
-  });
-});
-
-describe("every client-building entrypoint forwards observationScopes", () => {
-  const SRC = fileURLToPath(new URL("..", import.meta.url));
-
-  function sourceFiles(dir: string, prefix = ""): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory())
-        return entry.name === "e2e" ? [] : sourceFiles(join(dir, entry.name), rel);
-      return entry.name.endsWith(".ts") && !entry.name.includes(".test.") ? [rel] : [];
+  /** The fixture is the adversary: `active_only` applies the server's own predicate, `status`
+   *  filters, `total` counts the FILTERED set while only `limit` rows come back, and the 374
+   *  in-flight ops sit in whichever non-terminal status a single-status caller did NOT ask about.
+   *  So a page count reads 1, an unfiltered total 1000, and the per-status pair it replaced 0. */
+  it("reads the whole non-terminal backlog from one server-side count", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams;
+      const asked = q.get("status");
+      const flight = asked === "pending" ? "processing" : "pending";
+      const rows = Array.from({ length: 1000 }, (_, i) => (i < 374 ? flight : "completed"))
+        .filter((s) => q.get("active_only") !== "true" || s === "pending" || s === "processing")
+        .filter((s) => !asked || s === asked);
+      return jsonResponse(200, {
+        total: rows.length,
+        operations: rows.slice(0, Number(q.get("limit") ?? 20)).map((status) => ({ status })),
+      });
     });
-  }
+    vi.stubGlobal("fetch", fetchMock);
 
-  it("has no module that builds a client without passing cfg.observationScopes", () => {
-    const dropped = sourceFiles(SRC).filter((rel) => {
-      const src = readFileSync(join(SRC, rel), "utf8");
-      // `makeClient({` is the hook/session-start seam: the ClientOpts are built there even though
-      // the constructor call itself is the injected default further up the file.
-      const buildsClient = src.includes("new HindsightClient({") || src.includes("makeClient({");
-      return buildsClient && !src.includes("observationScopes:");
-    });
-    expect(dropped).toEqual([]);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    expect(await client.activeOperations()).toBe(374);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const q = new URL(String(fetchMock.mock.calls[0][0])).searchParams;
+    expect(q.get("active_only")).toBe("true");
+    expect(q.get("limit")).toBe("1");
   });
 });

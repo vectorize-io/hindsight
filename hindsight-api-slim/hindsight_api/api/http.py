@@ -7549,6 +7549,14 @@ def _register_routes(app: FastAPI):
         limit: int = Query(default=20, ge=1, le=100, description="Maximum number of operations to return"),
         offset: int = Query(default=0, ge=0, description="Number of operations to skip"),
         exclude_parents: bool = Query(default=False, description="Exclude parent batch operations from results"),
+        active_only: bool = Query(
+            default=False,
+            description=(
+                "Return only operations that are not yet terminal (status pending or processing). "
+                "The reported total counts the same filtered set, so one limit=1 request yields the "
+                "exact active backlog."
+            ),
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List async operations for a memory bank with optional filtering and pagination."""
@@ -7560,6 +7568,7 @@ def _register_routes(app: FastAPI):
                 limit=limit,
                 offset=offset,
                 exclude_parents=exclude_parents,
+                active_only=active_only,
                 request_context=request_context,
             )
             return OperationsListResponse(

@@ -4059,6 +4059,18 @@
             "description": "Exclude parent batch operations from results"
           },
           {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog.",
+              "default": false,
+              "title": "Active Only"
+            },
+            "description": "Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit=1 request yields the exact active backlog."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,

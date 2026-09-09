@@ -106,6 +106,9 @@ Query parameters:
 | `limit` | 1–100, default 20. |
 | `offset` | Pagination offset. |
 | `exclude_parents` | Exclude parent batch operations from results (large `retain_batch` calls create one parent + N children). |
+| `active_only` | Only operations that have not reached a terminal state (`pending` or `processing`). |
+
+`total` counts the whole filtered set, not the returned page, so `?active_only=true&limit=1` is the cheapest exact answer to "how much work is this bank still doing?". Counting rows in a page instead saturates at `limit`, and asking once per non-terminal status takes two counts at two different instants — an operation that moves `pending` → `processing` between them is missing from both, and the pair sums to zero while the bank is still working.
 
 ### Python
 

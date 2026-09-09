@@ -423,6 +423,7 @@ type ApiListOperationsRequest struct {
 	limit *int32
 	offset *int32
 	excludeParents *bool
+	activeOnly *bool
 	authorization *string
 }
 
@@ -453,6 +454,12 @@ func (r ApiListOperationsRequest) Offset(offset int32) ApiListOperationsRequest 
 // Exclude parent batch operations from results
 func (r ApiListOperationsRequest) ExcludeParents(excludeParents bool) ApiListOperationsRequest {
 	r.excludeParents = &excludeParents
+	return r
+}
+
+// Return only operations that are not yet terminal (status pending or processing). The reported total counts the same filtered set, so one limit&#x3D;1 request yields the exact active backlog.
+func (r ApiListOperationsRequest) ActiveOnly(activeOnly bool) ApiListOperationsRequest {
+	r.activeOnly = &activeOnly
 	return r
 }
 
@@ -527,6 +534,12 @@ func (a *OperationsAPIService) ListOperationsExecute(r ApiListOperationsRequest)
 	} else {
 		var defaultValue bool = false
 		r.excludeParents = &defaultValue
+	}
+	if r.activeOnly != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "active_only", r.activeOnly, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.activeOnly = &defaultValue
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
