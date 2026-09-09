@@ -30,11 +30,9 @@ from ..metrics import get_metrics_collector
 from .backpressure import is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
-# How long to hold a task a store shed for backpressure. Long enough that a fold has a real chance
-# to drain the backlog — retrying into a still-full store just sheds again and burns the claim —
-# and short enough that a cleared backlog is not left waiting. Deferrals do not count against
-# `max_retries`, so this can afford to be patient without risking the operation.
-_BACKPRESSURE_DEFER_SECONDS = int(os.environ.get("HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS", "120"))
+# How long to hold a task a store shed for backpressure. The rationale for the default
+# lives with the value, on DEFAULT_BACKPRESSURE_DEFER_SECONDS in config.py.
+_BACKPRESSURE_DEFER_SECONDS = get_config().backpressure_defer_seconds
 from .stage import StageHolder, bind_holder
 
 # Map DB operation_type -> metric `operation` label, collapsing the retain

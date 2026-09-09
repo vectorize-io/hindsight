@@ -41,7 +41,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext, suppress
 from dataclasses import dataclass
@@ -51,7 +50,12 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.config import (
+    DEFAULT_XAI_OAUTH_BASE_URL,
+    ENV_XAI_OAUTH_BASE_URL,
+    ENV_XAI_OAUTH_DEBUG_HEADERS,
+    get_config,
+)
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -86,9 +90,9 @@ __all__ = [
 #: ``HINDSIGHT_API_LLM_BASE_URL`` that deployments often set for an unrelated
 #: proxy — the same "more specific beats more general" rule the rest of
 #: Hindsight's config hierarchy follows.
-ENV_BASE_URL = "HINDSIGHT_API_XAI_OAUTH_BASE_URL"
 
-DEFAULT_BASE_URL = "https://api.x.ai/v1"
+DEFAULT_BASE_URL = DEFAULT_XAI_OAUTH_BASE_URL
+ENV_BASE_URL = ENV_XAI_OAUTH_BASE_URL
 
 #: Body marker xAI returns when the account's spending limit stopped the call.
 SPENDING_LIMIT_CODE = "personal-team-blocked:spending-limit"
@@ -105,7 +109,8 @@ MAX_ERROR_DETAIL_CHARS = 200
 
 #: Debug-only response-header logging on a non-2xx reply (default off). See
 #: the module docstring's Logging section for the exact carve-out.
-ENV_DEBUG_HEADERS = "HINDSIGHT_API_XAI_OAUTH_DEBUG_HEADERS"
+ENV_DEBUG_HEADERS = ENV_XAI_OAUTH_DEBUG_HEADERS
+
 
 #: Response headers safe to log verbatim under ``ENV_DEBUG_HEADERS``: routing
 #: and diagnostic metadata that names no credential and carries no request
@@ -336,7 +341,7 @@ def _actual_host(base_url: str) -> str:
 
 
 def _debug_headers_enabled() -> bool:
-    return os.getenv(ENV_DEBUG_HEADERS, "false").lower() == "true"
+    return get_config().xai_oauth_debug_headers
 
 
 def _log_non_2xx_response_headers(response: httpx.Response) -> None:
@@ -378,11 +383,13 @@ class XaiOAuthLLM(LLMInterface):
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
-        self.base_url = (os.environ.get(ENV_BASE_URL, "").strip() or self.base_url or DEFAULT_BASE_URL).rstrip("/")
+        # None means the operator named no deployment-wide endpoint, so the caller's
+        # base_url still gets its turn ahead of the vendor default.
+        self.base_url = (get_config().xai_oauth_base_url or self.base_url or DEFAULT_BASE_URL).rstrip("/")
 
         # Honour the engine-resolved per-operation timeout; fall back to the
         # same global default the OpenAI-compatible providers use.
-        self.timeout = timeout if timeout is not None else float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
+        self.timeout = timeout if timeout is not None else get_config().llm_timeout
 
         self._auth = auth_manager or XaiOAuthManager()
         self._auth_lock = asyncio.Lock()

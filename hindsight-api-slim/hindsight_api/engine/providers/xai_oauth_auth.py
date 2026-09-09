@@ -66,6 +66,14 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ...config import (
+    DEFAULT_XAI_OAUTH_CLIENT_ID,
+    DEFAULT_XAI_OAUTH_REFRESH_SKEW_SECONDS,
+    DEFAULT_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS,
+    DEFAULT_XAI_OAUTH_SCOPE,
+    get_config,
+)
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows
@@ -106,22 +114,20 @@ __all__ = [
 # Environment surface
 # ---------------------------------------------------------------------------
 
-#: Relocate the token store. The read and the write both follow it, so this is
-#: a full relocation rather than a read-side override.
-ENV_TOKEN_PATH = "HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH"
-
-#: Override the OAuth client id used for both login and refresh.
-ENV_CLIENT_ID = "HINDSIGHT_API_XAI_OAUTH_CLIENT_ID"
-
-#: Override the scope string requested at login.
-ENV_SCOPE = "HINDSIGHT_API_XAI_OAUTH_SCOPE"
-
-#: Per-HTTP-call timeout for discovery, device-code and refresh requests.
-ENV_REFRESH_TIMEOUT_SECONDS = "HINDSIGHT_API_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS"
-
-#: How long before ``expires_at`` a token counts as due for refresh.
-ENV_REFRESH_SKEW_SECONDS = "HINDSIGHT_API_XAI_OAUTH_REFRESH_SKEW_SECONDS"
-
+#: Every ``HINDSIGHT_API_*`` name and default is declared in config.py; these aliases
+#: keep this module's historical spellings without a second declaration of either.
+#:
+#: * ``ENV_TOKEN_PATH`` relocates the token store — read and write both follow it.
+#: * ``ENV_CLIENT_ID`` / ``ENV_SCOPE`` override the OAuth client used at login and refresh.
+#: * ``ENV_REFRESH_TIMEOUT_SECONDS`` is the per-HTTP-call timeout for discovery,
+#:   device-code and refresh requests.
+#: * ``ENV_REFRESH_SKEW_SECONDS`` is how long before ``expires_at`` a token is due.
+from ...config import ENV_XAI_OAUTH_CLIENT_ID as ENV_CLIENT_ID
+from ...config import ENV_XAI_OAUTH_REFRESH_SKEW_SECONDS as ENV_REFRESH_SKEW_SECONDS
+from ...config import ENV_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS as ENV_REFRESH_TIMEOUT_SECONDS
+from ...config import ENV_XAI_OAUTH_SCOPE as ENV_SCOPE
+from ...config import ENV_XAI_OAUTH_TOKEN_PATH as ENV_TOKEN_PATH
+from ...config import get_config
 
 # ---------------------------------------------------------------------------
 # Vendor constants
@@ -137,21 +143,21 @@ XAI_OAUTH_DEVICE_CODE_URL = f"{XAI_OAUTH_ISSUER}/oauth2/device/code"
 #: Public OAuth client id published in xAI's Apache-2.0 Grok CLI sources
 #: (``crates/codegen/xai-grok-shell/src/auth/config.rs`` in
 #: github.com/xai-org/grok-build). Not a secret: a device-code public client has
-#: no client secret by construction.
-DEFAULT_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+#: no client secret by construction. Declared in config.py with its env var.
+DEFAULT_CLIENT_ID = DEFAULT_XAI_OAUTH_CLIENT_ID
 
 #: Scope string the vendor's own device-code login requests.
-DEFAULT_SCOPE = "openid profile email offline_access grok-cli:access api:access"
+DEFAULT_SCOPE = DEFAULT_XAI_OAUTH_SCOPE
 
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
 #: Refresh this many seconds before ``expires_at``. 60s matches
 #: ``codex_auth.py``'s skew; deployments that touch the provider rarely (a cron
 #: or gateway shape) can widen it with ``ENV_REFRESH_SKEW_SECONDS``.
-DEFAULT_REFRESH_SKEW_SECONDS = 60.0
+DEFAULT_REFRESH_SKEW_SECONDS = DEFAULT_XAI_OAUTH_REFRESH_SKEW_SECONDS
 
 #: Hard per-request timeout for every call this module makes.
-DEFAULT_REFRESH_TIMEOUT_SECONDS = 20.0
+DEFAULT_REFRESH_TIMEOUT_SECONDS = DEFAULT_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS
 
 #: Anti-spin floor: a credential obtained less than this many seconds ago is
 #: not refreshed again. Measured from the store's ``obtained_at``.
@@ -236,7 +242,7 @@ def default_token_path() -> Path:
     Resolved on each call rather than cached at import, so the environment is
     read at the point of use.
     """
-    configured = os.environ.get(ENV_TOKEN_PATH, "").strip()
+    configured = get_config().xai_oauth_token_path
     if configured:
         return Path(configured).expanduser()
     return Path.home() / ".hindsight" / "xai_oauth.json"
@@ -599,13 +605,10 @@ def device_code_login(
     from the module's ``login`` entrypoint — no request path calls it.
     """
     path = token_path or default_token_path()
-    resolved_client_id = client_id or os.environ.get(ENV_CLIENT_ID, "").strip() or DEFAULT_CLIENT_ID
-    resolved_scope = scope or os.environ.get(ENV_SCOPE, "").strip() or DEFAULT_SCOPE
-    timeout = (
-        timeout_seconds
-        if timeout_seconds is not None
-        else _env_float(ENV_REFRESH_TIMEOUT_SECONDS, DEFAULT_REFRESH_TIMEOUT_SECONDS)
-    )
+    config = get_config()
+    resolved_client_id = client_id or config.xai_oauth_client_id
+    resolved_scope = scope or config.xai_oauth_scope
+    timeout = timeout_seconds if timeout_seconds is not None else config.xai_oauth_refresh_timeout_seconds
 
     with httpx.Client(timeout=httpx.Timeout(max(20.0, timeout)), headers={"Accept": "application/json"}) as client:
         endpoints = discover_endpoints(client)
@@ -653,17 +656,6 @@ def device_code_login(
     return path
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning("Ignoring non-numeric %s; using %s", name, default)
-        return default
-
-
 # ---------------------------------------------------------------------------
 # Manager
 # ---------------------------------------------------------------------------
@@ -689,16 +681,14 @@ class XaiOAuthManager:
         http_client: httpx.Client | None = None,
     ) -> None:
         self._token_path = token_path or default_token_path()
-        self._client_id = client_id or os.environ.get(ENV_CLIENT_ID, "").strip() or DEFAULT_CLIENT_ID
+        self._client_id = client_id or get_config().xai_oauth_client_id
         self._skew_seconds = (
-            refresh_skew_seconds
-            if refresh_skew_seconds is not None
-            else _env_float(ENV_REFRESH_SKEW_SECONDS, DEFAULT_REFRESH_SKEW_SECONDS)
+            refresh_skew_seconds if refresh_skew_seconds is not None else get_config().xai_oauth_refresh_skew_seconds
         )
         self._timeout_seconds = (
             refresh_timeout_seconds
             if refresh_timeout_seconds is not None
-            else _env_float(ENV_REFRESH_TIMEOUT_SECONDS, DEFAULT_REFRESH_TIMEOUT_SECONDS)
+            else get_config().xai_oauth_refresh_timeout_seconds
         )
         self._min_refresh_gap_seconds = min_refresh_gap_seconds
         self._owns_client = http_client is None

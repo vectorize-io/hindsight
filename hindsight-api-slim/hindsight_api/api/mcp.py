@@ -10,15 +10,20 @@ from fastmcp import FastMCP
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
-from hindsight_api.config import DEFAULT_MCP_RECALL_DESCRIPTION, DEFAULT_MCP_RETAIN_DESCRIPTION, _get_raw_config
+from hindsight_api.config import (
+    DEFAULT_MCP_RECALL_DESCRIPTION,
+    DEFAULT_MCP_RETAIN_DESCRIPTION,
+    _get_raw_config,
+    get_config,
+)
 from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.mcp_tools import _ALL_TOOLS, MCPToolsConfig, register_mcp_tools
 from hindsight_api.models import RequestContext
 
-# Configure logging from HINDSIGHT_API_LOG_LEVEL environment variable
-_log_level_str = os.environ.get("HINDSIGHT_API_LOG_LEVEL", "info").lower()
+# Configure logging from the resolved config (HINDSIGHT_API_LOG_LEVEL).
+_log_level_str = get_config().log_level.lower()
 _log_level_map = {
     "critical": logging.CRITICAL,
     "error": logging.ERROR,
@@ -38,7 +43,7 @@ DEFAULT_BANK_ID = os.environ.get("HINDSIGHT_MCP_BANK_ID", "default")
 
 # Legacy MCP authentication token (for backwards compatibility)
 # If set, this token is checked first before TenantExtension auth
-MCP_AUTH_TOKEN = os.environ.get("HINDSIGHT_API_MCP_AUTH_TOKEN")
+MCP_AUTH_TOKEN = get_config().mcp_auth_token
 
 # Context variable to hold the current bank_id
 _current_bank_id: ContextVar[str | None] = ContextVar("current_bank_id", default=None)

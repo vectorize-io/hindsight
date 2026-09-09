@@ -48,10 +48,15 @@ from alembic import op
 
 logger = logging.getLogger(__name__)
 
+
 ENV_EXTERNALLY_OWNED_ROUTINES = "HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES"
 
 
 def _owned() -> frozenset[str]:
+    # Read from the environment, not HindsightConfig, and deliberately so: migrations
+    # run under standalone Alembic, in a process that may have no application config —
+    # and this is read at call time, so a value set after start-up still applies.
+    # Exempted in tests/test_config_is_the_only_env_reader.py, with alembic/env.py.
     raw = os.environ.get(ENV_EXTERNALLY_OWNED_ROUTINES, "")
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 

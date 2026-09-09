@@ -19,11 +19,13 @@ import sys
 from pathlib import Path
 from typing import IO
 
+from .config import get_config
+
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 8888
 
-# Allow override via environment variable for profile-specific logs
-DAEMON_LOG_PATH = Path(os.getenv("HINDSIGHT_API_DAEMON_LOG", str(Path.home() / ".hindsight" / "daemon.log")))
+# Allow override via configuration (HINDSIGHT_API_DAEMON_LOG) for profile-specific logs
+DAEMON_LOG_PATH = Path(get_config().daemon_log or Path.home() / ".hindsight" / "daemon.log")
 
 # Internal env var: set by daemonize() in the re-exec'd child so the child
 # skips re-exec and just redirects stdio.  Also set by hindsight-embed's

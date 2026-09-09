@@ -460,7 +460,8 @@ def _tracing_config(**overrides):
         "otel_traces_enabled": True,
         "otel_exporter_otlp_endpoint": "http://localhost:4318",
         "otel_exporter_otlp_headers": None,
-        "otel_service_name": "hindsight-api",
+        # None is "operator named nothing" — the state the API default stands in for.
+        "otel_service_name": None,
         "otel_deployment_environment": "test",
     }
     return dataclasses.replace(_get_raw_config(), **{**defaults, **overrides})

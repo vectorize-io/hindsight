@@ -53,22 +53,48 @@ def test_llm_provider_from_env_ignores_gemini_tier_for_non_gemini(monkeypatch):
     clear_config_cache()
 
 
-def test_llm_provider_from_env_keeps_lightweight_loader(monkeypatch):
-    """Reading the Gemini tier must not construct the full application config."""
-    from hindsight_api.config import clear_config_cache
+def test_llm_provider_from_env_resolves_through_hindsight_config(monkeypatch):
+    """The factory reads HindsightConfig rather than re-parsing the environment.
+
+    It used to parse ``os.environ`` itself to stay independent of the full config.
+    That second parser is gone: config.py is the only place a ``HINDSIGHT_API_*``
+    value is interpreted, so the tier the factory applies is by construction the
+    tier the rest of the engine sees.
+    """
+    from hindsight_api.config import clear_config_cache, get_config
     from hindsight_api.engine.llm_wrapper import LLMProvider
 
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "gemini")
     monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "fake-key")
     monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "flex")
-    monkeypatch.setenv("HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS", "1000")
-    monkeypatch.setenv("HINDSIGHT_API_RETAIN_CHUNK_SIZE", "2000")
     clear_config_cache()
 
     with patch("google.genai.Client", return_value=MagicMock()):
         provider = LLMProvider.from_env()
 
     assert provider.gemini_service_tier == "flex"
+    assert provider.gemini_service_tier == get_config().llm_gemini_service_tier
+    clear_config_cache()
+
+
+def test_llm_provider_from_env_surfaces_invalid_configuration(monkeypatch):
+    """Config-level validation now reaches this factory instead of being bypassed.
+
+    A retain budget smaller than the chunk size is rejected when the config is built.
+    Because the factory goes through that config, the misconfiguration is reported
+    here too rather than only once some later code path happened to load it.
+    """
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "fake-key")
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS", "1000")
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_CHUNK_SIZE", "2000")
+    clear_config_cache()
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"):
+        LLMProvider.from_env()
     clear_config_cache()
 
 

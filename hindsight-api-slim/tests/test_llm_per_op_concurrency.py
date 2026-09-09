@@ -15,6 +15,7 @@ import httpx
 import pytest
 from openai import APIConnectionError
 
+from hindsight_api.config import clear_config_cache
 from hindsight_api.engine import llm_wrapper
 from hindsight_api.engine.llm_wrapper import (
     LLMProvider,
@@ -90,7 +91,16 @@ class TestSemaphoresForScope:
 
 
 class TestBuildPerOpSemaphores:
-    """`_build_per_op_semaphores()` reads env vars and validates them."""
+    """`_build_per_op_semaphores()` reads the resolved config and validates it.
+
+    Each case clears the config cache after setting the environment: the caps come
+    from HindsightConfig now, so the env only takes effect once the config is rebuilt.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self):
+        """Leave no rebuilt config behind for the next test to inherit."""
+        yield
 
     def test_empty_when_no_env_vars(self, monkeypatch):
         monkeypatch.delenv("HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT", raising=False)

@@ -34,7 +34,6 @@ possible future optimization.
 import asyncio
 import json
 import logging
-import os
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any, Callable
@@ -42,7 +41,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.config import get_config
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
@@ -212,7 +211,7 @@ class OpenAIResponsesLLM(LLMInterface):
         self.openai_service_tier = kwargs.get("openai_service_tier")
         self._config_extra_body = extra_body or {}
         self.default_headers = default_headers
-        self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
+        self.timeout = timeout or get_config().llm_timeout
 
         # Manual retries (max_retries=0). Extract query params from base_url so an
         # Azure-style ``?api-version=`` is forwarded as a default query param.

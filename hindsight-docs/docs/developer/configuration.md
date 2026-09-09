@@ -524,6 +524,27 @@ export HINDSIGHT_API_LLM_PROVIDER=none
 For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claude Code** (Claude Pro/Max), and **Vertex AI** (Google Cloud), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
 :::
 
+### SuperGrok OAuth (`xai-oauth`)
+
+`HINDSIGHT_API_LLM_PROVIDER=xai-oauth` authenticates with a SuperGrok subscription via
+device-code OAuth instead of an API key. Log in once with
+`python -m hindsight_api.engine.providers.xai_oauth_auth login`; the grant is stored on disk
+and refreshed automatically. Every variable below is optional — the defaults match the
+vendor's own client, so a normal deployment sets none of them.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH` | Where the OAuth grant is stored. Both the login and the refresh follow it, so this relocates the store rather than overriding only the read. | `~/.hindsight/xai_oauth.json` |
+| `HINDSIGHT_API_XAI_OAUTH_BASE_URL` | Deployment-wide endpoint override. Takes precedence over `HINDSIGHT_API_LLM_BASE_URL`, which deployments often set for an unrelated proxy. | `https://api.x.ai/v1` |
+| `HINDSIGHT_API_XAI_OAUTH_CLIENT_ID` | OAuth client id used at login and refresh. | xAI's published Grok CLI client |
+| `HINDSIGHT_API_XAI_OAUTH_SCOPE` | Scope string requested at login. | vendor default |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_SKEW_SECONDS` | How long before expiry a token counts as due for refresh. Widen it if this deployment calls the provider rarely (a cron or gateway shape). | `60` |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS` | Per-request timeout for discovery, device-code and refresh calls. | `20` |
+| `HINDSIGHT_API_XAI_OAUTH_DEBUG_HEADERS` | Log an allowlist of response headers (`via`, `x-request-id`, `cf-ray`, `server`, `date`) on a non-2xx reply. Diagnostic only; never logs credentials, cookies or bodies. | `false` |
+
+This is the subscription lane, not xAI API-key support — for `api.x.ai` with an API key use
+`HINDSIGHT_API_LLM_PROVIDER=openai` with `HINDSIGHT_API_LLM_BASE_URL=https://api.x.ai/v1`.
+
 ### LLM Router (LiteLLM Router)
 
 `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` runs the default LLM through [LiteLLM's `Router`](https://docs.litellm.ai/docs/routing). The config JSON is forwarded verbatim — for fallback chains, load-balancing, rate limits, routing strategies, and the rest of the supported keys, see the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing). Hindsight always issues completions against `model_name: "default"`, so include at least one entry with that name.
@@ -1376,6 +1397,8 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_BASE_PATH` | Base path for API when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 | `HINDSIGHT_API_WORKERS` | Number of uvicorn worker processes | `1` |
 | `HINDSIGHT_API_ACCESS_LOG` | Enable uvicorn access log (`true`, `1`, `yes`, `on` to enable) | `false` |
+| `HINDSIGHT_API_DAEMON_LOG` | Where `--daemon` redirects the server's stdout and stderr. Set this per profile when several daemons run on one machine, so their output does not interleave into a single file. | `~/.hindsight/daemon.log` |
+| `HINDSIGHT_API_FREE_THREADING` | What to do when running on a free-threaded (`python3.14t`) interpreter: `strict` refuses to start if the GIL is still enabled, `warn` logs and continues, `off` disables the check. Unset lets the interpreter decide — `strict` on a free-threaded build, `off` on a normal one. | interpreter-dependent |
 | `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
@@ -1409,7 +1432,6 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RECENCY_DECAY_FUNCTION` | Shape of the recency boost applied during reranking — how a memory's age is turned into a small freshness adjustment to its final rank. `linear` (default) decays in a straight line from full freshness (today) to a floor reached at `HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS`. `exponential` decays by half-life: a memory is treated as neutral (no boost or penalty) at `HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS`, younger memories are boosted and older ones penalised, with a smooth fade rather than a hard cutoff. `none` disables recency entirely (age never affects ranking). | `linear` |
 | `HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS` | For the `linear` decay function: the number of days over which a memory fades from full freshness to the minimum. Only used when `HINDSIGHT_API_RECENCY_DECAY_FUNCTION=linear`. | `365` |
 | `HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS` | For the `exponential` decay function: the age (in days) at which a memory is considered neutral — younger memories get a recency boost, older ones a penalty. Smaller values favour very recent memories more aggressively. Only used when `HINDSIGHT_API_RECENCY_DECAY_FUNCTION=exponential`. | `90` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY` | Max concurrent mental model refreshes | `8` |
 | `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY` | Track history of content changes to each mental model (previous content + timestamp), stored one row per change in the `mental_model_history` table. Set to `false` to disable entirely — no history rows are written, reducing storage if audit trails are not needed. **This is how you turn the feature off** (not a zero cap). | `true` |
 | `HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS` | Minimum seconds between two *automatic* refreshes of the same mental model — the after-consolidation trigger and the cron schedule. A trigger that fires sooner is not dropped: its refresh is queued and parked until the window closes, and every further trigger in the meantime folds into that one queued refresh, so a burst of small retains costs one refresh instead of one per retain. Raise it when a bank ingests continuously and its models do not need to be current to the minute — the parked refresh still sees everything that accumulated while it waited. Explicit refreshes (API, MCP, control plane) ignore the floor and run immediately, and additionally release a parked refresh they fold into. `0` = no floor, every trigger refreshes at once. Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), and per model via `trigger.min_refresh_interval_seconds` (which wins, including an explicit `0` to exempt one hot model from a bank-wide floor). | `0` |
 | `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max history rows kept per mental model. On each refresh the previous version is inserted into the `mental_model_history` table and the oldest rows beyond this cap are deleted, so per-model history can't grow without bound. `0` or a negative value **removes the cap** (history then grows with every refresh — unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` instead. | `50` |
@@ -1975,6 +1997,7 @@ Files uploaded via the file retain API are stored in an object storage backend b
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_FILE_STORAGE_TYPE` | Storage backend: `native`, `s3`, `gcs`, or `azure` | `native` |
+| `HINDSIGHT_API_FILE_STORAGE_EXTENSION` | `module.path:ClassName` naming your own `FileStorage` implementation, used instead of the built-in backends. Every other `HINDSIGHT_API_FILE_STORAGE_*` variable is passed to it as a lowercased config dict. | unset |
 
 #### Native (PostgreSQL)
 
@@ -2259,6 +2282,7 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS` | Seconds between retries on transient task failure | `60` |
+| `HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS` | How long a task the store shed for backpressure is held before it is retried. Long enough that the backlog has a real chance to drain — retrying into a still-full store just sheds again — and short enough that a cleared backlog is not left waiting. Deferrals do not count against `HINDSIGHT_API_WORKER_MAX_RETRIES`. | `120` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
 | `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` (the default) keeps them indefinitely; set a positive number of days to enable automatic pruning. | `0` |
@@ -2335,7 +2359,6 @@ For a server handling many concurrent requests, lower values (down to `1`) favor
 | `HINDSIGHT_API_WEBHOOK_URL` | Global webhook URL for event delivery | - (disabled) |
 | `HINDSIGHT_API_WEBHOOK_SECRET` | HMAC signing secret for webhook payloads | - (unsigned) |
 | `HINDSIGHT_API_WEBHOOK_EVENT_TYPES` | Comma-separated list of event types to deliver via webhook | `consolidation.completed` |
-| `HINDSIGHT_API_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS` | How often the webhook delivery worker polls for pending deliveries (seconds) | `30` |
 | `HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS` | Comma-separated hosts or IP/CIDR ranges permitted as webhook destinations in addition to public addresses. Private, loopback, and link-local ranges (including the cloud metadata address) are blocked unless listed here. | - (public only) |
 | `HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY` | Return the raw upstream response body in the delivery-history API. Off by default to avoid exposing internal response contents; the delivery status code is always returned. | `false` |
 

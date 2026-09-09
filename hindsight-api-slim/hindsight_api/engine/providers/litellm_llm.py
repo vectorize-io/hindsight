@@ -15,13 +15,12 @@ is handled automatically by LiteLLM.
 import asyncio
 import json
 import logging
-import os
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import lru_cache
 from typing import Any, Callable
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.config import get_config
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -136,7 +135,7 @@ class LiteLLMLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
         # ``None`` falls back to HINDSIGHT_API_LLM_TIMEOUT, then DEFAULT_LLM_TIMEOUT — never None,
         # so the hard ``asyncio.wait_for`` backstop in ``call`` is always bounded.
-        self.timeout = timeout if timeout is not None else float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
+        self.timeout = timeout if timeout is not None else get_config().llm_timeout
         self._litellm: Any = None
         # User-configured extra params merged as top-level kwargs into every
         # completion call so LiteLLM normalizes them per-provider (e.g. maps

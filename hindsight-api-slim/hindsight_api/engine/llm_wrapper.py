@@ -4,7 +4,6 @@ LLM wrapper for unified configuration across providers.
 
 import json
 import logging
-import os
 import re
 import time
 import uuid
@@ -26,11 +25,10 @@ except ImportError:
     VERTEXAI_AVAILABLE = False
 
 from ..config import (
-    DEFAULT_LLM_MAX_CONCURRENT,
     ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
-    ENV_LLM_MAX_CONCURRENT,
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
+    _get_raw_config,
 )
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
@@ -43,6 +41,9 @@ from .llm_interface import (
     OutputTooLongError as OutputTooLongError,
 )
 from .llm_transport import configure_http_logging
+
+# Re-exported: this module is where callers have always imported it from.
+from .provider_auth import requires_api_key as requires_api_key
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
@@ -61,12 +62,12 @@ configure_http_logging()
 # first waits on it — so the first contended LLM call claims it and any other loop
 # reaching it then fails. The cap stays process-wide, which is what --workers N
 # already implied.
-_llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
+_llm_max_concurrent = _get_raw_config().llm_max_concurrent
 _global_llm_semaphore = CrossLoopSemaphore(_llm_max_concurrent)
 
 
 def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
-    """Build the per-operation semaphore registry from env vars.
+    """Build the per-operation semaphore registry from the resolved config.
 
     Each per-op cap is composed with — not a substitute for — the global cap:
     a call that matches a configured operation must acquire both its per-op
@@ -77,18 +78,19 @@ def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
     Operations without a configured env var are absent from the registry and
     therefore only constrained by the global cap.
     """
+    config = _get_raw_config()
     semaphores: dict[str, CrossLoopSemaphore] = {}
-    for op, env_var in (
-        ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT),
-        ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT),
-        ("consolidation", ENV_CONSOLIDATION_LLM_MAX_CONCURRENT),
+    for op, env_var, value in (
+        ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT, config.retain_llm_max_concurrent),
+        ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT, config.reflect_llm_max_concurrent),
+        ("consolidation", ENV_CONSOLIDATION_LLM_MAX_CONCURRENT, config.consolidation_llm_max_concurrent),
     ):
-        raw = os.getenv(env_var)
-        if raw is None or raw == "":
+        # None is "unset" (config maps an absent or empty value onto it); the env name is
+        # carried alongside purely so the error names the knob the operator actually set.
+        if value is None:
             continue
-        value = int(raw)
         if value <= 0:
-            raise ValueError(f"{env_var} must be a positive integer, got {raw!r}")
+            raise ValueError(f"{env_var} must be a positive integer, got {value!r}")
         semaphores[op] = CrossLoopSemaphore(value)
     return semaphores
 
@@ -410,31 +412,6 @@ def parse_llm_json(raw: str) -> Any:
         if not repaired:
             raise
         return sanitize_value(repaired)
-
-
-_PROVIDERS_WITHOUT_API_KEY = frozenset(
-    {
-        "ollama",
-        "lmstudio",
-        "llamacpp",
-        "openai-codex",
-        "claude-code",
-        "github-copilot",
-        "mock",
-        "none",
-        "vertexai",
-        "litellm",
-        "litellmrouter",
-        "bedrock",
-        "nous",
-        "xai-oauth",
-    }
-)
-
-
-def requires_api_key(provider: str) -> bool:
-    """Return True if the given provider requires an API key to operate."""
-    return provider.lower() not in _PROVIDERS_WITHOUT_API_KEY
 
 
 def _validate_ollama_num_ctx(value: Any) -> int | None:
@@ -1667,102 +1644,53 @@ class LLMProvider:
 
     @classmethod
     def from_env(cls) -> "LLMProvider":
-        """Create provider from environment variables using config.py constants."""
-        # Read every field straight from the environment. The constructor no longer
-        # resolves global-config fallbacks, so this factory must supply them — and it
-        # does so without building the full HindsightConfig, keeping from_env() a
-        # lightweight env-only loader (see test_llm_provider_from_env_keeps_lightweight_loader).
-        from ..config import (
-            DEFAULT_LLM_CACHE_AFFINITY,
-            DEFAULT_LLM_GROQ_SERVICE_TIER,
-            DEFAULT_LLM_OPENAI_SERVICE_TIER,
-            DEFAULT_LLM_PROMPT_CACHE_ENABLED,
-            DEFAULT_LLM_PROVIDER,
-            DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
-            DEFAULT_LLM_TIMEOUT,
-            ENV_LLM_API_KEY,
-            ENV_LLM_BASE_URL,
-            ENV_LLM_BEDROCK_SERVICE_TIER,
-            ENV_LLM_CACHE_AFFINITY,
-            ENV_LLM_CODEX_HOME,
-            ENV_LLM_DEFAULT_HEADERS,
-            ENV_LLM_EXTRA_BODY,
-            ENV_LLM_GEMINI_SAFETY_SETTINGS,
-            ENV_LLM_GEMINI_SERVICE_TIER,
-            ENV_LLM_GROQ_SERVICE_TIER,
-            ENV_LLM_LITELLMROUTER_CONFIG,
-            ENV_LLM_MODEL,
-            ENV_LLM_OLLAMA_NUM_CTX,
-            ENV_LLM_OPENAI_SERVICE_TIER,
-            ENV_LLM_PROMPT_CACHE_ENABLED,
-            ENV_LLM_PROVIDER,
-            ENV_LLM_REASONING_EFFORT,
-            ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
-            ENV_LLM_TIMEOUT,
-            ENV_LLM_VERTEXAI_PROJECT_ID,
-            ENV_LLM_VERTEXAI_REGION,
-            ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
-            _get_default_model_for_provider,
-            _parse_boolean_env,
-            _parse_llm_router_config,
-            _parse_optional_positive_int,
-            parse_gemini_service_tier,
-        )
+        """Create provider from the resolved :class:`HindsightConfig`.
 
-        provider = os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER)
-        api_key = os.getenv(ENV_LLM_API_KEY, "")
+        Every ``HINDSIGHT_API_*`` value is parsed in one place — ``config.py`` — so this
+        factory reads fields rather than re-deriving them from ``os.environ``. A second
+        parser is how the two paths drift: the env-only loader this replaced had already
+        grown its own copies of the provider defaulting, the Gemini tier gating and the
+        cache-affinity default, each needing a comment to say it must not disagree with
+        config.
+        """
+        from ..config import ENV_LLM_API_KEY, _get_raw_config
+
+        # The raw dataclass, not get_config(): gemini_safety_settings is bank-configurable,
+        # and the static proxy refuses those. This is the process-wide default provider, so
+        # the global value is the correct one to read here.
+        config = _get_raw_config()
+
+        provider = config.llm_provider
+        api_key = config.llm_api_key or ""
 
         if not api_key and not requires_api_key(provider):
             pass  # Provider handles its own auth
         elif not api_key:
             raise ValueError(f"{ENV_LLM_API_KEY} environment variable is required for provider '{provider}'")
 
-        base_url = os.getenv(ENV_LLM_BASE_URL, "")
-        model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)
-        extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
-        default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
-        # Same default as HindsightConfig.from_env: this entry point must not
-        # resolve to a different mode than the engine's own config path.
-        cache_affinity = os.getenv(ENV_LLM_CACHE_AFFINITY, DEFAULT_LLM_CACHE_AFFINITY) or None
-        prompt_cache_enabled = os.getenv(
-            ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
-        ).lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-
         return cls(
             provider=provider,
             api_key=api_key,
-            base_url=base_url,
-            model=model,
-            reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT) or None,
-            extra_body=extra_body,
-            default_headers=default_headers,
-            cache_affinity=cache_affinity,
-            groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
-            openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
-            bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
-            gemini_service_tier=(
-                parse_gemini_service_tier(os.getenv(ENV_LLM_GEMINI_SERVICE_TIER))
-                if provider.lower() == "gemini"
-                else None
-            ),
-            gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
-            prompt_cache_enabled=prompt_cache_enabled,
-            ollama_num_ctx=_parse_optional_positive_int(ENV_LLM_OLLAMA_NUM_CTX, os.getenv(ENV_LLM_OLLAMA_NUM_CTX)),
-            litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
-            codex_home=os.getenv(ENV_LLM_CODEX_HOME) or None,
-            vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
-            vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
-            vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,
-            timeout=float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT))),
-            structured_output_forced_tool=_parse_boolean_env(
-                ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
-                DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
-            ),
+            base_url=config.llm_base_url or "",
+            model=config.llm_model,
+            reasoning_effort=config.llm_reasoning_effort,
+            extra_body=config.llm_extra_body,
+            default_headers=config.llm_default_headers,
+            cache_affinity=config.llm_cache_affinity,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
+            gemini_safety_settings=config.llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
+            litellmrouter_config=config.llm_litellmrouter_config,
+            codex_home=config.llm_codex_home,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            timeout=config.llm_timeout,
+            structured_output_forced_tool=config.llm_structured_output_forced_tool,
         )
 
 

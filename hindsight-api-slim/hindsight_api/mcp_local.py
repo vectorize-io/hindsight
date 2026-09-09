@@ -28,8 +28,12 @@ import os
 
 def main() -> None:
     """Start the Hindsight API server with local defaults."""
-    # Set local defaults (only if not already configured by the user)
-    os.environ.setdefault("HINDSIGHT_API_DATABASE_URL", "pg0://hindsight-mcp")
+    # Seeds the environment that HindsightConfig then parses — a write, not a read
+    # that bypasses the config. It has to happen before the config is first built,
+    # so it cannot be expressed as a config field.
+    from hindsight_api.config import ENV_DATABASE_URL
+
+    os.environ.setdefault(ENV_DATABASE_URL, "pg0://hindsight-mcp")
 
     from hindsight_api.main import main as api_main
 

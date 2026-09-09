@@ -102,7 +102,9 @@ def _load_file_storage_extension() -> FileStorage | None:
     import importlib
     import os
 
-    ext_path = os.getenv("HINDSIGHT_API_FILE_STORAGE_EXTENSION")
+    from ...config import get_config
+
+    ext_path = get_config().file_storage_extension
     if not ext_path:
         return None
     if ":" not in ext_path:

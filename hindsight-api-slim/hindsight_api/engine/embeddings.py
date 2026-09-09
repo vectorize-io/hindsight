@@ -46,8 +46,6 @@ from ..config import (
     ENV_EMBEDDINGS_GEMINI_API_KEY,
     ENV_EMBEDDINGS_LITELLM_DIMENSIONS,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
-    ENV_EMBEDDINGS_OPENAI_BASE_URL,
-    ENV_EMBEDDINGS_OPENAI_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
     ENV_EMBEDDINGS_ZEROENTROPY_API_KEY,
@@ -2177,14 +2175,14 @@ def create_embeddings_from_env() -> Embeddings:
         )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
-        api_key = os.environ.get(ENV_EMBEDDINGS_OPENAI_API_KEY) or os.environ.get(ENV_LLM_API_KEY)
+        api_key = config.embeddings_openai_api_key
         if not api_key:
             raise ValueError(
                 f"{ENV_EMBEDDINGS_OPENAI_API_KEY} or {ENV_LLM_API_KEY} is required "
                 f"when {ENV_EMBEDDINGS_PROVIDER} is 'openai'"
             )
-        model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
-        base_url = os.environ.get(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None
+        model = config.embeddings_openai_model
+        base_url = config.embeddings_openai_base_url
         return _with_request_concurrency(
             OpenAIEmbeddings(
                 api_key=api_key,
@@ -2198,7 +2196,7 @@ def create_embeddings_from_env() -> Embeddings:
             config,
         )
     elif provider == "openai-codex":
-        model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
+        model = config.embeddings_openai_model
         return _with_request_concurrency(
             CodexOAuthEmbeddings(
                 model=model,
