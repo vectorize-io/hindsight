@@ -7196,7 +7196,15 @@ class MemoryEngine(MemoryEngineInterface):
             - chunks: Optional dict of chunks (if include_chunks=True, independent of max_tokens)
         """
         # Authenticate tenant and set schema in context (for fq_table())
+        # Timed: an awaited call with no phase timer, sitting INSIDE the window the HTTP handler
+        # reports as `recall=`. On a loaded fleet the existing phases covered 10% of a recall's
+        # wall time (store hop 32ms, embedding 5ms of a 356ms mean) while event-loop lag stayed at
+        # 0.2ms — so the other 90% is a real await, and every untimed await here is a candidate.
+        _auth_t0 = time.time()
         await self._authenticate_tenant(request_context)
+        _auth_s = time.time() - _auth_t0
+        if _auth_s > 0.025:
+            logger.info("[RECALL AUTH] bank=%s tenant_auth=%.3fs", bank_id, _auth_s)
 
         # Cooperative cancellation checkpoint: if the client already disconnected
         # while this request waited to be scheduled, abort before doing any work

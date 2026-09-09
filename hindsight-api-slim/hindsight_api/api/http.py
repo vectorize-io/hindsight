@@ -5659,6 +5659,7 @@ def _register_routes(app: FastAPI):
                     operation="recall",
                     bank_id=bank_id,
                 )
+                engine_done = time.time()
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
             def _fact_to_result(fact: "MemoryFact") -> RecallResult:
@@ -5735,7 +5736,11 @@ def _register_routes(app: FastAPI):
             )
 
             handler_duration = time.time() - handler_start
-            recall_duration = time.time() - recall_start
+            # END OF THE ENGINE CALL, not end of handler. Measured at the end, this window also
+            # covered response building, and `post_recall` — computed as the remainder — was then
+            # ~0 by construction. That made a slow response-assembly path unreadable: the line
+            # said pre=0 post=0 and put every millisecond into `recall`, whatever spent it.
+            recall_duration = engine_done - recall_start
             post_recall = handler_duration - pre_recall - recall_duration
             if handler_duration > 1.0:
                 logging.info(
