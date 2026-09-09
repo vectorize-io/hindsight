@@ -24,6 +24,7 @@ response status is known:
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
@@ -62,6 +63,11 @@ class HttpObservabilityMiddleware:
 
         # Template id segments (bank ids, UUIDs, numeric ids) so the endpoint
         # metric label stays bounded-cardinality.
+        # ASGI entry time, stashed for handlers that want to know how much of a request was spent
+        # BEFORE their body ran. `handler_start` is set inside the endpoint, so routing, body
+        # parsing and dependency resolution (auth among them) are invisible to any timer the
+        # endpoint sets — which is exactly where an unexplained request cost can hide.
+        scope["hs_asgi_t0"] = time.time()
         path = normalize_http_endpoint(scope.get("path", ""))
         method = scope.get("method", "GET")
 
