@@ -4637,7 +4637,12 @@ def create_app(
         import socket
 
         from hindsight_api.config import get_config
+        from hindsight_api.loop_lag import install as _install_loop_lag
         from hindsight_api.worker import WorkerPoller
+
+        # Started here rather than at import time because it needs a running loop, and it must run
+        # on the loop that actually serves requests — that is the only one whose lag says anything.
+        _install_loop_lag()
 
         config = get_config()
         poller = None
