@@ -625,6 +625,16 @@ ENV_ENABLE_DRY_RUN_EXTRACT = "HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT"
 ENV_DEFAULT_BANK_TEMPLATE = "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
+
+# Admission control. The engine's *_MAX_CONCURRENT caps limit how much runs at once
+# and let an unbounded queue form behind them; these bound how long a request may
+# WAIT before being refused with 503. Set a lane's MAX_IN_FLIGHT to 0 to disable it.
+ENV_ADMISSION_RECALL_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_RECALL_MAX_IN_FLIGHT"
+ENV_ADMISSION_RECALL_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_RECALL_MAX_WAIT_MS"
+ENV_ADMISSION_REFLECT_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_IN_FLIGHT"
+ENV_ADMISSION_REFLECT_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_WAIT_MS"
+ENV_ADMISSION_RETAIN_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_IN_FLIGHT"
+ENV_ADMISSION_RETAIN_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_WAIT_MS"
 ENV_RECALL_CONNECTION_BUDGET = "HINDSIGHT_API_RECALL_CONNECTION_BUDGET"
 ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
@@ -1406,6 +1416,57 @@ DEFAULT_ENABLE_BANK_LLM_HEALTH = False
 DEFAULT_DEFAULT_BANK_TEMPLATE: dict | None = None  # BankTemplateManifest dict applied to newly-created banks
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"
 DEFAULT_RECALL_MAX_CONCURRENT = 32  # Max concurrent recall operations per worker
+
+# Admission-control defaults. These are PER WORKER PROCESS: with `--workers N` the
+# process budget is N x the value here.
+#
+# Sized for the reference shape of 2 vCPU / 2 workers.
+#
+# `in_flight` does NOT set capacity -- capacity is cores / cpu-per-request, and a
+# c=1024 sweep measured throughput flat at 40-45 rps whether the limit was 8, 16 or
+# 24 per worker. What it sets is queue depth, and hence the latency of an ADMITTED
+# request: client latency ~= MAX_WAIT_MS + in_flight_total / throughput. Measured at
+# c=1024 (2 workers, untuned): 8/worker -> 1.4s p50, 16 -> 1.8s, 24 -> 2.3s,
+# 32 -> 3.3s.
+#
+# It is bounded on BOTH sides, which is why the smallest value is not the best one:
+#
+#   floor    in_flight >= target_rps * service_time / workers
+#            Too low throttles I/O-bound work. A recall that waits 500ms on a slow
+#            embedding provider can only run in_flight/0.5s per second, so 8 permits
+#            would cap a worker at 16 rps -- well under what its CPU could serve.
+#   ceiling  in_flight <= target_latency * throughput / workers
+#            Too high just rebuilds the unbounded queue this exists to prevent.
+#
+# 16 sits between them for the reference shape: ~1.8s p50 under extreme overload
+# (vs 12.8s with no admission control) while leaving headroom for providers slower
+# than the benchmark's. Raise it if provider latency is high, lower it if latency
+# matters more than peak throughput.
+#
+# It is expressed PER CORE so a bigger machine is not throttled to a small box's
+# queue depth: the reference shape is 2 vCPU / 2 workers, i.e. one core per worker,
+# where this yields the measured 16. `admission_in_flight_for` applies it to the
+# CPU budget this process actually has (cgroup quota, not os.cpu_count()).
+DEFAULT_ADMISSION_RECALL_IN_FLIGHT_PER_CORE = 16
+DEFAULT_ADMISSION_RECALL_MAX_IN_FLIGHT = 0  # 0 = derive from cores; set to override
+# 30s, not 1s. The SDKs are patient (the Python client defaults to a 300s request
+# timeout) so a long queue is observable rather than wasted, and a queued request
+# whose client disconnects releases its place immediately -- so patience costs
+# nothing when nobody is still listening. This absorbs a burst instead of refusing
+# it. Under *sustained* overload it is still bufferbloat: the queue fills to the
+# deadline and the back of it is refused anyway, just later. Lower it if the traffic
+# is persistently over capacity rather than spiky.
+DEFAULT_ADMISSION_RECALL_MAX_WAIT_MS = 30000
+# Reflect is LLM-bound: seconds of wall time, little CPU, and already capped
+# downstream by the per-operation LLM semaphore. Fewer slots, longer patience.
+DEFAULT_ADMISSION_REFLECT_IN_FLIGHT_PER_CORE = 16
+DEFAULT_ADMISSION_REFLECT_MAX_IN_FLIGHT = 0
+DEFAULT_ADMISSION_REFLECT_MAX_WAIT_MS = 5000
+# Synchronous retain runs extraction inline; async retain returns as soon as the
+# operation is queued, so this only bites on the synchronous path.
+DEFAULT_ADMISSION_RETAIN_IN_FLIGHT_PER_CORE = 32
+DEFAULT_ADMISSION_RETAIN_MAX_IN_FLIGHT = 0
+DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS = 2000
 DEFAULT_RECALL_CONNECTION_BUDGET = 4  # Max concurrent DB connections per recall operation
 DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
@@ -2611,6 +2672,38 @@ def _parse_default_bank_template(raw: str | None) -> dict | None:
     return parsed
 
 
+def admission_in_flight_for(explicit: int, per_core: int, workers: int) -> int:
+    """Resolve an admission lane's in-flight limit.
+
+    Three cases, because "derive" and "off" both need to be expressible:
+
+    * ``explicit > 0``  -- use it verbatim;
+    * ``explicit == 0`` -- derive from the CPU budget (the default);
+    * ``explicit < 0``  -- disable the lane, so the operation is never gated.
+
+    Otherwise the limit is
+    derived from the CPU budget this process actually has, divided by the number of
+    worker processes sharing it -- the limit is PER WORKER, so a 4-core box running
+    4 workers gets the same per-worker depth as a 1-core box running 1.
+
+    Deriving beats a fixed number because the right depth scales with the machine:
+    queue depth trades latency against the risk of throttling I/O-bound work, and
+    both sides of that trade move with core count. It is deliberately floored at
+    ``per_core`` so a fractional-core deployment still admits enough concurrent work
+    to keep its CPU busy while requests wait on embeddings or an LLM.
+    """
+    if explicit > 0:
+        return explicit
+    if explicit < 0:
+        # Negative is the kill switch. It cannot be 0, because 0 is what "derive"
+        # has to mean for an unset env var.
+        return 0
+    from ._thread_limits import available_cpu_count
+
+    cores_per_worker = available_cpu_count() / max(1, workers)
+    return max(per_core, round(per_core * cores_per_worker))
+
+
 @dataclass
 class HindsightConfig:
     """Configuration container for Hindsight API."""
@@ -2954,6 +3047,12 @@ class HindsightConfig:
     # Recall
     graph_retriever: str
     recall_max_concurrent: int
+    admission_recall_max_in_flight: int
+    admission_recall_max_wait_seconds: float
+    admission_reflect_max_in_flight: int
+    admission_reflect_max_wait_seconds: float
+    admission_retain_max_in_flight: int
+    admission_retain_max_wait_seconds: float
     recall_connection_budget: int
     recall_max_query_tokens: int
     mental_model_refresh_concurrency: int
@@ -4330,6 +4429,33 @@ class HindsightConfig:
             # Recall
             graph_retriever=os.getenv(ENV_GRAPH_RETRIEVER, DEFAULT_GRAPH_RETRIEVER),
             recall_max_concurrent=int(os.getenv(ENV_RECALL_MAX_CONCURRENT, str(DEFAULT_RECALL_MAX_CONCURRENT))),
+            admission_recall_max_in_flight=admission_in_flight_for(
+                int(os.getenv(ENV_ADMISSION_RECALL_MAX_IN_FLIGHT, str(DEFAULT_ADMISSION_RECALL_MAX_IN_FLIGHT))),
+                DEFAULT_ADMISSION_RECALL_IN_FLIGHT_PER_CORE,
+                int(os.getenv(ENV_WORKERS, "1")),
+            ),
+            admission_recall_max_wait_seconds=float(
+                os.getenv(ENV_ADMISSION_RECALL_MAX_WAIT_MS, str(DEFAULT_ADMISSION_RECALL_MAX_WAIT_MS))
+            )
+            / 1000.0,
+            admission_reflect_max_in_flight=admission_in_flight_for(
+                int(os.getenv(ENV_ADMISSION_REFLECT_MAX_IN_FLIGHT, str(DEFAULT_ADMISSION_REFLECT_MAX_IN_FLIGHT))),
+                DEFAULT_ADMISSION_REFLECT_IN_FLIGHT_PER_CORE,
+                int(os.getenv(ENV_WORKERS, "1")),
+            ),
+            admission_reflect_max_wait_seconds=float(
+                os.getenv(ENV_ADMISSION_REFLECT_MAX_WAIT_MS, str(DEFAULT_ADMISSION_REFLECT_MAX_WAIT_MS))
+            )
+            / 1000.0,
+            admission_retain_max_in_flight=admission_in_flight_for(
+                int(os.getenv(ENV_ADMISSION_RETAIN_MAX_IN_FLIGHT, str(DEFAULT_ADMISSION_RETAIN_MAX_IN_FLIGHT))),
+                DEFAULT_ADMISSION_RETAIN_IN_FLIGHT_PER_CORE,
+                int(os.getenv(ENV_WORKERS, "1")),
+            ),
+            admission_retain_max_wait_seconds=float(
+                os.getenv(ENV_ADMISSION_RETAIN_MAX_WAIT_MS, str(DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS))
+            )
+            / 1000.0,
             recall_connection_budget=int(
                 os.getenv(ENV_RECALL_CONNECTION_BUDGET, str(DEFAULT_RECALL_CONNECTION_BUDGET))
             ),

@@ -7,13 +7,16 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 
 import asyncio
 import json
+import random
 import warnings
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import hindsight_client_api
+from hindsight_client_api.exceptions import ApiException
 
 try:
     _CLIENT_VERSION = metadata.version("hindsight-client")
@@ -125,6 +128,63 @@ def _trigger_input(trigger: dict[str, Any]) -> Any:
     return model(**unnamed_defaults, **trigger)
 
 
+#: Attempts a retryable call makes in total, including the first.
+DEFAULT_MAX_ATTEMPTS = 3
+
+#: Fallback backoff when the server sends 503 without a usable ``Retry-After``.
+_FALLBACK_BACKOFF_SECONDS = 0.5
+
+
+async def _retry_on_capacity(
+    call: "Callable[[], Awaitable[Any]]",
+    max_attempts: int,
+    rng: "random.Random",
+) -> Any:
+    """Run ``call``, retrying while the server reports it is at capacity.
+
+    Only for **idempotent** operations. Recall and reflect are reads, so a repeat is
+    free; synchronous retain is not, and is deliberately excluded — its
+    ``operation_id`` is ignored, so a retry there could duplicate a write.
+
+    Two things matter more than the retry itself:
+
+    ``Retry-After`` is honoured. The server sends it precisely because it knows how
+    long its queue is; retrying sooner just earns another 503.
+
+    The wait is **jittered**. A burst of clients that all receive ``Retry-After: 1``
+    and obey it exactly will come back in lockstep and rebuild the spike that caused
+    the rejection. Spreading them over the interval is what makes retrying safe, and
+    it is the part the generated client's ``ExponentialRetry`` does not do.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await call()
+        except ApiException as e:
+            at_capacity = e.status in (429, 503)
+            if not at_capacity or attempt == max_attempts:
+                raise
+            wait = _retry_after_seconds(e) or _FALLBACK_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            # Full jitter: sleep somewhere in [0, wait], so a synchronised burst
+            # spreads out instead of returning together.
+            await asyncio.sleep(rng.uniform(0, wait))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _retry_after_seconds(e: "ApiException") -> float | None:
+    """Parse ``Retry-After`` (delta-seconds form) from a response, if present."""
+    headers = getattr(e, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        # HTTP-date form; the fallback backoff is a better answer than parsing dates.
+        return None
+
+
 class Hindsight:
     """
     High-level, easy-to-use Hindsight API client.
@@ -199,6 +259,7 @@ class Hindsight:
         api_key: str | None = None,
         timeout: float = 300.0,
         user_agent: str | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     ):
         """
         Initialize the Hindsight client.
@@ -211,11 +272,19 @@ class Hindsight:
                 should set this to identify themselves (e.g.
                 ``"hindsight-crewai/1.2.0"``). Defaults to
                 ``hindsight-client-python/<version>``.
+            max_attempts: Total attempts for *idempotent* calls (recall, reflect)
+                when the server reports it is at capacity (429/503). 1 disables
+                retrying. Waits honour ``Retry-After`` and are jittered; writes are
+                never retried here.
         """
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
         self._api_client.user_agent = user_agent or DEFAULT_USER_AGENT
         self._timeout = timeout
+        self._max_attempts = max(1, max_attempts)
+        # Per-client RNG so jitter is injectable in tests and independent of any
+        # seeding the calling application does to the global `random` module.
+        self._retry_rng = random.Random()
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         if api_key:
@@ -1244,7 +1313,11 @@ class Hindsight:
             temporal_window=temporal_window_obj,
         )
 
-        return await self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout)
+        return await _retry_on_capacity(
+            lambda: self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout),
+            self._max_attempts,
+            self._retry_rng,
+        )
 
     async def areflect(
         self,
@@ -1336,7 +1409,11 @@ class Hindsight:
             exclude_mental_model_ids=exclude_mental_model_ids,
         )
 
-        return await self._memory_api.reflect(bank_id, request_obj, _request_timeout=self._timeout)
+        return await _retry_on_capacity(
+            lambda: self._memory_api.reflect(bank_id, request_obj, _request_timeout=self._timeout),
+            self._max_attempts,
+            self._retry_rng,
+        )
 
     # Mental Models methods
 

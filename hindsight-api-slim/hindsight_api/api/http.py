@@ -25,6 +25,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from hindsight_api.api import page_markdown
+from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
@@ -4823,6 +4824,10 @@ def create_app(
     # re-discover) and the metrics in a pure-ASGI middleware installed below.
     app.router.route_class = UnknownParamsRoute
 
+    # Per-operation admission control, consulted by the `admit_for` dependency on
+    # the heavy routes. One controller per app so the limits are a process budget.
+    app.state.admission = build_controller_from_config(config)
+
     # Register all routes
     _register_routes(app)
 
@@ -4977,6 +4982,44 @@ def _register_routes(app: FastAPI):
                 api_key = authorization.strip()
         extra_headers = collect_passthrough_headers(request.headers.raw, get_config().extension_passthrough_headers)
         return RequestContext(api_key=api_key, extra_headers=extra_headers)
+
+    def admit_for(operation: PrecheckOperation):
+        """Build a FastAPI dependency that holds an admission permit for the request.
+
+        Yield-style so the permit is held for the whole request and released once the
+        response has been produced. Declared alongside ``precheck_for`` on the heavy
+        routes: FastAPI resolves dependencies before deserialising the body, so an
+        overloaded server refuses without ever reading the payload.
+
+        Returns 503 with ``Retry-After`` rather than queueing indefinitely — see
+        :mod:`hindsight_api.api.admission` for why the wait, not the concurrency, is
+        the thing worth bounding.
+        """
+
+        async def _admit_dep(request: Request):
+            controller = getattr(app.state, "admission", None)
+            if controller is None:
+                yield
+                return
+            # Recall and reflect carry a disconnect token (see api/disconnect.py). A
+            # queued request whose client has gone gives up its place immediately,
+            # which is what makes a patient deadline affordable.
+            abandoned = get_scope_cancellation_token(request.scope)
+            try:
+                async with controller.admit(str(operation), abandoned=abandoned):
+                    yield
+            except AdmissionAbandoned:
+                # Nobody left to answer. Close the request without spending a slot
+                # or building a response.
+                raise HTTPException(status_code=499, detail="client disconnected while queued") from None
+            except AdmissionRejected as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(f"Server is at capacity for '{e.lane}' ({e.limit} concurrent); try again shortly."),
+                    headers={"Retry-After": str(e.retry_after_seconds)},
+                ) from None
+
+        return _admit_dep
 
     def precheck_for(operation: PrecheckOperation):
         """
@@ -5321,6 +5364,7 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
         _enabled: None = Depends(_require_dry_run_enabled),
         _precheck: None = Depends(precheck_for(PrecheckOperation.DRY_RUN_EXTRACT)),
+        _admit: None = Depends(admit_for(PrecheckOperation.DRY_RUN_EXTRACT)),
     ):
         try:
             override_fields = (
@@ -5561,6 +5605,7 @@ def _register_routes(app: FastAPI):
         http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.RECALL)),
+        _admit: None = Depends(admit_for(PrecheckOperation.RECALL)),
     ):
         """Run a recall and return results with trace."""
         import time
@@ -5777,6 +5822,7 @@ def _register_routes(app: FastAPI):
         http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.REFLECT)),
+        _admit: None = Depends(admit_for(PrecheckOperation.REFLECT)),
     ):
         metrics = get_metrics_collector()
 
@@ -6348,6 +6394,7 @@ def _register_routes(app: FastAPI):
         body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_CREATE)),
+        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_CREATE)),
     ):
         """Create a mental model (async - returns operation_id)."""
         try:
@@ -6393,6 +6440,7 @@ def _register_routes(app: FastAPI):
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
+        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
         """Refresh a mental model by re-running its source query (async)."""
         try:
@@ -6439,6 +6487,7 @@ def _register_routes(app: FastAPI):
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
+        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
         """Preview a mental model refresh without persisting anything."""
         try:
@@ -8845,6 +8894,7 @@ def _register_routes(app: FastAPI):
         request: RetainRequest,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.RETAIN)),
+        _admit: None = Depends(admit_for(PrecheckOperation.RETAIN)),
     ):
         """Retain memories with optional async processing."""
         metrics = get_metrics_collector()
@@ -9104,6 +9154,7 @@ def _register_routes(app: FastAPI):
         request: str = Form(..., description="JSON string with FileRetainRequest model"),
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.FILES_RETAIN)),
+        _admit: None = Depends(admit_for(PrecheckOperation.FILES_RETAIN)),
     ):
         """Upload and convert files to memories."""
         from hindsight_api.config import get_config
