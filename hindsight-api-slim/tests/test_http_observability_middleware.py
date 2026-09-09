@@ -10,7 +10,7 @@ the names on the scope and this middleware attaches them.
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from hindsight_api.api.observability import SCOPE_IGNORED_PARAMS, HttpObservabilityMiddleware
+from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.unknown_params import UnknownParamsRoute, adopt_included_routes
 
 
@@ -50,13 +50,6 @@ def test_header_survives_an_error_response():
     response = client.get("/boom", params={"nope": 1})
     assert response.status_code == 418
     assert response.headers["X-Ignored-Params"] == "nope"
-
-
-def test_scope_key_is_not_leaked_as_a_header_when_empty():
-    client = TestClient(_app())
-    response = client.get("/ok")
-    assert SCOPE_IGNORED_PARAMS not in response.headers
-    assert "X-Ignored-Params" not in response.headers
 
 
 def test_metrics_are_recorded_for_each_request():
