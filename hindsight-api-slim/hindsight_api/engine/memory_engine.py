@@ -10874,9 +10874,17 @@ class MemoryEngine(MemoryEngineInterface):
                 new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                 new_occ_start = _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                 new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
-                # event_date (NOT NULL, legacy single date + used by temporal links) tracks the
-                # occurred start when it's set.
-                new_event_date = new_occ_start or live.event_date
+                # event_date (legacy single date, still what temporal links and the curation
+                # list's `date` are built from) tracks the occurred start when it's set. An
+                # explicit occurred_start edit — including "" to clear it — re-derives it with
+                # retain's own rule (`occurred_start or mentioned_at`, see memories/pg/writes.py),
+                # so clearing an occurrence cannot leave the legacy date on the old one. An
+                # omitted occurred_start is not an occurrence edit and leaves it untouched.
+                new_event_date = (
+                    (new_occ_start if new_occ_start is not None else live.mentioned_at)
+                    if occurred_start is not None
+                    else live.event_date
+                )
 
                 entity_resolution = None
                 resolved_for_unit = None

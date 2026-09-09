@@ -8,6 +8,7 @@ associations), edit, the guards, listing, and recall exclusion.
 
 import json
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -445,6 +446,74 @@ class TestEdit:
             assert row["context"] == "from a chat"
             assert row["occurred_start"].date().isoformat() == "2023-06-01"
             assert row["event_date"].date().isoformat() == "2023-06-01", "event_date tracks occurred_start"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_clearing_occurred_start_clears_stale_event_date(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Clearing occurred_start must not leave the legacy event_date on the old occurrence.
+
+        `event_date` drives temporal-link regeneration and the date the curation UI shows, so a
+        cleared occurrence that keeps its old event_date silently keeps both. Retain derives the
+        column as `occurred_start or mentioned_at` (memories/pg/writes.py), and an explicit clear
+        follows the same rule.
+        """
+        bank_id = f"test-curation-cleardate-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "The user visited Paris.")
+            m2 = await _insert_memory(conn, memory, bank_id, "The user visited Rome.")
+            # Seeded with raw SQL because no public API sets these columns independently:
+            # the pre-edit state under test is a memory as retain leaves it — an occurrence
+            # plus the mention that carried it, with the legacy event_date on the occurrence.
+            # m2 has no mention at all (what retain writes for timestamp 'unset').
+            await conn.execute(
+                "UPDATE memory_units SET occurred_start = $2, occurred_end = $3, "
+                "mentioned_at = $4, event_date = $2 WHERE id = $1",
+                m1,
+                datetime(2023, 6, 1, tzinfo=UTC),
+                datetime(2023, 6, 30, tzinfo=UTC),
+                datetime(2024, 1, 15, tzinfo=UTC),
+            )
+            await conn.execute(
+                "UPDATE memory_units SET occurred_start = $2, mentioned_at = NULL, event_date = $2 WHERE id = $1",
+                m2,
+                datetime(2023, 6, 1, tzinfo=UTC),
+            )
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                occurred_start="",
+                occurred_end="",
+                request_context=request_context,
+            )
+            cleared_no_mention = await memory.update_memory_unit(
+                bank_id, str(m2), occurred_start="", request_context=request_context
+            )
+            # A text-only edit must leave the legacy date alone: it is not an occurrence edit.
+            text_only = await memory.update_memory_unit(
+                bank_id, str(m2), text="The user visited Rome twice.", request_context=request_context
+            )
+
+        # `date` is the legacy event_date as the API exposes it.
+        assert result["occurred_start"] is None and result["occurred_end"] is None
+        assert result["date"] == result["mentioned_at"], (
+            "clearing the occurrence must fall back to mentioned_at, not keep the old occurrence"
+        )
+
+        assert cleared_no_mention["occurred_start"] is None
+        assert cleared_no_mention["date"] == "", "no mention to fall back to: the legacy date clears too"
+        assert text_only["date"] == "", "a text-only edit leaves the cleared legacy date alone"
+        assert text_only["text"] == "The user visited Rome twice."
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
