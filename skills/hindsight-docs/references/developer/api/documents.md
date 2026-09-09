@@ -201,6 +201,8 @@ hindsight document get my-bank meeting-2024-03-15
 
 Update mutable fields on an existing document without re-processing the content. Currently supports updating `tags`.
 
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To remove a single tag, read the document's current tags, drop the one you want gone, and send the rest. Omitting the field entirely is not an update at all and is rejected with a `422`.
+
 ### Python
 
 ```python

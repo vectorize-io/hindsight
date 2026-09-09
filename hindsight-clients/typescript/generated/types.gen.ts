@@ -6149,7 +6149,7 @@ export type UpdateDocumentRequest = {
   /**
    * Tags
    *
-   * New tags for the document and its memory units. Triggers observation invalidation and re-consolidation.
+   * The complete new set of tags for the document and its memory units — this REPLACES the existing tags rather than adding to them, so omitting a tag drops it and `[]` clears them all. Triggers observation invalidation and re-consolidation.
    */
   tags?: Array<string> | null;
 };
