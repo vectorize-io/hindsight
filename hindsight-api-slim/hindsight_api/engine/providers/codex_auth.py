@@ -20,17 +20,20 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import errno
 import json
 import logging
 import os
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
+from pydantic import BaseModel, Field, ValidationError
 
 try:
     import fcntl
@@ -104,31 +107,54 @@ def _path_scoped_lock(auth_file: Path) -> threading.Lock:
 
 
 @contextlib.contextmanager
-def _codex_auth_lock(auth_file: Path, timeout_seconds: float = _CODEX_AUTH_LOCK_TIMEOUT_SECONDS):
-    """Cross-process advisory lock for one Codex auth store."""
+def _codex_auth_lock(auth_file: Path, timeout_seconds: float = _CODEX_AUTH_LOCK_TIMEOUT_SECONDS) -> Iterator[bool]:
+    """Yield whether refresh may proceed; False permits only external-token adoption."""
     with _path_scoped_lock(auth_file):
         if fcntl is None:  # pragma: no cover - Windows
             logger.debug("fcntl unavailable; Codex refresh proceeds without a cross-process lock.")
-            yield
+            yield True
             return
 
         lock_path = auth_file.with_suffix(".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as lock_file:
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = open(lock_path, "a+")
+        except OSError as exc:
+            if exc.errno not in (errno.EROFS, errno.EACCES):
+                raise
+            # A read-only consumer can still have an external credential writer.
+            # Never rotate its refresh token without the shared lock/persistence.
+            yield False
+            return
+
+        with lock_file:
             deadline = time.monotonic() + max(1.0, timeout_seconds)
             while True:
                 try:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
-                except (BlockingIOError, OSError):
+                except OSError as exc:
+                    if exc.errno not in (errno.EAGAIN, errno.EACCES):
+                        raise
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Timed out waiting for the Codex auth store lock") from None
                     time.sleep(0.05)
             try:
-                yield
+                yield True
             finally:
                 with contextlib.suppress(OSError):
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+class _ExternalCodexTokens(BaseModel):
+    access_token: str = Field(min_length=1)
+    refresh_token: str | None = None
+    account_id: str | None = None
+
+
+class _ExternalCodexAuth(BaseModel):
+    auth_mode: Literal["chatgpt"]
+    tokens: _ExternalCodexTokens
 
 
 class CodexRefreshExpiredError(RuntimeError):
@@ -395,6 +421,39 @@ class CodexAuthManager:
     # Refresh
     # ------------------------------------------------------------------
 
+    def _adopt_external_tokens(self) -> None:
+        """Read one snapshot without writing or attempting an unlocked OAuth refresh."""
+        message = (
+            "Codex auth store lock is unavailable: an external writer must atomically publish "
+            "a different access_token with a known expiry beyond the refresh window. "
+            "OAuth refresh is disabled while the lock file cannot be created."
+        )
+        try:
+            with open(self._auth_file) as auth_file:
+                tokens = _ExternalCodexAuth.model_validate_json(auth_file.read(), strict=True).tokens
+        except (ValidationError, UnicodeError):
+            # Validation errors can include credentials; do not chain or log them.
+            raise RuntimeError(message) from None
+
+        try:
+            exp = self._decode_jwt_exp_unixtime(tokens.access_token)
+        except (AttributeError, OverflowError):
+            # The shared decoder assumes an object payload and a finite exp.
+            raise RuntimeError(message) from None
+        if (
+            tokens.access_token == self.access_token
+            or exp is None
+            or exp <= int(time.time()) + _CODEX_TOKEN_REFRESH_SKEW_SECONDS
+        ):
+            raise RuntimeError(message)
+
+        # Validate before mutating: a refresh-token-only change cannot recover a 401.
+        self.access_token = tokens.access_token
+        if tokens.refresh_token:
+            self.refresh_token = tokens.refresh_token
+        if tokens.account_id:
+            self.account_id = tokens.account_id
+
     def refresh_tokens(self, reason: str = "", *, force: bool = False) -> None:
         """Synchronous single-flight OAuth token refresh.
 
@@ -427,7 +486,11 @@ class CodexAuthManager:
                 if not self._token_is_stale():
                     return
 
-            with _codex_auth_lock(self._auth_file):
+            with _codex_auth_lock(self._auth_file) as refresh_allowed:
+                if not refresh_allowed:
+                    self._adopt_external_tokens()
+                    return
+
                 disk_tokens = self._load_tokens_from_file(self._auth_file)
                 if disk_tokens and self._adopt_tokens(disk_tokens):
                     # Only skip the network refresh when the adopted token is
