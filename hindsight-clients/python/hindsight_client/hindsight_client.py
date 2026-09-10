@@ -8,6 +8,9 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 import asyncio
 import json
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
@@ -218,7 +221,7 @@ class Hindsight:
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
-        self._retain_suspended = False
+        self._retain_suspended: ContextVar[bool] = ContextVar("retain_suspended", default=False)
         if api_key:
             self._api_client.set_default_header("Authorization", f"Bearer {api_key}")
         self._memory_api = memory_api.MemoryApi(self._api_client)
@@ -236,16 +239,21 @@ class Hindsight:
 
     # -- Retain suspension ------------------------------------------------------
 
-    @property
-    def retain_suspended(self) -> bool:
-        """Whether retains through this client are currently suppressed.
+    @contextmanager
+    def suspend_retains(self) -> Iterator[None]:
+        """Temporarily suppress retains in the current execution context.
 
-        Set to ``True`` to run a read-only session against a real bank. Recall
-        and reflect are unaffected, while ``retain``, ``retain_batch`` and
-        ``retain_files`` (and their async variants) send no request and report
-        an empty result — ``items_count=0`` and no operation IDs. Useful for
-        evaluation runs, replaying a transcript against a populated bank, or
-        any session that must read a bank without adding to it.
+        Recall and reflect are unaffected, while ``retain``, ``retain_batch``
+        and ``retain_files`` (and their async variants) send no request and
+        report an empty result — ``items_count=0`` and no operation IDs. This
+        is useful for evaluation runs, replaying a transcript against a
+        populated bank, or any session that must read a bank without adding to
+        it.
+
+        The suspension is local to the current synchronous flow or async task,
+        so concurrent users of the same client are not affected. Scopes may be
+        nested and are restored when the scope exits, including after an
+        exception.
 
         Scope: this guards the convenience methods only. The low-level
         accessors (:attr:`memory`, :attr:`files`) call the generated API
@@ -253,18 +261,15 @@ class Hindsight:
 
         ::
 
-            client.retain_suspended = True
-            try:
+            with client.suspend_retains():
                 client.retain(bank_id, "not stored")   # items_count == 0
                 client.recall(bank_id, "still works")  # unaffected
-            finally:
-                client.retain_suspended = False
         """
-        return self._retain_suspended
-
-    @retain_suspended.setter
-    def retain_suspended(self, value: bool) -> None:
-        self._retain_suspended = bool(value)
+        token = self._retain_suspended.set(True)
+        try:
+            yield
+        finally:
+            self._retain_suspended.reset(token)
 
     # -- Low-level API accessors ------------------------------------------------
     # These expose the full, auto-generated API surface for operations not
@@ -521,7 +526,7 @@ class Hindsight:
         Returns:
             FileRetainResponse with operation_ids for tracking progress
         """
-        if self._retain_suspended:
+        if self._retain_suspended.get():
             return FileRetainResponse(operation_ids=[])
 
         file_data = []
@@ -1038,7 +1043,7 @@ class Hindsight:
         Returns:
             RetainResponse with success status and item count
         """
-        if self._retain_suspended:
+        if self._retain_suspended.get():
             return RetainResponse(success=True, bank_id=bank_id, items_count=0, var_async=False)
 
         from hindsight_client_api.models.content import Content
