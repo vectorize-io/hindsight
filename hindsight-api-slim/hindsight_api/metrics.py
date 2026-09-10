@@ -33,9 +33,11 @@ if TYPE_CHECKING:
     import asyncpg
 
 
-_RECALL_DIAGNOSTIC_PHASES = os.environ.get(
-    "HINDSIGHT_API_RECALL_DIAGNOSTIC_PHASES", "true"
-).lower() not in ("0", "false", "no")
+_RECALL_DIAGNOSTIC_PHASES = os.environ.get("HINDSIGHT_API_RECALL_DIAGNOSTIC_PHASES", "true").lower() not in (
+    "0",
+    "false",
+    "no",
+)
 
 
 def _get_tenant() -> str:

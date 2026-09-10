@@ -54,7 +54,12 @@ async def _run(report_every: float) -> None:
         q = lambda p: lags[min(n - 1, int(n * p / 100))]  # noqa: E731
         logger.info(
             "[loop-lag] pid=%d n=%d p50=%.1fms p90=%.1fms p99=%.1fms max=%.1fms",
-            pid, n, q(50), q(90), q(99), lags[-1],
+            pid,
+            n,
+            q(50),
+            q(90),
+            q(99),
+            lags[-1],
         )
 
 

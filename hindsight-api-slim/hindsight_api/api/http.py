@@ -5063,6 +5063,7 @@ def _register_routes(app: FastAPI):
                 )
 
             request.scope["hs_deps_done"] = time.time()
+
         return _precheck_dep
 
     # Global exception handler for authentication errors

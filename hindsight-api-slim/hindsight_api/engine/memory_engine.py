@@ -211,7 +211,8 @@ def _bind_bank_id(
                 if func.__name__ == "recall_async":
                     try:
                         get_metrics_collector().record_recall_phase(
-                            "recall_async_body", time.time() - _t0_body, diagnostic=True)
+                            "recall_async_body", time.time() - _t0_body, diagnostic=True
+                        )
                     except Exception:
                         pass
 
@@ -7292,7 +7293,7 @@ class MemoryEngine(MemoryEngineInterface):
             _d = time.time() - _t0
             get_metrics_collector().record_recall_phase("validate_pre", _d)
             if _d > 0.100:
-                logger.info('[RECALL PHASE] validate_pre=%.3fs bank=%s', _d, bank_id)
+                logger.info("[RECALL PHASE] validate_pre=%.3fs bank=%s", _d, bank_id)
             if result:
                 if result.tags is not None:
                     tags = result.tags
@@ -7308,7 +7309,7 @@ class MemoryEngine(MemoryEngineInterface):
         _d = time.time() - _t0
         get_metrics_collector().record_recall_phase("fuzzy_tags", _d)
         if _d > 0.100:
-            logger.info('[RECALL PHASE] fuzzy_tags=%.3fs bank=%s', _d, bank_id)
+            logger.info("[RECALL PHASE] fuzzy_tags=%.3fs bank=%s", _d, bank_id)
 
         # Map budget enum to thinking_budget number using bank-resolved config.
         # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
@@ -7318,7 +7319,7 @@ class MemoryEngine(MemoryEngineInterface):
         _d = time.time() - _t0
         get_metrics_collector().record_recall_phase("bank_config", _d)
         if _d > 0.100:
-            logger.info('[RECALL PHASE] bank_config=%.3fs bank=%s', _d, bank_id)
+            logger.info("[RECALL PHASE] bank_config=%.3fs bank=%s", _d, bank_id)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
         # Reranker candidate cap, optionally scaled by the same budget level (env-configured,
         # 0/unset → flat reranker_max_candidates). Static config, so read from get_config().
@@ -7396,7 +7397,9 @@ class MemoryEngine(MemoryEngineInterface):
                             enable_temporal_retrieval=enable_temporal_retrieval,
                             enable_graph_retrieval=enable_graph_retrieval,
                         )
-                        get_metrics_collector().record_recall_phase("search_with_retries", time.time() - _t0_swr2, diagnostic=True)
+                        get_metrics_collector().record_recall_phase(
+                            "search_with_retries", time.time() - _t0_swr2, diagnostic=True
+                        )
                         break  # Success - exit retry loop
                     except OperationCancelledError:
                         # Client disconnected — propagate to the HTTP layer (499);
@@ -7448,7 +7451,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     _d = time.time() - _t0
                                     get_metrics_collector().record_recall_phase("validate_post", _d)
                                     if _d > 0.100:
-                                        logger.info('[RECALL PHASE] validate_post=%.3fs bank=%s', _d, bank_id)
+                                        logger.info("[RECALL PHASE] validate_post=%.3fs bank=%s", _d, bank_id)
                                 except Exception as hook_err:
                                     logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
                             raise
@@ -7757,9 +7760,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # serialization either side, and any time the request sat in the
                 # channel. Recorded per-request because p99s of the individual stages
                 # are not additive, so this gap cannot be derived after the fact.
-                tracer.add_phase_metric(
-                    "store_hop_overhead", max(0.0, _full_elapsed - _store_reported)
-                )
+                tracer.add_phase_metric("store_hop_overhead", max(0.0, _full_elapsed - _store_reported))
                 tracer.add_phase_metric(
                     "full_recall",
                     _full_elapsed,
