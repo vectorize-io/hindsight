@@ -218,6 +218,7 @@ class Hindsight:
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._retain_suspended = False
         if api_key:
             self._api_client.set_default_header("Authorization", f"Bearer {api_key}")
         self._memory_api = memory_api.MemoryApi(self._api_client)
@@ -232,6 +233,38 @@ class Hindsight:
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
         self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
+
+    # -- Retain suspension ------------------------------------------------------
+
+    @property
+    def retain_suspended(self) -> bool:
+        """Whether retains through this client are currently suppressed.
+
+        Set to ``True`` to run a read-only session against a real bank. Recall
+        and reflect are unaffected, while ``retain``, ``retain_batch`` and
+        ``retain_files`` (and their async variants) send no request and report
+        an empty result — ``items_count=0`` and no operation IDs. Useful for
+        evaluation runs, replaying a transcript against a populated bank, or
+        any session that must read a bank without adding to it.
+
+        Scope: this guards the convenience methods only. The low-level
+        accessors (:attr:`memory`, :attr:`files`) call the generated API
+        directly and are deliberately not intercepted.
+
+        ::
+
+            client.retain_suspended = True
+            try:
+                client.retain(bank_id, "not stored")   # items_count == 0
+                client.recall(bank_id, "still works")  # unaffected
+            finally:
+                client.retain_suspended = False
+        """
+        return self._retain_suspended
+
+    @retain_suspended.setter
+    def retain_suspended(self, value: bool) -> None:
+        self._retain_suspended = bool(value)
 
     # -- Low-level API accessors ------------------------------------------------
     # These expose the full, auto-generated API surface for operations not
@@ -488,6 +521,9 @@ class Hindsight:
         Returns:
             FileRetainResponse with operation_ids for tracking progress
         """
+        if self._retain_suspended:
+            return FileRetainResponse(operation_ids=[])
+
         file_data = []
         for file_path in files:
             path = Path(file_path)
@@ -1002,6 +1038,9 @@ class Hindsight:
         Returns:
             RetainResponse with success status and item count
         """
+        if self._retain_suspended:
+            return RetainResponse(success=True, bank_id=bank_id, items_count=0, var_async=False)
+
         from hindsight_client_api.models.content import Content
         from hindsight_client_api.models.entity_input import EntityInput
         from hindsight_client_api.models.observation_scopes import ObservationScopes
