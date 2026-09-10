@@ -153,7 +153,7 @@ _BODY_PARTIAL = "\n\n".join(_SEGMENTS_PARTIAL)
 _BODY_DIFFERENT = "\n\n".join(_segment("other", i) for i in range(5))
 
 
-async def _concurrent_retains(memory, bank_id, document_id, body, n, request_context, stagger: float = 0.0):
+async def _concurrent_retains(memory, bank_id, document_id, body, n, request_context, commit_first: bool = False):
     counter = _ExtractionCounter()
     counter.install()
 
@@ -171,13 +171,17 @@ async def _concurrent_retains(memory, bank_id, document_id, body, n, request_con
             logger.warning("retain %d raised: %r", idx, e)
             return type(e).__name__
 
-    async def _one_staggered(idx: int, delay: float):
-        await asyncio.sleep(idx * delay)
-        return await _one(idx)
-
     try:
-        if stagger:
-            outcomes = await asyncio.gather(*[_one_staggered(i, stagger) for i in range(n)])
+        if commit_first:
+            # Await request 0 to completion, so the remaining n-1 provably start
+            # against the committed new state rather than "probably" doing so.
+            # This replaced a wall-clock stagger (each request fired 0.25s after
+            # the last), which assumed a retain finishes inside that gap: on a
+            # slow runner none had committed before the last request started,
+            # every one extracted, and the convergence assertion failed n/n
+            # (twice on the #4278 CI run, green locally and on other PRs).
+            outcomes = [await _one(0)]
+            outcomes += await asyncio.gather(*[_one(i) for i in range(1, n)])
         else:
             outcomes = await asyncio.gather(*[_one(i) for i in range(n)])
     finally:
@@ -227,35 +231,31 @@ async def test_concurrent_partial_overlap_retains_no_crash(memory_stub_emb, requ
 
 
 @pytest.mark.asyncio
-async def test_staggered_partial_overlap_retains_avoid_redundant_extraction(memory_stub_emb, request_context):
-    """Staggered concurrent retains with partial overlap: once the first writer
-    commits, later writers must observe the new state and skip extraction. The
-    pre-extraction freshness recheck (and the delta no-change path) should keep
-    total extraction calls well below the request count — i.e. we do NOT re-run
+async def test_retains_after_a_commit_avoid_redundant_extraction(memory_stub_emb, request_context):
+    """Once one writer commits changed content, later same-document retains of that
+    same content must observe the new state and skip extraction, instead of re-running
     the LLM once per racing request."""
-    bank_id = f"staggered_partial_{_ts()}"
+    bank_id = f"post_commit_convergence_{_ts()}"
     await memory_stub_emb.retain_async(
         bank_id=bank_id, content=_BODY_BASE, context="ctx", document_id="doc", request_context=request_context
     )
     n = 10
     counter, summary = await _concurrent_retains(
-        memory_stub_emb, bank_id, "doc", _BODY_PARTIAL, n, request_context, stagger=0.25
+        memory_stub_emb, bank_id, "doc", _BODY_PARTIAL, n, request_context, commit_first=True
     )
     logger.warning(
-        "staggered partial-overlap: extraction_calls=%d contents=%d outcomes=%s",
+        "post-commit convergence: extraction_calls=%d contents=%d outcomes=%s",
         counter.calls,
         counter.total_contents,
         summary,
     )
     assert summary == {"ok": n}, f"all retains should succeed, got {summary}"
-    # The invariant we guard: staggered same-document retains do NOT re-extract
-    # once per request — once a writer commits, the freshness recheck / delta
-    # no-change path lets later writers skip the LLM, so the total stays strictly
-    # below one extraction per request (the un-converged worst case is `n`).
-    # We assert `< n` rather than a tight constant because the exact number of
-    # converged requests is timing-dependent and varies with CI speed (observed:
-    # 1 locally, 4 on CI); a regression that re-extracts per request would hit n.
-    assert counter.calls < n, f"staggered retains should avoid per-request extraction, got {counter.calls}/{n}"
+    # Exactly one extraction: request 0 changed a segment, and the n-1 that follow
+    # it find the document already matching and take the delta metadata-only path.
+    # This is an exact count rather than the previous `< n` because `commit_first`
+    # makes the ordering causal — nothing here is timing-dependent, so a range
+    # would only hide a regression that re-extracts for some of the later writers.
+    assert counter.calls == 1, f"only the committing writer may extract, got {counter.calls}/{n}"
 
 
 @pytest.mark.asyncio
