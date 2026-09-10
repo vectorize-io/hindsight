@@ -14,6 +14,8 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from ..chunk_ids import resolve_chunk_id_in
+
 if TYPE_CHECKING:
     from asyncpg import Connection
 
@@ -498,10 +500,10 @@ async def tool_expand(
     _docs_in_store = _store.store_owned_for(bank_id)
     chunk_map: dict[str, Any] = {}
     if chunk_ids and _docs_in_store:
-        # The store addresses a chunk by (document_id, index), and `chunk_id` is
-        # `{bank_id}_{document_id}_{index}` by construction — so the index is what remains once
-        # that known prefix is removed. Built from the ids in hand rather than by splitting on
-        # "_", which a bank or document id containing one would break.
+        # The store addresses a chunk by (document_id, index), and the index is what remains
+        # once the known bank/document prefix is removed (see `engine/chunk_ids.py`). Anchored
+        # on the ids in hand rather than split on "_", which a bank or document id containing
+        # one would break.
         # Deduped by chunk_id: co-located memories share one chunk, and the SQL branch collapses
         # them through `= ANY($1)`. Without this the store is asked for the same chunk once per
         # memory sitting in it.
@@ -514,12 +516,13 @@ async def tool_expand(
                 continue
             if cid in _seen_chunks:
                 continue
-            suffix = cid.removeprefix(f"{bank_id}_{did}_")
-            if suffix == cid or not suffix.isdigit():
+            ref = resolve_chunk_id_in(cid, bank_id)
+            if ref is None or ref.document_id != did:
                 continue
+            index = ref.chunk_index
             _seen_chunks.add(cid)
-            refs.append((did, int(suffix)))
-            ref_owner.append({"chunk_id": cid, "document_id": did, "chunk_index": int(suffix)})
+            refs.append((did, index))
+            ref_owner.append({"chunk_id": cid, "document_id": did, "chunk_index": index})
         if refs:
             texts = await _store.get_chunk_texts(bank_id=bank_id, refs=refs)
             for owner, text in zip(ref_owner, texts):

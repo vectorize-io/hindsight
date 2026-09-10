@@ -1,6 +1,6 @@
 {
   "name": "hindsight-coding-agents",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Long-term project memory for coding agents",
   "skills": "./skill",
   "hooks": "./hooks/hooks.json",

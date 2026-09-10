@@ -30,11 +30,19 @@ from ..metrics import get_metrics_collector
 from .backpressure import is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
-# How long to hold a task a store shed for backpressure. Long enough that a fold has a real chance
-# to drain the backlog — retrying into a still-full store just sheds again and burns the claim —
-# and short enough that a cleared backlog is not left waiting. Deferrals do not count against
-# `max_retries`, so this can afford to be patient without risking the operation.
-_BACKPRESSURE_DEFER_SECONDS = int(os.environ.get("HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS", "120"))
+
+def _backpressure_defer_seconds() -> int:
+    """How long a task the store shed for backpressure is held before a retry.
+
+    Resolved per call, not once at import: ``worker.main`` imports this module at
+    module scope, before it runs ``load_dotenv_for_entrypoint()``. Building the config
+    here at import time would cache it from a pre-``.env`` environment for the whole
+    process. The rationale for the default lives with the value, on
+    DEFAULT_BACKPRESSURE_DEFER_SECONDS in config.py.
+    """
+    return get_config().backpressure_defer_seconds
+
+
 from .stage import StageHolder, bind_holder
 
 # Map DB operation_type -> metric `operation` label, collapsing the retain
@@ -1220,7 +1228,7 @@ class WorkerPoller:
             # budget runs out while the store is still legitimately shedding. Checked before the
             # failure path so the operation keeps its retries for things that are actually wrong.
             if is_store_backpressure(e):
-                retry_at = datetime.now(timezone.utc) + timedelta(seconds=_BACKPRESSURE_DEFER_SECONDS)
+                retry_at = datetime.now(timezone.utc) + timedelta(seconds=_backpressure_defer_seconds())
                 logger.warning(
                     "Task %s deferred until %s: store backpressure (%s)",
                     task.operation_id,

@@ -1062,6 +1062,7 @@
     "queryDatePlaceholder": "查詢日期",
     "chunks": "片段",
     "entities": "實體",
+    "entitiesHint": "回傳每個結果上顯示嘅實體名稱，同埋實體觀察區塊。",
     "tagsPlaceholder": "按標籤篩選（逗號分隔）",
     "tagsMatchAny": "任何（含未標記）",
     "tagsMatchAll": "全部（含未標記）",
@@ -1084,6 +1085,9 @@
     "relevance": "相關度：{value}",
     "noMemoriesFound": "找不到符合此查詢的記憶。",
     "scoreLabel": "分數",
+    "occurredLabel": "發生於",
+    "mentionedLabel": "提及於",
+    "factAttachments": "呢個事實嚟自嘅附件",
     "parallelRetrieval": "並行檢索",
     "methodsCount": "{count} 種方法",
     "showLess": "收合",
@@ -1612,7 +1616,11 @@
     "linkTypeEntity": "實體",
     "linkTypeCausal": "因果",
     "exportSvgTitle": "下載為 SVG 以分享",
-    "exportSvgLabel": "分享"
+    "exportSvgLabel": "分享",
+    "pauseMotionTitle": "暫停動畫",
+    "resumeMotionTitle": "繼續動畫",
+    "pauseMotionLabel": "暫停",
+    "resumeMotionLabel": "繼續"
   },
   "metadata": {
     "title": "Hindsight Cloud",

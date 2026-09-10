@@ -23,7 +23,6 @@ import asyncio
 import io
 import json
 import logging
-import os
 import re
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -35,7 +34,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.config import get_config
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cache_affinity import (
     CacheAffinityMode,
@@ -825,7 +824,7 @@ class OpenAICompatibleLLM(LLMInterface):
         self._config_extra_body = extra_body or {}
 
         # Get timeout config
-        self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
+        self.timeout = timeout or get_config().llm_timeout
 
         # Backend prompt-cache pinning. "auto" is resolved ONCE here rather than
         # per call: base_url is immutable after construction, so the answer can

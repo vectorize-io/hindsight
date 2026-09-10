@@ -35,6 +35,7 @@ type RecallResult struct {
 	Tags []string `json:"tags,omitempty"`
 	SourceFactIds []string `json:"source_fact_ids,omitempty"`
 	Scores NullableRecallScores `json:"scores,omitempty"`
+	Attachments []ChunkAttachment `json:"attachments,omitempty"`
 }
 
 type _RecallResult RecallResult
@@ -574,6 +575,39 @@ func (o *RecallResult) UnsetScores() {
 	o.Scores.Unset()
 }
 
+// GetAttachments returns the Attachments field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetAttachments() []ChunkAttachment {
+	if o == nil {
+		var ret []ChunkAttachment
+		return ret
+	}
+	return o.Attachments
+}
+
+// GetAttachmentsOk returns a tuple with the Attachments field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetAttachmentsOk() ([]ChunkAttachment, bool) {
+	if o == nil || IsNil(o.Attachments) {
+		return nil, false
+	}
+	return o.Attachments, true
+}
+
+// HasAttachments returns a boolean if a field has been set.
+func (o *RecallResult) HasAttachments() bool {
+	if o != nil && !IsNil(o.Attachments) {
+		return true
+	}
+
+	return false
+}
+
+// SetAttachments gets a reference to the given []ChunkAttachment and assigns it to the Attachments field.
+func (o *RecallResult) SetAttachments(v []ChunkAttachment) {
+	o.Attachments = v
+}
+
 func (o RecallResult) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -621,6 +655,9 @@ func (o RecallResult) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Scores.IsSet() {
 		toSerialize["scores"] = o.Scores.Get()
+	}
+	if o.Attachments != nil {
+		toSerialize["attachments"] = o.Attachments
 	}
 	return toSerialize, nil
 }

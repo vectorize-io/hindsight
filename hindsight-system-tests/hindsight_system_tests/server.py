@@ -137,12 +137,33 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         "HINDSIGHT_API_LLM_MAX_RETRIES": "0",
         "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES": "0",
         "HINDSIGHT_API_RERANKER_MAX_RETRIES": "0",
+        # Same reasoning one level up: the worker retries a failed operation on a
+        # backoff schedule, so an unstubbed call inside background work would sit
+        # in `pending` through several rounds before reaching `failed`. Against a
+        # deterministic stub the retry cannot change the answer, and the wait
+        # turns a fast loud-miss into a 90-second timeout.
+        "HINDSIGHT_API_WORKER_MAX_RETRIES": "0",
+        # Bank stats are cached for 60s by default. A test that changes the bank
+        # and then asserts on a counter would be reading a value from before its
+        # own action — racy at best, a minute of waiting at worst.
+        "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS": "0",
+        # Maintenance sweeps are what pick up recovered consolidations, and the
+        # default start jitter spreads them over a minute so a fleet of servers
+        # does not stampede the database on boot. One server in a test has nobody
+        # to stampede, and the jitter is otherwise a minute of a story waiting for
+        # work it already asked for.
+        "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS": "0",
+        # Webhook destinations are SSRF-checked, and loopback is refused — the
+        # right default, and story 64 asserts it. But the only receiver a
+        # hermetic test can offer *is* on loopback, so the stub's host is
+        # allowlisted explicitly. Nothing else is: a webhook aimed anywhere else
+        # private still fails, which is what keeps the guard under test.
+        "HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS": "127.0.0.1",
+        "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS": "5",
     }
 
 
-def start_hindsight_server(
-    *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
-) -> HindsightServer:
+def start_hindsight_server(*, stub_url: str, log_path: Path) -> HindsightServer:
     port = free_port()
 
     env = os.environ.copy()
@@ -170,7 +191,6 @@ def start_hindsight_server(
             # catch are mostly in that half.
         }
     )
-    env.update(extra_env or {})
 
     # `hindsight-api` calls load_dotenv(find_dotenv(usecwd=True), override=True) at
     # startup, and a discovered .env deliberately wins over the ambient environment

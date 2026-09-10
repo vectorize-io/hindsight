@@ -83,6 +83,27 @@ async def _teardown_memory_engine(mem: MemoryEngine) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """Let a test's ``monkeypatch.setenv`` actually reach the code under test.
+
+    ``HindsightConfig`` is built once and cached for the process, and every
+    ``HINDSIGHT_API_*`` value is now read off it rather than from ``os.environ`` at
+    the point of use. Without this, a test that sets an environment variable and
+    then calls the code would be read against whatever config the *first* test in
+    this xdist worker happened to build — the value would silently not apply, and
+    which tests noticed would depend on file ordering.
+
+    Clearing on the way out as well keeps a config built from one test's patched
+    environment from outliving it.
+    """
+    from hindsight_api.config import clear_config_cache
+
+    clear_config_cache()
+    yield
+    clear_config_cache()
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_leaked_span_recorders():
     """Fail-safe for the process-global LLM-trace recorder registry (#2229).
 

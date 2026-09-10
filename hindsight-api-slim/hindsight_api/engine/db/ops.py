@@ -24,6 +24,20 @@ from typing import Any
 from .base import DatabaseConnection
 from .result import ResultRow
 
+
+class ChunkIdOwnedByAnotherBank(Exception):
+    """A chunk upsert hit a ``chunks`` row that belongs to a different bank.
+
+    ``chunks`` is keyed on ``chunk_id`` alone, so the row can only be one bank's. Ids
+    built by ``engine/chunk_ids.py`` cannot collide across banks; ones written before
+    that fix can, and overwriting is how #4244 leaked one bank's chunk into another.
+    """
+
+    def __init__(self, chunk_ids: list[str]) -> None:
+        self.chunk_ids = chunk_ids
+        super().__init__(f"Chunk id(s) already owned by another bank, refusing to overwrite: {chunk_ids}")
+
+
 #: The ``memory_units`` columns every link-expansion arm projects, in the order the
 #: arms are ``UNION ALL``-ed together.  Order is part of the contract, not a style
 #: choice: the arms are combined positionally, so two arms listing the same columns
@@ -345,6 +359,10 @@ class DataAccessOps(ABC):
 
         PG uses INSERT ... SELECT FROM unnest() with ON CONFLICT DO UPDATE.
         Non-PG uses bulk_insert_from_arrays (executemany).
+
+        A conflicting row belonging to a DIFFERENT bank is never overwritten: PG raises
+        :class:`ChunkIdOwnedByAnotherBank`, and the plain insert other backends use raises
+        their unique-violation error. See ``engine/chunk_ids.py`` and #4244.
         """
         ...
 
@@ -779,23 +797,57 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
-    async def enqueue_entity_maintenance(
+    async def release_entity_postings(
         self,
         conn: DatabaseConnection,
-        table: str,
+        queue_table: str,
+        entities_table: str,
         ue_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
-        """Enqueue the entities referenced by ``unit_ids`` as prune candidates.
+        """Retire the entity postings of ``unit_ids``: queue their entities as
+        prune candidates, and give back the ``mention_count`` those postings
+        contributed.
 
-        Reads the entity ids out of ``unit_entities`` and inserts them into
-        entity_maintenance_queue, deduplicating on the (bank_id, entity_id)
-        primary key. Returns the number of rows the insert added.
+        One operation because it is one read. Both halves need the same
+        ``unit_entities`` rows — the queue wants the entity ids, the counter
+        wants how many rows each entity has — and both must run inside the
+        triggering transaction and BEFORE the delete or cascade fires, because
+        afterwards there is nothing left to read them from.
 
-        Must run inside the triggering transaction and BEFORE the rows go —
-        once the unit_entities rows are deleted (or cascaded away) there is
-        nothing left to read the entity ids from.
+        Queue rows are locked before entity rows, matching the order
+        :meth:`claim_entity_maintenance_batch` and :meth:`prune_orphan_entities`
+        take them, so a delete cannot cycle against a worker draining the queue.
+
+        The count floors at zero. The increment side counts *mentions* while a
+        posting is per (unit, entity), so the two disagree by one whenever two
+        differently spelled mentions in one fact resolve to the same entity; the
+        floor keeps that rare asymmetry from driving the count negative.
+
+        Returns the number of candidate entities enqueued.
+        """
+        ...
+
+    @abstractmethod
+    async def restore_entity_postings(
+        self,
+        conn: DatabaseConnection,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+        unit_id: str,
+        entity_ids: list,
+    ) -> int:
+        """Re-post ``unit_id`` to ``entity_ids`` and credit one mention per
+        posting written.
+
+        The inverse of :meth:`release_entity_postings`, for reverting an
+        invalidation. Entities that no longer exist are skipped — the orphan
+        prune may have swept them while the memory sat archived — so the credit
+        follows the postings actually written, not the ids asked for.
+
+        Returns the number of postings written.
         """
         ...
 

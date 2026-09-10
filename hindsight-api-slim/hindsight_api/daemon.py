@@ -19,11 +19,24 @@ import sys
 from pathlib import Path
 from typing import IO
 
+from .config import ENV_DAEMON_LOG, get_config
+
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 8888
 
-# Allow override via environment variable for profile-specific logs
-DAEMON_LOG_PATH = Path(os.getenv("HINDSIGHT_API_DAEMON_LOG", str(Path.home() / ".hindsight" / "daemon.log")))
+
+def daemon_log_path() -> Path:
+    """Where the daemon redirects its stdio (HINDSIGHT_API_DAEMON_LOG).
+
+    Resolved per call, not once at import: this module is imported by ``main`` at
+    module scope, which is *before* ``main()`` runs ``load_dotenv_for_entrypoint()``.
+    Reading the config here at import time would build and cache it from an
+    environment that has not yet had the discovered ``.env`` applied — and since that
+    config is then cached for the process, every later reader would see the wrong
+    values too (a whole `.env` silently ignored).
+    """
+    return Path(get_config().daemon_log or Path.home() / ".hindsight" / "daemon.log")
+
 
 # Internal env var: set by daemonize() in the re-exec'd child so the child
 # skips re-exec and just redirects stdio.  Also set by hindsight-embed's
@@ -65,7 +78,7 @@ def _redirect_stdio_to_log() -> None:
 
     Called in the daemon child process after re-exec.
     """
-    DAEMON_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    daemon_log_path().parent.mkdir(parents=True, exist_ok=True)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -73,7 +86,7 @@ def _redirect_stdio_to_log() -> None:
     with open(os.devnull, "r") as devnull:
         os.dup2(devnull.fileno(), sys.stdin.fileno())
 
-    log_fd = open(DAEMON_LOG_PATH, "a")
+    log_fd = open(daemon_log_path(), "a")
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
     os.dup2(log_fd.fileno(), sys.stderr.fileno())
 
@@ -102,7 +115,7 @@ def daemonize():
     We still ensure the log directory exists.
     """
     if sys.platform == "win32":
-        DAEMON_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        daemon_log_path().parent.mkdir(parents=True, exist_ok=True)
         return
 
     # If we are already the daemon child (re-exec'd by a previous daemonize()
@@ -121,11 +134,11 @@ def daemonize():
 
     env = os.environ.copy()
     env[ENV_DAEMON_CHILD] = "1"
-    env["HINDSIGHT_API_DAEMON_LOG"] = str(DAEMON_LOG_PATH)
+    env[ENV_DAEMON_LOG] = str(daemon_log_path())
 
-    DAEMON_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    daemon_log_path().parent.mkdir(parents=True, exist_ok=True)
 
-    with open(DAEMON_LOG_PATH, "ab") as log_handle:
+    with open(daemon_log_path(), "ab") as log_handle:
         subprocess.Popen(cmd, env=env, **_detach_popen_kwargs(log_handle))
 
     sys.exit(0)

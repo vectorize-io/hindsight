@@ -14,9 +14,13 @@ from hindsight_api.main import _parse_cli_args
 
 
 class _Config:
+    """The fields of HindsightConfig that _parse_cli_args() reads for its defaults."""
+
     host = "0.0.0.0"
     port = 8888
     log_level = "info"
+    workers = 1
+    access_log = False
 
 
 def test_idle_timeout_flag_is_still_accepted():

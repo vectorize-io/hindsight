@@ -56,6 +56,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -112,6 +115,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -161,6 +167,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -220,6 +229,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -262,6 +274,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -309,6 +324,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -350,6 +368,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"
@@ -394,6 +415,9 @@ class TestMainModuleExtensionLoading:
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
             mock_config.log_level = "info"
+            # argparse defaults: a MagicMock would compare against ints later on.
+            mock_config.workers = 1
+            mock_config.access_log = False
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
             mock_config.database_url = "postgresql://test:test@localhost/test"

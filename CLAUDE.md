@@ -236,6 +236,15 @@ Run both locally with:
 
 Most tests are deterministic (MockLLM, pure functions) — assert directly.
 
+**A user-facing capability needs a blackbox story in `hindsight-system-tests/`.**
+Those drive a real `hindsight-api` process through the published Python client — no
+engine access, no SQL — and exist to catch the bugs the ~500-file api-slim suite
+structurally cannot: the ones in the seam *between* steps, where consolidation wipes
+the facts under it or a transfer drops its evidence. Add a story when a change adds a
+capability someone can name, or makes two existing capabilities meet for the first
+time; the composition is the part nothing else tests. See that package's README, and
+`.claude/skills/code-review/SKILL.md` step 6b for the review checklist.
+
 **Tests that verify LLM behaviour use a real LLM + an LLM-as-judge.** When the thing under test is *how the model interprets a prompt* (classification, attribution, dimension preservation, instruction-following), MockLLM can't simulate it and exact string/enum asserts flake across providers and runs. Use this pattern instead:
 
 1. Mark the test module `pytestmark = pytest.mark.hs_llm_core` (single-provider; CI runs it in the core-LLM job). Use `hs_llm_mat` only for provider-matrix acceptance tests.

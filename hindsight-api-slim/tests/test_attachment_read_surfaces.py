@@ -142,6 +142,14 @@ async def test_recall_returns_them_on_chunks_and_on_memories(api_client, bank_wi
     chunks = (body.get("chunks") or {}).values()
     _assert_handle(next(c["attachments"] for c in chunks if c.get("attachments")))
 
+    # And on the results themselves, so an agent that did not ask for chunks can
+    # still show what a fact was drawn from. The two are not the same set: a
+    # chunk lists everything its text references, a result only what the
+    # extractor attributed to that fact.
+    results = body["results"]
+    assert results, "recall returned no results"
+    _assert_handle(next(r["attachments"] for r in results if r.get("attachments")))
+
 
 @pytest.mark.asyncio
 async def test_a_text_only_bank_reports_no_attachments_anywhere(api_client):
@@ -155,5 +163,11 @@ async def test_a_text_only_bank_reports_no_attachments_anywhere(api_client):
     document = await api_client.get(f"/v1/default/banks/{bank_id}/documents/plain")
     memories = await api_client.get(f"/v1/default/banks/{bank_id}/memories/list")
 
+    recall = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={"query": "what is the VPN client called"},
+    )
+
     assert document.json().get("attachments") is None
     assert all(m.get("attachments") is None for m in memories.json()["items"])
+    assert all(r.get("attachments") is None for r in recall.json()["results"])

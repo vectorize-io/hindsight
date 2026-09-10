@@ -1062,6 +1062,7 @@
     "queryDatePlaceholder": "Query date",
     "chunks": "Chunks",
     "entities": "Entities",
+    "entitiesHint": "Returns the entity names shown on each result, plus the entity observations block.",
     "tagsPlaceholder": "Filter by tags (comma-separated)",
     "tagsMatchAny": "Any (incl. untagged)",
     "tagsMatchAll": "All (incl. untagged)",
@@ -1084,6 +1085,9 @@
     "relevance": "Relevance: {value}",
     "noMemoriesFound": "No memories found for this query.",
     "scoreLabel": "score",
+    "occurredLabel": "occurred",
+    "mentionedLabel": "mentioned",
+    "factAttachments": "Attachments this fact came from",
     "parallelRetrieval": "PARALLEL RETRIEVAL",
     "methodsCount": "{count} methods",
     "showLess": "Show less",
@@ -1612,7 +1616,11 @@
     "linkTypeEntity": "entity",
     "linkTypeCausal": "causal",
     "exportSvgTitle": "Download as SVG to share",
-    "exportSvgLabel": "Share"
+    "exportSvgLabel": "Share",
+    "pauseMotionTitle": "Pause the ambient motion",
+    "resumeMotionTitle": "Resume the ambient motion",
+    "pauseMotionLabel": "Pause",
+    "resumeMotionLabel": "Play"
   },
   "metadata": {
     "title": "Hindsight Cloud",

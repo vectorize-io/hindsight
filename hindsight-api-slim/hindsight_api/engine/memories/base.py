@@ -1998,10 +1998,12 @@ class MemoriesExtension(Extension, ABC):
         return RelinkPassResult()
 
     async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
-        """Queue the entities ``affected_unit_ids`` reference as prune candidates.
+        """Queue the entities ``affected_unit_ids`` reference as prune candidates,
+        and give back the ``mention_count`` their postings contributed.
 
         Zero for a store that never wrote `unit_entities`: it has no entity
-        postings to lose, so nothing can become an orphan.
+        postings to lose, so nothing can become an orphan and no mention count
+        can drift.
         """
         return 0
 

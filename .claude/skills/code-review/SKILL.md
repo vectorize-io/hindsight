@@ -98,7 +98,7 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **The trap: filtering by a caller-supplied, non-globally-unique key without `bank_id`.** Keys like `document_id` and `mental_models.id` are unique only *per bank* (their PK is composite, e.g. `(id, bank_id)`), so the *same* id legally exists in every bank. A statement like `UPDATE memory_units SET tags = $1 WHERE document_id = $2` — no `bank_id` — silently reads/writes **every** bank's rows that share the id. This is the exact defect from #3429/#3430. Adding `AND bank_id = $n` fixes it.
 - **Three ways a statement is legitimately scoped** (accept these; flag anything that fits none):
   1. **Explicit** `WHERE ... AND bank_id = $n`.
-  2. **Globally-unique single-column PK.** Filtering by a global uuid PK (`memory_units.id`, `entities.id`, `knowledge_pages.id`) or a bank-encoded key (`chunks.chunk_id` is `{bank_id}_{document_id}_{idx}`) cannot collide across banks. Contrast the *composite*-PK ids (`documents.id`/`document_id`, `mental_models.id`) — those are dangerous and MUST carry `bank_id`.
+  2. **Globally-unique single-column PK.** Filtering by a global uuid PK (`memory_units.id`, `entities.id`, `knowledge_pages.id`) or a bank-encoded key (`chunks.chunk_id`, built by `engine/chunk_ids.py`) cannot collide across banks. Note that the chunk id is only injective because that helper escapes the separator inside each component — the plain `{bank_id}_{document_id}_{idx}` join it replaced let `('a', 'b_c')` and `('a_b', 'c')` address the same row (#4244), so ids written before it are NOT safe to treat as bank-scoped. Contrast the *composite*-PK ids (`documents.id`/`document_id`, `mental_models.id`) — those are dangerous and MUST carry `bank_id`.
   3. **Transitive.** Junction tables without a `bank_id` column (`unit_entities`, `entity_cooccurrences`, `observation_sources`) are safe only when reached through globally-unique unit/entity ids that were themselves selected from a bank-scoped query in the same call, and edges are intra-bank by construction. If the id set could contain another bank's ids, it is not scoped.
 - **Watch two smells:** (a) a caller-supplied id used in the `WHERE` with no adjacent `bank_id`, while a *neighbouring* statement in the same method does carry `bank_id` (asymmetry is the tell); (b) a `bank_id` predicate applied only under `if bank_id:` with a `bank_id: str | None = None` default — latent even if all current callers pass one.
 - **Cross-bank by design must rewrite `bank_id` to the destination.** The transfer/import path is the only one that legitimately crosses banks; verify every write pins the *destination* `bank_id` and never inherits a source row's `bank_id`.
@@ -235,6 +235,58 @@ Direct SQL on those tables is legitimate **only** when it forces or inspects int
 public API cannot express — e.g. an `UPDATE documents SET updated_at` that forges a race, or a
 raw `memory_links` row-count that the deduped `get_graph_data` edge list cannot reproduce. Those
 must carry a comment saying why the direct access is necessary; flag any that do not.
+
+### 6b. Check user-facing capabilities have a system test
+
+`hindsight-system-tests/` holds blackbox stories that drive a real `hindsight-api`
+process through the published Python client — no engine access, no SQL, no internal
+imports. They exist because the ~500-file api-slim suite is one test per *mechanism*,
+which catches mechanism bugs and misses **composition** bugs: consolidation wiping the
+facts under it, a delta refresh missing a backdated window, a transfer dropping
+mental-model evidence, a reprocess that is a silent no-op. Every one of those spanned
+steps no single-mechanism test crosses. Tracking issue: #4214.
+
+A change needs a system story when it **adds a capability a user can name**, or when it
+**makes two existing capabilities meet**. Concretely, flag as **should fix** a PR that:
+
+- adds or changes an API endpoint, a retain/recall/reflect parameter, or a bank-config
+  field that alters observable behaviour;
+- adds a new derived layer or lifecycle step (an observation kind, a refresh trigger, a
+  background operation);
+- makes an existing feature interact with another for the first time — a new
+  combination is exactly what the unit suite cannot see;
+- fixes a composition bug. The regression test belongs here, not only in api-slim,
+  because the bug lived in the seam between steps.
+
+It does **not** need one for: internal refactors with no observable change, performance
+work, a mechanism already covered by an existing story, or anything whose only surface
+is the control plane (this suite is API-only by design).
+
+When reviewing an added or changed story, check:
+
+- **It goes through the client.** `client.aretain(...)`, not `httpx` and not
+  `MemoryEngine`. Reaching around the published client hides SDK defects the suite
+  exists to surface — `import_bank_template` was uncallable from every SDK (#4232) and
+  only a client-driven test could show it. **Must fix** if a story bypasses the client
+  to make itself pass.
+- **Every LLM call is declared.** An unscripted call fails the test with the rule to
+  paste in; a story that answers one with a plausible default proves nothing. Never
+  add a catch-all rule to quiet a miss.
+- **Background work is awaited, not disabled.** Retain enqueues consolidation; a story
+  that switches it off to stay deterministic has removed the half where the composition
+  bugs live. Use `settled(bank_id)`.
+- **It asserts the whole deterministic payload**, not the presence of a keyword. With
+  the LLM, embedder and reranker all stubbed, recall is a pure function of its input —
+  ranking, scores and rendered text are all pinnable, and "the word appears somewhere"
+  passes just as happily when fusion inverts.
+- **A known defect fails, rather than being documented.** If the PR leaves a contract
+  unmet, the story asserts the behaviour we *want* and is red until it is fixed — not
+  `xfail`, which keeps the run green so nothing forces the question, and not a test
+  pinning today's wrong answer, which breaks the day someone fixes it and teaches the
+  next reader to delete tests. **Must fix** either shape.
+
+The suite's README documents the conventions; `tests/test_01_retain_and_recall.py` is
+the reference for how total the assertions should be.
 
 ### 7. Check API consistency
 
@@ -434,6 +486,8 @@ Present a clear summary organized by severity:
 - Raw dict usage for structured data (including internal code)
 - Multi-item tuple returns (including internal code)
 - Missing tests for new endpoints
+- A new user-facing capability, or a new combination of existing ones, with no story in `hindsight-system-tests/` (see step 6b)
+- A system story that bypasses the published client, silences an unscripted LLM call, or disables background work to stay deterministic
 - Direct DB access (raw SQL / `acquire_with_retry` / `fq_table`) in an `api/` handler instead of a `MemoryEngine` method
 - Tenant-scoped data accessed without authentication enforced in the engine (`_authenticate_tenant` / `get_bank_profile`)
 - A SQL statement against a multi-bank table filtered by a caller-supplied, non-globally-unique key without a `bank_id` predicate (cross-bank read/write leak — see step 7c)

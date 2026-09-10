@@ -54,11 +54,22 @@ async def wait_until_settled(
             )
             raise AssertionError(f"bank {bank_id} has failed background operations — {summary}")
 
-        in_flight = [
-            f"{op.task_type}({status})"
+        busy = [
+            op
             for status in _BUSY_STATUSES
             for op in (await client.operations.list_operations(bank_id, status=status, limit=100)).operations
         ]
+
+        # An operation carrying an error is already lost, even while its status
+        # still reads `pending`: that is the worker holding it for a retry. With a
+        # deterministic stub the retry gets the same answer, so waiting out the
+        # backoff only delays the same failure — report it now, with the message.
+        errored = [op for op in busy if op.error_message]
+        if errored:
+            summary = ", ".join(f"{op.task_type}: {op.error_message}" for op in errored)
+            raise AssertionError(f"bank {bank_id} has a background operation that failed — {summary}")
+
+        in_flight = [f"{op.task_type}({op.status})" for op in busy]
 
         if in_flight:
             quiet_polls = 0

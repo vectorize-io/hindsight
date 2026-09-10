@@ -21,15 +21,13 @@ exactly ``llm_timeout`` and the logs could not say which phase was stuck.
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
 
 from ..config import (
-    DEFAULT_LLM_CONNECT_TIMEOUT,
     DEFAULT_LLM_HTTP_LOG_LEVEL,
-    ENV_LLM_CONNECT_TIMEOUT,
     ENV_LLM_HTTP_LOG_LEVEL,
+    get_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,7 +49,7 @@ def build_sdk_timeout(total: float) -> httpx.Timeout:
     rather than consuming the whole request budget. Setting that variable to 0
     restores the old behaviour of one value across all four phases.
     """
-    connect_cap = float(os.getenv(ENV_LLM_CONNECT_TIMEOUT, str(DEFAULT_LLM_CONNECT_TIMEOUT)))
+    connect_cap = get_config().llm_connect_timeout
     if connect_cap <= 0:
         return httpx.Timeout(total)
     return httpx.Timeout(total, connect=min(connect_cap, total))
@@ -120,7 +118,7 @@ def configure_http_logging() -> None:
     in (``connect_tcp``, ``send_request_headers``, ``receive_response_headers``),
     which is what tells a hung LLM call apart from a slow one.
     """
-    raw = os.getenv(ENV_LLM_HTTP_LOG_LEVEL, DEFAULT_LLM_HTTP_LOG_LEVEL).strip().upper()
+    raw = get_config().llm_http_log_level.strip().upper()
     level = logging.getLevelName(raw)
     if not isinstance(level, int):
         logger.warning(f"{ENV_LLM_HTTP_LOG_LEVEL}={raw!r} is not a log level; using {DEFAULT_LLM_HTTP_LOG_LEVEL}")

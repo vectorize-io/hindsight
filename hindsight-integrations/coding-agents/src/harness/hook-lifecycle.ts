@@ -16,6 +16,7 @@ import { readDevinTranscript } from "../core/transcript-devin";
 import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
 import { readQwenTranscript } from "../core/transcript-qwen";
 import { readDroidTranscript } from "../core/transcript-droid";
+import { zcodeAssistantText } from "../core/transcript-zcode";
 
 export type HookHarnessName =
   | "claude-code"
@@ -27,9 +28,19 @@ export type HookHarnessName =
   | "grok-build"
   | "dcode"
   | "qwen-code"
-  | "factory-droid";
+  | "factory-droid"
+  | "zcode";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
-export type HookConfigStyle = "nested" | "flat";
+/**
+ * How the HOST spells one hook registration.
+ *   nested  — Claude Code's matcher group: `[{hooks:[{type:"command", command, timeout}]}]`.
+ *   flat    — one `{command, timeout}` object per entry (Cursor, Copilot, Antigravity).
+ *   process — ZCode's: a matcher group like `nested`, but the command is SPLIT into an argv
+ *             (`type:"process"`, `command:"node"`, `args:[...]`) and the budget is `timeoutMs`.
+ *             The split matters: ZCode spawns without a shell, so a quoted command string is
+ *             looked up verbatim as an executable name and never runs.
+ */
+export type HookConfigStyle = "nested" | "flat" | "process";
 
 export interface HookInstallSpec {
   event: string;
@@ -130,6 +141,10 @@ const qwenPrompt: HookSpec = {
     sessionId: ev.session_id as string | undefined,
   }),
 };
+
+/** ZCode sends `session_id` on UserPromptSubmit and BOTH spellings on Stop; accept either. */
+const zcodeSessionId = (ev: Record<string, unknown>): string | undefined =>
+  (ev.session_id as string | undefined) ?? (ev.sessionId as string | undefined);
 
 const antigravityCwd = (ev: Record<string, unknown>): string | undefined =>
   Array.isArray(ev.workspacePaths) ? (ev.workspacePaths[0] as string | undefined) : undefined;
@@ -487,6 +502,62 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readDroidTranscript,
+    },
+  },
+  /**
+   * ZCode (Z.ai's GLM coding agent) embeds the Claude Code agent runtime, so its hook PROTOCOL is
+   * Claude's — `prompt`/`cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out —
+   * with `sessionId` accepted alongside `session_id`, which its Stop payload sends instead.
+   *
+   * What is not Claude's is the TRANSCRIPT, and that is the whole of the difference here. ZCode
+   * keeps no durable session file: `Stop` carries the reply in `responseText` plus a temp,
+   * assistant-only transcript it deletes as soon as the hook returns, and no user prompt at all.
+   * So this is the one harness that retains from the plugin's own journal (core/turn-journal.ts) —
+   * the prompt hook appends the user turn, `journal.assistantText` closes it with the reply — and
+   * everything downstream (cursor, append, stamping) sees the same full conversation as any host
+   * transcript.
+   */
+  zcode: {
+    configStyle: "process",
+    // ZCode's `timeoutMs`, so MILLISECONDS — see the qwen-code note above for the same trap. The
+    // prompt budget must stay above core/hook.ts's HOOK_REFLECT_CAP_MS (25_000).
+    timeoutUnit: "milliseconds",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "zcode-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "zcode-stop-hook.js", timeout: 60_000 },
+    },
+    sessionStart: {
+      ...standardSessionStart("zcode"),
+      parse: (ev) => ({ cwd: ev.cwd as string | undefined, sessionId: zcodeSessionId(ev) }),
+    },
+    prompt: {
+      ...claudePrompt,
+      harness: "zcode",
+      journalPrompt: true,
+      parse: (ev) => ({
+        prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+        cwd: ev.cwd as string | undefined,
+        sessionId: zcodeSessionId(ev),
+      }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "zcode",
+      // No transcriptPath: the journal supplies it (see `journal` below).
+      parse: (ev) => ({ sessionId: zcodeSessionId(ev), cwd: ev.cwd as string | undefined }),
+      journal: {
+        // `responseText` is the full reply and is what ZCode sends in practice. The ephemeral
+        // transcript is the fallback when it is absent, and `responsePreview` — which is
+        // TRUNCATED — is the last resort, preferred only over losing the turn entirely.
+        assistantText: (ev) =>
+          (
+            (ev.responseText as string | undefined) ||
+            zcodeAssistantText(ev.transcript_path as string | undefined) ||
+            (ev.responsePreview as string | undefined) ||
+            ""
+          ).trim(),
+      },
     },
   },
 };

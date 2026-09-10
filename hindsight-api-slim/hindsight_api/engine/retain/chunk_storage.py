@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from ...config import _get_raw_config
+from ..chunk_ids import build_chunk_id
 from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
@@ -111,12 +112,17 @@ async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str], *, sto
     return unit_ids
 
 
-async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, ops=None) -> int:
+async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str, ops=None) -> int:
     """
-    Delete specific chunks by their IDs.
+    Delete the named chunks, which must all belong to ``bank_id``.
 
     This cascades to memory_units (via FK with CASCADE delete)
     and their links.
+
+    ``bank_id`` is required, not optional: `chunks` is keyed on chunk_id alone, so an id
+    that collides with another bank's row (possible for rows written before the escaping
+    in `chunk_ids.py` -- see #4244) would otherwise let a delta retain here cascade that
+    bank's facts away. Every statement below carries it.
 
     ``ops`` is the backend-specific DataAccessOps the observation sweep below needs to choose
     the PG (native array) vs Oracle (junction table) read path — pass ``pool.ops``.
@@ -134,29 +140,28 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     # this in ``handle_document_tracking``; the delta path deletes facts through this cascade
     # instead, which is why the sweep has to live here rather than at one of the call sites.
     invalidated = 0
-    if bank_id:
-        outgoing_unit_ids = await memory_ids_for_chunks(conn, bank_id, chunk_ids)
-        if outgoing_unit_ids:
-            from ..graph_maintenance import enqueue_entity_prune_candidates
-            from .fact_storage import delete_stale_observations_for_memories
+    outgoing_unit_ids = await memory_ids_for_chunks(conn, bank_id, chunk_ids)
+    if outgoing_unit_ids:
+        from ..graph_maintenance import enqueue_entity_prune_candidates
+        from .fact_storage import delete_stale_observations_for_memories
 
-            invalidated = await delete_stale_observations_for_memories(conn, bank_id, outgoing_unit_ids, ops=ops)
-            # Queue the entities these facts reference BEFORE the cascade takes
-            # their unit_entities rows: afterwards an entity whose last posting
-            # was here is unreachable garbage. Delta retain deletes facts only
-            # through this cascade, so this is the one place that can catch them
-            # (the full-replace path enqueues in ``handle_document_tracking``).
-            await enqueue_entity_prune_candidates(conn, bank_id, outgoing_unit_ids)
+        invalidated = await delete_stale_observations_for_memories(conn, bank_id, outgoing_unit_ids, ops=ops)
+        # Queue the entities these facts reference BEFORE the cascade takes
+        # their unit_entities rows: afterwards an entity whose last posting
+        # was here is unreachable garbage. Delta retain deletes facts only
+        # through this cascade, so this is the one place that can catch them
+        # (the full-replace path enqueues in ``handle_document_tracking``).
+        await enqueue_entity_prune_candidates(conn, bank_id, outgoing_unit_ids)
 
-            # Capture surviving units whose temporal/semantic links point at
-            # the outgoing facts before the link/chunk cascade below removes
-            # the evidence needed to find them. Full document replacement does
-            # the same in ``handle_document_tracking``; without it, a delta
-            # edit leaves survivors permanently below their configured link
-            # caps even though retain submits graph maintenance afterwards.
-            from ..graph_maintenance import enqueue_relink_victims
+        # Capture surviving units whose temporal/semantic links point at
+        # the outgoing facts before the link/chunk cascade below removes
+        # the evidence needed to find them. Full document replacement does
+        # the same in ``handle_document_tracking``; without it, a delta
+        # edit leaves survivors permanently below their configured link
+        # caps even though retain submits graph maintenance afterwards.
+        from ..graph_maintenance import enqueue_relink_victims
 
-            await enqueue_relink_victims(conn, bank_id, outgoing_unit_ids)
+        await enqueue_relink_victims(conn, bank_id, outgoing_unit_ids)
 
     # The chunks->memory_units FK cascade below does not reach a store that keeps memories
     # outside SQL (its memory_units is empty), so drop the memories carrying each deleted
@@ -164,7 +169,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     from ..memories import META_CHUNK_ID, DeletePredicate, get_memories
 
     _store = get_memories()
-    if bank_id and _store.store_owned_for(bank_id):
+    if _store.store_owned_for(bank_id):
         for _cid in chunk_ids:
             await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}))
 
@@ -192,6 +197,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             SELECT id
             FROM {fq_table("memory_units")}
             WHERE chunk_id = ANY($1::text[])
+              AND bank_id = $2
         ),
         matched_links AS MATERIALIZED (
             SELECT ml.ctid AS link_ctid
@@ -218,6 +224,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
         WHERE ml.ctid = ol.ctid
         """,
         chunk_ids,
+        bank_id,
     )
     await conn.execute(
         f"""
@@ -225,6 +232,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             SELECT chunk_id
             FROM {fq_table("chunks")}
             WHERE chunk_id = ANY($1::text[])
+              AND bank_id = $2
             ORDER BY chunk_id
             FOR UPDATE
         )
@@ -233,6 +241,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
         WHERE c.chunk_id = oc.chunk_id
         """,
         chunk_ids,
+        bank_id,
     )
     return invalidated
 
@@ -286,7 +295,7 @@ async def store_chunks_batch(
     chunk_id_map = {}
 
     for chunk in chunks:
-        chunk_id = f"{bank_id}_{document_id}_{chunk.chunk_index}"
+        chunk_id = build_chunk_id(bank_id, document_id, chunk.chunk_index)
         chunk_ids.append(chunk_id)
         chunk_texts.append(chunk.chunk_text if store_text else "")
         chunk_indices.append(chunk.chunk_index)

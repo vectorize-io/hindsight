@@ -29,6 +29,9 @@ interface PreparedNode {
   phase: number;
 }
 
+/** Ambient-motion preference, shared by every constellation (not per bank). */
+const MOTION_STORAGE_KEY = "constellation-motion";
+
 // ============================================================================
 // Props
 // ============================================================================
@@ -266,6 +269,31 @@ export function Constellation({
   const isDark = useIsDarkMode();
   const animRef = useRef<number>(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Ambient motion (drift/pulse/shimmer) on-off, remembered globally — not per
+  // bank — so the preference follows the user across every constellation.
+  const [motionEnabled, setMotionEnabled] = useState(true);
+  const motionRef = useRef(true);
+  // Elapsed "animation seconds". Accumulated only while motion is on, so
+  // pausing freezes the field in place and resuming continues without a jump.
+  const clockRef = useRef({ seconds: 0, lastFrameMs: 0 });
+
+  useEffect(() => {
+    const saved = localStorage.getItem(MOTION_STORAGE_KEY);
+    if (saved === "off") {
+      setMotionEnabled(false);
+      motionRef.current = false;
+    }
+  }, []);
+
+  const toggleMotion = useCallback(() => {
+    setMotionEnabled((prev) => {
+      const next = !prev;
+      motionRef.current = next;
+      localStorage.setItem(MOTION_STORAGE_KEY, next ? "on" : "off");
+      return next;
+    });
+  }, []);
 
   // Interaction state stored in ref for perf (avoid re-renders on every frame)
   const stateRef = useRef({
@@ -544,8 +572,15 @@ export function Constellation({
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    // Ambient-motion clock (seconds).
-    const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1000;
+    // Ambient-motion clock (seconds). Advances only while motion is enabled, so
+    // pausing holds every drift/pulse/shimmer exactly where it is.
+    const nowMs = typeof performance !== "undefined" ? performance.now() : 0;
+    const clock = clockRef.current;
+    if (motionRef.current && clock.lastFrameMs > 0) {
+      clock.seconds += (nowMs - clock.lastFrameMs) / 1000;
+    }
+    clock.lastFrameMs = nowMs;
+    const time = clock.seconds;
     // Drift amplitude in world units — nodes slowly wander around their home
     // position so the whole field visibly breathes.
     const DRIFT_AMP = 16;
@@ -1567,6 +1602,49 @@ export function Constellation({
             <line x1="12" y1="4" x2="12" y2="15" />
           </svg>
           {t("exportSvgLabel")}
+        </button>
+
+        {/* Ambient-motion toggle */}
+        <button
+          onClick={toggleMotion}
+          style={toolbarBtnStyle(isDark)}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
+          }}
+          title={motionEnabled ? t("pauseMotionTitle") : t("resumeMotionTitle")}
+        >
+          {motionEnabled ? (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="6" y="4" width="4" height="16" />
+              <rect x="14" y="4" width="4" height="16" />
+            </svg>
+          ) : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+          )}
+          {motionEnabled ? t("pauseMotionLabel") : t("resumeMotionLabel")}
         </button>
 
         {/* Fullscreen toggle */}

@@ -1124,6 +1124,88 @@ class TestUpdateDocumentTagsObservationCleanup:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_empty_tags_clears_them(self, memory: MemoryEngine, request_context: RequestContext):
+        """``tags=[]`` is a real update: it clears the document's tags and its units'.
+
+        The array is a REPLACEMENT, never a merge, so an empty one is how a caller drops
+        every tag. Every guard on the path is written ``is not None`` rather than a
+        truthiness check precisely so the empty list survives it — this test is what stops
+        one of them regressing to ``if tags:`` and turning a clear into a silent no-op.
+        """
+        bank_id = f"test-tag-update-clear-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            doc_mem_ids = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a", "b"], request_context=request_context)
+
+        async with pool.acquire() as conn:
+            obs_id = await _insert_observation(memory, conn, bank_id, "Alice is outdoorsy.", doc_mem_ids)
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as mock_consolidate:
+            assert await memory.update_document(doc_id, bank_id, tags=[], request_context=request_context)
+            mock_consolidate.assert_awaited()
+
+        document = await memory.get_document(doc_id, bank_id, request_context=request_context)
+        assert list(document["tags"] or []) == [], document["tags"]
+
+        async with pool.acquire() as conn:
+            for mem_id in doc_mem_ids:
+                stored_mem = await _get_memory(conn, bank_id, mem_id)
+                assert list(stored_mem.tags or []) == [], f"Memory unit {mem_id} should have no tags left"
+            # Clearing is a tag CHANGE like any other, so it runs the same cascade.
+            assert str(obs_id) not in await _get_observation_ids(conn, bank_id)
+            for mem_id in doc_mem_ids:
+                assert await _get_consolidated_at(conn, mem_id, bank_id) is None
+
+        # And clearing tags on a document that already has none is the no-op the set
+        # comparison promises — not a second round of re-consolidation.
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as mock_consolidate:
+            assert await memory.update_document(doc_id, bank_id, tags=[], request_context=request_context)
+            mock_consolidate.assert_not_awaited()
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_patch_endpoint_accepts_empty_tags(
+        self, memory: MemoryEngine, api_client, request_context: RequestContext
+    ):
+        """PATCH ``{"tags": []}`` clears the tags; only a MISSING ``tags`` is a 422.
+
+        The route rejects "no field provided" with ``body.tags is None``. An empty list is
+        a provided value, and the documented way to drop every tag, so it must reach the
+        engine rather than trip the guard.
+        """
+        bank_id = f"test-tag-patch-empty-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+            await _insert_document_with_memories(memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")])
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_document(doc_id, bank_id, tags=["a", "b"], request_context=request_context)
+
+            resp = await api_client.patch(f"/v1/default/banks/{bank_id}/documents/{doc_id}", json={"tags": []})
+        assert resp.status_code == 200, resp.text
+
+        document = await memory.get_document(doc_id, bank_id, request_context=request_context)
+        assert list(document["tags"] or []) == [], document["tags"]
+
+        # An omitted `tags` is still the "nothing to update" 422.
+        resp = await api_client.patch(f"/v1/default/banks/{bank_id}/documents/{doc_id}", json={})
+        assert resp.status_code == 422, resp.text
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_tag_change_stamps_memory_units_updated_at(
         self, memory: MemoryEngine, request_context: RequestContext
     ):

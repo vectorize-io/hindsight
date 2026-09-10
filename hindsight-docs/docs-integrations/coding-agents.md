@@ -9,7 +9,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -171,6 +171,30 @@ user-managed MCP server already named `hindsight`. Droid's hook protocol matches
 (`session_id`/`transcript_path`/`cwd` in, `hookSpecificOutput.additionalContext` out). Recall and
 injection use the same protocol; write-back also handles Droid's cancellation notification because
 Droid does not emit `Stop` after a cancelled turn.
+
+#### <img src="/img/harness/zcode.svg" alt="" width="20" height="20" /> ZCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install zcode
+```
+
+Three hook registrations plus a stdio MCP server under `mcp.servers.hindsight`, both in ZCode's own
+CLI config `~/.zcode/cli/config.json` - never your real Claude Code settings, even though ZCode
+embeds the Claude Code agent runtime and speaks its hook protocol. The companion skill goes to
+`~/.zcode/skills`. Config hooks ship **disabled**, so the installer also sets `hooks.enabled` to
+`true`; `uninstall` removes the whole block again when nothing else is registered there, and
+refuses to touch an MCP server named `hindsight` that it did not write.
+
+> ZCode's hook `timeoutMs` is in **milliseconds** (installed values `30000/30000/60000`), and
+> `hooks.maxOutputBytes` caps what a hook may print - anything larger is dropped, injection and
+> all. The installer seeds it at `32768` only when your config does not already set one.
+>
+> ZCode keeps no durable session transcript: `Stop` carries the reply plus a temp, assistant-only
+> file it deletes as soon as the hook returns, and no user prompt at all. So this is the one agent
+> whose conversation the plugin journals itself - the prompt hook records what you asked, the
+> `Stop` hook records the reply - and the write-back then behaves like every other agent's,
+> appending each new turn to the same session document. `--import-conversations` is therefore not
+> available for ZCode: there is no past history on disk to backfill from.
 
 #### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 

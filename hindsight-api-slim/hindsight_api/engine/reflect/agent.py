@@ -896,6 +896,13 @@ async def _run_reflect_agent_inner(
     # iteration onward and let the agent answer (or retrieve deeper itself)
     # under ``auto`` tool choice. None means the full forced path still applies.
     stop_forcing_from_iteration: int | None = None
+    # Every wire id already written into ``messages`` as a tool_use block. The
+    # whole loop serialises into ONE request, so uniqueness has to hold across
+    # iterations, not just within a batch: a gateway that blanks (or repeats) an
+    # id does it every turn, and two turns minting the same replacement puts two
+    # tool_use blocks with one id back into the request. ``_unique_tool_call_ids``
+    # reads and extends this set.
+    emitted_wire_ids: set[str] = set()
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
@@ -1077,17 +1084,22 @@ async def _run_reflect_agent_inner(
                 bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
             )
             if not has_gathered_evidence and iteration < max_iterations - 1:
-                # Add assistant message and fake tool result asking for evidence
+                # Add assistant message and fake tool result asking for evidence.
+                # This branch loops, so its tool_use lands in the same request as
+                # every later turn -- it needs a deduped wire id just like the
+                # parallel batch below (a blank ``done_call.id`` is rejected
+                # outright by a strict API).
+                (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
                 messages.append(
                     {
                         "role": "assistant",
-                        "tool_calls": [_tool_call_to_dict(done_call)],
+                        "tool_calls": [_tool_call_to_dict(done_call, done_wire_id)],
                     }
                 )
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": done_call.id,
+                        "tool_call_id": done_wire_id,
                         "content": json.dumps(
                             {
                                 "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
@@ -1145,11 +1157,16 @@ async def _run_reflect_agent_inner(
                     allowed_tools.append(tc)
                     allowed_positions.append(position)
 
-            # Build assistant message with all tool calls (LLM requires them for history)
+            # Build assistant message with all tool calls (LLM requires them for history).
+            # Wire ids are deduped once, up front, and reused for the tool_result
+            # messages below so the two stay one-to-one -- see _unique_tool_call_ids.
+            wire_tool_call_ids = _unique_tool_call_ids(other_tools, emitted_wire_ids)
             messages.append(
                 {
                     "role": "assistant",
-                    "tool_calls": [_tool_call_to_dict(tc) for tc in other_tools],
+                    "tool_calls": [
+                        _tool_call_to_dict(tc, wire_id) for tc, wire_id in zip(other_tools, wire_tool_call_ids)
+                    ],
                 }
             )
 
@@ -1162,8 +1179,7 @@ async def _run_reflect_agent_inner(
             # non-conforming OpenAI-compatible gateway can hand back duplicate or
             # empty ids for a parallel batch, and an id-keyed map would silently
             # drop one tool's evidence and duplicate another's.
-            ordered_tool_calls = list(other_tools)
-            tool_outputs: list[str] = [""] * len(ordered_tool_calls)
+            tool_outputs: list[str] = [""] * len(other_tools)
             for position, tc in zip(hallucinated_positions, hallucinated_tools):
                 tool_outputs[position] = json.dumps(
                     {
@@ -1312,11 +1328,11 @@ async def _run_reflect_agent_inner(
             # Emit tool_result messages in the assistant tool_calls order so the
             # serialized history matches the tool_use blocks (Anthropic requires
             # tool_result blocks in the same order as the corresponding tool_use).
-            for tc, tool_output in zip(ordered_tool_calls, tool_outputs):
+            for wire_id, tool_output in zip(wire_tool_call_ids, tool_outputs):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": wire_id,
                         "content": tool_output,
                     }
                 )
@@ -1331,10 +1347,39 @@ async def _run_reflect_agent_inner(
     )
 
 
-def _tool_call_to_dict(tc: "LLMToolCall") -> dict[str, Any]:
-    """Convert LLMToolCall to OpenAI message format."""
+def _unique_tool_call_ids(tool_calls: list["LLMToolCall"], already_emitted: set[str]) -> list[str]:
+    """Pick one unique wire id per tool call, by position, for a parallel batch.
+
+    A non-conforming OpenAI-compatible gateway can hand back duplicate or empty
+    ids, and a strict Anthropic API then rejects the turn outright ("each
+    tool_use must have a single result"). Only the ids that would collide are
+    rewritten, so a conforming provider keeps the ids it minted.
+
+    ``already_emitted`` carries every id used earlier in the SAME conversation
+    and is extended in place. Uniqueness has to span the whole reflect loop, not
+    one batch: the loop serialises into a single request, and a gateway that
+    blanks an id blanks it on every turn -- deduping per batch would just mint
+    the same replacement twice and put the collision back.
+    """
+    wire_ids: list[str] = []
+    for position, tc in enumerate(tool_calls):
+        wire_id = (tc.id or "").strip()
+        if not wire_id or wire_id in already_emitted:
+            base = f"{wire_id or 'toolcall'}_{position}"
+            wire_id = base
+            attempt = 1
+            while wire_id in already_emitted:
+                wire_id = f"{base}_{attempt}"
+                attempt += 1
+        already_emitted.add(wire_id)
+        wire_ids.append(wire_id)
+    return wire_ids
+
+
+def _tool_call_to_dict(tc: "LLMToolCall", wire_id: str) -> dict[str, Any]:
+    """Convert LLMToolCall to OpenAI message format under its deduped wire id."""
     d: dict[str, Any] = {
-        "id": tc.id,
+        "id": wire_id,
         "type": "function",
         "function": {
             "name": tc.name,

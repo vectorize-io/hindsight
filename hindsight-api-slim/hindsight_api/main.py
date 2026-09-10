@@ -25,9 +25,9 @@ from . import __version__
 from .banner import print_banner
 from .config import (
     DEFAULT_ACCESS_LOG,
+    DEFAULT_HOST,
     DEFAULT_WORKERS,
     ENV_ACCESS_LOG,
-    ENV_HOST,
     ENV_WORKERS,
     HindsightConfig,
     _get_raw_config,
@@ -119,19 +119,18 @@ def resolve_daemon_host_port(
     args_port: int,
     explicit_host: bool,
     explicit_port: bool,
+    configured_host: bool = False,
 ) -> ResolvedDaemonHostPort:
     """Resolve host/port for daemon mode.
 
-    Defaults to 127.0.0.1 for security, but honors explicit user overrides
-    via --host flag or HINDSIGHT_API_HOST env var. Uses DEFAULT_DAEMON_PORT
-    unless the user specified a custom port.
+    Defaults to 127.0.0.1 for security, but honors explicit user overrides via the
+    --host flag (``explicit_host``) or HINDSIGHT_API_HOST (``configured_host``, which
+    the caller reads off the config rather than the environment). Uses
+    DEFAULT_DAEMON_PORT unless the user specified a custom port.
     """
     port = args_port if explicit_port else DEFAULT_DAEMON_PORT
     # Only force localhost if the user didn't explicitly set a host
-    if explicit_host or os.environ.get(ENV_HOST):
-        host = args_host
-    else:
-        host = "127.0.0.1"
+    host = args_host if (explicit_host or configured_host) else "127.0.0.1"
     return ResolvedDaemonHostPort(host=host, port=port)
 
 
@@ -152,7 +151,9 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser.add_argument(
         "--host",
         default=argparse.SUPPRESS,
-        help=f"Host to bind to (default: {config.host}, env: HINDSIGHT_API_HOST)",
+        # config.host is None when nothing configured one; show the address that will
+        # actually be bound, not the sentinel that stands for "operator said nothing".
+        help=f"Host to bind to (default: {config.host or DEFAULT_HOST}, env: HINDSIGHT_API_HOST)",
     )
     parser.add_argument(
         "--port",
@@ -172,7 +173,7 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser.add_argument(
         "--workers",
         type=int,
-        default=int(os.getenv(ENV_WORKERS, str(DEFAULT_WORKERS))),
+        default=config.workers,
         help=f"Number of worker processes (env: {ENV_WORKERS}, default: {DEFAULT_WORKERS})",
     )
 
@@ -180,7 +181,7 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser.add_argument(
         "--access-log",
         action="store_true",
-        default=os.getenv(ENV_ACCESS_LOG, "").lower() in ("1", "true", "yes", "on") or DEFAULT_ACCESS_LOG,
+        default=config.access_log,
         help=f"Enable access log (env: {ENV_ACCESS_LOG}, default: {DEFAULT_ACCESS_LOG})",
     )
     parser.add_argument(
@@ -221,7 +222,7 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     explicit_host = hasattr(args, "host")
     explicit_port = hasattr(args, "port")
     if not explicit_host:
-        args.host = config.host
+        args.host = config.host or DEFAULT_HOST
     if not explicit_port:
         args.port = config.port
 
@@ -269,6 +270,7 @@ def main():
             args_port=args.port,
             explicit_host=parsed_cli_args.explicit_host,
             explicit_port=parsed_cli_args.explicit_port,
+            configured_host=config.host is not None,
         )
         args.host = resolved_daemon_host_port.host
         args.port = resolved_daemon_host_port.port

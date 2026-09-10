@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
+import { hoistCurrentBank } from "@/lib/bank-order";
 import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
 import type { RetainContentBlock as ContentBlock } from "@/lib/api";
@@ -236,12 +237,18 @@ function BankSelectorInner() {
     return () => window.removeEventListener("hindsight:create-bank", openCreate);
   }, []);
 
-  // Banks arrive already ordered by last write descending, one page at a time, so the
-  // list is rendered in server order — re-sorting here would only shuffle a later page
-  // above an earlier one.
   const maxFactCount = React.useMemo(
     () => Math.max(1, ...bankInfos.map((b) => b.fact_count)),
     [bankInfos]
+  );
+
+  // Banks arrive already ordered by last write descending, one page at a time, so the
+  // list stays in server order — re-sorting it here would only shuffle a later page
+  // above an earlier one. The single exception is hoisting the current bank; see
+  // hoistCurrentBank for why that one is worth the reorder.
+  const orderedBanks = React.useMemo(
+    () => hoistCurrentBank(bankInfos, currentBank),
+    [bankInfos, currentBank]
   );
 
   // Search runs server-side (the bank list is paginated), so the input holds a draft
@@ -687,7 +694,7 @@ function BankSelectorInner() {
                     banksLoading && bankInfos.length > 0 && "opacity-40"
                   )}
                 >
-                  {bankInfos.map((bank, index) => {
+                  {orderedBanks.map((bank, index) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
                     const isSelected = currentBank === bank.bank_id;
                     // Last write, not last ingestion: appends to an existing document
@@ -711,7 +718,13 @@ function BankSelectorInner() {
                         // already on screen, so appending page 2 flows in without
                         // replaying page 1. The stagger restarts per page and is capped
                         // so the tail of a 50-row page doesn't crawl in.
-                        className="relative overflow-hidden py-2.5 mb-0.5 group animate-list-row-enter"
+                        className={cn(
+                          "relative overflow-hidden py-2.5 mb-0.5 group animate-list-row-enter",
+                          // Not bg-accent: cmdk paints the keyboard-active row with
+                          // data-[selected=true]:bg-accent, so reusing it here would
+                          // make two rows look active at once while arrowing down.
+                          isSelected && "ring-1 ring-inset ring-primary/50"
+                        )}
                         style={{
                           animationDelay: `${Math.min(index % BANKS_PAGE_SIZE, 10) * 18}ms`,
                         }}
@@ -725,11 +738,14 @@ function BankSelectorInner() {
                           <Check
                             className={cn(
                               "h-4 w-4 shrink-0",
-                              isSelected ? "opacity-100" : "opacity-0"
+                              isSelected ? "opacity-100 text-primary" : "opacity-0"
                             )}
                           />
                           <span
-                            className="truncate flex-1 font-medium"
+                            className={cn(
+                              "truncate flex-1",
+                              isSelected ? "font-semibold" : "font-medium"
+                            )}
                             title={bank.name || bank.bank_id}
                           >
                             {bank.name || bank.bank_id}

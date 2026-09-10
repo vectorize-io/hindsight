@@ -15,9 +15,46 @@ DEFAULT_PORT = 8888
 
 
 class _Config:
+    """The fields of HindsightConfig that _parse_cli_args() reads for its defaults."""
+
     host = DEFAULT_HOST
     port = DEFAULT_PORT
     log_level = "info"
+    workers = 1
+    access_log = False
+
+
+class TestParseCliArgsHostDefault:
+    """`_parse_cli_args` applies the bind default when nothing configured a host.
+
+    `config.host` is None when HINDSIGHT_API_HOST is unset — the state that lets daemon
+    mode tell an operator-chosen host from an unstated one. Every other test here hands
+    `_parse_cli_args` a config whose `host` is already a string, so the `or DEFAULT_HOST`
+    branch went unexercised and shipped a NameError that only a real server start caught.
+    """
+
+    def test_unset_host_falls_back_to_the_bind_default(self):
+        from hindsight_api.config import DEFAULT_HOST as CONFIG_DEFAULT_HOST
+        from hindsight_api.main import _parse_cli_args
+
+        class _UnsetHostConfig(_Config):
+            host = None
+
+        parsed = _parse_cli_args([], _UnsetHostConfig())
+
+        assert parsed.args.host == CONFIG_DEFAULT_HOST
+        assert parsed.explicit_host is False
+
+    def test_configured_host_is_used_verbatim(self):
+        from hindsight_api.main import _parse_cli_args
+
+        class _ConfiguredHostConfig(_Config):
+            host = "10.0.0.5"
+
+        parsed = _parse_cli_args([], _ConfiguredHostConfig())
+
+        assert parsed.args.host == "10.0.0.5"
+        assert parsed.explicit_host is False
 
 
 class TestResolveDaemonHostPort:
@@ -57,29 +94,59 @@ class TestResolveDaemonHostPort:
         )
         assert resolved.host == DEFAULT_HOST
 
-    def test_honors_env_var_host(self, monkeypatch):
-        """HINDSIGHT_API_HOST=0.0.0.0 --daemon should bind to 0.0.0.0."""
-        monkeypatch.setenv("HINDSIGHT_API_HOST", "0.0.0.0")
-        # When env var is set, config.host already reflects it, so
-        # args_host matches the config default, but the env var presence is the signal.
+    def test_honors_env_var_host(self):
+        """HINDSIGHT_API_HOST=0.0.0.0 --daemon should bind to 0.0.0.0.
+
+        ``configured_host`` is the caller's answer to "did HINDSIGHT_API_HOST name a
+        host?", read off HindsightConfig rather than the environment — the env var is
+        parsed in config.py and nowhere else.
+        """
         resolved = resolve_daemon_host_port(
             args_host="0.0.0.0",
             args_port=DEFAULT_PORT,
             explicit_host=False,
             explicit_port=False,
+            configured_host=True,
         )
         assert resolved.host == "0.0.0.0"
 
-    def test_honors_custom_host_via_env(self, monkeypatch):
+    def test_honors_custom_host_via_env(self):
         """HINDSIGHT_API_HOST=10.0.0.5 should be respected in daemon mode."""
-        monkeypatch.setenv("HINDSIGHT_API_HOST", "10.0.0.5")
         resolved = resolve_daemon_host_port(
             args_host="10.0.0.5",
             args_port=DEFAULT_PORT,
             explicit_host=False,
             explicit_port=False,
+            configured_host=True,
         )
         assert resolved.host == "10.0.0.5"
+
+    def test_unset_host_narrows_to_loopback(self):
+        """Nothing configured anywhere: daemon mode still refuses to listen publicly."""
+        resolved = resolve_daemon_host_port(
+            args_host=DEFAULT_HOST,
+            args_port=DEFAULT_PORT,
+            explicit_host=False,
+            explicit_port=False,
+            configured_host=False,
+        )
+        assert resolved.host == "127.0.0.1"
+
+    def test_configured_host_is_read_from_config_not_environ(self, monkeypatch):
+        """The env var alone no longer reaches this function.
+
+        Guards the wiring: main() must pass ``configured_host=config.host is not None``.
+        If someone reintroduces an os.environ read here, this fails.
+        """
+        monkeypatch.setenv("HINDSIGHT_API_HOST", "0.0.0.0")
+        resolved = resolve_daemon_host_port(
+            args_host=DEFAULT_HOST,
+            args_port=DEFAULT_PORT,
+            explicit_host=False,
+            explicit_port=False,
+            configured_host=False,
+        )
+        assert resolved.host == "127.0.0.1"
 
     def test_cli_flag_overrides_env_var(self, monkeypatch):
         """--host flag should take precedence over env var."""

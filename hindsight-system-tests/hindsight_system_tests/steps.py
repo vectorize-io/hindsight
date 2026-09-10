@@ -22,6 +22,18 @@ from __future__ import annotations
 STEP_ANCHORS: dict[str, str] = {
     "extract_facts": "Extract facts from the following chunk.",
     "consolidate": "### Existing observations",
+    # The reflect loop uses two different system prompts: a tool-using role for
+    # the search turns, and a separate synthesising role for the turn that writes
+    # the answer. They need separate anchors or the final turn matches nothing.
+    # The preamble, not the role line: a bank with a reflect mission *replaces*
+    # the default role, so anchoring on that made every story break the moment a
+    # mission was set. This line is on every reflect turn regardless.
+    "reflect": "CRITICAL: You MUST ONLY use information from retrieved tool results.",
+    "reflect_answer": "You are a thoughtful assistant that synthesizes answers from retrieved memories.",
+    # Structured output is a *second* call after the answer: an extraction pass
+    # that reshapes the prose into the caller's schema. Anchored separately
+    # because a story about the schema is about this call, not the answer.
+    "reflect_structured": "You are a precise data extraction assistant.",
     "connection_probe": "Say 'ok'",
 }
 

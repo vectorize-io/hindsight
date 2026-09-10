@@ -59,6 +59,13 @@ import { createInstallerUi, type SelectOption } from "./install-ui";
  */
 export const MARKER = "coding-agents";
 
+/** ZCode truncates hook stdout past this many bytes, dropping the injection whole. Its own default;
+ *  written only when the user's config does not already carry one. */
+const ZCODE_MAX_OUTPUT_BYTES = 32768;
+
+/** ZCode's CLI config — hooks, MCP servers and model routing all live in this one file. */
+const zcodeConfigPath = (c: InstallCtx) => join(c.home, ".zcode", "cli", "config.json");
+
 export interface InstallCtx {
   home: string;
   pkgRoot: string; // package root (opencode plugin entry)
@@ -190,6 +197,13 @@ const cmdHook = (dist: string, file: string, timeout: number) => ({
   hooks: [{ type: "command", command: `node "${join(dist, file)}"`, timeout }],
 });
 
+/** ZCode's registration shape: the same matcher group, but an argv rather than a command STRING —
+ *  it spawns hooks without a shell, so `node "…/zcode-hook.js"` would be looked up as one
+ *  executable name and never run — and a `timeoutMs` budget rather than `timeout` seconds. */
+const processHook = (dist: string, file: string, timeoutMs: number) => ({
+  hooks: [{ type: "process", command: "node", args: [join(dist, file)], timeoutMs }],
+});
+
 /**
  * The MCP registration for a JSON-configured host.
  *
@@ -239,10 +253,12 @@ function mergeHarnessHooks(
     const entry =
       spec.configStyle === "nested"
         ? cmdHook(dist, hook.entry, hook.timeout!)
-        : {
-            command: `node "${join(dist, hook.entry)}"`,
-            ...(hook.timeout ? { timeout: hook.timeout } : {}),
-          };
+        : spec.configStyle === "process"
+          ? processHook(dist, hook.entry, hook.timeout!)
+          : {
+              command: `node "${join(dist, hook.entry)}"`,
+              ...(hook.timeout ? { timeout: hook.timeout } : {}),
+            };
     hooks[hook.event] = mergeHookEvent(hooks[hook.event], entry);
   }
 }
@@ -1649,6 +1665,83 @@ const factoryDroid: HarnessInstaller = {
   },
 };
 
+/**
+ * ZCode (Z.ai's GLM coding agent) keeps its own CLI config at `~/.zcode/cli/config.json` and reads
+ * hooks from a `hooks` block there — deliberately NOT `~/.claude/settings.json`, even though ZCode
+ * embeds the Claude Code agent runtime and speaks its hook protocol. Writing the user's real Claude
+ * Code config would wire a second agent nobody asked for.
+ *
+ * Three things make this block different from the other JSON hosts:
+ *
+ * - `hooks.enabled` ships FALSE. Registering the events without flipping it installs a lifecycle
+ *   that never fires, which looks like a healthy install and remembers nothing.
+ * - `hooks.maxOutputBytes` caps what a hook may print; anything larger is DROPPED, taking the whole
+ *   injection with it. Seeded only when absent — a user who has tuned it owns it.
+ * - the registrations live under `hooks.events`, in the "process" argv shape (see processHook).
+ *
+ * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
+ *
+ * - `mcp.servers.hindsight` runs the same stdio `dist/mcp-server.js` as every other host, tagged
+ *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
+ *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
+ *   in. A same-named foreign server blocks install instead of being overwritten.
+ * - `~/.zcode/skills` — ZCode's own user-level skill root (see SKILL_DIRS for why not the shared
+ *   `~/.agents/skills` it also scans).
+ *
+ * Both ride `features.mcp` / `features.skill`, which default to true; the installer leaves those
+ * alone rather than forcing them, because a user who turned one off meant it.
+ */
+const zcode: HarnessInstaller = {
+  name: "zcode",
+  detect: (c) => onPath("zcode") || existsSync(join(c.home, ".zcode")),
+  preflight(c) {
+    const configPath = zcodeConfigPath(c);
+    const existing = readJson(configPath).mcp?.servers?.hindsight;
+    if (existing && !isOurMcpEntry(existing)) {
+      return (
+        `${configPath} already contains a user-managed MCP server named "hindsight". ` +
+        "Rename or remove that entry, then re-run install."
+      );
+    }
+  },
+  install(c) {
+    const configPath = zcodeConfigPath(c);
+    const config = readJson(configPath);
+    const hooks = (config.hooks = config.hooks ?? {});
+    hooks.enabled = true;
+    hooks.maxOutputBytes = hooks.maxOutputBytes ?? ZCODE_MAX_OUTPUT_BYTES;
+    hooks.events = hooks.events ?? {};
+    mergeHarnessHooks(hooks.events, "zcode", c.dist);
+    config.mcp = config.mcp ?? {};
+    config.mcp.servers = config.mcp.servers ?? {};
+    config.mcp.servers.hindsight = mcpServerEntry(c.dist, "zcode");
+    writeJson(configPath, config);
+    c.log?.(`zcode: hooks + MCP server merged into ${configPath}`);
+    installSkill(c, "zcode");
+  },
+  uninstall(c) {
+    const configPath = zcodeConfigPath(c);
+    if (existsSync(configPath)) {
+      const config = readJson(configPath);
+      if (isOurMcpEntry(config.mcp?.servers?.hindsight)) {
+        delete config.mcp.servers.hindsight;
+        if (!Object.keys(config.mcp.servers).length) delete config.mcp;
+      }
+      const hooks = config.hooks;
+      if (hooks?.events) {
+        stripHarnessHooks(hooks.events, "zcode");
+        // Nothing of ours left to run: remove the whole block so ZCode's hook system goes back to
+        // off, its shipped default. When FOREIGN hooks remain the switch is now theirs, so the
+        // block — `enabled` included — stays exactly as it is.
+        if (!Object.keys(hooks.events).length) delete config.hooks;
+      }
+      writeJson(configPath, config);
+    }
+    uninstallSkill(c, "zcode");
+    c.log?.(`zcode: hooks + MCP registration + skill removed`);
+  },
+};
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   opencode2,
@@ -1667,6 +1760,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   dcode,
   dsh,
   factoryDroid,
+  zcode,
 ];
 
 // The public executable was renamed from Gemini CLI to Antigravity's `agy`. Keep the

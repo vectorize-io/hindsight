@@ -17,20 +17,28 @@ class RecordingConn:
     async def execute(self, sql: str, *args: object) -> None:
         self.calls.append((sql, args))
 
+    async def fetch(self, sql: str, *args: object) -> list[object]:
+        # The observation sweep reads the facts the outgoing chunks own before deleting
+        # anything. Only the two DELETEs are under test here, so answer "no facts" and
+        # keep them the only recorded calls.
+        return []
+
 
 @pytest.mark.asyncio
 async def test_delete_chunks_by_ids_predeletes_links_before_chunks():
     conn = RecordingConn()
     chunk_ids = ["chunk-b", "chunk-a"]
 
-    await chunk_storage.delete_chunks_by_ids(conn, chunk_ids)
+    await chunk_storage.delete_chunks_by_ids(conn, chunk_ids, "bank-1")
 
     assert len(conn.calls) == 2
     link_sql, link_args = conn.calls[0]
     chunk_sql, chunk_args = conn.calls[1]
 
-    assert link_args == (chunk_ids,)
-    assert chunk_args == (chunk_ids,)
+    # Both statements carry the bank alongside the ids: the delete is bank-scoped, so a
+    # colliding legacy chunk id cannot reach another bank's rows (#4244).
+    assert link_args == (chunk_ids, "bank-1")
+    assert chunk_args == (chunk_ids, "bank-1")
 
     assert "DELETE FROM" in link_sql
     assert "memory_links" in link_sql
@@ -57,7 +65,7 @@ async def test_delete_chunks_by_ids_matches_link_endpoints_through_indexable_joi
     """
     conn = RecordingConn()
 
-    await chunk_storage.delete_chunks_by_ids(conn, ["chunk-a"])
+    await chunk_storage.delete_chunks_by_ids(conn, ["chunk-a"], "bank-1")
 
     link_sql = conn.calls[0][0]
     normalized = " ".join(link_sql.split())
@@ -73,7 +81,7 @@ async def test_delete_chunks_by_ids_matches_link_endpoints_through_indexable_joi
 async def test_delete_chunks_by_ids_noops_without_chunks():
     conn = RecordingConn()
 
-    await chunk_storage.delete_chunks_by_ids(conn, [])
+    await chunk_storage.delete_chunks_by_ids(conn, [], "bank-1")
 
     assert conn.calls == []
 

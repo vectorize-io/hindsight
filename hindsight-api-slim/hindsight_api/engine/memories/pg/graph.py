@@ -815,6 +815,14 @@ async def enqueue_entity_prune_candidates(
 ) -> int:
     """Enqueue the entities ``affected_unit_ids`` reference as prune candidates.
 
+    Also gives back the ``mention_count`` those units' postings contributed:
+    this is the one choke point every unlink path goes through (document
+    replace/delete, memory delete, invalidation, an edit that rewrites the
+    entity set), and it is called exactly where the counts are still readable,
+    so the decrement belongs here rather than repeated at six call sites.
+    ``mention_count`` is otherwise increment-only, and the drift is proportional
+    to how often documents are updated (#4291).
+
     Must run inside the same transaction that removes those units (or their
     ``unit_entities`` rows), *before* the delete or cascade fires — afterwards
     there is no posting left to read the entity ids from, and the entity is
@@ -822,6 +830,8 @@ async def enqueue_entity_prune_candidates(
 
     Enqueueing an entity that turns out to still be referenced is free: the
     drain re-checks and keeps it. Over-enqueueing is always the safe direction.
+    The decrement is not free in the same way, which is why it counts the
+    postings actually going rather than assuming one per unit.
 
     Returns:
         Number of candidate entities enqueued.
@@ -832,6 +842,7 @@ async def enqueue_entity_prune_candidates(
     ops = _ops_for(conn)
     queue_table = fq_table("entity_maintenance_queue")
     ue_table = fq_table("unit_entities")
+    entities_table = fq_table("entities")
     unit_uuids = _as_uuids(list(affected_unit_ids))
 
     # Chunked because a bulk delete can hand in thousands of unit ids and the
@@ -839,9 +850,10 @@ async def enqueue_entity_prune_candidates(
     # literal IN list — Oracle caps those at 1000 elements.
     enqueued = 0
     for start in range(0, len(unit_uuids), _ENQUEUE_LOOKUP_CHUNK):
-        enqueued += await ops.enqueue_entity_maintenance(
+        enqueued += await ops.release_entity_postings(
             conn,
             queue_table,
+            entities_table,
             ue_table,
             bank_id,
             unit_uuids[start : start + _ENQUEUE_LOOKUP_CHUNK],

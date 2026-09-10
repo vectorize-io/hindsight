@@ -401,6 +401,175 @@ describe("factory-droid installer", () => {
   });
 });
 
+describe("zcode installer", () => {
+  const configPath = (ctx: InstallCtx) => join(ctx.home, ".zcode", "cli", "config.json");
+
+  it("registers the three hooks in ZCode's own CLI config, in its process shape", () => {
+    // ZCode spawns hooks WITHOUT a shell, so a `node "…/zcode-hook.js"` command string would be
+    // looked up verbatim as an executable and never run. The argv split is the whole point.
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const hooks = readJson(configPath(ctx)).hooks;
+    expect(Object.keys(hooks.events).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    const entry = (ev: string) => hooks.events[ev][0].hooks[0];
+    for (const ev of ["SessionStart", "Stop", "UserPromptSubmit"]) {
+      expect(entry(ev).type).toBe("process");
+      expect(entry(ev).command).toBe("node");
+      expect(entry(ev).command).not.toContain(".js");
+    }
+    expect(entry("SessionStart").args[0]).toContain("zcode-sessionstart-hook.js");
+    expect(entry("UserPromptSubmit").args[0]).toContain("zcode-hook.js");
+    expect(entry("Stop").args[0]).toContain("zcode-stop-hook.js");
+  });
+
+  it("writes the budgets as timeoutMs, in milliseconds", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const entry = (ev: string) => readJson(configPath(ctx)).hooks.events[ev][0].hooks[0];
+    expect(entry("SessionStart")).toMatchObject({ timeoutMs: 30_000 });
+    expect(entry("UserPromptSubmit")).toMatchObject({ timeoutMs: 30_000 });
+    expect(entry("Stop")).toMatchObject({ timeoutMs: 60_000 });
+    // `timeout` seconds is another host's field: writing it here registers no budget at all.
+    expect(entry("Stop").timeout).toBeUndefined();
+  });
+
+  it("turns ZCode's hook system on — it ships disabled, and off it fires nothing", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks).toMatchObject({
+      enabled: true,
+      maxOutputBytes: 32768,
+    });
+  });
+
+  it("leaves a tuned maxOutputBytes alone", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { hooks: { maxOutputBytes: 65536 } });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks.maxOutputBytes).toBe(65536);
+  });
+
+  it("preserves the rest of the CLI config and any foreign hooks", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      model: "glm-4.6",
+      theme: "dark",
+      hooks: {
+        events: {
+          UserPromptSubmit: [{ hooks: [{ type: "process", command: "their-hook" }] }],
+          PreToolUse: [{ hooks: [{ type: "process", command: "their-other-hook" }] }],
+        },
+      },
+    });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config).toMatchObject({ model: "glm-4.6", theme: "dark" });
+    expect(JSON.stringify(config.hooks.events)).toContain("their-hook");
+    expect(config.hooks.events.PreToolUse).toBeDefined();
+    expect(config.hooks.events.UserPromptSubmit).toHaveLength(2);
+  });
+
+  it("is idempotent — a second install replaces our entries rather than stacking them", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).hooks.events.UserPromptSubmit).toHaveLength(1);
+  });
+
+  it("registers the stdio MCP server in the same config, tagged with the zcode harness", () => {
+    // ZCode's server schema is strict — {type?, command, args?, cwd?, env?, enabled?, timeoutMs?} —
+    // and infers type "stdio" from a command, which is why the shared entry shape drops straight in.
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const server = readJson(configPath(ctx)).mcp.servers.hindsight;
+    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: "zcode" } });
+    expect(server.args[0]).toContain("mcp-server.js");
+  });
+
+  it("refuses to overwrite a user-managed MCP server already named hindsight", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      mcp: { servers: { hindsight: { command: "their-own-proxy", args: ["serve"] } } },
+    });
+    expect(run(["install", "zcode"], ctx)).not.toBe(0);
+    expect(readJson(configPath(ctx)).mcp.servers.hindsight.command).toBe("their-own-proxy");
+  });
+
+  /** makeCtx's pkgRoot is a synthetic /opt path the test cannot write; stage the packaged skill in
+   *  a real temp package root, like the droid and skills-sync tests do. */
+  const ctxWithPackagedSkill = (): InstallCtx => {
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-zcodeskill-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    return { ...makeCtx(), pkgRoot, dist: join(pkgRoot, "dist") };
+  };
+
+  it("installs the companion skill in ZCode's own root, not the shared agentskills one", () => {
+    const ctx = ctxWithPackagedSkill();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const skill = join(ctx.home, ...SKILL_DIRS.zcode, "hindsight-coding-agent", "SKILL.md");
+    expect(readFileSync(skill, "utf8")).toBe("packaged skill body");
+    // ~/.agents/skills is Codex's and dsh's copy; uninstalling zcode must never take it.
+    expect(existsSync(join(ctx.home, ".agents", "skills", "hindsight-coding-agent"))).toBe(false);
+  });
+
+  it("uninstall takes the skill back out of ZCode's root", () => {
+    const ctx = ctxWithPackagedSkill();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ...SKILL_DIRS.zcode, "hindsight-coding-agent"))).toBe(false);
+  });
+
+  it("uninstall removes our MCP entry and keeps a foreign server", () => {
+    // Plain makeCtx: ownership is decided by the dist path (isOurMcpEntry), which only the real
+    // package layout satisfies — a temp pkgRoot would read as someone else's server.
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { mcp: { servers: { playwright: { command: "npx" } } } });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config.mcp.servers.playwright).toBeDefined();
+    expect(config.mcp.servers.hindsight).toBeUndefined();
+  });
+
+  it("uninstall preserves a same-named MCP server that no longer belongs to the package", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    config.mcp.servers.hindsight = { command: "coding-agents-proxy", args: ["serve"] };
+    writeJsonAt(configPath(ctx), config);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).mcp.servers.hindsight).toEqual({
+      command: "coding-agents-proxy",
+      args: ["serve"],
+    });
+  });
+
+  it("uninstall removes the whole hooks block, so the host goes back to its off default", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { model: "glm-4.6" });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const config = readJson(configPath(ctx));
+    expect(config.hooks).toBeUndefined();
+    expect(config).toMatchObject({ model: "glm-4.6" });
+  });
+
+  it("uninstall keeps foreign hooks — and the enabled switch they now depend on", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), {
+      hooks: { events: { PreToolUse: [{ hooks: [{ type: "process", command: "their-hook" }] }] } },
+    });
+    expect(run(["install", "zcode"], ctx)).toBe(0);
+    expect(run(["uninstall", "zcode"], ctx)).toBe(0);
+    const hooks = readJson(configPath(ctx)).hooks;
+    expect(JSON.stringify(hooks)).toContain("their-hook");
+    expect(JSON.stringify(hooks)).not.toContain("zcode-hook.js");
+    expect(hooks.enabled).toBe(true);
+  });
+});
+
 describe("codex installer", () => {
   const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "hooks.json");
   const tomlPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "config.toml");
@@ -1338,6 +1507,7 @@ describe("run() CLI behavior", () => {
       "dcode",
       "dsh",
       "factory-droid",
+      "zcode",
     ]);
   });
 });

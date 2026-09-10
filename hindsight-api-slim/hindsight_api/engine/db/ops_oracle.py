@@ -366,26 +366,37 @@ class OracleOps(DataAccessOps):
             )
         return claimed
 
-    async def enqueue_entity_maintenance(
+    async def release_entity_postings(
         self,
         conn: DatabaseConnection,
-        table: str,
+        queue_table: str,
+        entities_table: str,
         ue_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
         if not unit_ids:
             return 0
+        # One read for both halves: the ids are the queue candidates, the counts
+        # are what each entity is about to stop being mentioned by. Oracle can't
+        # express the whole thing as one statement the way the PG side does —
+        # MERGE has no RETURNING to hang the second write off — so it stays two
+        # executemany calls over this one result.
         rows = await conn.fetch(
-            f"SELECT DISTINCT entity_id FROM {ue_table} WHERE unit_id = ANY($1::uuid[])",
+            f"""
+            SELECT entity_id, COUNT(*) AS n
+            FROM {ue_table}
+            WHERE unit_id = ANY($1::uuid[])
+            GROUP BY entity_id
+            """,
             unit_ids,
         )
-        # Sorted for the same reason as enqueue_graph_maintenance: the MERGE
-        # takes the (bank_id, entity_id) row locks in executemany array order,
-        # and claim_entity_maintenance_batch deletes in that same order, so
-        # overlapping mutation/worker sets cannot cycle.
-        candidates = sorted(str(row["entity_id"]) for row in rows)
-        if not candidates:
+        # Sorted for the same reason as enqueue_graph_maintenance: executemany
+        # takes the row locks in array order, and claim_entity_maintenance_batch
+        # deletes in that same order, so overlapping mutation/worker sets cannot
+        # cycle.
+        deltas = sorted((str(row["entity_id"]), int(row["n"])) for row in rows)
+        if not deltas:
             return 0
         # MERGE is the Oracle analogue of ON CONFLICT DO UPDATE: WHEN MATCHED
         # locks the existing queue row (the SET is a no-op preserving
@@ -393,15 +404,63 @@ class OracleOps(DataAccessOps):
         # instead of being silently dropped (#3034).
         await conn.executemany(
             f"""
-            MERGE INTO {table} q
+            MERGE INTO {queue_table} q
             USING (SELECT $1 AS bank_id, $2 AS entity_id FROM dual) s
             ON (q.bank_id = s.bank_id AND q.entity_id = s.entity_id)
             WHEN MATCHED THEN UPDATE SET q.enqueued_at = q.enqueued_at
             WHEN NOT MATCHED THEN INSERT (bank_id, entity_id) VALUES (s.bank_id, s.entity_id)
             """,
-            [(bank_id, eid) for eid in candidates],
+            [(bank_id, eid) for eid, _ in deltas],
         )
-        return len(candidates)
+        # Queue rows first, then entity rows — the order the drain takes them,
+        # which is what keeps a delete from cycling against a worker.
+        await conn.executemany(
+            f"""
+            UPDATE {entities_table}
+            SET mention_count = GREATEST(mention_count - $3, 0)
+            WHERE id = $1 AND bank_id = $2
+            """,
+            [(eid, bank_id, n) for eid, n in deltas],
+        )
+        return len(deltas)
+
+    async def restore_entity_postings(
+        self,
+        conn: DatabaseConnection,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+        unit_id: str,
+        entity_ids: list,
+    ) -> int:
+        if not entity_ids:
+            return 0
+        # Only entities that still exist can be posted to — some may have been
+        # swept as orphans while the memory sat archived — and only what is
+        # actually posted may be credited, so the surviving set is read first
+        # and drives both writes.
+        rows = await conn.fetch(
+            f"SELECT id FROM {entities_table} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+            bank_id,
+            entity_ids,
+        )
+        survivors = sorted(str(row["id"]) for row in rows)
+        if not survivors:
+            return 0
+        # Credits every survivor rather than only the rows the insert added, as
+        # the PG side does with RETURNING (MERGE/executemany has none). The two
+        # agree because a reverting unit has no postings left to conflict with —
+        # the cascade took them at invalidation — so DO NOTHING never fires. A
+        # caller that re-posted a unit whose postings survive would over-credit.
+        await conn.executemany(
+            f"INSERT INTO {ue_table} (unit_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            [(unit_id, eid) for eid in survivors],
+        )
+        await conn.executemany(
+            f"UPDATE {entities_table} SET mention_count = mention_count + 1 WHERE id = $1 AND bank_id = $2",
+            [(eid, bank_id) for eid in survivors],
+        )
+        return len(survivors)
 
     async def claim_entity_maintenance_batch(
         self,

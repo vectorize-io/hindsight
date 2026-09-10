@@ -24,7 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .lexical import EMBEDDING_DIMENSION
-from .rulebook import ChatRequest, Stubs
+from .rulebook import ChatRequest, ReceivedWebhook, Stubs
 from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,11 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         body = await request.json()
         validate_chat(body)
 
-        chat_request = ChatRequest(model=body["model"], messages=body["messages"])
+        chat_request = ChatRequest(
+            model=body["model"],
+            messages=body["messages"],
+            tools=tuple(tool["function"]["name"] for tool in body.get("tools") or []),
+        )
 
         reply = stubs.llm.resolve(chat_request)
         if reply is None:
@@ -100,6 +104,19 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 "usage": {"prompt_tokens": sum(len(text.split()) for text in inputs), "total_tokens": 0},
             }
         )
+
+    @app.post("/webhook")
+    async def webhook(request: Request) -> JSONResponse:
+        """Stand in for a customer's webhook endpoint.
+
+        Records the headers as well as the body: the signature a receiver is
+        expected to verify travels in a header, and a delivery that arrives
+        unsigned is indistinguishable from one anybody could forge.
+        """
+        stubs.webhooks.append(
+            ReceivedWebhook(headers={k.lower(): v for k, v in request.headers.items()}, body=await request.json())
+        )
+        return JSONResponse({"received": True})
 
     @app.post("/rerank")
     async def rerank(request: Request) -> JSONResponse:

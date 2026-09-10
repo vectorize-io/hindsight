@@ -60,6 +60,7 @@ from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
+from .chunk_ids import build_chunk_id, parse_chunk_id, resolve_chunk_id_in
 from .db import DatabaseBackend, DatabaseConnection, ResultRow, create_database_backend
 from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
@@ -224,32 +225,6 @@ def _bind_bank_id(
 def count_tokens(text: str) -> int:
     """Count tokens in text under the configured encoding (see engine/token_encoding.py)."""
     return _token_encoding_count(text)
-
-
-def _parse_chunk_id(chunk_id: str | None) -> "tuple[str, str, int] | None":
-    """Split a ``{bank_id}_{document_id}_{index}`` chunk_id into its parts.
-
-    Retain builds chunk ids in exactly this shape (see ``retain/chunk_storage.py``), which makes
-    them self-describing — the addressed chunk route has no bank in its path and normally recovers
-    it from the SQL row, but a store that owns the document store has no such row. Both splits are
-    from the RIGHT: the index is the final segment, and the document id before it is a UUID, which
-    contains no underscore. A bank id containing underscores is therefore still parsed correctly.
-
-    Returns ``None`` when the id is not in that shape, so the caller falls through to the SQL
-    lookup rather than guessing.
-    """
-    if not chunk_id:
-        return None
-    head, _, idx_s = chunk_id.rpartition("_")
-    if not head or not idx_s:
-        return None
-    bank_id, _, document_id = head.rpartition("_")
-    if not bank_id or not document_id:
-        return None
-    try:
-        return bank_id, document_id, int(idx_s)
-    except ValueError:
-        return None
 
 
 def _epoch_ms_to_datetime(value: Any) -> datetime | None:
@@ -8548,26 +8523,24 @@ class MemoryEngine(MemoryEngineInterface):
                     if _owns_docs and not chunks_rows:
                         # A store that owns the document store AND wrote no SQL chunks row (PG-free
                         # retain) leaves the chunks table empty, so the query above found nothing.
-                        # Synthesize the metadata from the chunk_ids themselves — a chunk_id is
-                        # ``{bank_id}_{document_id}_{chunk_index}`` and bank_id is known, so the last
-                        # ``_``-segment is the index and everything between is the document_id — then
-                        # let the overlay below fill in the text from the store. Independent of the
-                        # per-request capability flags: it fires whenever docs are owned and SQL is
-                        # empty, which is exactly the PG-free case.
-                        _pfx = f"{bank_id}_"
+                        # Synthesize the metadata from the chunk_ids themselves — the id carries
+                        # the document and the index, and bank_id is known (see
+                        # ``engine/chunk_ids.py``) — then let the overlay below fill in the text
+                        # from the store. Independent of the per-request capability flags: it
+                        # fires whenever docs are owned and SQL is empty, which is exactly the
+                        # PG-free case.
                         chunks_rows = []
                         for _cid in chunk_ids_ordered:
-                            if not _cid.startswith(_pfx):
-                                continue
-                            _doc, _, _idx_s = _cid[len(_pfx) :].rpartition("_")
-                            if not _doc:
-                                continue
-                            try:
-                                _idx = int(_idx_s)
-                            except ValueError:
+                            _ref = resolve_chunk_id_in(_cid, bank_id)
+                            if _ref is None:
                                 continue
                             chunks_rows.append(
-                                {"chunk_id": _cid, "chunk_text": "", "chunk_index": _idx, "document_id": _doc}
+                                {
+                                    "chunk_id": _cid,
+                                    "chunk_text": "",
+                                    "chunk_index": _ref.chunk_index,
+                                    "document_id": _ref.document_id,
+                                }
                             )
 
                     if _owns_docs:
@@ -10962,9 +10935,17 @@ class MemoryEngine(MemoryEngineInterface):
                 new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                 new_occ_start = _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                 new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
-                # event_date (NOT NULL, legacy single date + used by temporal links) tracks the
-                # occurred start when it's set.
-                new_event_date = new_occ_start or live.event_date
+                # event_date (legacy single date, still what temporal links and the curation
+                # list's `date` are built from) tracks the occurred start when it's set. An
+                # explicit occurred_start edit — including "" to clear it — re-derives it with
+                # retain's own rule (`occurred_start or mentioned_at`, see memories/pg/writes.py),
+                # so clearing an occurrence cannot leave the legacy date on the old one. An
+                # omitted occurred_start is not an occurrence edit and leaves it untouched.
+                new_event_date = (
+                    (new_occ_start if new_occ_start is not None else live.mentioned_at)
+                    if occurred_start is not None
+                    else live.event_date
+                )
 
                 entity_resolution = None
                 resolved_for_unit = None
@@ -12345,12 +12326,12 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
 
         # A store that owns the document store keeps no SQL `chunks` row to look this id up in.
-        # The id is self-describing — retain builds it as `{bank_id}_{document_id}_{index}` — so
-        # the bank and document are recoverable from it without a row. Attempted before touching
-        # SQL because for such a bank the SELECT below can only ever miss.
-        _parsed = _parse_chunk_id(chunk_id)
+        # The id is self-describing — retain builds it from the bank, document and index (see
+        # `engine/chunk_ids.py`) — so those are recoverable from it without a row. Attempted
+        # before touching SQL because for such a bank the SELECT below can only ever miss.
+        _parsed = parse_chunk_id(chunk_id)
         if _parsed is not None:
-            _cbank, _cdoc, _cidx = _parsed
+            _cbank, _cdoc, _cidx = _parsed.bank_id, _parsed.document_id, _parsed.chunk_index
             from .memories import get_memories
 
             _chunk_store = get_memories()
@@ -12472,10 +12453,9 @@ class MemoryEngine(MemoryEngineInterface):
             return {
                 "items": [
                     {
-                        # Rebuilt to the same shape retain writes
-                        # (chunk_storage.py: f"{bank_id}_{document_id}_{index}") so an id from
-                        # this route is accepted by the addressed chunk route.
-                        "chunk_id": f"{bank_id}_{document_id}_{idx}",
+                        # Rebuilt the same way retain builds it (``engine/chunk_ids.py``) so an
+                        # id from this route is accepted by the addressed chunk route.
+                        "chunk_id": build_chunk_id(bank_id, document_id, idx),
                         "document_id": document_id,
                         "bank_id": bank_id,
                         "chunk_index": idx,

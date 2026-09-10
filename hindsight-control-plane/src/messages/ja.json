@@ -1062,6 +1062,7 @@
     "queryDatePlaceholder": "クエリ日付",
     "chunks": "チャンク",
     "entities": "エンティティ",
+    "entitiesHint": "各結果に表示されるエンティティ名と、エンティティの観測ブロックを返します。",
     "tagsPlaceholder": "タグでフィルター（カンマ区切り）",
     "tagsMatchAny": "いずれか（タグなし含む）",
     "tagsMatchAll": "すべて（タグなし含む）",
@@ -1084,6 +1085,9 @@
     "relevance": "関連性：{value}",
     "noMemoriesFound": "このクエリに該当するメモリが見つかりませんでした。",
     "scoreLabel": "スコア",
+    "occurredLabel": "発生",
+    "mentionedLabel": "言及",
+    "factAttachments": "このファクトの由来となった添付ファイル",
     "parallelRetrieval": "並列取得",
     "methodsCount": "{count}メソッド",
     "showLess": "表示を減らす",
@@ -1612,7 +1616,11 @@
     "linkTypeEntity": "エンティティ",
     "linkTypeCausal": "因果",
     "exportSvgTitle": "共有用にSVGをダウンロード",
-    "exportSvgLabel": "共有"
+    "exportSvgLabel": "共有",
+    "pauseMotionTitle": "動きを一時停止",
+    "resumeMotionTitle": "動きを再開",
+    "pauseMotionLabel": "一時停止",
+    "resumeMotionLabel": "再開"
   },
   "metadata": {
     "title": "Hindsight Cloud",

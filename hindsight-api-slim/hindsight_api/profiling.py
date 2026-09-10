@@ -56,7 +56,7 @@ import os
 import threading
 import time
 
-ENV_PROFILE = "HINDSIGHT_API_PROFILE"
+from .config import ENV_PROFILE, get_config  # noqa: E402
 
 logger = logging.getLogger("hindsight_api.profiling")
 
@@ -71,7 +71,7 @@ def _config() -> dict | None:
     A malformed value raises rather than quietly disabling: whoever set this wants a
     profile, and a typo that produces no output costs a whole test cycle to notice.
     """
-    raw = os.getenv(ENV_PROFILE, "").strip()
+    raw = get_config().profile
     if not raw:
         return None
     cfg = json.loads(raw)

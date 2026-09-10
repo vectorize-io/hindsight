@@ -1062,6 +1062,7 @@
     "queryDatePlaceholder": "Fecha de consulta",
     "chunks": "Fragmentos",
     "entities": "Entidades",
+    "entitiesHint": "Devuelve los nombres de entidad que se muestran en cada resultado, además del bloque de observaciones de entidades.",
     "tagsPlaceholder": "Filtrar por etiquetas (separadas por comas)",
     "tagsMatchAny": "Cualquiera (incl. sin etiqueta)",
     "tagsMatchAll": "Todas (incl. sin etiqueta)",
@@ -1084,6 +1085,9 @@
     "relevance": "Relevancia: {value}",
     "noMemoriesFound": "No se encontraron memorias para esta consulta.",
     "scoreLabel": "puntuación",
+    "occurredLabel": "ocurrió",
+    "mentionedLabel": "mencionado",
+    "factAttachments": "Adjuntos de los que procede este hecho",
     "parallelRetrieval": "RECUPERACIÓN PARALELA",
     "methodsCount": "{count} métodos",
     "showLess": "Mostrar menos",
@@ -1612,7 +1616,11 @@
     "linkTypeEntity": "entidad",
     "linkTypeCausal": "causal",
     "exportSvgTitle": "Descargar como SVG para compartir",
-    "exportSvgLabel": "Compartir"
+    "exportSvgLabel": "Compartir",
+    "pauseMotionTitle": "Pausar el movimiento",
+    "resumeMotionTitle": "Reanudar el movimiento",
+    "pauseMotionLabel": "Pausar",
+    "resumeMotionLabel": "Reanudar"
   },
   "metadata": {
     "title": "Hindsight Cloud",

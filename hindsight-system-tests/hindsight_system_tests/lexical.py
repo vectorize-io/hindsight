@@ -18,33 +18,57 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from dataclasses import dataclass
 
 # Matches the server's DEFAULT_EMBEDDING_DIMENSION. The vector columns are
 # created at this width, so the stub must answer with exactly this many floats.
 EMBEDDING_DIMENSION = 384
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
+# Latin/digit runs are one token each; every CJK codepoint is a token on its own.
+# Chinese and Japanese are not space-delimited, so an alphanumeric-only pattern
+# silently drops them entirely — the query and the memory both tokenize to
+# nothing, land on the same fallback vector, and retrieval becomes meaningless.
+# Per-character tokens are roughly what a real CJK analyser does at the unigram
+# level and are enough to make overlap track relatedness.
+_CJK = (
+    r"\u4e00-\u9fff"  # CJK unified ideographs
+    r"\u3040-\u309f"  # hiragana
+    r"\u30a0-\u30ff"  # katakana
+    r"\uac00-\ud7af"  # hangul syllables
+)
+_TOKEN_RE = re.compile(rf"[a-z0-9]+|[{_CJK}]")
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase word tokens. Deliberately crude — determinism beats linguistics."""
-    return _WORD_RE.findall(text.lower())
+    """Lowercase tokens. Deliberately crude — determinism beats linguistics."""
+    return _TOKEN_RE.findall(text.lower())
 
 
-def _slots(token: str, dimension: int) -> tuple[int, int]:
-    """Two slots per token, so a single hash collision degrades rather than merges."""
+@dataclass(frozen=True)
+class _Slots:
+    """Where one token lands in the vector.
+
+    Two positions rather than one so a single hash collision degrades the score
+    instead of merging two tokens outright.
+    """
+
+    primary: int
+    secondary: int
+
+
+def _slots(token: str, dimension: int) -> _Slots:
     digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
     value = int.from_bytes(digest, "big")
-    return value % dimension, (value >> 32) % dimension
+    return _Slots(primary=value % dimension, secondary=(value >> 32) % dimension)
 
 
 def lexical_embedding(text: str, dimension: int = EMBEDDING_DIMENSION) -> list[float]:
     """A unit-length vector whose cosine similarity tracks word overlap."""
     vector = [0.0] * dimension
     for token in tokenize(text):
-        primary, secondary = _slots(token, dimension)
-        vector[primary] += 1.0
-        vector[secondary] += 0.5
+        slots = _slots(token, dimension)
+        vector[slots.primary] += 1.0
+        vector[slots.secondary] += 0.5
 
     norm = math.sqrt(sum(component * component for component in vector))
     if norm == 0.0:

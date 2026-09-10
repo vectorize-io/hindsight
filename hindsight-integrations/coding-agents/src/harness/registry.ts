@@ -67,6 +67,9 @@ export const HARNESS_NAMES = [
   // Factory Droid is a per-prompt HOOK host: the installer wires ~/.factory/hooks.json and the
   // stdio MCP registration in ~/.factory/mcp.json (see src/installer.ts).
   "factory-droid",
+  // ZCode is a per-prompt HOOK host too, registered in its own CLI config
+  // (~/.zcode/cli/config.json) under `hooks.events` — never the user's real Claude Code settings.
+  "zcode",
 ];
 
 const HOOK_BINS: Record<string, string> = {
@@ -80,6 +83,7 @@ const HOOK_BINS: Record<string, string> = {
   "grok-build": "hindsight-grok-hook",
   "qwen-code": "hindsight-qwen-hook",
   "factory-droid": "hindsight-droid-hook",
+  zcode: "hindsight-zcode-hook",
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 

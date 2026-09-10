@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from hindsight_client_api.models.recall_scores import RecallScores
 from typing import Optional, Set
 from typing_extensions import Self
@@ -41,7 +42,8 @@ class RecallResult(BaseModel):
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
     scores: Optional[RecallScores] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids", "scores"]
+    attachments: Optional[List[ChunkAttachment]] = None
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids", "scores", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +87,13 @@ class RecallResult(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of scores
         if self.scores:
             _dict['scores'] = self.scores.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
+        _items = []
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
         # set to None if type (nullable) is None
         # and model_fields_set contains the field
         if self.type is None and "type" in self.model_fields_set:
@@ -145,6 +154,11 @@ class RecallResult(BaseModel):
         if self.scores is None and "scores" in self.model_fields_set:
             _dict['scores'] = None
 
+        # set to None if attachments (nullable) is None
+        # and model_fields_set contains the field
+        if self.attachments is None and "attachments" in self.model_fields_set:
+            _dict['attachments'] = None
+
         return _dict
 
     @classmethod
@@ -170,7 +184,8 @@ class RecallResult(BaseModel):
             "chunk_id": obj.get("chunk_id"),
             "tags": obj.get("tags"),
             "source_fact_ids": obj.get("source_fact_ids"),
-            "scores": RecallScores.from_dict(obj["scores"]) if obj.get("scores") is not None else None
+            "scores": RecallScores.from_dict(obj["scores"]) if obj.get("scores") is not None else None,
+            "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

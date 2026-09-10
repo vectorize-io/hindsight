@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -163,13 +162,17 @@ _INSTALL_HINTS = {
 def configured_vector_extension() -> str:
     """Return the user-configured vector backend extension.
 
-    Reads ``HINDSIGHT_API_VECTOR_EXTENSION`` (default ``"pgvector"``) and
-    validates it via :func:`validate_extension`. This is the single source of
-    truth for runtime code that needs to dispatch behaviour by vector backend;
-    callers should prefer this over reading the env var directly, so the
-    default value and the lookup mechanism live in one place.
+    Reads ``vector_extension`` off the resolved config, which is where
+    ``HINDSIGHT_API_VECTOR_EXTENSION`` and its default are parsed. This is the single
+    source of truth for runtime code that needs to dispatch behaviour by vector
+    backend; callers should prefer this over reading the env var directly.
+
+    The config import is deferred because ``config.py`` imports this module for
+    :func:`validate_extension` — at module scope the two would form a cycle.
     """
-    return validate_extension(os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector"))
+    from .config import get_config
+
+    return validate_extension(get_config().vector_extension)
 
 
 def validate_extension(name: str) -> str:

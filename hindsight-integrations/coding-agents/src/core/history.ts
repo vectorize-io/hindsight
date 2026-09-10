@@ -495,6 +495,15 @@ export function importLocalHistory(
     case "copilot-cli":
     case "devin-cli":
       return { supported: false, reason: `${harness} ${SQLITE_HISTORY}`, sessions: [] };
+    case "zcode":
+      // Not a missing reader: ZCode keeps no session files to read. Its Stop transcript is a temp
+      // file deleted as the hook returns, which is why the plugin journals live sessions itself
+      // (core/turn-journal.ts) — and why there is no past history to backfill from.
+      return {
+        supported: false,
+        reason: "ZCode keeps no session transcripts on disk to import",
+        sessions: [],
+      };
     default:
       return { supported: false, reason: `no local history reader for ${harness}`, sessions: [] };
   }

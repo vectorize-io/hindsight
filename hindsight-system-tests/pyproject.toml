@@ -20,7 +20,11 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-hindsight-client = { path = "../hindsight-clients/python" }
+# editable: without it uv installs a *copy*, and the suite silently tests a
+# snapshot of the client taken whenever the venv was last built — an endpoint
+# added or regenerated since then simply is not there. The whole point of driving
+# the published client is that it is the current one.
+hindsight-client = { path = "../hindsight-clients/python", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_system_tests"]
