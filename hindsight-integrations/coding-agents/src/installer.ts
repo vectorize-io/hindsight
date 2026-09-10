@@ -40,6 +40,7 @@ import { isatty } from "node:tty";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify } from "jsonc-parser";
+import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -1249,7 +1250,103 @@ const copilot: HarnessInstaller = {
 const GROK_MARKER_START = "# HINDSIGHT_CODING_AGENTS_GROK_START";
 const GROK_MARKER_END = "# HINDSIGHT_CODING_AGENTS_GROK_END";
 /** Our sentinel-delimited block; shared by install (replace) and uninstall (strip). */
-const GROK_BLOCK_RE = new RegExp(`\\n?${GROK_MARKER_START}[\\s\\S]*?${GROK_MARKER_END}\\n?`);
+const GROK_BLOCK_RE = new RegExp(`\\n?${GROK_MARKER_START}[\\s\\S]*?${GROK_MARKER_END}\\n?`, "g");
+
+/** Hook scripts only this package writes; their basenames identify our entries in a foreign TOML. */
+const GROK_HOOK_SCRIPT_RE = /(grok-(?:sessionstart-|stop-)?hook\.js|hindsight-coding-agents)/;
+
+/** The slice of Grok's config.toml this installer touches. */
+interface GrokToml {
+  mcp_servers?: Record<string, unknown>;
+  hooks?: Record<string, { hooks?: { command?: unknown }[] }[]>;
+}
+
+/** Parse config.toml, or null when it is malformed — including the duplicate-key state this repairs. */
+function parseGrokToml(text: string): GrokToml | null {
+  try {
+    return parseToml(text) as GrokToml;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does the config still declare Hindsight entries outside our markers?
+ *
+ * Decided from the PARSED document, so a `[mcp_servers.hindsight]` written in any legal TOML
+ * spelling (dotted key, inline table, `[mcp_servers]` with a `hindsight` sub-table) is recognized —
+ * not just the exact text an old release happened to emit. Only the `[table]` form is removed
+ * automatically; any other spelling survives the strip and the install's final parse refuses to
+ * write, telling the user to remove it. Falls back to a textual probe only when the file no longer
+ * parses, which is precisely the broken state we are repairing.
+ */
+function hasUnmarkedGrokEntries(text: string): boolean {
+  const cfg = parseGrokToml(text);
+  if (!cfg)
+    return /\[\s*mcp_servers\s*\.\s*hindsight\s*[.\]]/.test(text) || GROK_HOOK_SCRIPT_RE.test(text);
+  if (cfg.mcp_servers && "hindsight" in cfg.mcp_servers) return true;
+  return Object.values(cfg.hooks ?? {}).some((entries) =>
+    (entries ?? []).some((entry) =>
+      (entry?.hooks ?? []).some(
+        (h) => typeof h?.command === "string" && GROK_HOOK_SCRIPT_RE.test(h.command)
+      )
+    )
+  );
+}
+
+/**
+ * Remove Hindsight's Grok tables that are NOT wrapped in our markers.
+ *
+ * Configs written before the markers existed (or hand-edited so the markers were lost) keep a
+ * `[mcp_servers.hindsight]` table and `[[hooks.*]]` entries pointing at our scripts. TOML forbids
+ * redefining a table, so appending a fresh marked block on top of those makes the whole file
+ * unparsable — Grok then reports "No MCP servers configured" and silently disables every server.
+ *
+ * The edit is textual on purpose: re-serializing the parsed document would drop the comments,
+ * ordering and formatting of a config the user maintains by hand. The caller validates the result
+ * with the parser before writing it.
+ */
+function stripUnmarkedGrokEntries(toml: string): string {
+  const lines = toml.split("\n");
+  // Split into table sections: a header line plus everything up to the next header.
+  const sections: { header: string; lines: string[] }[] = [{ header: "", lines: [] }];
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) sections.push({ header: line.trim(), lines: [line] });
+    else sections[sections.length - 1].lines.push(line);
+  }
+
+  const isOurs = (s: { header: string; lines: string[] }) =>
+    s.lines.some((l) => /^\s*(command|args)\s*=/.test(l) && GROK_HOOK_SCRIPT_RE.test(l));
+  const hasKeys = (s: { header: string; lines: string[] }) =>
+    s.lines.slice(1).some((l) => /^\s*[^#\s]/.test(l));
+
+  const drop = sections.map((s) => {
+    if (/^\[mcp_servers\.hindsight(\.|\])/.test(s.header)) return true;
+    if (/^\[\[hooks\..+\.hooks\]\]$/.test(s.header)) return isOurs(s);
+    return false;
+  });
+  // A bare `[[hooks.X]]` parent carries no keys of its own; drop it once all its children are gone.
+  for (let i = 0; i < sections.length; i++) {
+    if (!/^\[\[hooks\.[^.\]]+\]\]$/.test(sections[i].header) || hasKeys(sections[i])) continue;
+    let j = i + 1;
+    let sawChild = false;
+    while (j < sections.length && /^\[\[hooks\..+\.hooks\]\]$/.test(sections[j].header)) {
+      if (!drop[j]) break;
+      sawChild = true;
+      j++;
+    }
+    const childrenAllDropped =
+      sawChild && (j >= sections.length || !/^\[\[hooks\..+\.hooks\]\]$/.test(sections[j].header));
+    if (childrenAllDropped) drop[i] = true;
+  }
+
+  if (!drop.some(Boolean)) return toml;
+  return sections
+    .filter((_, i) => !drop[i])
+    .map((s) => s.lines.join("\n"))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
 
 const grok: HarnessInstaller = {
   name: "grok-build",
@@ -1260,7 +1357,13 @@ const grok: HarnessInstaller = {
     // REPLACE any previous block rather than skipping when one exists. Skipping made this
     // install-once-only: after the package moved, a re-install silently left the old (now dead)
     // paths in place, which is exactly the case `install` is meant to repair.
-    const withoutOurs = existing.replace(GROK_BLOCK_RE, "\n");
+    const stripped = existing.replace(GROK_BLOCK_RE, "\n");
+    // Entries an older release wrote WITHOUT the markers must go too: TOML forbids redefining a
+    // table, so appending on top of them leaves a file Grok cannot parse — it then reports "No MCP
+    // servers configured" and every MCP server, ours included, silently stops working.
+    const withoutOurs = hasUnmarkedGrokEntries(stripped)
+      ? stripUnmarkedGrokEntries(stripped)
+      : stripped;
     // Grok executes this shell command verbatim. Quote the absolute script path so a globally
     // installed package still works when its installation directory contains spaces.
     const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
@@ -1272,10 +1375,19 @@ const grok: HarnessInstaller = {
       `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
       `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
       `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
+    const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
+    // Never hand Grok a config it cannot parse: one bad table takes down every MCP server it has.
+    if (parseGrokToml(next) === null) {
+      c.log?.(
+        `grok-build: refusing to write ${path} — the result would not be valid TOML. ` +
+          `Remove the Hindsight hooks and [mcp_servers.hindsight] from it by hand, then re-run install.`
+      );
+      return false;
+    }
     if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${withoutOurs.replace(/\n*$/, "\n")}${block}`);
+    writeFileSync(path, next);
     installSkill(c, "grok-build");
     c.log?.(`grok-build: native hooks + MCP installed in ${path}`);
   },
@@ -1283,8 +1395,14 @@ const grok: HarnessInstaller = {
     const path = join(c.home, ".grok", "config.toml");
     if (existsSync(path)) {
       const existing = readFileSync(path, "utf8");
-      const cleaned = existing.replace(GROK_BLOCK_RE, "\n");
-      if (cleaned !== existing) writeFileSync(path, cleaned);
+      const stripped = existing.replace(GROK_BLOCK_RE, "\n");
+      const cleaned = hasUnmarkedGrokEntries(stripped)
+        ? stripUnmarkedGrokEntries(stripped)
+        : stripped;
+      // Write when the removal leaves valid TOML — or when the file was already invalid, since
+      // dropping our entries cannot make that worse and is usually what repairs it.
+      const safe = parseGrokToml(cleaned) !== null || parseGrokToml(existing) === null;
+      if (cleaned !== existing && safe) writeFileSync(path, cleaned);
     }
     uninstallSkill(c, "grok-build");
     c.log?.("grok-build: native hooks + MCP + skill removed");

@@ -87,6 +87,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vectorize-io/hindsight-all": "^0.8.6",
     "jsonc-parser": "^3.3.1",
+    "smol-toml": "^1.8.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

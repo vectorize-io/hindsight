@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { INSTALLERS, MARKER, parseJsonc, run, type InstallCtx } from "./installer";
 import { SKILL_DIRS } from "./core/skill-dirs";
+import { parse as parseToml } from "smol-toml";
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
 // claudeMcp so the real `claude` CLI is never executed. run() is always called with
@@ -1296,6 +1297,89 @@ describe("grok-build installer", () => {
     expect(config).toContain(join(ctx.dist, "mcp-server.js"));
     expect(config).toContain('env = { HINDSIGHT_MCP_HARNESS = "grok-build" }');
     expect(existsSync(join(ctx.home, ".claude"))).toBe(false);
+  });
+
+  // A config written before the markers existed (or hand-edited so they were lost) keeps an
+  // unmarked `[mcp_servers.hindsight]` + hook entries. TOML forbids redefining a table, so
+  // appending on top of them made the whole file unparsable and disabled every MCP server.
+  const legacyToml = (dist: string) =>
+    `[ui]\ntheme = "dark"\n\n` +
+    `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = "command"\n  command = "node \\"${join(dist, "grok-sessionstart-hook.js")}\\""\n  timeout = 30\n\n` +
+    `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = "command"\n  command = "node \\"${join(dist, "grok-hook.js")}\\""\n  timeout = 30\n\n` +
+    `[mcp_servers.hindsight]\ncommand = "node"\nargs = ["${join(dist, "mcp-server.js")}"]\n`;
+
+  it("replaces an unmarked legacy block instead of duplicating the TOML tables", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    // The whole point: the file still parses. A duplicate table makes Grok drop every MCP server.
+    const parsed = parseToml(toml) as any;
+    expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
+    expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
+    expect(toml.match(/\[\[hooks\.SessionStart\]\]/g)).toHaveLength(1);
+    expect(toml.match(/\[\[hooks\.UserPromptSubmit\]\]/g)).toHaveLength(1);
+    expect(toml).not.toContain(join("/opt", MARKER, "old-dist"));
+    expect(toml).toContain(join(ctx.dist, "mcp-server.js"));
+    expect(toml).toContain('[ui]\ntheme = "dark"'); // foreign config preserved
+  });
+
+  it("leaves a foreign MCP server and unrelated hooks untouched", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(
+      configPath(ctx),
+      `${legacyToml(join("/opt", MARKER, "old-dist"))}\n` +
+        `[mcp_servers.other]\ncommand = "other-server"\n\n` +
+        `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = "command"\n  command = "my-own-script"\n`
+    );
+    run(["install", "grok-build"], ctx);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    const parsed = parseToml(toml) as any;
+    expect(parsed.mcp_servers.other.command).toBe("other-server");
+    expect(parsed.hooks.Stop[0].hooks[0].command).toBe("my-own-script");
+    expect(toml).toContain('[mcp_servers.other]\ncommand = "other-server"');
+    expect(toml).toContain('command = "my-own-script"');
+    expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
+  });
+
+  // The reported end state (#4295): the duplicate already exists, so config.toml no longer parses
+  // and `grok mcp list` shows nothing. Re-running install must repair it.
+  it("repairs a config already broken by a duplicated block", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    const legacy = legacyToml(join("/opt", MARKER, "old-dist"));
+    writeFileSync(configPath(ctx), legacy);
+    run(["install", "grok-build"], ctx);
+    // Re-create the pre-fix damage: the marked block appended on top of the untouched legacy one.
+    const installed = readFileSync(configPath(ctx), "utf8");
+    const marked = installed.slice(installed.indexOf("# HINDSIGHT_CODING_AGENTS_GROK_START"));
+    const broken = `${legacy}\n${marked}`;
+    expect(() => parseToml(broken)).toThrow();
+    writeFileSync(configPath(ctx), broken);
+
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    const toml = readFileSync(configPath(ctx), "utf8");
+    const parsed = parseToml(toml) as any;
+    expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
+    expect(parsed.mcp_servers.hindsight.args).toEqual([join(ctx.dist, "mcp-server.js")]);
+    expect(toml.match(/HINDSIGHT_CODING_AGENTS_GROK_START/g)).toHaveLength(1);
+  });
+
+  it("uninstall removes an unmarked legacy block too", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    run(["uninstall", "grok-build"], ctx);
+
+    const toml = readFileSync(configPath(ctx), "utf8");
+    expect(parseToml(toml)).toEqual({ ui: { theme: "dark" } });
+    expect(toml).not.toContain("[mcp_servers.hindsight]");
+    expect(toml).not.toContain("grok-sessionstart-hook.js");
+    expect(toml).toContain('[ui]\ntheme = "dark"');
   });
 
   it("removes only its marked Grok TOML block", () => {

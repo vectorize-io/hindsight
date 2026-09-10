@@ -84,5 +84,7 @@ export default defineConfig({
     /^zod/,
     /^@vectorize-io\/hindsight-all/,
     /^jsonc-parser/,
+    // smol-toml likewise: installer.js parses ~/.grok/config.toml with it.
+    /^smol-toml/,
   ],
 });
