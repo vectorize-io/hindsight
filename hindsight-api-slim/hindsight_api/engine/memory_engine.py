@@ -6678,6 +6678,16 @@ class MemoryEngine(MemoryEngineInterface):
 
         if not unit_ids:
             return {}
+        # A store-owned bank keeps its memories outside SQL, so `memory_units` holds none of
+        # them and this read can only come back empty. It is not a cheap empty read either:
+        # the table carries partial vector indexes per bank, and the planner opens and locks
+        # every one of them to plan any statement against it. In a tenant with a few thousand
+        # banks that is ~15k locks and ~450ms of planning to return nothing -- on every recall,
+        # which is where this is called from.
+        from .memories import get_memories
+
+        if get_memories().store_owned_for(bank_id):
+            return {}
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}
