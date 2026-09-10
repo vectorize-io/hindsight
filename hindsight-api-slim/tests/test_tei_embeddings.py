@@ -195,3 +195,26 @@ def test_tei_batch_size_env_var_reaches_the_client() -> None:
             else:
                 os.environ[key] = value
         clear_config_cache()
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expect_verify"),
+    [("http://tei:8080", False), ("https://tei.example.com", True)],
+)
+def test_thread_client_skips_tls_setup_only_for_plaintext(
+    monkeypatch: pytest.MonkeyPatch, base_url: str, expect_verify: bool
+) -> None:
+    # A plaintext TEI never uses TLS, so building an SSLContext (and loading the CA bundle)
+    # per thread client is pure overhead; an https TEI must still verify.
+    seen: list[object] = []
+    real_client = httpx.Client
+
+    def spy(*args: object, **kwargs: object) -> httpx.Client:
+        seen.append(kwargs.get("verify", True))
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", spy)
+    embeddings = RemoteTEIEmbeddings(base_url=base_url)
+    embeddings._client_for_thread().close()
+
+    assert seen == [expect_verify]

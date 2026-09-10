@@ -4650,11 +4650,12 @@ def create_app(
         from hindsight_api.loop_lag import install as _install_loop_lag
         from hindsight_api.worker import WorkerPoller
 
+        config = get_config()
+
         # Started here rather than at import time because it needs a running loop, and it must run
         # on the loop that actually serves requests — that is the only one whose lag says anything.
-        _install_loop_lag()
+        _install_loop_lag(config.loop_lag_report_seconds)
 
-        config = get_config()
         poller = None
         poller_task = None
         loop_watchdog = None
@@ -4810,9 +4811,10 @@ def create_app(
 
     # Compressing a recall response costs ~5% of the request's CPU. Tunable so a deployment
     # that is CPU-bound rather than bandwidth-bound can raise the floor past its response size.
-    _gzip_min = int(os.environ.get("HINDSIGHT_API_GZIP_MIN_SIZE", "1024"))
-    if _gzip_min >= 0:
-        app.add_middleware(GZipMiddleware, minimum_size=_gzip_min)
+    # A negative floor drops the middleware entirely.
+    gzip_min_size = get_config().gzip_min_size
+    if gzip_min_size >= 0:
+        app.add_middleware(GZipMiddleware, minimum_size=gzip_min_size)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format
@@ -4974,7 +4976,6 @@ def _register_routes(app: FastAPI):
     audited = _make_audited_http(lambda: getattr(app.state, "audit_logger", None))
 
     def get_request_context(request: Request, authorization: str | None = Header(default=None)) -> RequestContext:
-        request.scope.setdefault("hs_deps_t0", time.time())
         """
         Extract request context from the Authorization header.
 
@@ -4989,6 +4990,8 @@ def _register_routes(app: FastAPI):
         empty by default, so no other header reaches extension code unless an
         operator opts in.
         """
+        # Dependency-resolution start, read by api_recall to split `http_to_handler`.
+        request.scope.setdefault("hs_deps_t0", time.time())
         api_key = None
         if authorization:
             if authorization.lower().startswith("bearer "):
@@ -5063,6 +5066,7 @@ def _register_routes(app: FastAPI):
                 )
 
             request.scope["hs_deps_done"] = time.time()
+
         return _precheck_dep
 
     # Global exception handler for authentication errors

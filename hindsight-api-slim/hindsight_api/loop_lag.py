@@ -12,7 +12,8 @@ other callbacks (or blocked in a synchronous call) while this one was ready. If 
 requests are slow, the time is in a real await and the phases are missing one; if lag tracks
 request latency, the loop is oversubscribed and no amount of I/O tuning helps.
 
-Enabled by HINDSIGHT_API_LOOP_LAG (seconds between reports); unset means the task never starts.
+Enabled by HINDSIGHT_API_LOOP_LAG_REPORT_SECONDS (seconds between reports); 0 means the task never
+starts.
 """
 
 from __future__ import annotations
@@ -28,16 +29,16 @@ logger = logging.getLogger(__name__)
 #: enough that the probe itself is not a meaningful share of the loop's work.
 _TICK_S = 0.05
 
+#: Floor on the report interval, so a typo like `0.01` does not turn the probe into log spam.
+_MIN_REPORT_S = 1.0
 
-def _interval() -> float | None:
-    raw = os.getenv("HINDSIGHT_API_LOOP_LAG")
-    if not raw:
-        return None
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        logger.warning("[loop-lag] ignoring unparseable HINDSIGHT_API_LOOP_LAG=%r", raw)
-        return None
+# The loop only keeps a weak reference to a task, so an unreferenced one can be garbage-collected
+# mid-run and the probe would silently stop reporting.
+_tasks: set[asyncio.Task[None]] = set()
+
+
+def _percentile(sorted_lags: list[float], p: float) -> float:
+    return sorted_lags[min(len(sorted_lags) - 1, int(len(sorted_lags) * p / 100))]
 
 
 async def _run(report_every: float) -> None:
@@ -50,24 +51,24 @@ async def _run(report_every: float) -> None:
             await asyncio.sleep(_TICK_S)
             lags.append((time.monotonic() - t0 - _TICK_S) * 1000.0)
         lags.sort()
-        n = len(lags)
-        q = lambda p: lags[min(n - 1, int(n * p / 100))]  # noqa: E731
         logger.info(
             "[loop-lag] pid=%d n=%d p50=%.1fms p90=%.1fms p99=%.1fms max=%.1fms",
-            pid, n, q(50), q(90), q(99), lags[-1],
+            pid,
+            len(lags),
+            _percentile(lags, 50),
+            _percentile(lags, 90),
+            _percentile(lags, 99),
+            lags[-1],
         )
 
 
-def install() -> bool:
-    """Start the probe on the running loop. No-op unless the env var asks for it."""
-    every = _interval()
-    if every is None:
-        return False
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        # Called before the loop exists (import time); the caller retries from a startup hook.
-        return False
-    asyncio.ensure_future(_run(every))
-    logger.info("[loop-lag] armed: reporting every %.0fs", every)
-    return True
+def install(report_every: float) -> asyncio.Task[None] | None:
+    """Start the probe on the running loop. No-op when `report_every` is 0 (the default)."""
+    if report_every <= 0:
+        return None
+    report_every = max(_MIN_REPORT_S, report_every)
+    task = asyncio.get_running_loop().create_task(_run(report_every))
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    logger.info("[loop-lag] armed: reporting every %.0fs", report_every)
+    return task

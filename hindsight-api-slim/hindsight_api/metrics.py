@@ -33,11 +33,6 @@ if TYPE_CHECKING:
     import asyncpg
 
 
-_RECALL_DIAGNOSTIC_PHASES = os.environ.get(
-    "HINDSIGHT_API_RECALL_DIAGNOSTIC_PHASES", "true"
-).lower() not in ("0", "false", "no")
-
-
 def _get_tenant() -> str:
     """Get current tenant (schema) from context for metrics labeling."""
     # Import here to avoid circular imports
@@ -428,6 +423,7 @@ class MetricsCollector(MetricsCollectorBase):
         from .config import get_config
 
         self._include_bank_id = get_config().metrics_include_bank_id
+        self._record_diagnostic_phases = get_config().recall_diagnostic_phases
 
         # Operation latency histogram (in seconds)
         # Records duration of retain, recall, reflect operations
@@ -867,7 +863,7 @@ class MetricsCollector(MetricsCollectorBase):
         per-arm timing inside `parallel_retrieval`, say — so a consumer summing phases into a
         request total can exclude them instead of double-counting.
         """
-        if diagnostic and not _RECALL_DIAGNOSTIC_PHASES:
+        if diagnostic and not self._record_diagnostic_phases:
             return
         attrs = {"phase": phase, "tenant": _get_tenant(), "diagnostic": str(bool(diagnostic)).lower()}
         # One instrument, not two: the histogram already carries `_count` for this attribute set,
