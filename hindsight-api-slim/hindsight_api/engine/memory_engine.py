@@ -199,10 +199,21 @@ def _bind_bank_id(
             if key is not None and type(value) is dict:
                 value = value.get(key)
             token = _current_bank_id.set(value if type(value) is str else None)
+            # Times the decorated coroutine itself, so "inside recall_async" can be separated from
+            # "between the handler's timer and the body running". Every await inside the body is
+            # already a phase and they summed to about half of `engine_call`, with no CPU to
+            # explain the rest — so the split has to be measured rather than reasoned about.
+            _t0_body = time.time()
             try:
                 return await func(*args, **kwargs)
             finally:
                 _current_bank_id.reset(token)
+                if func.__name__ == "recall_async":
+                    try:
+                        get_metrics_collector().record_recall_phase(
+                            "recall_async_body", time.time() - _t0_body, diagnostic=True)
+                    except Exception:
+                        pass
 
         return wrapper
 
@@ -7204,6 +7215,7 @@ class MemoryEngine(MemoryEngineInterface):
         _auth_t0 = time.time()
         await self._authenticate_tenant(request_context)
         _auth_s = time.time() - _auth_t0
+        get_metrics_collector().record_recall_phase("engine_auth", _auth_s)
         if _auth_s > 0.025:
             logger.info("[RECALL AUTH] bank=%s tenant_auth=%.3fs", bank_id, _auth_s)
 
@@ -7342,12 +7354,15 @@ class MemoryEngine(MemoryEngineInterface):
             result = None
             error_msg = None
             semaphore_wait_start = time.time()
+            _t0_sem = time.time()
             async with self._search_semaphore:
+                get_metrics_collector().record_recall_phase("semaphore_acquire", time.time() - _t0_sem)
                 semaphore_wait = time.time() - semaphore_wait_start
                 # Retry loop for connection errors
                 max_retries = 3
                 for attempt in range(max_retries + 1):
                     try:
+                        _t0_swr2 = time.time()
                         result = await self._search_with_retries(
                             bank_id,
                             query,
@@ -7381,6 +7396,7 @@ class MemoryEngine(MemoryEngineInterface):
                             enable_temporal_retrieval=enable_temporal_retrieval,
                             enable_graph_retrieval=enable_graph_retrieval,
                         )
+                        get_metrics_collector().record_recall_phase("search_with_retries", time.time() - _t0_swr2, diagnostic=True)
                         break  # Success - exit retry loop
                     except OperationCancelledError:
                         # Client disconnected — propagate to the HTTP layer (499);
@@ -7460,7 +7476,9 @@ class MemoryEngine(MemoryEngineInterface):
                             error=error_msg,
                         )
                         try:
+                            _t0_vp = time.time()
                             await self._operation_validator.on_recall_complete(result_ctx)
+                            get_metrics_collector().record_recall_phase("validate_post", time.time() - _t0_vp)
                         except Exception as hook_err:
                             logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
                     raise Exception(error_msg)
@@ -7487,7 +7505,9 @@ class MemoryEngine(MemoryEngineInterface):
                     error=None,
                 )
                 try:
+                    _t0_vp = time.time()
                     await self._operation_validator.on_recall_complete(result_ctx)
+                    get_metrics_collector().record_recall_phase("validate_post", time.time() - _t0_vp)
                 except Exception as e:
                     logger.warning(f"Post-recall hook error (non-fatal): {e}")
 
