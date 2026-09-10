@@ -6,6 +6,7 @@ import {
   SURVEY_AGENT_CONFIG,
   SURVEY_PROMPT,
 } from "./survey";
+import { releaseLease, type SurveySupervisorSpec } from "./survey-lease";
 
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, readdirSync, writeFileSync } from "node:fs";
@@ -32,7 +33,11 @@ afterEach(() => {
   rmSync(lockDir, { recursive: true, force: true });
 });
 function startCodebaseSurvey(repoDir: string, opts: Parameters<typeof startSurvey>[1] = {}) {
-  return startSurvey(repoDir, { lockDir, ...opts });
+  return startSurvey(repoDir, {
+    lease: { dir: lockDir },
+    supervisorPath: "/x/survey-supervisor.js",
+    ...opts,
+  });
 }
 
 describe("resolveClaudeBin", () => {
@@ -75,6 +80,15 @@ describe("startCodebaseSurvey", () => {
     });
   }
   const yes = () => true;
+  /** The survey agent is launched through the lease supervisor: decode the agent's bin + argv
+   *  from the supervisor's spec; the options are the real spawn's (the agent inherits them). */
+  function launched(spawn: ReturnType<typeof fakeSpawn>, i = 0) {
+    const [node, [script, specJson], options] = spawn.mock.calls[i];
+    expect(node).toBe("node");
+    expect(script).toBe("/x/survey-supervisor.js");
+    const spec = JSON.parse(specJson) as SurveySupervisorSpec;
+    return [spec.bin, spec.args, options, spec] as const;
+  }
 
   // ── claude recipe (the default / self-contained inline-MCP one) ────────────────────────────────
   it("claude: spawns the resolved binary with the expected argv, sandbox, and options", async () => {
@@ -88,7 +102,7 @@ describe("startCodebaseSurvey", () => {
     });
 
     expect(spawn).toHaveBeenCalledTimes(1);
-    const [bin, argv, options] = spawn.mock.calls[0];
+    const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("/bin/claude");
 
     expect(argv).toContain("-p");
@@ -131,7 +145,7 @@ describe("startCodebaseSurvey", () => {
   it("claude: defaults model to 'haiku' and --max-budget-usd to 2", async () => {
     const spawn = fakeSpawn();
     await startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes });
-    const argv = spawn.mock.calls[0][1];
+    const argv = launched(spawn)[1];
     expect(argv[argv.indexOf("--model") + 1]).toBe("haiku");
     expect(argv[argv.indexOf("--max-budget-usd") + 1]).toBe("2");
   });
@@ -145,7 +159,7 @@ describe("startCodebaseSurvey", () => {
       spawn,
       exists: (b) => b === "codex",
     });
-    const [bin, argv, options] = spawn.mock.calls[0];
+    const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("codex");
     expect(argv.slice(0, 3)).toEqual(["exec", "--sandbox", "read-only"]);
     expect(argv).toContain(SURVEY_PROMPT);
@@ -169,7 +183,7 @@ describe("startCodebaseSurvey", () => {
       spawn,
       exists: (b) => b === "agy",
     });
-    const [bin, argv, options] = spawn.mock.calls[0];
+    const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("agy");
     expect(argv).toEqual(["-p", SURVEY_PROMPT, "--mode=plan"]);
     expect(options.env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
@@ -183,7 +197,7 @@ describe("startCodebaseSurvey", () => {
       spawn,
       exists: (b) => b === "opencode",
     });
-    const [bin, argv, options] = spawn.mock.calls[0];
+    const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("opencode");
     expect(argv).toEqual(["run", "--agent", SURVEY_AGENT, SURVEY_PROMPT]);
     // `plan` appends a read-only system-reminder that talks models out of the ingest call the
@@ -220,7 +234,7 @@ describe("startCodebaseSurvey", () => {
     } finally {
       delete process.env.HINDSIGHT_CODEX_BIN;
     }
-    expect(spawn.mock.calls[0][0]).toBe("/opt/codex");
+    expect(launched(spawn)[0]).toBe("/opt/codex");
   });
 
   it("falls back to another available agent when the preferred harness's CLI is missing", async () => {
@@ -232,7 +246,7 @@ describe("startCodebaseSurvey", () => {
       spawn,
       exists: (b) => b === "codex",
     });
-    const [bin, argv] = spawn.mock.calls[0];
+    const [bin, argv] = launched(spawn);
     expect(bin).toBe("codex");
     expect(argv[0]).toBe("exec");
   });
@@ -266,16 +280,39 @@ describe("startCodebaseSurvey", () => {
     );
   });
 
-  it("admits one concurrent survey and permits retry after it exits", async () => {
+  it("launches the agent under the detached lease supervisor, which owns the lease", async () => {
+    const spawn = fakeSpawn();
+    await expect(
+      startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes })
+    ).resolves.toBe(true);
+    const [bin, , options, spec] = launched(spawn);
+    expect(bin).toBe("/bin/claude");
+    expect(options).toMatchObject({ cwd: "/repo", detached: true, stdio: "ignore" });
+    expect(readdirSync(spec.lease.directory)).toEqual([spec.lease.owner]);
+    expect(spawn.mock.results[0].value.unref).toHaveBeenCalled();
+  });
+
+  it("admits one concurrent survey and permits retry once the lease is released", async () => {
     const spawn = fakeSpawn();
     const results = await Promise.all(
       Array.from({ length: 6 }, () => startCodebaseSurvey("/repo", { spawn, exists: yes }))
     );
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(results.filter(Boolean)).toHaveLength(1);
-    spawn.mock.results[0].value.emit("exit", 0);
+    releaseLease(launched(spawn)[3].lease); // what the supervisor does when the agent exits
     await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(true);
     expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the lease when the supervisor cannot be spawned", async () => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    const failing = vi.fn().mockReturnValue(child);
+    const launch = startCodebaseSurvey("/repo", { spawn: failing, exists: yes });
+    child.emit("error", Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" }));
+    await expect(launch).resolves.toBe(false);
+    await expect(startCodebaseSurvey("/repo", { spawn: fakeSpawn(), exists: yes })).resolves.toBe(
+      true
+    );
   });
 
   it("keys admission by the resolved API, credential and bank, not repository or asking harness", async () => {
@@ -299,57 +336,54 @@ describe("startCodebaseSurvey", () => {
     expect(spawn).toHaveBeenCalledTimes(4);
   });
 
-  it("does not reclaim an owner whose PID cannot be probed", async () => {
-    const spawn = fakeSpawn();
-    await startCodebaseSurvey("/repo", { spawn, exists: yes });
-    vi.spyOn(process, "kill").mockImplementation(() => {
-      throw Object.assign(new Error("denied"), { code: "EPERM" });
+  it("a disabled plugin launches nothing", async () => {
+    vi.mocked(resolveHostConfig).mockReturnValue({
+      cfg: { ...resolveConfig({}), disabled: true },
+      bankId: "",
     });
+    const spawn = fakeSpawn();
     await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(false);
-    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("an old child's exit cannot release a replacement generation", async () => {
-    const spawn = fakeSpawn();
-    await startCodebaseSurvey("/repo", { spawn, exists: yes });
-    const oldChild = spawn.mock.results[0].value;
-    vi.spyOn(process, "kill").mockImplementationOnce(() => {
-      throw Object.assign(new Error("gone"), { code: "ESRCH" });
-    });
-    await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(true);
-    oldChild.emit("exit", 0);
-    await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(false);
-    expect(spawn).toHaveBeenCalledTimes(2);
-  });
-
-  it("deduplicates independent hooks after their parents exit and recovers a dead survey", async () => {
+  // Real processes end to end: bundled hook + bundled supervisor + a stand-in agent.
+  it("single-flights independent hooks, survives their exit, and recovers a dead supervisor", async () => {
+    const build = (entry: string, outfile: string) =>
+      buildSync({
+        entryPoints: [fileURLToPath(new URL(entry, import.meta.url))],
+        bundle: true,
+        platform: "node",
+        format: "esm",
+        outfile,
+        banner: {
+          js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+        },
+      });
     const bundle = join(lockDir, "survey.mjs");
-    buildSync({
-      entryPoints: [fileURLToPath(new URL("./survey.ts", import.meta.url))],
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      outfile: bundle,
-      banner: {
-        js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
-      },
-    });
+    const supervisor = join(lockDir, "survey-supervisor.mjs");
+    build("./survey.ts", bundle);
+    build("../survey-supervisor.ts", supervisor);
     const config = join(lockDir, "config.json");
     writeFileSync(
       config,
-      JSON.stringify({
-        bankId: "bank-1",
-        apiUrl: "https://api.example.test",
-        apiToken: "test-token",
-      })
+      JSON.stringify({ bankId: "bank-1", apiUrl: "https://api.example.test", apiToken: "t" })
     );
-    const paidChild = `require('node:fs').writeFileSync(${JSON.stringify(lockDir)} + '/pid-' + process.pid, ''); setInterval(() => {}, 1000);`;
+    // The stand-in agent records its pid and its supervisor's, then idles like a long survey.
+    const agent = `require('node:fs').writeFileSync(${JSON.stringify(lockDir)} + '/pid-' + process.pid + '-' + process.ppid, ''); setInterval(() => {}, 1000);`;
+    const staleMs = 2_000;
     const hook = `
       import { startCodebaseSurvey } from ${JSON.stringify(pathToFileURL(bundle).href)};
       import { spawn } from 'node:child_process';
       const started = await startCodebaseSurvey(${JSON.stringify(lockDir)}, {
-        exists: () => true, mcpServerPath: '/unused-mcp-server.js', lockDir: ${JSON.stringify(join(lockDir, "locks"))},
-        spawn: () => spawn(process.execPath, ['-e', ${JSON.stringify(paidChild)}], { detached: true, stdio: 'ignore' }),
+        exists: () => true,
+        mcpServerPath: '/unused-mcp-server.js',
+        supervisorPath: ${JSON.stringify(supervisor)},
+        lease: { dir: ${JSON.stringify(join(lockDir, "locks"))}, staleMs: ${staleMs}, heartbeatMs: 200 },
+        // Swap the real agent for the stand-in; the supervisor itself runs for real.
+        spawn: (_node, [script, specJson], options) => {
+          const spec = { ...JSON.parse(specJson), bin: process.execPath, args: ['-e', ${JSON.stringify(agent)}] };
+          return spawn(process.execPath, [script, JSON.stringify(spec)], options);
+        },
       });
       console.log(JSON.stringify(started));
     `;
@@ -368,31 +402,52 @@ describe("startCodebaseSurvey", () => {
       );
       return JSON.parse(stdout.trim()) as boolean;
     };
-    const pids = () =>
+    const race = async () =>
+      (await Promise.all(Array.from({ length: 6 }, runHook))).filter(Boolean).length;
+    const agents = () =>
       readdirSync(lockDir)
         .filter((name) => name.startsWith("pid-"))
-        .map((name) => Number(name.slice(4)));
+        .map((name) => {
+          const [, pid, ppid] = name.split("-").map(Number);
+          return { pid, ppid };
+        });
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     try {
-      expect((await Promise.all(Array.from({ length: 6 }, runHook))).filter(Boolean)).toHaveLength(
-        1
-      );
-      await vi.waitFor(() => expect(pids()).toHaveLength(1));
-      // Every hook has exited, but the paid child is alive: no false stale-owner recovery.
+      expect(await race()).toBe(1);
+      await vi.waitFor(() => expect(agents()).toHaveLength(1));
+      // Every hook has exited; past the stale window the heartbeat still holds the lease.
+      await sleep(staleMs * 2);
       expect(await runHook()).toBe(false);
-      const pid = pids()[0];
-      process.kill(pid, "SIGTERM");
-      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
-      // Multiple fresh hooks race to reclaim the SAME dead generation.
-      expect((await Promise.all(Array.from({ length: 6 }, runHook))).filter(Boolean)).toHaveLength(
-        1
-      );
-      await vi.waitFor(() => expect(pids()).toHaveLength(2));
+
+      // The agent finishes: the supervisor releases, and exactly one new survey is admitted.
+      const first = agents()[0];
+      process.kill(first.pid, "SIGTERM");
+      await vi.waitFor(() => expect(alive(first.ppid)).toBe(false));
+      expect(await race()).toBe(1);
+      await vi.waitFor(() => expect(agents().filter((a) => alive(a.pid))).toHaveLength(1));
+
+      // The supervisor dies without releasing: its lease goes stale, and one reclaimer wins.
+      const second = agents().find((a) => alive(a.pid))!;
+      process.kill(second.ppid, "SIGKILL");
+      expect(await runHook()).toBe(false); // not stale yet
+      await sleep(staleMs * 2);
+      expect(await race()).toBe(1);
     } finally {
-      for (const pid of pids()) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          /* already exited */
+      for (const { pid, ppid } of agents()) {
+        for (const p of [pid, ppid]) {
+          try {
+            process.kill(p, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
         }
       }
     }
