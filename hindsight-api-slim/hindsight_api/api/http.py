@@ -9357,11 +9357,19 @@ def _register_routes(app: FastAPI):
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(
+            result = await app.state.memory.delete_bank(
                 bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
             )
-
-            return DeleteResponse(success=True)
+            # The delete is the only place that knows exactly how many units went; a caller
+            # cannot recover that number afterwards (a pre/post count races with concurrent
+            # retains), so report it instead of a bare success.
+            deleted_count = result.get("memory_units_deleted", 0)
+            scope = f"{type} memory units" if type else "memory units"
+            return DeleteResponse(
+                success=True,
+                message=f"Deleted {deleted_count} {scope} from bank '{bank_id}'",
+                deleted_count=deleted_count,
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
