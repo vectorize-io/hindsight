@@ -163,9 +163,7 @@ def stub_environment(stub_url: str) -> dict[str, str]:
     }
 
 
-def start_hindsight_server(
-    *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
-) -> HindsightServer:
+def start_hindsight_server(*, stub_url: str, log_path: Path) -> HindsightServer:
     port = free_port()
 
     env = os.environ.copy()
@@ -193,7 +191,6 @@ def start_hindsight_server(
             # catch are mostly in that half.
         }
     )
-    env.update(extra_env or {})
 
     # `hindsight-api` calls load_dotenv(find_dotenv(usecwd=True), override=True) at
     # startup, and a discovered .env deliberately wins over the ambient environment
