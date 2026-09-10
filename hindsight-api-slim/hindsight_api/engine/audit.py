@@ -9,6 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+try:
+    import orjson as _orjson
+except ImportError:  # optional: stdlib json is the fallback
+    _orjson = None
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -82,6 +87,9 @@ class AuditEntry:
     ended_at: datetime | None = None
     request: dict[str, Any] | None = None
     response: dict[str, Any] | None = None
+    # The response already serialized, when the caller could do it in one step (a pydantic
+    # model's Rust ``model_dump_json``). Preferred over ``response`` by the writer.
+    response_json: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -103,6 +111,14 @@ def _safe_json(data: Any) -> str | None:
     if data is None:
         return None
     try:
+        if _orjson is not None:
+            # A recall's audit row carries its whole response; stdlib json.dumps of it was ~3.5%
+            # of the API's busy CPU in a profile at 450 recalls/s. orjson emits the same JSON
+            # document (the column is JSON, so key order and escaping are not observable).
+            try:
+                return _orjson.dumps(data, default=_json_default, option=_orjson.OPT_NON_STR_KEYS).decode()
+            except TypeError:
+                pass
         return json.dumps(data, default=_json_default)
     except Exception:
         logger.debug("Failed to serialize audit data", exc_info=True)
@@ -210,7 +226,7 @@ class AuditLogger:
                     entry.started_at,
                     entry.ended_at,
                     _safe_json(entry.request),
-                    _safe_json(entry.response),
+                    entry.response_json if entry.response_json is not None else _safe_json(entry.response),
                     _safe_json(entry.metadata) or "{}",
                 )
         except Exception as e:

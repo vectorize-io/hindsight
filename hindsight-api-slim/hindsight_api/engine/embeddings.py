@@ -9,6 +9,10 @@ The database schema is automatically adjusted to match the model's dimension.
 Configuration via environment variables - see hindsight_api.config for all env var names.
 """
 
+try:
+    import orjson as _orjson
+except ImportError:  # optional: response.json() is the fallback
+    _orjson = None
 import asyncio
 import base64
 import contextvars
@@ -861,6 +865,10 @@ class RemoteTEIEmbeddings(Embeddings):
             )
         except httpx.HTTPError as e:
             raise RuntimeError(f"TEI embedding request failed: {e}")
+        # A batch of embeddings is a large JSON array of floats; orjson parses it several times
+        # faster than the stdlib decoder behind response.json() (1.4% of busy CPU at 450 recalls/s).
+        if _orjson is not None:
+            return _orjson.loads(response.content)
         return response.json()
 
 
