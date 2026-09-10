@@ -34,6 +34,10 @@ STEP_ANCHORS: dict[str, str] = {
     # that reshapes the prose into the caller's schema. Anchored separately
     # because a story about the schema is about this call, not the answer.
     "reflect_structured": "You are a precise data extraction assistant.",
+    # An over-long reflect answer gets a *second* call that rewrites it to the
+    # caller's token budget. Anchored separately because a story about the budget
+    # is about this call, not the one that wrote the answer.
+    "reflect_trim": "Rewrite the user's text so it fits within the requested token budget.",
     "connection_probe": "Say 'ok'",
 }
 
