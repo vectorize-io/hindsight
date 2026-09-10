@@ -646,7 +646,7 @@ class PostgreSQLOps(DataAccessOps):
     ) -> list:
         # Same claim shape as claim_graph_maintenance_batch: pick the oldest
         # batch by enqueued_at, but acquire the row locks in (bank_id, entity_id)
-        # order — the order enqueue_entity_maintenance takes them — so a
+        # order — the order release_entity_postings takes them — so a
         # concurrent enqueue can never cycle against this claim. `chosen` is
         # MATERIALIZED so the enqueued_at pick is fenced from the locking clause,
         # and `FOR UPDATE OF q ... ORDER BY q.entity_id` puts LockRows above the

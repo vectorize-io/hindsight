@@ -447,6 +447,11 @@ class OracleOps(DataAccessOps):
         survivors = sorted(str(row["id"]) for row in rows)
         if not survivors:
             return 0
+        # Credits every survivor rather than only the rows the insert added, as
+        # the PG side does with RETURNING (MERGE/executemany has none). The two
+        # agree because a reverting unit has no postings left to conflict with —
+        # the cascade took them at invalidation — so DO NOTHING never fires. A
+        # caller that re-posted a unit whose postings survive would over-credit.
         await conn.executemany(
             f"INSERT INTO {ue_table} (unit_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             [(unit_id, eid) for eid in survivors],
