@@ -4808,7 +4808,11 @@ def create_app(
     app.state.memory = memory
     app.state.audit_logger = memory.audit_logger
 
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # Compressing a recall response costs ~5% of the request's CPU. Tunable so a deployment
+    # that is CPU-bound rather than bandwidth-bound can raise the floor past its response size.
+    _gzip_min = int(os.environ.get("HINDSIGHT_API_GZIP_MIN_SIZE", "1024"))
+    if _gzip_min >= 0:
+        app.add_middleware(GZipMiddleware, minimum_size=_gzip_min)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format

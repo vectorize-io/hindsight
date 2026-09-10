@@ -721,8 +721,14 @@ class RemoteTEIEmbeddings(Embeddings):
             return self._injected_client
         client = getattr(self._thread_clients, "client", None)
         if client is None or client.is_closed:
+            # `verify` builds an SSLContext and loads the system CA bundle even when every
+            # request is plain http:// — which is what an in-cluster TEI is. ssl.load_default_certs
+            # showed up in the profile for exactly this reason, once per thread the pool retires
+            # and recreates.
+            verify = not str(self.base_url or "").startswith("http://")
             client = httpx.Client(
                 timeout=self.timeout,
+                verify=verify,
                 limits=httpx.Limits(keepalive_expiry=min(self.timeout, TEI_KEEPALIVE_EXPIRY_SECONDS)),
             )
             self._thread_clients.client = client
