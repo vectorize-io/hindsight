@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hindsight-system-evals"
+version = "0.1.0"
+description = "Blackbox quality evals: a real Hindsight server and a real model, scored by an independent judge"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-timeout>=2.4.0",
+    "httpx>=0.27.0",
+    "pydantic>=2",
+    "pyyaml>=6",
+    # The judge only — never the server under test. Covers both a developer's
+    # Gemini API key and the perf workflow's VertexAI service account.
+    "google-genai>=1.0.0",
+    "google-auth>=2.0.0",
+    "hindsight-client",
+]
+
+[tool.uv.sources]
+# editable, for the same reason the system tests give: a copied client silently
+# freezes the API surface at whenever the venv was last built.
+hindsight-client = { path = "../hindsight-clients/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_system_evals"]
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+# Must exceed HINDSIGHT_EVAL_SETTLE_TIMEOUT (900s default), or pytest kills a
+# test in the middle of the settle it is legitimately waiting on. One eval waits
+# on fact extraction, consolidation and a refresh, all real model calls.
+addopts = "--timeout 2400 -v"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "full: the complete eval set; deselected in minimum-acceptance runs",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+ignore = ["E501"]

@@ -47,6 +47,17 @@ on:
         description: "Obs benchmark fraction (0-1] of each document to run."
         type: string
         default: "1.0"
+      system_evals_skip:
+        description: "Skip the system-evals quality job (knowledge-page convergence)"
+        type: boolean
+        default: false
+      system_evals_mode:
+        description: "system-evals mode: full (every category) or minimum (the two cases that have regressed)."
+        type: choice
+        options:
+          - full
+          - minimum
+        default: full
       ref:
         description: "Git ref to test (branch, tag, or SHA). Defaults to main."
         type: string
@@ -295,3 +306,86 @@ jobs:
         PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: ./scripts/benchmarks/publish-obs-results.sh hindsight-dev/obs-results.json
+
+  system-evals:
+    # Knowledge-page convergence, graded by an independent judge. Blackbox: a real
+    # hindsight-api process driven only through the published Python client, the
+    # same shape as hindsight-system-tests — except the model is REAL, because a
+    # quality eval against a stub would score the stub. That also means it needs
+    # provider secrets, which is why it lives here and not in the PR workflow.
+    if: inputs.system_evals_skip != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HINDSIGHT_EVAL_LLM_PROVIDER: vertexai
+      HINDSIGHT_EVAL_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      # A different model from the one under test: a model grading its own output
+      # agrees with itself.
+      HINDSIGHT_EVAL_JUDGE_PROVIDER: vertexai
+      HINDSIGHT_EVAL_JUDGE_MODEL: google/gemini-2.5-flash
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Install server and eval dependencies
+      # The server under test keeps its default local embeddings and reranker (only
+      # the LLM is real-provider), so it needs the full extras, unlike test-system.
+      run: |
+        (cd hindsight-api-slim && uv sync --frozen --all-extras --index-strategy unsafe-best-match)
+        (cd hindsight-system-evals && uv sync)
+
+    - name: Run system evals
+      run: |
+        MODE="${{ inputs.system_evals_mode }}"
+        FLAG="--full"
+        if [ "$MODE" = "minimum" ]; then FLAG=""; fi
+        cd hindsight-system-evals
+        uv run pytest evals $FLAG --output system-evals-results.json
+
+    - name: Upload system-evals results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: system-evals-results-${{ github.sha }}
+        path: hindsight-system-evals/system-evals-results.json
+        retention-days: 90
+
+    - name: Publish system-evals to dashboard
+      # Published even when an eval fails: for a quality metric the red run IS the
+      # data point, and dropping it would hide exactly the regressions it exists to
+      # show. Skipped only when nothing was written (the run died before grading).
+      if: >-
+        always() &&
+        hashFiles('hindsight-system-evals/system-evals-results.json') != '' &&
+        (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-system-evals-results.sh hindsight-system-evals/system-evals-results.json

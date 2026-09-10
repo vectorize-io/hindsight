@@ -247,7 +247,8 @@ async def build_hard_corpus(memory: MemoryEngine, *, bank_id: str | None = None)
     await memory.get_bank_profile(bank_id=bank_id, request_context=ctx)
     await memory._config_resolver.update_bank_config(bank_id, {"enable_auto_consolidation": False}, ctx)
 
-    facts, questions = hard_corpus.build()
+    hard = hard_corpus.build()
+    facts, questions = hard.facts, hard.questions
     corpus = Corpus(
         questions=[
             Question(

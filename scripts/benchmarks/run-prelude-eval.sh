@@ -15,6 +15,9 @@ MODE="retrieval"
 if [ "${1:-}" = "--answers" ]; then
     MODE="answers"
     shift
+elif [ "${1:-}" = "--pages" ]; then
+    MODE="pages"
+    shift
 fi
 
 # A DEDICATED pg0 instance, not the shared default. The eval builds ~1000 rows
@@ -30,7 +33,7 @@ _CALLER_MODEL="${HINDSIGHT_API_LLM_MODEL:-}"
 _CALLER_PROVIDER="${HINDSIGHT_API_LLM_PROVIDER:-}"
 export HINDSIGHT_API_DATABASE_URL="${_CALLER_DB:-pg0://prelude-eval}"
 
-if [ "$MODE" = "answers" ]; then
+if [ "$MODE" = "answers" ] || [ "$MODE" = "pages" ]; then
     # Needs a real reflect model AND a judge key, so .env matters here. The corpus
     # is still seeded deterministically: the fixture scripts retain's extraction
     # regardless of which provider reflect runs on.
@@ -50,12 +53,19 @@ if [ "$MODE" = "answers" ]; then
         [ -n "$_CALLER_MODEL" ] && export HINDSIGHT_API_LLM_MODEL="$_CALLER_MODEL"
         [ -n "$_CALLER_PROVIDER" ] && export HINDSIGHT_API_LLM_PROVIDER="$_CALLER_PROVIDER"
     fi
-    echo "Running prelude ANSWER eval (real reflect + LLM judge):"
+    if [ "$MODE" = "pages" ]; then
+        echo "Running prelude KNOWLEDGE-PAGE eval (create page -> ingest in waves -> judge the page):"
+    else
+        echo "Running prelude ANSWER eval (real reflect + LLM judge):"
+    fi
     echo "  db=${HINDSIGHT_API_DATABASE_URL}"
     echo "  reflect=${HINDSIGHT_API_LLM_PROVIDER:-not set}/${HINDSIGHT_API_LLM_MODEL:-not set}"
     echo "  judge=${HINDSIGHT_TEST_JUDGE_PROVIDER:-gemini}/${HINDSIGHT_TEST_JUDGE_MODEL:-gemini-2.5-flash-lite}"
     echo ""
     cd "$REPO_ROOT/hindsight-dev"
+    if [ "$MODE" = "pages" ]; then
+        exec uv run python -m benchmarks.prelude.kp_eval "$@"
+    fi
     exec uv run python -m benchmarks.prelude.answer_eval "$@"
 fi
 

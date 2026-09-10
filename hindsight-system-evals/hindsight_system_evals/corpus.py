@@ -1,9 +1,9 @@
-"""A corpus built to be hard, where the previous one was merely big.
+"""A corpus built to be hard, where a big one would merely be slow.
 
-The 1000-row ballast corpus proved nothing: its filler came from deliberately
-disjoint domains (botany, cycling, carpentry), so separating it from the gold was
-something bag-of-words would manage. Zero contamination, identical scores to a
-28-row bank. Row count is not difficulty.
+An earlier version padded the bank to ~1000 rows with filler from unrelated
+domains (botany, cycling, carpentry). Separating that from the gold is something
+bag-of-words would manage: contamination was zero and the scores were identical
+to a 28-row bank. Row count is not difficulty, so the padding is gone.
 
 What makes retrieval hard is **near-miss density inside the question's own
 topic**. So every fact here belongs to a cluster that shares the gold's
