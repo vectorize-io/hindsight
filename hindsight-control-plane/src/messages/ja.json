@@ -1616,7 +1616,11 @@
     "linkTypeEntity": "エンティティ",
     "linkTypeCausal": "因果",
     "exportSvgTitle": "共有用にSVGをダウンロード",
-    "exportSvgLabel": "共有"
+    "exportSvgLabel": "共有",
+    "pauseMotionTitle": "動きを一時停止",
+    "resumeMotionTitle": "動きを再開",
+    "pauseMotionLabel": "一時停止",
+    "resumeMotionLabel": "再開"
   },
   "metadata": {
     "title": "Hindsight Cloud",

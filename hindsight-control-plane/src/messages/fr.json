@@ -1616,7 +1616,11 @@
     "linkTypeEntity": "entité",
     "linkTypeCausal": "causal",
     "exportSvgTitle": "Télécharger en SVG à partager",
-    "exportSvgLabel": "Partager"
+    "exportSvgLabel": "Partager",
+    "pauseMotionTitle": "Suspendre le mouvement",
+    "resumeMotionTitle": "Reprendre le mouvement",
+    "pauseMotionLabel": "Pause",
+    "resumeMotionLabel": "Reprendre"
   },
   "metadata": {
     "title": "Hindsight Cloud",

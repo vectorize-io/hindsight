@@ -1616,7 +1616,11 @@
     "linkTypeEntity": "实体",
     "linkTypeCausal": "因果",
     "exportSvgTitle": "下载为 SVG 以分享",
-    "exportSvgLabel": "分享"
+    "exportSvgLabel": "分享",
+    "pauseMotionTitle": "暂停动画",
+    "resumeMotionTitle": "继续动画",
+    "pauseMotionLabel": "暂停",
+    "resumeMotionLabel": "继续"
   },
   "metadata": {
     "title": "Hindsight Cloud",
