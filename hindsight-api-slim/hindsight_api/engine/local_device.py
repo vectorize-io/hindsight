@@ -172,6 +172,19 @@ def _empty_gpu_cache(device_type: str | None) -> None:
     """Empty the allocator pool of the GPU backend the model ran on, if any."""
     if not device_type or device_type == "cpu":
         return
+    if device_type == "mlx":
+        # MLX keeps freed Metal buffers in its own cache and only returns them to
+        # the OS once the cache limit is exceeded. That limit defaults to the device
+        # memory limit — 121.60 GB measured on a 128 GB M-series host — so without
+        # this the cache is effectively unbounded. torch has no "mlx" attribute, so
+        # the lookup below would silently free nothing.
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return
     try:
         import torch
 
@@ -189,10 +202,14 @@ def release_local_inference_memory(device_type: str | None = None) -> None:
     the model ran on a GPU. Python's normal reference counting already releases
     the short-lived CPU inference buffers; a full cyclic-GC scan on every batch is
     needlessly expensive on that hot path, so CPU callers leave cyclic GC to its
-    normal threshold-based schedule. GPU callers retain the existing full cleanup
+    normal threshold-based schedule. MLX callers skip it for the same reason: MLX
+    arrays are refcounted too. Torch GPU callers retain the existing full cleanup
     because allocator release is part of the opt-in accelerator memory policy.
     """
-    if device_type != "cpu":
+    # "mlx" is exempt for the same reason "cpu" is: MLX arrays are refcounted C++
+    # objects behind Python wrappers, so reference counting already releases them and
+    # a process-wide cycle scan on every batch does not release anything extra.
+    if device_type not in ("cpu", "mlx"):
         gc.collect()
     _heap_trim()
     _empty_gpu_cache(device_type)
