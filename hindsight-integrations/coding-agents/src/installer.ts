@@ -1278,7 +1278,12 @@ export function stripGrokOwned(toml: string): string {
   }
   sections.push(current);
 
-  const tableName = (header: string) => header.replace(/^\[+|\]+$/g, "").trim();
+  // Headers may carry a trailing comment: `[mcp_servers.hindsight] # managed`.
+  const tableName = (header: string) =>
+    header
+      .replace(/\s*#.*$/, "")
+      .replace(/^\[+|\]+$/g, "")
+      .trim();
   const ownsMcp = (header: string) => /^mcp_servers\.hindsight(\.|$)/.test(tableName(header));
   const ownsHook = (section: Section) =>
     /^hooks\.[^.]+\.hooks$/.test(tableName(section.header)) &&
@@ -1292,7 +1297,9 @@ export function stripGrokOwned(toml: string): string {
   const result: Section[] = [];
   for (let index = 0; index < kept.length; index += 1) {
     const section = kept[index];
-    const event = /^\[\[hooks\.([^.\]]+)\]\]$/.exec(section.header)?.[1];
+    const event = section.header.startsWith("[[")
+      ? /^hooks\.([^.]+)$/.exec(tableName(section.header))?.[1]
+      : undefined;
     if (event !== undefined) {
       const hasBody = section.lines
         .slice(1)

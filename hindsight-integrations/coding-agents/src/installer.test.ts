@@ -1304,7 +1304,7 @@ describe("grok-build installer", () => {
   // file as a duplicate key — every MCP server, ours included, silently disappears.
   const rewrittenByGrok = (ctx: InstallCtx) =>
     [
-      "[[hooks.SessionStart]]",
+      "[[hooks.SessionStart]] # hindsight",
       "",
       "[[hooks.SessionStart.hooks]]",
       'type = "command"',
@@ -1323,7 +1323,7 @@ describe("grok-build installer", () => {
       `command = 'node "${join(ctx.dist, "grok-stop-hook.js")}"'`,
       "timeout = 60",
       "",
-      "[mcp_servers.hindsight]",
+      "[mcp_servers.hindsight] # managed by hindsight",
       'command = "node"',
       `args = ["${join(ctx.dist, "mcp-server.js")}"]`,
       "",
