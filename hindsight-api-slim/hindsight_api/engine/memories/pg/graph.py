@@ -850,23 +850,13 @@ async def enqueue_entity_prune_candidates(
     # literal IN list — Oracle caps those at 1000 elements.
     enqueued = 0
     for start in range(0, len(unit_uuids), _ENQUEUE_LOOKUP_CHUNK):
-        chunk = unit_uuids[start : start + _ENQUEUE_LOOKUP_CHUNK]
-        enqueued += await ops.enqueue_entity_maintenance(
+        enqueued += await ops.release_entity_postings(
             conn,
             queue_table,
-            ue_table,
-            bank_id,
-            chunk,
-        )
-        # Takes the `entities` row locks in ascending id order — the order
-        # retain's upsert (`ORDER BY id FOR KEY SHARE`) and the orphan prune
-        # take them — so it cannot cycle against either.
-        await ops.release_entity_mentions(
-            conn,
             entities_table,
             ue_table,
             bank_id,
-            chunk,
+            unit_uuids[start : start + _ENQUEUE_LOOKUP_CHUNK],
         )
     return enqueued
 

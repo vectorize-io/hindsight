@@ -82,10 +82,11 @@ async def _posting_count(conn, entity_id: uuid.UUID) -> int:
 
 
 @pytest.mark.asyncio
-async def test_oracle_release_subtracts_per_entity_in_stable_id_order():
-    """Oracle adapter: one UPDATE per entity, carrying that entity's posting
-    count, bound in sorted id order — the order the entity upsert and the orphan
-    prune take the same rows, so a delete cannot cycle against a live retain."""
+async def test_oracle_release_reads_the_postings_once_and_queues_before_it_debits():
+    """Oracle adapter: one read of `unit_entities` feeds both writes, the queue
+    MERGE runs before the entity UPDATE (the order the drain takes those locks,
+    so a delete cannot cycle against a worker), and each entity is debited by
+    its own posting count, bound in sorted id order."""
     ops = OracleOps()
     conn = AsyncMock()
     id_a = "00000000-0000-0000-0000-00000000000a"
@@ -96,45 +97,64 @@ async def test_oracle_release_subtracts_per_entity_in_stable_id_order():
         {"entity_id": id_a, "n": 3},
     ]
 
-    updated = await ops.release_entity_mentions(conn, "entities", "unit_entities", "bank-1", ["u1", "u2"])
+    enqueued = await ops.release_entity_postings(
+        conn, "entity_maintenance_queue", "entities", "unit_entities", "bank-1", ["u1", "u2"]
+    )
 
-    assert updated == 2
-    sql, rows = conn.executemany.await_args.args
-    assert "GREATEST(mention_count - $3, 0)" in sql
-    assert rows == [(id_a, "bank-1", 3), (id_b, "bank-1", 1)]
+    assert enqueued == 2
+    assert conn.fetch.await_count == 1, "both halves must come out of one scan of the postings"
+
+    (queue_sql, queue_rows), (debit_sql, debit_rows) = (call.args for call in conn.executemany.await_args_list)
+    assert "MERGE INTO entity_maintenance_queue" in queue_sql
+    assert queue_rows == [("bank-1", id_a), ("bank-1", id_b)]
+    assert "GREATEST(mention_count - $3, 0)" in debit_sql
+    assert debit_rows == [(id_a, "bank-1", 3), (id_b, "bank-1", 1)]
 
 
 @pytest.mark.asyncio
-async def test_oracle_release_of_units_with_no_postings_issues_no_update():
-    """Units that never named an entity cost no round-trip."""
+async def test_oracle_release_of_units_with_no_postings_writes_nothing():
+    """Units that never named an entity cost no write round-trip."""
     ops = OracleOps()
     conn = AsyncMock()
     conn.fetch.return_value = []
 
-    assert await ops.release_entity_mentions(conn, "entities", "unit_entities", "bank-1", ["u1"]) == 0
+    released = await ops.release_entity_postings(
+        conn, "entity_maintenance_queue", "entities", "unit_entities", "bank-1", ["u1"]
+    )
+
+    assert released == 0
     conn.executemany.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_oracle_restore_adds_one_per_entity():
+async def test_oracle_restore_credits_only_the_entities_that_still_exist():
+    """The archive snapshot names entities the orphan prune may since have
+    swept; the surviving set drives both the posting insert and the credit."""
     ops = OracleOps()
     conn = AsyncMock()
     id_a = "00000000-0000-0000-0000-00000000000a"
     id_b = "00000000-0000-0000-0000-00000000000b"
+    gone = "00000000-0000-0000-0000-00000000000c"
+    conn.fetch.return_value = [{"id": id_b}, {"id": id_a}]
 
-    assert await ops.restore_entity_mentions(conn, "entities", "bank-1", [id_b, id_a]) == 2
+    posted = await ops.restore_entity_postings(
+        conn, "unit_entities", "entities", "bank-1", "unit-1", [id_a, id_b, gone]
+    )
 
-    sql, rows = conn.executemany.await_args.args
-    assert "mention_count + 1" in sql
-    assert rows == [(id_a, "bank-1"), (id_b, "bank-1")]
+    assert posted == 2
+    (post_sql, post_rows), (credit_sql, credit_rows) = (call.args for call in conn.executemany.await_args_list)
+    assert "INSERT INTO unit_entities" in post_sql
+    assert post_rows == [("unit-1", id_a), ("unit-1", id_b)]
+    assert "mention_count + 1" in credit_sql
+    assert credit_rows == [(id_a, "bank-1"), (id_b, "bank-1")]
 
 
 @pytest.mark.asyncio
-async def test_oracle_restore_of_nothing_issues_no_update():
+async def test_oracle_restore_of_nothing_writes_nothing():
     ops = OracleOps()
     conn = AsyncMock()
 
-    assert await ops.restore_entity_mentions(conn, "entities", "bank-1", []) == 0
+    assert await ops.restore_entity_postings(conn, "unit_entities", "entities", "bank-1", "unit-1", []) == 0
     conn.executemany.assert_not_awaited()
 
 
@@ -170,6 +190,10 @@ class TestReleaseAtTheChokePoint:
             assert await _mention_count(conn, alice) == 1
             assert await _mention_count(conn, alice) == await _posting_count(conn, alice)
             assert await _mention_count(conn, bob) == 1
+            # The debit and the prune-candidate queueing are one statement, so
+            # the queue is part of this path's contract, not a separate concern.
+            queued = await conn.fetch("SELECT entity_id FROM entity_maintenance_queue WHERE bank_id = $1", bank_id)
+            assert {str(r["entity_id"]) for r in queued} == {str(alice)}
 
     @pytest.mark.asyncio
     async def test_one_unit_naming_an_entity_twice_gives_back_both_postings(

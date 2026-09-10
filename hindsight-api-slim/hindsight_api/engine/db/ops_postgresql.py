@@ -496,24 +496,27 @@ class PostgreSQLOps(DataAccessOps):
         )
         return [str(row["unit_id"]) for row in rows]
 
-    async def enqueue_entity_maintenance(
+    async def release_entity_postings(
         self,
         conn: DatabaseConnection,
-        table: str,
+        queue_table: str,
+        entities_table: str,
         ue_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
         # Read the candidates straight out of unit_entities rather than making
         # callers pass entity ids: every caller runs this immediately before the
-        # rows go, and the join they'd have to write is this one.
+        # rows go, and the join they'd have to write is this one. `doomed` is
+        # that read, aggregated, so one scan serves both halves — the queue
+        # insert wants the ids, the mention release wants the counts.
         #
-        # The inner ORDER BY is load-bearing, not cosmetic: it makes the INSERT
-        # take the (bank_id, entity_id) row locks ascending, the same order
-        # claim_entity_maintenance_batch takes them, so a mutation enqueueing an
-        # overlapping candidate set cannot cycle against a worker draining it.
-        # (Same protocol as enqueue_graph_maintenance, which sorts in Python
-        # because its ids arrive as a bind array.)
+        # `enqueued`'s inner ORDER BY is load-bearing, not cosmetic: it makes the
+        # INSERT take the (bank_id, entity_id) row locks ascending, the same
+        # order claim_entity_maintenance_batch takes them, so a mutation
+        # enqueueing an overlapping candidate set cannot cycle against a worker
+        # draining it. (Same protocol as enqueue_graph_maintenance, which sorts
+        # in Python because its ids arrive as a bind array.)
         #
         # DO UPDATE (not DO NOTHING) on a duplicate — #3034. The SET is a
         # deliberate no-op preserving enqueued_at; its only purpose is to lock
@@ -523,40 +526,32 @@ class PostgreSQLOps(DataAccessOps):
         # would find the entity still referenced, keep it, and the re-enqueue
         # signal would be lost, stranding the orphan until some later delete
         # happened to name it again.
-        result = await conn.execute(
-            f"""
-            INSERT INTO {table} (bank_id, entity_id)
-            SELECT $1, s.entity_id
-            FROM (
-                SELECT DISTINCT ue.entity_id
-                FROM {ue_table} ue
-                WHERE ue.unit_id = ANY($2::uuid[])
-                ORDER BY 1
-            ) s
-            ON CONFLICT (bank_id, entity_id)
-                DO UPDATE SET enqueued_at = {table}.enqueued_at
-            """,
-            bank_id,
-            unit_ids,
-        )
-        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("INSERT") else 0
-
-    async def release_entity_mentions(
-        self,
-        conn: DatabaseConnection,
-        entities_table: str,
-        ue_table: str,
-        bank_id: str,
-        unit_ids: list,
-    ) -> int:
-        # Same read as enqueue_entity_maintenance, aggregated instead of
-        # DISTINCT: one row per entity carrying how many postings it is about to
-        # lose. Runs before the delete for the same reason the enqueue does.
         #
-        # `victims` locks the entity rows in id order — the order
-        # bulk_upsert_entities takes them (`ORDER BY id FOR KEY SHARE`) and the
-        # order prune_orphan_entities takes them — so a delete giving mentions
-        # back cannot cycle against a concurrent retain asserting them.
+        # Both halves are one statement so the postings are counted in the scan
+        # that already lists them, but the two lock sets still have to be
+        # ordered or a delete and a worker draining the queue deadlock on the
+        # same entity. The invariant is: *an entity's queue row is locked before
+        # its own `entities` row, and queue rows are locked ascending.*
+        #
+        # `victims` referencing `enqueued` is what enforces the first half — an
+        # entity cannot become a victim until the INSERT has produced it. The
+        # second half is `enqueued`'s inner ORDER BY. Together they hold under
+        # every plan shape the statement gets: EXPLAIN picks a nested-loop semi
+        # join here (queue and entity locks interleave per entity, ascending)
+        # and a hashed subplan or a sort under LockRows on other row counts
+        # (every queue lock taken before the first entity lock). Both are safe,
+        # because taking an `entities` row lock always means already holding
+        # that entity's queue row, and the drain takes them in that same order.
+        #
+        # What is deliberately NOT relied on: the order `victims` produces rows
+        # in. `ORDER BY e.id` asks for ascending entity locks, but a lazily
+        # pulled semi join takes them in `doomed` order instead. That is fine
+        # for the reason above — the ascending queue locks are the serialiser,
+        # so two concurrent deletes cannot hold entity rows in opposing orders.
+        #
+        # `victims` re-filters on bank_id even though a posting cannot name
+        # another bank's entity: mention_count is denormalised state, and
+        # scoping the write is what keeps that true if the invariant slips.
         result = await conn.execute(
             f"""
             WITH doomed AS (
@@ -565,11 +560,19 @@ class PostgreSQLOps(DataAccessOps):
                 WHERE ue.unit_id = ANY($2::uuid[])
                 GROUP BY ue.entity_id
             ),
+            enqueued AS (
+                INSERT INTO {queue_table} (bank_id, entity_id)
+                SELECT $1, s.id FROM (SELECT id FROM doomed ORDER BY 1) s
+                ON CONFLICT (bank_id, entity_id)
+                    DO UPDATE SET enqueued_at = {queue_table}.enqueued_at
+                RETURNING entity_id
+            ),
             victims AS (
                 SELECT e.id, d.n
                 FROM {entities_table} e
                 JOIN doomed d ON d.id = e.id
                 WHERE e.bank_id = $1
+                  AND e.id IN (SELECT entity_id FROM enqueued)
                 ORDER BY e.id
                 FOR UPDATE OF e
             )
@@ -581,35 +584,55 @@ class PostgreSQLOps(DataAccessOps):
             bank_id,
             unit_ids,
         )
-        # asyncpg returns "UPDATE N"
+        # asyncpg returns "UPDATE N". Every posting names an existing entity in
+        # this bank (FK, and postings are intra-bank by construction), so the
+        # rows updated are the rows enqueued.
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
 
-    async def restore_entity_mentions(
+    async def restore_entity_postings(
         self,
         conn: DatabaseConnection,
+        ue_table: str,
         entities_table: str,
         bank_id: str,
+        unit_id: str,
         entity_ids: list,
     ) -> int:
         if not entity_ids:
             return 0
-        # Ordered lock acquisition, as in release_entity_mentions above.
+        # One statement, because crediting a mention for a posting that was not
+        # written would be the same bug in the other direction: `posted` returns
+        # exactly the rows the insert added, and only those are credited. Some
+        # of `entity_ids` may have been swept as orphans while the memory sat
+        # archived, which `survivors` filters out, and DO NOTHING covers a
+        # posting that somehow already exists.
+        #
+        # `survivors` locks the entity rows in ascending id order, the order
+        # release_entity_postings and prune_orphan_entities take them. No queue
+        # row is involved here, so there is no second lock set to sequence.
         result = await conn.execute(
             f"""
-            WITH victims AS (
+            WITH survivors AS (
                 SELECT e.id
                 FROM {entities_table} e
                 WHERE e.bank_id = $1
-                  AND e.id = ANY($2::uuid[])
+                  AND e.id = ANY($3::uuid[])
                 ORDER BY e.id
                 FOR UPDATE
+            ),
+            posted AS (
+                INSERT INTO {ue_table} (unit_id, entity_id)
+                SELECT $2, s.id FROM survivors s
+                ON CONFLICT DO NOTHING
+                RETURNING entity_id
             )
             UPDATE {entities_table} e
             SET mention_count = e.mention_count + 1
-            FROM victims v
-            WHERE e.id = v.id
+            FROM posted p
+            WHERE e.id = p.entity_id
             """,
             bank_id,
+            unit_id,
             entity_ids,
         )
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0

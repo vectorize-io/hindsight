@@ -478,30 +478,19 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
     from .graph import _ops_for
 
     # Restore the entity postings for entities that still exist — some may have
-    # been swept as orphans while the memory was archived.
+    # been swept as orphans while the memory was archived — and give each one
+    # back the mention invalidation took from it (#4291). One call: the credit
+    # has to follow the postings actually written, so the two cannot be decided
+    # separately.
     if arch_row["entity_ids"]:
-        await conn.execute(
-            f"INSERT INTO {ue} (unit_id, entity_id) "
-            f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
-            f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
-            f"ON CONFLICT DO NOTHING",
+        await _ops_for(conn).restore_entity_postings(
+            conn,
+            ue,
+            ent,
+            bank_id,
             str(unit_id),
             arch_row["entity_ids"],
-            bank_id,
         )
-        # Give the mention back that invalidation took (#4291). Restricted to the
-        # entities that survived, which is the same set the insert above posted:
-        # the unit's postings were cascaded away with it, so nothing pre-exists
-        # for the ON CONFLICT to swallow.
-        survivors = [
-            r["id"]
-            for r in await conn.fetch(
-                f"SELECT id FROM {ent} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
-                bank_id,
-                arch_row["entity_ids"],
-            )
-        ]
-        await _ops_for(conn).restore_entity_mentions(conn, ent, bank_id, survivors)
     # Rematerialize the causal edges parked at invalidation (#2864). Edges whose peer is still
     # archived or permanently deleted are skipped — the peer keeps its own copy and recreates the
     # edge when it reverts, so the restore is order-independent and idempotent.

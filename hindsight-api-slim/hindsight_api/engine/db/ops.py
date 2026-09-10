@@ -797,64 +797,57 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
-    async def enqueue_entity_maintenance(
+    async def release_entity_postings(
         self,
         conn: DatabaseConnection,
-        table: str,
-        ue_table: str,
-        bank_id: str,
-        unit_ids: list,
-    ) -> int:
-        """Enqueue the entities referenced by ``unit_ids`` as prune candidates.
-
-        Reads the entity ids out of ``unit_entities`` and inserts them into
-        entity_maintenance_queue, deduplicating on the (bank_id, entity_id)
-        primary key. Returns the number of rows the insert added.
-
-        Must run inside the triggering transaction and BEFORE the rows go —
-        once the unit_entities rows are deleted (or cascaded away) there is
-        nothing left to read the entity ids from.
-        """
-        ...
-
-    @abstractmethod
-    async def release_entity_mentions(
-        self,
-        conn: DatabaseConnection,
+        queue_table: str,
         entities_table: str,
         ue_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
-        """Give back the ``mention_count`` the postings of ``unit_ids`` contributed.
+        """Retire the entity postings of ``unit_ids``: queue their entities as
+        prune candidates, and give back the ``mention_count`` those postings
+        contributed.
 
-        Subtracts, per entity, the number of ``unit_entities`` rows about to go
-        with those units. Like :meth:`enqueue_entity_maintenance` this must run
-        inside the triggering transaction and BEFORE the delete or cascade
-        fires, for the same reason: afterwards there is no posting left to count.
+        One operation because it is one read. Both halves need the same
+        ``unit_entities`` rows — the queue wants the entity ids, the counter
+        wants how many rows each entity has — and both must run inside the
+        triggering transaction and BEFORE the delete or cascade fires, because
+        afterwards there is nothing left to read them from.
 
-        Floors at zero. The increment side counts *mentions* and the posting is
-        per (unit, entity), so the two disagree by one whenever two differently
-        spelled mentions in one fact resolve to the same entity; the floor keeps
-        that rare asymmetry from driving the count negative.
+        Queue rows are locked before entity rows, matching the order
+        :meth:`claim_entity_maintenance_batch` and :meth:`prune_orphan_entities`
+        take them, so a delete cannot cycle against a worker draining the queue.
 
-        Returns the number of entity rows updated.
+        The count floors at zero. The increment side counts *mentions* while a
+        posting is per (unit, entity), so the two disagree by one whenever two
+        differently spelled mentions in one fact resolve to the same entity; the
+        floor keeps that rare asymmetry from driving the count negative.
+
+        Returns the number of candidate entities enqueued.
         """
         ...
 
     @abstractmethod
-    async def restore_entity_mentions(
+    async def restore_entity_postings(
         self,
         conn: DatabaseConnection,
+        ue_table: str,
         entities_table: str,
         bank_id: str,
+        unit_id: str,
         entity_ids: list,
     ) -> int:
-        """Add one mention back to each of ``entity_ids`` in ``bank_id``.
+        """Re-post ``unit_id`` to ``entity_ids`` and credit one mention per
+        posting written.
 
-        The inverse of :meth:`release_entity_mentions` for a restore that
-        re-inserts one posting per entity (reverting an invalidation). Returns
-        the number of entity rows updated.
+        The inverse of :meth:`release_entity_postings`, for reverting an
+        invalidation. Entities that no longer exist are skipped — the orphan
+        prune may have swept them while the memory sat archived — so the credit
+        follows the postings actually written, not the ids asked for.
+
+        Returns the number of postings written.
         """
         ...
 
