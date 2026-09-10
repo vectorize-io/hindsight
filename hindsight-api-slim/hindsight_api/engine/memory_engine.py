@@ -7749,8 +7749,17 @@ class MemoryEngine(MemoryEngineInterface):
                 # showed up as an unattributed remainder, on the one path where the work is not
                 # in this process to begin with. `store_*` are the store's own stages, `full_recall`
                 # is the whole hop including the Python either side of it.
+                _store_reported = 0.0
                 for _name, _micros in (_store_result.store_stages or {}).items():
                     tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
+                    _store_reported += _micros / 1_000_000
+                # The hop minus what the store says it spent: our gRPC client, the
+                # serialization either side, and any time the request sat in the
+                # channel. Recorded per-request because p99s of the individual stages
+                # are not additive, so this gap cannot be derived after the fact.
+                tracer.add_phase_metric(
+                    "store_hop_overhead", max(0.0, _full_elapsed - _store_reported)
+                )
                 tracer.add_phase_metric(
                     "full_recall",
                     _full_elapsed,
