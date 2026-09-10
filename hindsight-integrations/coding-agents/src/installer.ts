@@ -1284,7 +1284,9 @@ export function stripGrokOwned(toml: string): string {
     /^hooks\.[^.]+\.hooks$/.test(tableName(section.header)) &&
     section.lines.some((line) => /^\s*command\s*=/.test(line) && line.includes(MARKER));
 
-  const kept = sections.filter((section) => section.header === "" || !(ownsMcp(section.header) || ownsHook(section)));
+  const kept = sections.filter(
+    (section) => section.header === "" || !(ownsMcp(section.header) || ownsHook(section))
+  );
   // A `[[hooks.<event>]]` entry whose only content was our hook is now an empty array entry;
   // Grok would surface it as a hook with no commands.
   const result: Section[] = [];
@@ -1292,7 +1294,9 @@ export function stripGrokOwned(toml: string): string {
     const section = kept[index];
     const event = /^\[\[hooks\.([^.\]]+)\]\]$/.exec(section.header)?.[1];
     if (event !== undefined) {
-      const hasBody = section.lines.slice(1).some((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+      const hasBody = section.lines
+        .slice(1)
+        .some((line) => line.trim() !== "" && !line.trim().startsWith("#"));
       const next = kept[index + 1];
       const hasChild = next !== undefined && tableName(next.header) === `hooks.${event}.hooks`;
       if (!hasBody && !hasChild) continue;
