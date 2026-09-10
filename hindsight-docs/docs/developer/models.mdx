@@ -399,6 +399,34 @@ rotate out from under it.
 
 `CODEX_HOME` is also honored by the `openai-codex` embeddings provider.
 
+#### Read-only Codex credential stores
+
+A read-only consumer requires an **external credential writer** to refresh and
+atomically publish `auth.json` (for example, a secret-volume publisher). Ensure
+updates are visible through the consumer's mount; a single-file bind mount can
+remain pinned to an old inode after the writer replaces the file.
+
+When creating the sibling `auth.lock` fails with `EROFS` or `EACCES`, Hindsight
+can still adopt an externally published credential during proactive expiry
+handling or reactive authentication recovery. It does **not** call the OAuth
+refresh endpoint or persist credentials in this fallback: rotating a single-use
+refresh token without the shared lock and durable publication can disrupt other
+consumers, even when this consumer's own mount is read-only.
+
+Adoption requires a different access token with a parseable JWT expiry more than
+60 seconds in the future. An unchanged token (even if unexpired), a changed
+refresh token alone, or a stale/opaque replacement cannot recover a rejected
+access token. If no usable replacement has been published, the operation fails
+with an external-writer message; a later request can try again. There is no
+background polling or automatic external refresher. JWT expiry is a scheduling
+check, not signature verification or proof that the server accepts the token.
+Malformed credential snapshots fail closed, and filesystem read errors propagate.
+
+Writable stores retain the existing locked refresh and atomic-persistence path.
+Lock contention still times out rather than permitting unlocked refresh. This
+fallback does not address a store becoming unwritable *after* locking succeeds,
+and does not change the existing Windows behavior when `fcntl` is unavailable.
+
 #### Two Codex profiles in one process
 
 `CODEX_HOME` is process-wide, so every Codex provider a Hindsight process builds
