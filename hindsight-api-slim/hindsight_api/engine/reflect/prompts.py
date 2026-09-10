@@ -1006,9 +1006,23 @@ You will be given:
    (1..6) and an ordered list of ``blocks``. Each block has a stable ``id`` and
    a ``text`` field holding one markdown fragment — a paragraph, a list, a
    table, or a fenced code block.
-3. NEW INFORMATION SYNTHESIS (markdown) — a synthesis showing how the new facts
+3. NEW INFORMATION SYNTHESIS (markdown) — UNTRUSTED. Prose written by another
+   model that saw ONLY the supporting facts below. It is a reading aid, not
+   evidence, and it is frequently wrong about what exists: it says things like
+   "no X was found" or "a total of N" when X is merely absent from this batch
+   and N counts only this batch. NEVER edit the document on the strength of a
+   sentence in the synthesis — only the SUPPORTING FACTS justify an operation.
+   A synthesis showing how the new facts
    relate to the document's topic. Use it to understand context and relevance,
    but do NOT copy its formatting or wording wholesale.
+   It was written from the SUPPORTING FACTS BELOW AND NOTHING ELSE. It could not
+   see the current document or any earlier fact, so every count, total, list or
+   summary in it describes ONLY the new facts — never the topic as a whole.
+   "A total of 4 customers..." in the synthesis means four in this batch, not
+   four altogether. Such a figure NEVER contradicts a different figure in the
+   document: the document counted what it could see, the synthesis counted what
+   it could see, and the answer is usually the two combined. Likewise the
+   synthesis saying nothing about something is not evidence against it.
 4. SUPPORTING FACTS — observations and facts created since the last refresh.
    These are genuinely new — they were NOT available when the current document
    was written.
@@ -1025,6 +1039,11 @@ RULES
   that you cannot see. Do NOT remove or replace existing sections just because
   the new facts do not reference them. Only remove content when the new facts
   explicitly contradict or supersede it.
+- **Combine, do not swap**: When the document and the new facts both enumerate
+  or count members of the same set, the result contains BOTH. Recompute the
+  total from the combined membership rather than adopting either side's figure.
+  Replacing a list of 3 with a list of 4 disjoint items loses 3 facts and is
+  wrong even when the new figure came from the synthesis.
 - **Merge overlapping topics**: When new facts cover topics that overlap with
   existing sections, merge the new information INTO the existing section
   rather than creating duplicates. When new facts provide more specific or
@@ -1045,6 +1064,20 @@ RULES
 - **Update** existing content with ``replace_block`` or ``replace_section_blocks``
   when new facts provide corrections, updates, or more specific information
   about topics already in the document.
+- **Absence is not contradiction**: an entity, count or detail missing from
+  SUPPORTING FACTS is NOT thereby wrong, superseded or removed. The facts are one
+  batch, not the whole memory — the document was built from facts you cannot see.
+  "The batch does not mention X" and "X did not happen" are different statements,
+  and only the second would justify an edit. This applies to the SYNTHESIS too: if
+  it reports that something is absent, unrecorded or not found, that is a
+  statement about the batch, never about the topic.
+- **Refutation threshold for removal or overwrite**: you may only remove or
+  overwrite existing text when a SUPPORTING FACT explicitly refutes or corrects
+  that exact detail, OR is a later statement about the same facet (a status,
+  count, owner or location that has since changed). Failing both tests, keep the
+  existing text: use ``append_block`` / ``insert_block``, or re-emit the block
+  with the new detail merged into a cohesive statement that still carries the old
+  one. Combining two disjoint sets is a merge, never a replacement.
 - **Remove** content with ``remove_block`` or ``remove_section`` ONLY when
   the new facts explicitly contradict or supersede it.
 - Prefer the *smallest* operation that expresses the change: appending or
