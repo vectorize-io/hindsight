@@ -818,6 +818,47 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def release_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        """Give back the ``mention_count`` the postings of ``unit_ids`` contributed.
+
+        Subtracts, per entity, the number of ``unit_entities`` rows about to go
+        with those units. Like :meth:`enqueue_entity_maintenance` this must run
+        inside the triggering transaction and BEFORE the delete or cascade
+        fires, for the same reason: afterwards there is no posting left to count.
+
+        Floors at zero. The increment side counts *mentions* and the posting is
+        per (unit, entity), so the two disagree by one whenever two differently
+        spelled mentions in one fact resolve to the same entity; the floor keeps
+        that rare asymmetry from driving the count negative.
+
+        Returns the number of entity rows updated.
+        """
+        ...
+
+    @abstractmethod
+    async def restore_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        bank_id: str,
+        entity_ids: list,
+    ) -> int:
+        """Add one mention back to each of ``entity_ids`` in ``bank_id``.
+
+        The inverse of :meth:`release_entity_mentions` for a restore that
+        re-inserts one posting per entity (reverting an invalidation). Returns
+        the number of entity rows updated.
+        """
+        ...
+
+    @abstractmethod
     async def claim_entity_maintenance_batch(
         self,
         conn: DatabaseConnection,

@@ -541,6 +541,79 @@ class PostgreSQLOps(DataAccessOps):
         )
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("INSERT") else 0
 
+    async def release_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        # Same read as enqueue_entity_maintenance, aggregated instead of
+        # DISTINCT: one row per entity carrying how many postings it is about to
+        # lose. Runs before the delete for the same reason the enqueue does.
+        #
+        # `victims` locks the entity rows in id order — the order
+        # bulk_upsert_entities takes them (`ORDER BY id FOR KEY SHARE`) and the
+        # order prune_orphan_entities takes them — so a delete giving mentions
+        # back cannot cycle against a concurrent retain asserting them.
+        result = await conn.execute(
+            f"""
+            WITH doomed AS (
+                SELECT ue.entity_id AS id, COUNT(*) AS n
+                FROM {ue_table} ue
+                WHERE ue.unit_id = ANY($2::uuid[])
+                GROUP BY ue.entity_id
+            ),
+            victims AS (
+                SELECT e.id, d.n
+                FROM {entities_table} e
+                JOIN doomed d ON d.id = e.id
+                WHERE e.bank_id = $1
+                ORDER BY e.id
+                FOR UPDATE OF e
+            )
+            UPDATE {entities_table} e
+            SET mention_count = GREATEST(e.mention_count - v.n, 0)
+            FROM victims v
+            WHERE e.id = v.id
+            """,
+            bank_id,
+            unit_ids,
+        )
+        # asyncpg returns "UPDATE N"
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
+
+    async def restore_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        bank_id: str,
+        entity_ids: list,
+    ) -> int:
+        if not entity_ids:
+            return 0
+        # Ordered lock acquisition, as in release_entity_mentions above.
+        result = await conn.execute(
+            f"""
+            WITH victims AS (
+                SELECT e.id
+                FROM {entities_table} e
+                WHERE e.bank_id = $1
+                  AND e.id = ANY($2::uuid[])
+                ORDER BY e.id
+                FOR UPDATE
+            )
+            UPDATE {entities_table} e
+            SET mention_count = e.mention_count + 1
+            FROM victims v
+            WHERE e.id = v.id
+            """,
+            bank_id,
+            entity_ids,
+        )
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
+
     async def claim_entity_maintenance_batch(
         self,
         conn: DatabaseConnection,

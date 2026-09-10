@@ -403,6 +403,57 @@ class OracleOps(DataAccessOps):
         )
         return len(candidates)
 
+    async def release_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        if not unit_ids:
+            return 0
+        rows = await conn.fetch(
+            f"""
+            SELECT entity_id, COUNT(*) AS n
+            FROM {ue_table}
+            WHERE unit_id = ANY($1::uuid[])
+            GROUP BY entity_id
+            """,
+            unit_ids,
+        )
+        # Sorted for the same reason as enqueue_entity_maintenance: executemany
+        # takes the row locks in array order, which is the order the entity
+        # upsert and the orphan prune take them.
+        deltas = sorted((str(row["entity_id"]), int(row["n"])) for row in rows)
+        if not deltas:
+            return 0
+        await conn.executemany(
+            f"""
+            UPDATE {entities_table}
+            SET mention_count = GREATEST(mention_count - $3, 0)
+            WHERE id = $1 AND bank_id = $2
+            """,
+            [(eid, bank_id, n) for eid, n in deltas],
+        )
+        return len(deltas)
+
+    async def restore_entity_mentions(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        bank_id: str,
+        entity_ids: list,
+    ) -> int:
+        if not entity_ids:
+            return 0
+        ids = sorted(str(eid) for eid in entity_ids)
+        await conn.executemany(
+            f"UPDATE {entities_table} SET mention_count = mention_count + 1 WHERE id = $1 AND bank_id = $2",
+            [(eid, bank_id) for eid in ids],
+        )
+        return len(ids)
+
     async def claim_entity_maintenance_batch(
         self,
         conn: DatabaseConnection,

@@ -171,6 +171,11 @@ async def enqueue_entity_prune_candidates(
     Over-enqueueing costs nothing: the drain re-checks each candidate and keeps
     the ones still referenced.
 
+    This is also where the entities get their ``mention_count`` back: the
+    counter is incremented once per mention at retain time and would otherwise
+    never come down, so an entity's prominence would track how often its
+    documents were rewritten rather than how many facts mention it (#4291).
+
     Delegated to the memories store: a store that never wrote ``unit_entities``
     has no postings to lose and returns 0.
 

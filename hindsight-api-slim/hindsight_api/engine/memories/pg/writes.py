@@ -475,6 +475,8 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
         str(unit_id),
         bank_id,
     )
+    from .graph import _ops_for
+
     # Restore the entity postings for entities that still exist — some may have
     # been swept as orphans while the memory was archived.
     if arch_row["entity_ids"]:
@@ -487,11 +489,23 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
             arch_row["entity_ids"],
             bank_id,
         )
+        # Give the mention back that invalidation took (#4291). Restricted to the
+        # entities that survived, which is the same set the insert above posted:
+        # the unit's postings were cascaded away with it, so nothing pre-exists
+        # for the ON CONFLICT to swallow.
+        survivors = [
+            r["id"]
+            for r in await conn.fetch(
+                f"SELECT id FROM {ent} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+                bank_id,
+                arch_row["entity_ids"],
+            )
+        ]
+        await _ops_for(conn).restore_entity_mentions(conn, ent, bank_id, survivors)
     # Rematerialize the causal edges parked at invalidation (#2864). Edges whose peer is still
     # archived or permanently deleted are skipped — the peer keeps its own copy and recreates the
     # edge when it reverts, so the restore is order-independent and idempotent.
     from ...retain.link_utils import rematerialize_causal_links
-    from .graph import _ops_for
 
     causal_json = await conn.fetchval(
         f"SELECT causal_links FROM {arch} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id
