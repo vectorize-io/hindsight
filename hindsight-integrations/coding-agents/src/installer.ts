@@ -1251,6 +1251,60 @@ const GROK_MARKER_END = "# HINDSIGHT_CODING_AGENTS_GROK_END";
 /** Our sentinel-delimited block; shared by install (replace) and uninstall (strip). */
 const GROK_BLOCK_RE = new RegExp(`\\n?${GROK_MARKER_START}[\\s\\S]*?${GROK_MARKER_END}\\n?`);
 
+/**
+ * Strip everything Hindsight owns from a Grok config, marked or not.
+ *
+ * Grok rewrites `~/.grok/config.toml` itself (`grok mcp add`, the `/mcps` modal, settings saves)
+ * and that rewrite drops comments, so the sentinel markers vanish while our hook and MCP tables
+ * survive in Grok's normalized layout. Stripping only the marked block then appends a second
+ * `[mcp_servers.hindsight]`, which is a TOML duplicate-key error: Grok logs it on every command
+ * and disables every MCP server in the file. So also drop, section by section, the
+ * `[mcp_servers.hindsight]` table with its subtables, and any `[[hooks.<event>.hooks]]` entry
+ * whose command runs a script from this package (its path contains MARKER); an enclosing
+ * `[[hooks.<event>]]` entry is removed only once nothing else is left in it.
+ */
+export function stripGrokOwned(toml: string): string {
+  const withoutMarked = toml.replace(GROK_BLOCK_RE, "\n");
+  type Section = { header: string; lines: string[] };
+  const sections: Section[] = [];
+  let current: Section = { header: "", lines: [] };
+  for (const line of withoutMarked.split("\n")) {
+    if (/^\s*\[/.test(line)) {
+      sections.push(current);
+      current = { header: line.trim(), lines: [line] };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  sections.push(current);
+
+  const tableName = (header: string) => header.replace(/^\[+|\]+$/g, "").trim();
+  const ownsMcp = (header: string) => /^mcp_servers\.hindsight(\.|$)/.test(tableName(header));
+  const ownsHook = (section: Section) =>
+    /^hooks\.[^.]+\.hooks$/.test(tableName(section.header)) &&
+    section.lines.some((line) => /^\s*command\s*=/.test(line) && line.includes(MARKER));
+
+  const kept = sections.filter((section) => section.header === "" || !(ownsMcp(section.header) || ownsHook(section)));
+  // A `[[hooks.<event>]]` entry whose only content was our hook is now an empty array entry;
+  // Grok would surface it as a hook with no commands.
+  const result: Section[] = [];
+  for (let index = 0; index < kept.length; index += 1) {
+    const section = kept[index];
+    const event = /^\[\[hooks\.([^.\]]+)\]\]$/.exec(section.header)?.[1];
+    if (event !== undefined) {
+      const hasBody = section.lines.slice(1).some((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+      const next = kept[index + 1];
+      const hasChild = next !== undefined && tableName(next.header) === `hooks.${event}.hooks`;
+      if (!hasBody && !hasChild) continue;
+    }
+    result.push(section);
+  }
+  return result
+    .flatMap((section) => section.lines)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 const grok: HarnessInstaller = {
   name: "grok-build",
   detect: (c) => onPath("grok") || existsSync(join(c.home, ".grok")),
@@ -1260,7 +1314,7 @@ const grok: HarnessInstaller = {
     // REPLACE any previous block rather than skipping when one exists. Skipping made this
     // install-once-only: after the package moved, a re-install silently left the old (now dead)
     // paths in place, which is exactly the case `install` is meant to repair.
-    const withoutOurs = existing.replace(GROK_BLOCK_RE, "\n");
+    const withoutOurs = stripGrokOwned(existing);
     // Grok executes this shell command verbatim. Quote the absolute script path so a globally
     // installed package still works when its installation directory contains spaces.
     const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
@@ -1283,7 +1337,7 @@ const grok: HarnessInstaller = {
     const path = join(c.home, ".grok", "config.toml");
     if (existsSync(path)) {
       const existing = readFileSync(path, "utf8");
-      const cleaned = existing.replace(GROK_BLOCK_RE, "\n");
+      const cleaned = stripGrokOwned(existing);
       if (cleaned !== existing) writeFileSync(path, cleaned);
     }
     uninstallSkill(c, "grok-build");

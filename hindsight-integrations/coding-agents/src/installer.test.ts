@@ -1298,6 +1298,79 @@ describe("grok-build installer", () => {
     expect(existsSync(join(ctx.home, ".claude"))).toBe(false);
   });
 
+  // Grok rewrites config.toml on `grok mcp add` and from the /mcps modal, dropping comments: the
+  // sentinel markers vanish while the tables survive in Grok's normalized layout. Appending a
+  // fresh block after that leaves two `[mcp_servers.hindsight]` tables, and Grok rejects the whole
+  // file as a duplicate key — every MCP server, ours included, silently disappears.
+  const rewrittenByGrok = (ctx: InstallCtx) =>
+    [
+      "[[hooks.SessionStart]]",
+      "",
+      "[[hooks.SessionStart.hooks]]",
+      'type = "command"',
+      `command = 'node "${join(ctx.dist, "grok-sessionstart-hook.js")}"'`,
+      "timeout = 30",
+      "",
+      "[[hooks.Stop]]",
+      "",
+      "[[hooks.Stop.hooks]]",
+      'type = "command"',
+      "command = 'echo user-owned'",
+      "timeout = 5",
+      "",
+      "[[hooks.Stop.hooks]]",
+      'type = "command"',
+      `command = 'node "${join(ctx.dist, "grok-stop-hook.js")}"'`,
+      "timeout = 60",
+      "",
+      "[mcp_servers.hindsight]",
+      'command = "node"',
+      `args = ["${join(ctx.dist, "mcp-server.js")}"]`,
+      "",
+      "[mcp_servers.hindsight.env]",
+      'HINDSIGHT_MCP_HARNESS = "grok-build"',
+      "",
+      "[mcp_servers.other]",
+      'url = "https://mcp.example/mcp"',
+      "enabled = true",
+      "",
+      "[ui]",
+      'theme = "dark"',
+      "",
+    ].join("\n");
+
+  it("re-install after Grok stripped the markers still yields exactly one hooks + MCP definition", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), rewrittenByGrok(ctx));
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    const config = readFileSync(configPath(ctx), "utf8");
+    expect(config.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
+    expect(config).not.toContain("[mcp_servers.hindsight.env]");
+    expect(config.match(/grok-sessionstart-hook\.js/g)).toHaveLength(1);
+    expect(config.match(/grok-stop-hook\.js/g)).toHaveLength(1);
+    expect(config.match(/\[\[hooks\.SessionStart\]\]/g)).toHaveLength(1);
+    // The user's own Stop hook keeps its enclosing entry; only ours left it.
+    expect(config).toContain("command = 'echo user-owned'");
+    expect(config.match(/\[\[hooks\.Stop\]\]/g)).toHaveLength(2);
+    expect(config).toContain('[mcp_servers.other]\nurl = "https://mcp.example/mcp"');
+    expect(config).toContain('[ui]\ntheme = "dark"');
+  });
+
+  it("uninstall strips the unmarked layout Grok leaves behind", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    writeFileSync(configPath(ctx), rewrittenByGrok(ctx));
+    run(["uninstall", "grok-build"], ctx);
+    const config = readFileSync(configPath(ctx), "utf8");
+    expect(config).not.toContain("mcp_servers.hindsight");
+    expect(config).not.toContain(ctx.dist);
+    expect(config).not.toContain("[[hooks.SessionStart]]");
+    expect(config).toContain("command = 'echo user-owned'");
+    expect(config).toContain("[mcp_servers.other]");
+    expect(config).toContain('[ui]\ntheme = "dark"');
+  });
+
   it("removes only its marked Grok TOML block", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
