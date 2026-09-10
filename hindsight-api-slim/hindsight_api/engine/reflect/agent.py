@@ -11,10 +11,11 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
-from ...config import get_config
+from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
@@ -48,6 +49,69 @@ from .structured_doc import (
 )
 from .tokenization import count_prompt_tokens
 from .tools_schema import get_reflect_tools
+
+#: Bounds on any token argument the model supplies to a retrieval tool. Below the
+#: floor a tool returns too little to be worth the round-trip; above the ceiling one
+#: call can pull in more than the whole reflect context budget and force the slow
+#: split-synthesis path (#4239). The ceiling is deliberately not configurable: the
+#: budget that matters is HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS, which already
+#: tightens this per call (see ``_resolve_tool_arg_ceiling``), and a second knob would only give
+#: two ways to describe the same limit. It sits far enough above every default that
+#: it binds the model reaching for a broader search, not ordinary retrieval.
+_TOOL_ARG_MIN_TOKENS = 1000
+_TOOL_ARG_MAX_TOKENS = 16000
+
+#: Default budget for ``search_observations``. Unlike recall's budgets this has no
+#: env/bank knob behind it, so it lives here rather than in ``config``; it is the
+#: value the tool schema advertises to the model.
+DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS = 5000
+
+
+@dataclass(frozen=True)
+class ReflectToolTokenLimits:
+    """Token budgets the agent applies to the retrieval tools it calls.
+
+    The defaults are the values a tool gets when the model omits the argument.
+    They are resolved per bank (env -> tenant -> bank config, plus per-mental-model
+    trigger overrides) and passed in, rather than hardcoded at the call site: the
+    tool closures bind the same values as *their* defaults, but ``_execute_tool``
+    always passes every argument positionally, so those closure defaults were never
+    reached and the configured values did nothing (#4239).
+
+    Only the defaults live here; the bounds applied to a model-supplied value are
+    fixed (``_TOOL_ARG_MIN_TOKENS`` / ``_TOOL_ARG_MAX_TOKENS``).
+    """
+
+    recall_max_tokens: int
+    recall_chunk_max_tokens: int
+    observations_max_tokens: int
+
+
+def _resolve_tool_arg_ceiling(remaining_context_tokens: int | None, concurrent_calls: int) -> int:
+    """Ceiling for one tool call, tightened by what is left of the context budget.
+
+    The agent loop checks the context budget between iterations, so a single
+    iteration's parallel tool calls could previously overshoot it by their whole
+    combined payload before anything reacted -- and that overshoot is what forces the
+    slow split-synthesis path (#4239). Sharing the remaining budget across the calls
+    in flight keeps the ask itself inside the budget instead of only noticing
+    afterwards. Never drops below the floor: an unusable tool result is worse than a
+    slightly late budget check.
+    """
+    if remaining_context_tokens is None:
+        return _TOOL_ARG_MAX_TOKENS
+    share = remaining_context_tokens // max(1, concurrent_calls)
+    return max(_TOOL_ARG_MIN_TOKENS, min(_TOOL_ARG_MAX_TOKENS, share))
+
+
+#: What the tools get when a caller supplies no resolved limits. Built from the
+#: shipped defaults rather than from ``get_config()``: the recall budgets are
+#: bank-configurable and reading them globally is refused by design.
+_SHIPPED_DEFAULT_TOOL_LIMITS = ReflectToolTokenLimits(
+    recall_max_tokens=DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunk_max_tokens=DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+    observations_max_tokens=DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+)
 
 
 def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[DirectiveInfo]:
@@ -513,6 +577,7 @@ async def _run_reflect_agent_inner(
     cancel_check: Callable[[], None] | None = None,
     store_document_text: bool = True,
     answer_as_document: bool = False,
+    tool_token_limits: ReflectToolTokenLimits | None = None,
     *,
     reflect_id: str,
     provider_impl: Any,
@@ -559,6 +624,14 @@ async def _run_reflect_agent_inner(
     # visible page mid-word (#3365). An operator can set a hard cost ceiling via
     # HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS.
     synthesis_max_completion_tokens = get_config().reflect_max_completion_tokens
+
+    # ``reflect_async`` always resolves these per bank; this covers direct callers
+    # (tests) only. It cannot read them off the global config: they are
+    # bank-configurable, and ``HindsightConfig`` raises ConfigFieldAccessError rather
+    # than let a caller silently pick up a global default where a bank override may
+    # exist -- which is the same class of bug as #4239 itself.
+    if tool_token_limits is None:
+        tool_token_limits = _SHIPPED_DEFAULT_TOOL_LIMITS
 
     # Build directives_applied for the trace
     directives_applied = _build_directives_applied(directives)
@@ -1184,6 +1257,18 @@ async def _run_reflect_agent_inner(
                 await _resolve_pending_cache()
                 _schedule_cache(call_msg_count)
 
+            # Ceiling for this batch: the fixed cap, tightened by whatever is left of
+            # the context budget and shared across the calls running in parallel. The between-iteration budget check below only reacts once a
+            # batch has already landed, so bounding the ask here is what actually
+            # keeps an iteration from overshooting into split synthesis (#4239).
+            # ``estimated_tokens`` is this iteration's count from the guard above; only
+            # the assistant's own tool-call message has landed since, so re-walking every
+            # message for a handful of tokens is not worth a second tokenization pass.
+            call_ceiling = _resolve_tool_arg_ceiling(
+                max_context_tokens - estimated_tokens,
+                len(other_tools),
+            )
+
             # Execute tools in parallel
             tool_tasks = [
                 _execute_tool_with_timing(
@@ -1192,6 +1277,8 @@ async def _run_reflect_agent_inner(
                     search_observations_fn,
                     recall_fn,
                     expand_fn,
+                    tool_token_limits,
+                    call_ceiling,
                     enabled_tools=enabled_tools,
                 )
                 for tc in other_tools
@@ -1276,7 +1363,7 @@ async def _run_reflect_agent_inner(
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
-                input_summary = _summarize_input(tc.name, tc.arguments)
+                input_summary = _summarize_input(tc.name, tc.arguments, tool_token_limits, call_ceiling)
 
                 # Extract reason from tool arguments (if provided)
                 tool_reason = tc.arguments.get("reason")
@@ -1567,6 +1654,8 @@ async def _execute_tool_with_timing(
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
+    token_limits: "ReflectToolTokenLimits",
+    ceiling: int,
     enabled_tools: frozenset[str] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Execute a tool call and return result with timing."""
@@ -1601,6 +1690,8 @@ async def _execute_tool_with_timing(
                 search_observations_fn,
                 recall_fn,
                 expand_fn,
+                token_limits,
+                ceiling,
                 enabled_tools=enabled_tools,
             )
 
@@ -1641,9 +1732,16 @@ async def _execute_tool(
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
+    token_limits: "ReflectToolTokenLimits",
+    ceiling: int,
     enabled_tools: frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    """Execute a single tool by name."""
+    """Execute a single tool by name.
+
+    ``token_limits`` supplies the default each token argument takes when the model
+    omits it -- the bank/env-configured values, not a constant -- and ``ceiling``
+    bounds what the model may ask for on this call.
+    """
     # Normalize tool name for various LLM output formats
     tool_name = _normalize_tool_name(tool_name)
 
@@ -1666,7 +1764,13 @@ async def _execute_tool(
         query = args.get("query")
         if not query:
             return {"error": "search_observations requires a query parameter"}
-        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=5000, minimum=1000)
+        max_tokens, error = _parse_tool_int_arg_or_error(
+            args,
+            "max_tokens",
+            default=token_limits.observations_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
         if error:
             return {"error": error}
         return await search_observations_fn(query, max_tokens)
@@ -1675,14 +1779,21 @@ async def _execute_tool(
         query = args.get("query")
         if not query:
             return {"error": "recall requires a query parameter"}
-        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=2048, minimum=1000)
+        max_tokens, error = _parse_tool_int_arg_or_error(
+            args,
+            "max_tokens",
+            default=token_limits.recall_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
         if error:
             return {"error": error}
         max_chunk_tokens, error = _parse_tool_int_arg_or_error(
             args,
             "max_chunk_tokens",
-            default=1000,
-            minimum=1000,
+            default=token_limits.recall_chunk_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
         )
         if error:
             return {"error": error}
@@ -1702,17 +1813,31 @@ async def _execute_tool(
 _NULLISH_TOOL_INT_STRINGS = {"", "none", "null"}
 
 
-def _parse_tool_int_arg(args: dict[str, Any], key: str, *, default: int, minimum: int | None = None) -> int:
+def _parse_tool_int_arg(
+    args: dict[str, Any],
+    key: str,
+    *,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Read one integer tool argument, clamped to [minimum, maximum].
+
+    ``maximum`` applies to the model's value only -- a configured default above it is
+    honoured, since that is an operator's deliberate choice rather than the model
+    reaching for a broader search.
+    """
     raw_value = args.get(key)
     if not raw_value:
-        value = default
-    elif isinstance(raw_value, str) and raw_value.strip().lower() in _NULLISH_TOOL_INT_STRINGS:
-        value = default
-    else:
-        value = int(raw_value)
-    if minimum is None:
-        return value
-    return max(value, minimum)
+        return default
+    if isinstance(raw_value, str) and raw_value.strip().lower() in _NULLISH_TOOL_INT_STRINGS:
+        return default
+    value = int(raw_value)
+    if maximum is not None:
+        value = min(value, maximum)
+    if minimum is not None:
+        value = max(value, minimum)
+    return value
 
 
 def _parse_tool_int_arg_or_error(
@@ -1721,16 +1846,24 @@ def _parse_tool_int_arg_or_error(
     *,
     default: int,
     minimum: int | None = None,
+    maximum: int | None = None,
 ) -> tuple[int, str | None]:
     try:
-        return _parse_tool_int_arg(args, key, default=default, minimum=minimum), None
+        return _parse_tool_int_arg(args, key, default=default, minimum=minimum, maximum=maximum), None
     except (OverflowError, TypeError, ValueError):
         return default, f"{key} must be an integer or null-like value"
 
 
-def _summarize_tool_int_arg(args: dict[str, Any], key: str, *, default: int, minimum: int | None = None) -> str:
+def _summarize_tool_int_arg(
+    args: dict[str, Any],
+    key: str,
+    *,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> str:
     try:
-        return str(_parse_tool_int_arg(args, key, default=default, minimum=minimum))
+        return str(_parse_tool_int_arg(args, key, default=default, minimum=minimum, maximum=maximum))
     except (OverflowError, TypeError, ValueError):
         return f"invalid:{args.get(key)!r}"
 
@@ -1742,20 +1875,47 @@ def _summarize_tool_query(args: dict[str, Any]) -> str:
     return f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
 
 
-def _summarize_input(tool_name: str, args: dict[str, Any]) -> str:
-    """Create a summary of tool input for logging, showing all params."""
+def _summarize_input(
+    tool_name: str,
+    args: dict[str, Any],
+    token_limits: "ReflectToolTokenLimits",
+    ceiling: int,
+) -> str:
+    """Create a summary of tool input for logging, showing all params.
+
+    Resolved the same way ``_execute_tool`` resolves them, so the summary reports
+    what the tool actually ran with rather than what the model asked for.
+    """
     if tool_name == "search_mental_models":
         query_preview = _summarize_tool_query(args)
         max_results = _summarize_tool_int_arg(args, "max_results", default=5)
         return f"(query={query_preview}, max_results={max_results})"
     elif tool_name == "search_observations":
         query_preview = _summarize_tool_query(args)
-        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=5000, minimum=1000)
+        max_tokens = _summarize_tool_int_arg(
+            args,
+            "max_tokens",
+            default=token_limits.observations_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
         return f"(query={query_preview}, max_tokens={max_tokens})"
     elif tool_name == "recall":
         query_preview = _summarize_tool_query(args)
-        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=2048, minimum=1000)
-        max_chunk_tokens = _summarize_tool_int_arg(args, "max_chunk_tokens", default=1000, minimum=1000)
+        max_tokens = _summarize_tool_int_arg(
+            args,
+            "max_tokens",
+            default=token_limits.recall_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
+        max_chunk_tokens = _summarize_tool_int_arg(
+            args,
+            "max_chunk_tokens",
+            default=token_limits.recall_chunk_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
         return f"(query={query_preview}, max_tokens={max_tokens}, max_chunk_tokens={max_chunk_tokens})"
     elif tool_name == "expand":
         memory_ids = args.get("memory_ids", [])
