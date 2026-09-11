@@ -10222,16 +10222,17 @@ class MemoryEngine(MemoryEngineInterface):
                         # dependent observations AFTER the delete below. Running the
                         # stale-observation sweep post-delete ensures we also catch
                         # observations inserted concurrently by consolidation.
+                        # Both the stale-observation ids and the deleted count must come from
+                        # wherever the memories live: for a store that keeps them elsewhere the
+                        # memory_units table is intentionally empty, so reading it yields nothing
+                        # (the sweep would silently skip, and the count would report 0 rows).
+                        from .memories import get_memories as _get_memories_for_scope
+
+                        _scope_store = _get_memories_for_scope()
+                        _scope_store_owned = _scope_store.store_owned_for(bank_id)
                         unit_ids: list[str] = []
                         if fact_type in ("experience", "world"):
-                            # These ids drive the stale-observation sweep below, so they must come
-                            # from wherever the memories live: reading memory_units for a store that
-                            # keeps them elsewhere yields nothing, and the sweep would silently skip,
-                            # leaving observations behind that outlive the sources they summarise.
-                            from .memories import get_memories as _get_memories_for_scope
-
-                            _scope_store = _get_memories_for_scope()
-                            if not _scope_store.store_owned_for(bank_id):
+                            if not _scope_store_owned:
                                 unit_id_rows = await conn.fetch(
                                     f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                                     bank_id,
@@ -10249,11 +10250,17 @@ class MemoryEngine(MemoryEngineInterface):
                                 unit_ids = [m.unit_id for m in _scope_page.memories]
 
                         # Delete only memories of a specific fact type
-                        units_count = await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
-                            bank_id,
-                            fact_type,
-                        )
+                        if not _scope_store_owned:
+                            units_count = await conn.fetchval(
+                                f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
+                                bank_id,
+                                fact_type,
+                            )
+                        else:
+                            _scope_counts = await _scope_store.count_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id
+                            )
+                            units_count = int(_scope_counts.get(fact_type) or 0)
                         await conn.execute(
                             f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                             bank_id,
