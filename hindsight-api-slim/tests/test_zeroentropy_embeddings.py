@@ -2,10 +2,14 @@
 
 import base64
 import struct
+from collections.abc import Callable
+from typing import Any
 
-import httpx
 import pytest
+from aiohttp import web
 from pydantic import BaseModel
+
+from tests.aiohttp_stub import stub_server
 
 ZEROENTROPY_ENV_VARS = [
     "HINDSIGHT_API_EMBEDDINGS_PROVIDER",
@@ -131,29 +135,35 @@ def test_zeroentropy_rejects_invalid_encoding_format(monkeypatch):
         create_embeddings_from_env()
 
 
-def test_zeroentropy_encode_documents_batches_and_sends_expected_payload():
+def _json_handler(respond: Callable[[dict[str, Any], web.Request], Any]):
+    """An upstream that answers every request with ``respond(body, request)`` as JSON."""
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response(respond(await request.json(), request))
+
+    return handler
+
+
+async def _ready(base_url: str, **kwargs: Any):
     from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings
 
+    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", base_url=base_url, **kwargs)
+    await embeddings.initialize()  # no startup probe: nothing reaches the stub
+    return embeddings
+
+
+async def test_zeroentropy_encode_documents_batches_and_sends_expected_payload():
     requests: list[CapturedZeroEntropyEmbedRequest] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = CapturedZeroEntropyEmbedRequest.model_validate_json(request.content)
-        requests.append(body)
-        assert str(request.url) == "https://api.zeroentropy.dev/v1/models/embed"
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        requests.append(CapturedZeroEntropyEmbedRequest.model_validate(body))
+        assert request.path == "/v1/models/embed"
         assert request.headers["authorization"] == "Bearer ze-test"
-        return httpx.Response(
-            200,
-            json={"results": [{"embedding": [float(i), 0.0]} for i, _ in enumerate(body.input)]},
-        )
+        return {"results": [{"embedding": [float(i), 0.0]} for i, _ in enumerate(body["input"])]}
 
-    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", dimensions=1280, batch_size=2, latency="fast")
-    embeddings._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
-    )
-    embeddings._dimension = 1280
-
-    vectors = embeddings.encode_documents(["alpha", "beta", "gamma"])
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, batch_size=2, latency="fast")
+        vectors = await embeddings.encode_documents(["alpha", "beta", "gamma"])
 
     assert len(vectors) == 3
     assert [request.input for request in requests] == [["alpha", "beta"], ["gamma"]]
@@ -164,66 +174,40 @@ def test_zeroentropy_encode_documents_batches_and_sends_expected_payload():
     assert all(request.latency == "fast" for request in requests)
 
 
-def test_zeroentropy_omits_latency_when_unset():
-    import json
-
-    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings
-
+async def test_zeroentropy_omits_latency_when_unset():
     seen_bodies: list[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_bodies.append(json.loads(request.content))
-        return httpx.Response(200, json={"results": [{"embedding": [1.0, 2.0]}]})
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        seen_bodies.append(body)
+        return {"results": [{"embedding": [1.0, 2.0]}]}
 
-    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", dimensions=1280, latency=None)
-    embeddings._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
-    )
-    embeddings._dimension = 1280
-
-    embeddings.encode_documents(["alpha"])
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, latency=None)
+        await embeddings.encode_documents(["alpha"])
 
     assert "latency" not in seen_bodies[0]
 
 
-def test_zeroentropy_encode_query_sends_query_input_type():
-    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings
-
+async def test_zeroentropy_encode_query_sends_query_input_type():
     seen_input_types: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = CapturedZeroEntropyEmbedRequest.model_validate_json(request.content)
-        seen_input_types.append(body.input_type)
-        return httpx.Response(200, json={"results": [{"embedding": [1.0, 2.0]}]})
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        seen_input_types.append(CapturedZeroEntropyEmbedRequest.model_validate(body).input_type)
+        return {"results": [{"embedding": [1.0, 2.0]}]}
 
-    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", dimensions=1280)
-    embeddings._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
-    )
-    embeddings._dimension = 1280
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280)
+        assert await embeddings.encode_query(["where is this?"]) == [[1.0, 2.0]]
 
-    assert embeddings.encode_query(["where is this?"]) == [[1.0, 2.0]]
     assert seen_input_types == ["query"]
 
 
-def test_zeroentropy_base64_response_is_decoded():
-    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings
-
+async def test_zeroentropy_base64_response_is_decoded():
     encoded = base64.b64encode(struct.pack("<2f", 0.25, 0.5)).decode("ascii")
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": [{"embedding": encoded}]})
-
-    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", dimensions=1280, encoding_format="base64")
-    embeddings._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
-    )
-    embeddings._dimension = 1280
-
-    assert embeddings.encode_documents(["alpha"]) == [[0.25, 0.5]]
+    async with stub_server(_json_handler(lambda body, request: {"results": [{"embedding": encoded}]})) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, encoding_format="base64")
+        assert await embeddings.encode_documents(["alpha"]) == [[0.25, 0.5]]
 
 
 def test_zeroentropy_reranker_create_from_env_uses_base_url(monkeypatch):
@@ -252,10 +236,10 @@ async def test_embedding_utils_routes_query_embeddings_to_provider_hook():
         # EmbeddingsBackend Protocol requires a `dimension` property).
         dimension = 1
 
-        def encode(self, texts: list[str]) -> list[list[float]]:
+        async def encode(self, texts: list[str]) -> list[list[float]]:
             raise AssertionError("query embeddings should not use the generic encode method")
 
-        def encode_query(self, texts: list[str]) -> list[list[float]]:
+        async def encode_query(self, texts: list[str]) -> list[list[float]]:
             return [[float(len(text))] for text in texts]
 
     vectors = await generate_embeddings_batch(QueryAwareEmbeddings(), ["query text"], input_type="query")
@@ -273,10 +257,10 @@ async def test_embedding_utils_routes_document_embeddings_to_provider_hook():
         # EmbeddingsBackend Protocol requires a `dimension` property).
         dimension = 1
 
-        def encode(self, texts: list[str]) -> list[list[float]]:
+        async def encode(self, texts: list[str]) -> list[list[float]]:
             raise AssertionError("document embeddings should not use the generic encode method")
 
-        def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        async def encode_documents(self, texts: list[str]) -> list[list[float]]:
             return [[float(len(text))] for text in texts]
 
     vectors = await generate_embeddings_batch(DocumentAwareEmbeddings(), ["document text"], input_type="document")
@@ -286,73 +270,65 @@ async def test_embedding_utils_routes_document_embeddings_to_provider_hook():
 
 # ── bounded retry/backoff (issue #4103 for the native Gemini provider; same gap here) ──
 #
-# The provider posts through a bare httpx.Client, so before this a single 429 or 5xx
-# failed the whole retain/consolidation operation. These pin the same contract the
-# LiteLLM, Gemini and Cohere backends hold.
+# Before this a single 429 or 5xx from the upstream failed the whole
+# retain/consolidation operation. These pin the same contract the LiteLLM, Gemini and
+# Cohere backends hold.
 
 
-def _retrying_embeddings(responses: list[int], policy=None):
-    """Build a provider whose transport replays `responses` (HTTP status codes) in order."""
-    import threading
+async def _encode_against(responses: list[int]) -> tuple[int, list[list[float]] | Exception, Any]:
+    """Encode one text against an upstream that replays ``responses`` (HTTP status codes) in order."""
+    from hindsight_api.engine.embeddings import RetryPolicy
 
-    from hindsight_api.engine.embeddings import RetryPolicy, ZeroEntropyEmbeddings
-
-    statuses = list(responses)
     calls = {"n": 0}
-    lock = threading.Lock()
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        with lock:
-            index = calls["n"]
-            calls["n"] += 1
-        status = statuses[index] if index < len(statuses) else statuses[-1]
+    async def handler(request: web.Request) -> web.StreamResponse:
+        status = responses[min(calls["n"], len(responses) - 1)]
+        calls["n"] += 1
         if status != 200:
-            return httpx.Response(status, json={"error": "upstream"})
-        body = CapturedZeroEntropyEmbedRequest.model_validate_json(request.content)
-        return httpx.Response(200, json={"results": [{"embedding": [0.1, 0.2]} for _ in body.input]})
+            return web.json_response({"error": "upstream"}, status=status)
+        body = CapturedZeroEntropyEmbedRequest.model_validate(await request.json())
+        return web.json_response({"results": [{"embedding": [0.1, 0.2]} for _ in body.input]})
 
-    # Fast policy so these tests exercise the retry logic, not the sleeps.
-    embeddings = ZeroEntropyEmbeddings(
-        api_key="ze-test",
-        dimensions=1280,
-        batch_size=2,
-        retry_policy=policy or RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
-    )
-    embeddings._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"Authorization": "Bearer ze-test", "Content-Type": "application/json"},
-    )
-    embeddings._dimension = 1280
-    return embeddings, calls
+    async with stub_server(handler) as base_url:
+        # Fast policy so these tests exercise the retry logic, not the sleeps.
+        embeddings = await _ready(
+            base_url,
+            dimensions=1280,
+            batch_size=2,
+            retry_policy=RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
+        )
+        try:
+            result: list[list[float]] | Exception = await embeddings.encode_documents(["alpha"])
+        except Exception as exc:
+            result = exc
+    return calls["n"], result, embeddings
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408])
-def test_zeroentropy_transient_status_then_success(status):
-    embeddings, calls = _retrying_embeddings([status, 200])
+async def test_zeroentropy_transient_status_then_success(status):
+    calls, result, _ = await _encode_against([status, 200])
 
-    vectors = embeddings.encode_documents(["alpha"])
-
-    assert vectors == [[0.1, 0.2]]
-    assert calls["n"] == 2
+    assert result == [[0.1, 0.2]]
+    assert calls == 2
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
-def test_zeroentropy_permanent_client_errors_fail_fast(status):
+async def test_zeroentropy_permanent_client_errors_fail_fast(status):
     """Auth and validation failures must not be retried — retrying cannot fix them."""
-    embeddings, calls = _retrying_embeddings([status])
+    calls, result, _ = await _encode_against([status])
 
-    with pytest.raises(RuntimeError, match="ZeroEntropy embedding request failed"):
-        embeddings.encode_documents(["alpha"])
-    assert calls["n"] == 1
+    assert isinstance(result, RuntimeError)
+    assert "ZeroEntropy embedding request failed" in str(result)
+    assert calls == 1
 
 
-def test_zeroentropy_exhausted_retries_propagate_the_diagnostic_error():
+async def test_zeroentropy_exhausted_retries_propagate_the_diagnostic_error():
     """Retries are bounded, and an exhausted request still reaches the caller wrapped."""
-    embeddings, calls = _retrying_embeddings([503])
+    calls, result, embeddings = await _encode_against([503])
 
-    with pytest.raises(RuntimeError, match="ZeroEntropy embedding request failed"):
-        embeddings.encode_documents(["alpha"])
-    assert calls["n"] == embeddings.retry_policy.max_retries + 1
+    assert isinstance(result, RuntimeError)
+    assert "ZeroEntropy embedding request failed" in str(result)
+    assert calls == embeddings.retry_policy.max_retries + 1
 
 
 def test_zeroentropy_create_from_env_wires_the_configured_policy(monkeypatch):

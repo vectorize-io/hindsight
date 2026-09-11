@@ -42,12 +42,12 @@ class _FakeBackend:
     def dimension(self) -> int:
         return self._dimension
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
         self.received = list(texts)
         return [[0.1] * self._dimension for _ in texts]
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return self.encode_documents(texts)
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self.encode_documents(texts)
 
 
 def _patch_cap(value: int | None):
@@ -139,11 +139,11 @@ class _PrefixedBackend(_FakeBackend):
     query_prefix = "query: "
     passage_prefix = "passage: "
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
-        return super().encode_documents([f"{self.passage_prefix}{t}" for t in texts])
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return await super().encode_documents([f"{self.passage_prefix}{t}" for t in texts])
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return super().encode_documents([f"{self.query_prefix}{t}" for t in texts])
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await super().encode_documents([f"{self.query_prefix}{t}" for t in texts])
 
 
 @pytest.mark.asyncio

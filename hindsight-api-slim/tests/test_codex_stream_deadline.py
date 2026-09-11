@@ -8,7 +8,7 @@ keeps emitting deltas never trips it: the client read one such response for ~830
 (~12 MB) until the backend itself closed the connection, holding the consolidation
 slot for the whole time.
 
-These tests run a real local SSE server rather than mocking httpx, because the whole
+These tests run a real local SSE server rather than mocking the client, because the whole
 defect lives in the interaction between a still-flowing socket and the timeout that
 was supposed to bound it — a mocked response cannot express "bytes keep arriving".
 """
@@ -17,14 +17,16 @@ import asyncio
 import time
 from unittest.mock import patch
 
-import httpx
+import aiohttp
 import pytest
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.providers.codex_llm import (
     _MAX_SSE_BODY_CHARS,
     CodexLLM,
     CodexRunawayStreamError,
 )
+from hindsight_api.engine.remote_retry import is_transient_remote_error
 
 pytestmark = pytest.mark.asyncio
 
@@ -115,7 +117,8 @@ async def test_deadline_also_bounds_the_tool_call_path():
 
 async def test_runaway_is_retryable_transport_error():
     """The deadline must land in the existing retry path, not escape as a hard failure."""
-    assert issubclass(CodexRunawayStreamError, httpx.RequestError)
+    assert issubclass(CodexRunawayStreamError, aiohttp.ClientError)
+    assert is_transient_remote_error(CodexRunawayStreamError("runaway"))
 
 
 async def test_oversized_body_is_abandoned_before_the_deadline():
@@ -165,9 +168,55 @@ async def test_error_body_is_readable_after_streaming():
     base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     llm = _build_llm(base_url, timeout=30.0)
     try:
-        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+        with pytest.raises(UpstreamHTTPError) as excinfo:
             await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
-        assert "bad request detail" in excinfo.value.response.text
+        assert excinfo.value.status_code == 400
+        assert "bad request detail" in excinfo.value.body
+    finally:
+        await llm.cleanup()
+        server.close()
+
+
+async def test_lines_split_across_chunks_are_reassembled():
+    """SSE lines arrive in arbitrary chunks; the reader must rejoin them exactly.
+
+    Covers a ``\\r\\n`` split between two chunks, a multi-byte character split
+    mid-sequence, and one line far longer than aiohttp's own line-reader buffer
+    (which would raise rather than yield it).
+    """
+    long_delta = "y" * 200_000
+    body = (
+        b'event: response.text.delta\r\ndata: {"delta": "caf\xc3\xa9 "}\r\n\r\n'
+        + b'event: response.text.delta\ndata: {"delta": "'
+        + long_delta.encode()
+        + b'"}\n\n'
+        + b"data: [DONE]\n\n"
+    )
+    # Cut points: inside the first "\r\n", inside the "é" (0xc3 | 0xa9), inside the long line.
+    first_crlf = body.index(b"\r\n") + 1
+    inside_e_acute = body.index(b"\xc3") + 1
+    inside_long_line = body.index(b"yyyy") + 50_000
+    cuts = [0, first_crlf, inside_e_acute, inside_long_line, len(body)]
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        while await reader.readline() not in (b"\r\n", b"\n", b""):
+            pass
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+        for start, end in zip(cuts, cuts[1:]):
+            piece = body[start:end]
+            writer.write(b"%x\r\n" % len(piece) + piece + b"\r\n")
+            await writer.drain()
+            await asyncio.sleep(0.02)  # separate reads on the client side
+        writer.write(b"0\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+    llm = _build_llm(base_url, timeout=30.0)
+    try:
+        result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+        assert result.content == "café " + long_delta
     finally:
         await llm.cleanup()
         server.close()

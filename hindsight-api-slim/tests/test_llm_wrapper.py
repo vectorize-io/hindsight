@@ -122,78 +122,58 @@ def test_llm_provider_from_env_reads_ollama_num_ctx(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_native_ollama_omits_num_ctx_unless_configured(monkeypatch):
+async def test_native_ollama_omits_num_ctx_unless_configured():
     """Native Ollama calls should not override the model context window by default."""
     from pydantic import BaseModel
 
     from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+    from tests.ollama_stub import chat_body, ollama_stub
 
     class Answer(BaseModel):
         ok: bool
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
+    async with ollama_stub(chat_body('{"ok": true}')) as stub:
+        default_provider = OpenAICompatibleLLM(
+            provider="ollama",
+            api_key="",
+            base_url=stub.openai_base_url,
+            model="llama3.2",
+        )
+        await default_provider._call_ollama_native(
+            messages=[{"role": "user", "content": "ping"}],
+            response_format=Answer,
+            max_completion_tokens=None,
+            temperature=None,
+            max_retries=0,
+            initial_backoff=1,
+            max_backoff=1,
+            skip_validation=False,
+        )
 
-        def json(self):
-            return {"message": {"content": '{"ok": true}'}}
+        configured_provider = OpenAICompatibleLLM(
+            provider="ollama",
+            api_key="",
+            base_url=stub.openai_base_url,
+            model="llama3.2",
+            ollama_num_ctx=65536,
+        )
+        await configured_provider._call_ollama_native(
+            messages=[{"role": "user", "content": "ping"}],
+            response_format=Answer,
+            max_completion_tokens=None,
+            temperature=None,
+            max_retries=0,
+            initial_backoff=1,
+            max_backoff=1,
+            skip_validation=False,
+        )
+        await default_provider.cleanup()
+        await configured_provider.cleanup()
 
-    calls = []
-
-    class FakeAsyncClient:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def post(self, url, json, headers):
-            calls.append({"url": url, "json": json, "headers": headers})
-            return FakeResponse()
-
-    monkeypatch.setattr("hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient", FakeAsyncClient)
-
-    default_provider = OpenAICompatibleLLM(
-        provider="ollama",
-        api_key="",
-        base_url="",
-        model="llama3.2",
-    )
-    await default_provider._call_ollama_native(
-        messages=[{"role": "user", "content": "ping"}],
-        response_format=Answer,
-        max_completion_tokens=None,
-        temperature=None,
-        max_retries=0,
-        initial_backoff=1,
-        max_backoff=1,
-        skip_validation=False,
-    )
-
-    configured_provider = OpenAICompatibleLLM(
-        provider="ollama",
-        api_key="",
-        base_url="",
-        model="llama3.2",
-        ollama_num_ctx=65536,
-    )
-    await configured_provider._call_ollama_native(
-        messages=[{"role": "user", "content": "ping"}],
-        response_format=Answer,
-        max_completion_tokens=None,
-        temperature=None,
-        max_retries=0,
-        initial_backoff=1,
-        max_backoff=1,
-        skip_validation=False,
-    )
-
-    assert "num_ctx" not in calls[0]["json"]["options"]
-    assert calls[0]["json"]["options"]["num_batch"] == 512
-    assert calls[1]["json"]["options"]["num_ctx"] == 65536
+    calls = stub.requests
+    assert "num_ctx" not in calls[0].json["options"]
+    assert calls[0].json["options"]["num_batch"] == 512
+    assert calls[1].json["options"]["num_ctx"] == 65536
 
 
 @pytest.mark.parametrize(

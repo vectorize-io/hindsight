@@ -23,7 +23,7 @@ FROM ${HINDSIGHT_IMAGE}
 # site-packages and be invisible to the running server.
 RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
       'PyJWT[crypto]>=2.12.0' \
-      'httpx>=0.27.0'
+      'aiohttp>=3.14.3'
 
 # Put the extension on the server's import path. /app/extensions is ours — the
 # image does not use it — so this cannot shadow anything the server ships.

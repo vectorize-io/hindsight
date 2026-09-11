@@ -24,19 +24,19 @@ async def test_live_zeroentropy_embeddings_document_and_query():
     embeddings = ZeroEntropyEmbeddings(api_key=LIVE_API_KEY, dimensions=1280)
     await embeddings.initialize()
 
-    docs = embeddings.encode_documents(["Paris is the capital of France.", "Python is a programming language."])
+    docs = await embeddings.encode_documents(["Paris is the capital of France.", "Python is a programming language."])
     assert len(docs) == 2
     assert all(len(v) == 1280 for v in docs)
     assert all(isinstance(x, float) for x in docs[0])
 
-    queries = embeddings.encode_query(["What is the capital of France?"])
+    queries = await embeddings.encode_query(["What is the capital of France?"])
     assert len(queries) == 1
     assert len(queries[0]) == 1280
 
     # Asymmetric encoder: same text embedded as document vs query should differ.
     same_text = "Paris is the capital of France."
-    doc_vec = embeddings.encode_documents([same_text])[0]
-    query_vec = embeddings.encode_query([same_text])[0]
+    doc_vec = (await embeddings.encode_documents([same_text]))[0]
+    query_vec = (await embeddings.encode_query([same_text]))[0]
     assert doc_vec != query_vec
 
 
@@ -52,11 +52,11 @@ async def test_live_zeroentropy_embeddings_base64_matches_float():
 
     float_provider = ZeroEntropyEmbeddings(api_key=LIVE_API_KEY, dimensions=640, encoding_format="float")
     await float_provider.initialize()
-    float_vec = float_provider.encode_documents([text])[0]
+    float_vec = (await float_provider.encode_documents([text]))[0]
 
     base64_provider = ZeroEntropyEmbeddings(api_key=LIVE_API_KEY, dimensions=640, encoding_format="base64")
     await base64_provider.initialize()
-    base64_vec = base64_provider.encode_documents([text])[0]
+    base64_vec = (await base64_provider.encode_documents([text]))[0]
 
     assert len(float_vec) == 640
     assert len(base64_vec) == 640

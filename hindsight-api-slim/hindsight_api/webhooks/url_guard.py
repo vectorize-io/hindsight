@@ -10,9 +10,10 @@ API returns it — server-side request forgery with response exfiltration
 This module rejects such destinations. It is deny-by-default for
 private/loopback/link-local/reserved ranges; operators re-permit specific
 internal hosts (e.g. ``127.0.0.1`` for local testing, or an internal receiver)
-via an explicit allowlist. At delivery time the host is resolved and the
-connection is pinned to the validated IP so a DNS name cannot be rebound to an
-internal address between validation and connect.
+via an explicit allowlist. At delivery time the host is resolved by
+:class:`GuardedResolver` — the only resolver the delivery connector has — and
+the connection is made only to the addresses it validated, so a DNS name cannot
+be rebound to an internal address between validation and connect.
 """
 
 from __future__ import annotations
@@ -20,9 +21,14 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from collections.abc import Mapping
 from dataclasses import dataclass
 
-import httpx
+import aiohttp
+from aiohttp.abc import AbstractResolver, ResolveResult
+from yarl import URL
+
+from ..engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout
 
 _ALLOWED_SCHEMES = ("http", "https")
 
@@ -108,6 +114,47 @@ def _ip_is_blocked(ip: _IPAddress) -> bool:
     )
 
 
+def _validate_host_literal(host: str, allowlist: Allowlist) -> None:
+    """Reject an IP-literal host in a blocked range (no DNS).
+
+    Also catches the legacy numeric IPv4 spellings (``2130706433``, ``127.1``,
+    ``0x7f.1``) that ``ipaddress`` refuses but the OS resolver maps onto an
+    address, so they cannot smuggle a loopback/private target past the check.
+    """
+    if allowlist.allows_host(host):
+        return
+    literal = _as_ip(host)
+    if literal is None:
+        try:
+            literal = ipaddress.IPv4Address(socket.inet_aton(host))
+        except OSError:
+            return  # a DNS name — validated when it is resolved
+    if _ip_is_blocked(literal) and not allowlist.allows_ip(literal):
+        raise WebhookURLError(
+            f"Webhook URL host '{host}' targets a private/loopback/link-local address, "
+            "which is not an allowed destination"
+        )
+
+
+def _parse_target(url: str) -> URL:
+    """Parse ``url`` and check scheme and host presence (no DNS)."""
+    # yarl silently strips control characters (WHATWG behaviour) where httpx
+    # rejected them; keep rejecting so the accepted set does not widen.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        raise WebhookURLError("Invalid webhook URL: contains non-printable characters")
+    try:
+        parsed = URL(url)
+        host = parsed.host
+        parsed.port  # noqa: B018 — force port validation (yarl parses it lazily)
+    except (ValueError, TypeError) as exc:
+        raise WebhookURLError(f"Invalid webhook URL: {exc}") from exc
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise WebhookURLError(f"Webhook URL scheme must be http or https, got '{parsed.scheme or 'empty'}'")
+    if not host:
+        raise WebhookURLError("Webhook URL must include a host")
+    return parsed
+
+
 def validate_url_syntax(url: str, allowlist: Allowlist) -> None:
     """Registration-time check (no DNS).
 
@@ -119,45 +166,55 @@ def validate_url_syntax(url: str, allowlist: Allowlist) -> None:
     Raises:
         WebhookURLError: if the URL is structurally unsafe.
     """
-    try:
-        parsed = httpx.URL(url)
-    except Exception as exc:  # httpx.InvalidURL and friends
-        raise WebhookURLError(f"Invalid webhook URL: {exc}") from exc
-    if parsed.scheme not in _ALLOWED_SCHEMES:
-        raise WebhookURLError(f"Webhook URL scheme must be http or https, got '{parsed.scheme or 'empty'}'")
-    host = parsed.host
-    if not host:
-        raise WebhookURLError("Webhook URL must include a host")
-    if allowlist.allows_host(host):
-        return
-    literal = _as_ip(host)
-    if literal is not None and _ip_is_blocked(literal) and not allowlist.allows_ip(literal):
-        raise WebhookURLError(
-            f"Webhook URL host '{host}' targets a private/loopback/link-local address, "
-            "which is not an allowed destination"
-        )
+    parsed = _parse_target(url)
+    assert parsed.host is not None  # guaranteed by _parse_target
+    _validate_host_literal(parsed.host, allowlist)
 
 
-async def _resolve(host: str, port: int) -> list[str]:
+@dataclass(frozen=True)
+class _ResolvedAddress:
+    family: int
+    ip: str
+
+
+async def _resolve(host: str, port: int, family: int = socket.AF_UNSPEC) -> list[_ResolvedAddress]:
     loop = asyncio.get_running_loop()
     try:
-        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = await loop.getaddrinfo(host, port, family=family, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise WebhookURLError(f"Webhook host '{host}' did not resolve: {exc}") from exc
-    ips = [info[4][0] for info in infos]
-    if not ips:
+    addresses: list[_ResolvedAddress] = []
+    for info in infos:
+        address = _ResolvedAddress(family=info[0], ip=str(info[4][0]))
+        if address not in addresses:
+            addresses.append(address)
+    if not addresses:
         raise WebhookURLError(f"Webhook host '{host}' did not resolve to any address")
-    return ips
+    return addresses
+
+
+async def _resolve_validated(
+    host: str, port: int, allowlist: Allowlist, family: int = socket.AF_UNSPEC
+) -> list[_ResolvedAddress]:
+    """Resolve a DNS name and reject the whole answer if any address is blocked."""
+    addresses = await _resolve(host, port, family)
+    if allowlist.allows_host(host):
+        return addresses
+    for address in addresses:
+        ip = ipaddress.ip_address(address.ip)
+        if _ip_is_blocked(ip) and not allowlist.allows_ip(ip):
+            raise WebhookURLError(f"Webhook host '{host}' resolved to disallowed address {address.ip}")
+    return addresses
 
 
 async def resolve_and_validate(host: str, port: int, allowlist: Allowlist) -> list[str]:
-    """Resolve ``host`` and return the validated IPs to pin the connection to.
+    """Resolve ``host`` and return the validated IPs a connection may use.
 
     Rejects if *any* resolved address is blocked (rather than silently keeping
     the good ones) so a split-horizon / partially-rebound DNS answer can't slip
     an internal address through. The full validated list is returned (not just
-    the first) so the caller can preserve httpx's fallback across A/AAAA records
-    while still only ever connecting to an address we checked.
+    the first) so the connector can fall back across A/AAAA records while still
+    only ever connecting to an address we checked.
 
     Raises:
         WebhookURLError: on a disallowed literal, a disallowed resolved address,
@@ -168,60 +225,112 @@ async def resolve_and_validate(host: str, port: int, allowlist: Allowlist) -> li
         if _ip_is_blocked(literal) and not allowlist.allows_ip(literal):
             raise WebhookURLError(f"Webhook host '{host}' targets a disallowed address")
         return [host]
-
-    ips = await _resolve(host, port)
-    if allowlist.allows_host(host):
-        return ips
-    for ip_str in ips:
-        ip = ipaddress.ip_address(ip_str)
-        if _ip_is_blocked(ip) and not allowlist.allows_ip(ip):
-            raise WebhookURLError(f"Webhook host '{host}' resolved to disallowed address {ip_str}")
-    return ips
+    return [address.ip for address in await _resolve_validated(host, port, allowlist)]
 
 
-class GuardedAsyncTransport(httpx.AsyncHTTPTransport):
-    """httpx transport that validates and pins every outbound webhook request.
+class GuardedResolver(AbstractResolver):
+    """aiohttp resolver that only ever yields validated addresses.
 
-    All webhook delivery traffic flows through one instance of this transport,
-    so there is no code path that can reach ``httpx`` without the SSRF check.
-    On each request it resolves the host, rejects disallowed destinations, and
-    rewrites the connection target to the validated IP while preserving the
-    original ``Host`` header and TLS SNI (via the ``sni_hostname`` extension) so
-    virtual hosting and certificate verification keep working.
+    It is the sole resolver of the webhook delivery connector, so every DNS
+    name a delivery connects to is resolved *and checked* here, at connect
+    time. aiohttp then connects to the returned addresses in turn (dual-stack
+    fallback) while keeping the original hostname for the ``Host`` header and
+    TLS SNI / certificate verification — it never re-resolves on its own.
     """
 
-    def __init__(self, allowlist: Allowlist, **kwargs) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, allowlist: Allowlist) -> None:
         self._allowlist = allowlist
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        url = request.url
-        if url.scheme not in _ALLOWED_SCHEMES:
-            raise WebhookURLError(f"Webhook URL scheme must be http or https, got '{url.scheme or 'empty'}'")
-        host = url.host
-        if not host:
-            raise WebhookURLError("Webhook URL must include a host")
-        port = url.port or (443 if url.scheme == "https" else 80)
+    async def resolve(
+        self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+    ) -> list[ResolveResult]:
+        addresses = await _resolve_validated(host, port, self._allowlist, family)
+        return [
+            ResolveResult(
+                hostname=host,
+                host=address.ip,
+                port=port,
+                family=address.family,
+                proto=0,
+                flags=socket.AI_NUMERICHOST | socket.AI_NUMERICSERV,
+            )
+            for address in addresses
+        ]
 
-        validated_ips = await resolve_and_validate(host, port, self._allowlist)
-        if validated_ips == [host]:
-            # Host is already a validated IP literal — nothing to pin/rewrite.
-            return await super().handle_async_request(request)
+    async def close(self) -> None:
+        return None
 
-        # Connect to a validated IP but keep the original identity: the Host
-        # header (already set by httpx from the original URL) is left untouched,
-        # and sni_hostname carries the real name for TLS. Try each validated
-        # address in turn so a dual-stack host whose first record is unreachable
-        # still connects — without ever re-resolving to an unchecked address.
-        base_extensions = {**request.extensions, "sni_hostname": host}
-        last_error: Exception | None = None
-        for ip in validated_ips:
-            request.url = url.copy_with(host=ip)
-            request.extensions = dict(base_extensions)
-            try:
-                return await super().handle_async_request(request)
-            except httpx.ConnectError as exc:
-                last_error = exc
-                continue
-        assert last_error is not None
-        raise last_error
+
+@dataclass(frozen=True)
+class WebhookResponse:
+    """A 2xx webhook response, body already read."""
+
+    status_code: int
+    body: str
+
+
+_DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+class GuardedWebhookClient:
+    """The only HTTP client webhook delivery uses; every request is SSRF-checked.
+
+    * IP-literal hosts never reach a resolver in aiohttp, so they are checked
+      here before the request is sent.
+    * DNS names are resolved and checked by :class:`GuardedResolver` at connect
+      time. The connector's DNS cache is off, so every new connection re-runs
+      the check (a rebind cannot reuse a stale validated answer); pooled
+      connections are keyed by host/port/TLS and were validated when opened.
+    * Redirects are not followed (a 3xx is a failed delivery), and proxy
+      environment variables are ignored, so the validated destination is the
+      only one ever contacted.
+    """
+
+    def __init__(self, allowlist: Allowlist) -> None:
+        self._allowlist = allowlist
+        self._sessions = LoopLocalSession(
+            timeout=per_phase_timeout(_DEFAULT_TIMEOUT_SECONDS),
+            connector_factory=self._build_connector,
+        )
+
+    def _build_connector(self) -> aiohttp.BaseConnector:
+        return aiohttp.TCPConnector(resolver=GuardedResolver(self._allowlist), use_dns_cache=False)
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        params: Mapping[str, str] | None,
+        body: bytes | None,
+        timeout_seconds: float,
+    ) -> WebhookResponse:
+        """Send one request and return the 2xx response.
+
+        Raises:
+            WebhookURLError: the destination is disallowed (never valid on retry).
+            UpstreamHTTPError: a non-2xx response (3xx included), body attached.
+            aiohttp.ClientError / asyncio.TimeoutError: transport failures.
+        """
+        parsed = _parse_target(url)
+        assert parsed.host is not None  # guaranteed by _parse_target
+        _validate_host_literal(parsed.host, self._allowlist)
+
+        session = self._sessions.get()
+        async with session.request(
+            method,
+            parsed,
+            headers=dict(headers),
+            params=dict(params) if params else None,
+            data=body,
+            timeout=per_phase_timeout(timeout_seconds),
+            allow_redirects=False,
+        ) as response:
+            text = await response.text(errors="replace")
+            if not 200 <= response.status < 300:
+                raise UpstreamHTTPError(response.status, text, response.headers, str(response.url))
+            return WebhookResponse(status_code=response.status, body=text)
+
+    async def close(self) -> None:
+        await self._sessions.close()

@@ -16,7 +16,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
-import httpx
+import aiohttp
+
+# Only to classify errors raised by third-party SDKs built on httpx (openai, litellm,
+# google-genai); our own calls go through aiohttp.
+import httpx  # noqa: TID251
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +140,8 @@ def is_transient_remote_error(exc: BaseException) -> bool:
     if status is not None:
         return status >= 500 or status in _TRANSIENT_STATUS_CODES
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    if isinstance(exc, (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError)):
         return True
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return True

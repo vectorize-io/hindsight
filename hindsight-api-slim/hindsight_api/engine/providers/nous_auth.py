@@ -32,9 +32,9 @@ the protocol Hermes follows too, so the two coordinate safely through the file.
 Usage
 -----
     mgr = NousAuthManager.from_file()
-    token = mgr.ensure_fresh_token()        # proactive; refreshes if near expiry
+    token = await mgr.ensure_fresh_token()   # proactive; refreshes if near expiry
     ...                                       # use token as Bearer
-    mgr.refresh_tokens(force=True)           # reactive, on a 401
+    await mgr.refresh_tokens(force=True)     # reactive, on a 401
 """
 
 from __future__ import annotations
@@ -46,19 +46,15 @@ import json
 import logging
 import os
 import tempfile
-import threading
 import time
-from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
+import aiohttp
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
+from ..aiohttp_session import LoopLocalSession, per_phase_timeout
+from .oauth_store_lock import oauth_store_lock
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +87,9 @@ _NOUS_TERMINAL_REFRESH_ERROR_CODES = frozenset(
 
 _AUTH_LOCK_TIMEOUT_SECONDS = 20.0
 
+# Per-phase timeout for the refresh request (connect, and each socket read).
+_REFRESH_TIMEOUT_SECONDS = 30.0
+
 
 def _default_auth_file() -> Path:
     return Path.home() / ".hermes" / "auth.json"
@@ -111,47 +110,13 @@ class NousRefreshExpiredError(RuntimeError):
     """
 
 
-@contextlib.contextmanager
-def _hermes_auth_lock(auth_file: Path, timeout_seconds: float = _AUTH_LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
-    """Cross-process advisory lock on the Hermes auth store.
-
-    Uses ``<auth_file>.lock`` (i.e. ``~/.hermes/auth.lock``) with
-    ``fcntl.flock(LOCK_EX)`` — the exact same lock file and primitive Hermes'
-    ``_auth_store_lock`` takes — so a refresh here is mutually exclusive with a
-    concurrently-running Hermes agent. Degrades to a no-op (with a debug log)
-    where ``fcntl`` is unavailable (Windows); the single-process in-memory lock
-    still serialises this process's own refreshes.
-    """
-    if fcntl is None:  # pragma: no cover - Windows
-        logger.debug("fcntl unavailable; Nous refresh proceeds without a cross-process lock.")
-        yield
-        return
-
-    lock_path = auth_file.with_suffix(".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a+") as lock_file:
-        deadline = time.monotonic() + max(1.0, timeout_seconds)
-        while True:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except (BlockingIOError, OSError):
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Timed out waiting for the Hermes auth store lock") from None
-                time.sleep(0.05)
-        try:
-            yield
-        finally:
-            with contextlib.suppress(OSError):
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-
 class NousAuthManager:
-    """Sync Nous Portal OAuth credential manager.
+    """Async Nous Portal OAuth credential manager.
 
     Holds the access_token + refresh_token in memory and handles
-    proactive/reactive refresh. A ``threading.Lock`` gives single-flight
-    semantics within the process; the cross-process ``fcntl`` lock guards
+    proactive/reactive refresh, single-flight through :func:`oauth_store_lock`:
+    one refresh at a time across this process's coroutines and event loops,
+    and — through the same ``~/.hermes/auth.lock`` flock Hermes takes —
     against a concurrent Hermes agent (see module docstring).
     """
 
@@ -171,8 +136,7 @@ class NousAuthManager:
         self._portal_base_url = portal_base_url.rstrip("/")
         self._inference_base_url = inference_base_url.rstrip("/")
         self._client_id = client_id
-        self._lock = threading.Lock()
-        self._http_client = httpx.Client(timeout=30.0)
+        self._http = LoopLocalSession(timeout=per_phase_timeout(_REFRESH_TIMEOUT_SECONDS))
 
     # ------------------------------------------------------------------
     # Construction
@@ -298,7 +262,7 @@ class NousAuthManager:
         providers, the credential pool, rotated tokens) are never clobbered,
         then patches only the Nous OAuth fields and ``os.replace``s into place
         (atomic on POSIX within the same filesystem). Must be called while
-        holding :func:`_hermes_auth_lock`.
+        holding :func:`oauth_store_lock` for the store.
         """
         try:
             with open(self._auth_file) as f:
@@ -343,10 +307,10 @@ class NousAuthManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_oauth_error_code(response: httpx.Response) -> str | None:
+    def _extract_oauth_error_code(body_text: str) -> str | None:
         """Pull the OAuth error code out of a 4xx refresh response, if present."""
         try:
-            body = response.json()
+            body = json.loads(body_text)
         except (json.JSONDecodeError, ValueError):
             return None
         if not isinstance(body, dict):
@@ -359,11 +323,11 @@ class NousAuthManager:
         code = body.get("error_code")
         return code if isinstance(code, str) else None
 
-    def refresh_tokens(self, reason: str = "", *, force: bool = False) -> None:
+    async def refresh_tokens(self, reason: str = "", *, force: bool = False) -> None:
         """Single-flight Nous OAuth token refresh.
 
-        Serialised through ``self._lock`` (in-process single-flight) and
-        :func:`_hermes_auth_lock` (cross-process, vs a running Hermes agent).
+        Serialised through :func:`oauth_store_lock` (in-process single-flight,
+        and cross-process vs a running Hermes agent).
         The latest ``refresh_token`` is re-read from disk under the lock before
         the exchange — single-use tokens make using a stale in-memory RT a
         session-revoking mistake.
@@ -376,88 +340,90 @@ class NousAuthManager:
             For other refresh failures (network, 5xx, missing refresh_token).
         """
         token_before_lock = self.access_token
-        with self._lock:
+        async with oauth_store_lock(
+            self._auth_file, timeout_seconds=_AUTH_LOCK_TIMEOUT_SECONDS, label="Hermes auth store"
+        ):
             if force:
                 if self.access_token != token_before_lock:
                     return  # another caller already refreshed while we waited
             elif not self._token_is_stale():
                 return
 
-            with _hermes_auth_lock(self._auth_file):
-                # Re-read the freshest refresh_token persisted by whoever rotated
-                # last (this process or Hermes). Using a stale RT is exactly what
-                # trips the Portal's single-use reuse-detection.
-                disk_rt = self.load_refresh_token_from_file(self._auth_file)
-                if disk_rt:
-                    self.refresh_token = disk_rt
+            # Re-read the freshest refresh_token persisted by whoever rotated
+            # last (this process or Hermes). Using a stale RT is exactly what
+            # trips the Portal's single-use reuse-detection.
+            disk_rt = self.load_refresh_token_from_file(self._auth_file)
+            if disk_rt:
+                self.refresh_token = disk_rt
 
-                if not self.refresh_token:
-                    raise RuntimeError(
-                        "Nous access_token is expired but no refresh_token is available. "
-                        "Run 'hermes portal' to re-authenticate."
+            if not self.refresh_token:
+                raise RuntimeError(
+                    "Nous access_token is expired but no refresh_token is available. "
+                    "Run 'hermes portal' to re-authenticate."
+                )
+
+            log_reason = f" ({reason})" if reason else ""
+            logger.info(f"Refreshing Nous Portal access_token{log_reason}")
+
+            try:
+                async with self._http.get().post(
+                    f"{self._portal_base_url}/api/oauth/token",
+                    headers={"x-nous-refresh-token": self.refresh_token},
+                    data={"grant_type": "refresh_token", "client_id": self._client_id},
+                ) as response:
+                    status_code = response.status
+                    body_text = await response.text(errors="replace")
+            except (aiohttp.ClientError, TimeoutError) as e:
+                raise RuntimeError(f"Nous OAuth refresh network error: {type(e).__name__}") from e
+
+            if status_code != 200:
+                code = self._extract_oauth_error_code(body_text)
+                if code in _NOUS_TERMINAL_REFRESH_ERROR_CODES or status_code in (400, 401):
+                    raise NousRefreshExpiredError(
+                        f"Nous refresh_token is no longer valid (status={status_code}, "
+                        f"error={code or 'none'}). Run 'hermes portal' to re-authenticate."
                     )
+                raise RuntimeError(f"Nous OAuth refresh failed with HTTP {status_code}")
 
-                log_reason = f" ({reason})" if reason else ""
-                logger.info(f"Refreshing Nous Portal access_token{log_reason}")
+            try:
+                body = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError) as e:
+                raise RuntimeError(f"Nous OAuth refresh returned non-JSON body: {e}") from e
 
-                try:
-                    response = self._http_client.post(
-                        f"{self._portal_base_url}/api/oauth/token",
-                        headers={"x-nous-refresh-token": self.refresh_token},
-                        data={"grant_type": "refresh_token", "client_id": self._client_id},
-                        timeout=30.0,
-                    )
-                except httpx.RequestError as e:
-                    raise RuntimeError(f"Nous OAuth refresh network error: {type(e).__name__}") from e
+            new_access = body.get("access_token")
+            if not new_access:
+                raise RuntimeError("Nous OAuth refresh returned no access_token")
+            new_refresh = body.get("refresh_token") or self.refresh_token
 
-                if response.status_code != 200:
-                    code = self._extract_oauth_error_code(response)
-                    if code in _NOUS_TERMINAL_REFRESH_ERROR_CODES or response.status_code in (400, 401):
-                        raise NousRefreshExpiredError(
-                            f"Nous refresh_token is no longer valid (status={response.status_code}, "
-                            f"error={code or 'none'}). Run 'hermes portal' to re-authenticate."
-                        )
-                    raise RuntimeError(f"Nous OAuth refresh failed with HTTP {response.status_code}")
+            # Update in-memory state first so waiters see fresh credentials
+            # even if the disk write fails.
+            self.access_token = new_access
+            self.refresh_token = new_refresh
 
-                try:
-                    body = response.json()
-                except (json.JSONDecodeError, ValueError) as e:
-                    raise RuntimeError(f"Nous OAuth refresh returned non-JSON body: {e}") from e
+            persisted: dict[str, Any] = {"access_token": new_access, "refresh_token": new_refresh}
+            expires_in = body.get("expires_in")
+            if isinstance(expires_in, (int, float)):
+                persisted["expires_at"] = datetime.fromtimestamp(
+                    time.time() + float(expires_in), tz=timezone.utc
+                ).isoformat()
+            try:
+                self._persist_state_atomic(persisted)
+            except OSError as e:
+                logger.warning(
+                    f"Nous refresh succeeded but persisting auth.json failed: {type(e).__name__}. "
+                    "In-memory credentials are current; the on-disk rotated token was not saved."
+                )
+            logger.info("Nous Portal access_token refreshed successfully")
 
-                new_access = body.get("access_token")
-                if not new_access:
-                    raise RuntimeError("Nous OAuth refresh returned no access_token")
-                new_refresh = body.get("refresh_token") or self.refresh_token
-
-                # Update in-memory state first so waiters see fresh credentials
-                # even if the disk write fails.
-                self.access_token = new_access
-                self.refresh_token = new_refresh
-
-                persisted: dict[str, Any] = {"access_token": new_access, "refresh_token": new_refresh}
-                expires_in = body.get("expires_in")
-                if isinstance(expires_in, (int, float)):
-                    persisted["expires_at"] = datetime.fromtimestamp(
-                        time.time() + float(expires_in), tz=timezone.utc
-                    ).isoformat()
-                try:
-                    self._persist_state_atomic(persisted)
-                except OSError as e:
-                    logger.warning(
-                        f"Nous refresh succeeded but persisting auth.json failed: {type(e).__name__}. "
-                        "In-memory credentials are current; the on-disk rotated token was not saved."
-                    )
-                logger.info("Nous Portal access_token refreshed successfully")
-
-    def ensure_fresh_token(self) -> str:
+    async def ensure_fresh_token(self) -> str:
         """Refresh proactively if near/at expiry, then return the bearer token.
 
         Cheap when fresh (a JWT exp decode + comparison).
         """
         if self._token_is_stale():
-            self.refresh_tokens(reason="proactive (token near expiry)")
+            await self.refresh_tokens(reason="proactive (token near expiry)")
         return self.access_token
 
-    def close(self) -> None:
-        """Close the underlying HTTP client."""
-        self._http_client.close()
+    async def close(self) -> None:
+        """Close the running loop's HTTP session."""
+        await self._http.close()

@@ -17,7 +17,7 @@ class DummyEmbeddings(Embeddings):
     async def initialize(self) -> None:
         pass
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    async def encode(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] for _ in texts]
 
 

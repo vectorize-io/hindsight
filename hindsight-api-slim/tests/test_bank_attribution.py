@@ -14,8 +14,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiohttp import web
 from pydantic import BaseModel
 
+from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cross_encoder import LiteLLMCrossEncoder
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
@@ -28,6 +30,7 @@ from hindsight_api.engine.memory_engine import (
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
 from hindsight_api.models import RequestContext
+from tests.aiohttp_stub import stub_server
 
 
 @pytest.fixture(autouse=True)
@@ -253,43 +256,63 @@ def _openai_embeddings() -> OpenAIEmbeddings:
 
 
 def _fake_embed_client(captured: list[dict]):
-    def fake_create(**kwargs):
+    async def fake_create(**kwargs):
         captured.append(kwargs)
         n = len(kwargs["input"])
         return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.0] * 1536) for i in range(n)])
 
-    return SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+    return SimpleNamespace(api_key="sk-test", embeddings=SimpleNamespace(create=fake_create))
 
 
-def test_embeddings_user_injected_when_flag_on_and_bank_set():
+async def test_embeddings_user_injected_when_flag_on_and_bank_set():
     _set_flag(True)
     emb = _openai_embeddings()
     captured: list[dict] = []
-    emb._client = _fake_embed_client(captured)
+    client = _fake_embed_client(captured)
+    emb._clients = LoopLocal(lambda: client)
     token = _current_bank_id.set("user-emb")
     try:
-        emb.encode(["hello"])
+        await emb.encode(["hello"])
     finally:
         _current_bank_id.reset(token)
     assert captured[0]["user"] == "user-emb"
 
 
-async def test_litellm_proxy_sends_bank_header():
-    encoder = LiteLLMCrossEncoder(api_base="https://rerank.example", model="will-memory-rerank")
-    response = SimpleNamespace(
-        raise_for_status=lambda: None,
-        json=lambda: {"results": [{"index": 0, "relevance_score": 0.91}]},
-    )
-    encoder._async_client = SimpleNamespace(post=AsyncMock(return_value=response))
+async def test_embeddings_user_injected_on_every_concurrent_batch():
+    """Batches fanned out as tasks still see the caller's bank ContextVar."""
+    _set_flag(True)
+    emb = _openai_embeddings()
+    emb.batch_size = 1
+    emb.max_concurrent_requests = 4
+    captured: list[dict] = []
+    client = _fake_embed_client(captured)
+    emb._clients = LoopLocal(lambda: client)
+    token = _current_bank_id.set("user-fanout")
+    try:
+        await emb.encode(["a", "b", "c", "d"])
+    finally:
+        _current_bank_id.reset(token)
+    assert [request["user"] for request in captured] == ["user-fanout"] * 4
 
-    with patch(
-        "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
-        return_value={"X-Hindsight-Bank-Id": "bank-litellm-proxy"},
-    ):
-        scores = await encoder.predict([("query", "document")])
+
+async def test_litellm_proxy_sends_bank_header():
+    received: list[dict[str, str]] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        received.append(dict(request.headers))
+        return web.json_response({"results": [{"index": 0, "relevance_score": 0.91}]})
+
+    async with stub_server(handler) as base_url:
+        encoder = LiteLLMCrossEncoder(api_base=base_url, model="will-memory-rerank")
+        await encoder.initialize()
+        with patch(
+            "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+            return_value={"X-Hindsight-Bank-Id": "bank-litellm-proxy"},
+        ):
+            scores = await encoder.predict([("query", "document")])
 
     assert scores == [0.91]
-    assert encoder._async_client.post.call_args.kwargs["headers"] == {"X-Hindsight-Bank-Id": "bank-litellm-proxy"}
+    assert received[0]["X-Hindsight-Bank-Id"] == "bank-litellm-proxy"
 
 
 # ── Executor context propagation ──────────────────────────────────────────────
@@ -298,8 +321,8 @@ async def test_litellm_proxy_sends_bank_header():
 class _BankCapturingBackend:
     """Embeddings backend whose encode records the bank id visible at call time.
 
-    The real `generate_embeddings_batch` offloads encode to a thread via
-    run_in_executor; this verifies the bank ContextVar survives that thread hop.
+    `generate_embeddings_batch` hands the backend the caller's context; this verifies
+    the bank ContextVar reaches the backend it dispatches to.
     """
 
     dimension = 1
@@ -307,12 +330,12 @@ class _BankCapturingBackend:
     def __init__(self) -> None:
         self.seen_bank_id: str | None = "UNSET"
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
         self.seen_bank_id = get_current_bank_id()
         return [[0.0] for _ in texts]
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return self.encode_documents(texts)
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self.encode_documents(texts)
 
 
 async def test_executor_propagates_bank_contextvar_into_worker_thread():
@@ -332,11 +355,11 @@ async def test_executor_length_validation_preserved():
     class _ShortBackend:
         dimension = 1
 
-        def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        async def encode_documents(self, texts: list[str]) -> list[list[float]]:
             return [[0.0]]  # one vector for two inputs
 
-        def encode_query(self, texts: list[str]) -> list[list[float]]:
-            return self.encode_documents(texts)
+        async def encode_query(self, texts: list[str]) -> list[list[float]]:
+            return await self.encode_documents(texts)
 
     with pytest.raises(Exception, match="expected exact 1:1 alignment"):
         await generate_embeddings_batch(_ShortBackend(), ["a", "b"], input_type="document")

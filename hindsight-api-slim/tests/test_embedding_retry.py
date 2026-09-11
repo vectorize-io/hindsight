@@ -13,22 +13,25 @@ contract of the retry wrapper:
    retrying, and batching does not multiply it.
 """
 
+import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+from hindsight_api.engine.embeddings import (
+    LiteLLMEmbeddings,
+    LiteLLMSDKEmbeddings,
+)
 from hindsight_api.engine.remote_retry import (
     RetryPolicy,
     is_transient_remote_error,
     status_code_of,
 )
-from hindsight_api.engine.embeddings import (
-    LiteLLMEmbeddings,
-    LiteLLMSDKEmbeddings,
-)
+from tests.aiohttp_stub import stub_server
 
 
 class _StatusError(Exception):
@@ -67,6 +70,7 @@ def _make_embeddings(policy: RetryPolicy, batch_size: int = 100) -> LiteLLMSDKEm
         retry_policy=policy,
     )
     emb._litellm = MagicMock()
+    emb._litellm.aembedding = AsyncMock()
     emb._dimension = 768
     return emb
 
@@ -118,9 +122,9 @@ class TestTransientClassification:
 
 
 class TestEncodeRetries:
-    """encode() is the synchronous path recall runs inline."""
+    """encode() is the path recall runs inline."""
 
-    def test_transient_then_success(self):
+    async def test_transient_then_success(self):
         emb = _make_embeddings(FAST_POLICY)
         calls = {"n": 0}
 
@@ -130,119 +134,119 @@ class TestEncodeRetries:
                 raise _InternalServerError()
             return _response_for(kwargs["input"])
 
-        emb._litellm.embedding.side_effect = side_effect
+        emb._litellm.aembedding.side_effect = side_effect
 
-        result = emb.encode(["what did we decide about embeddings?"])
+        result = await emb.encode(["what did we decide about embeddings?"])
 
         assert len(result) == 1
         assert len(result[0]) == 768
-        assert emb._litellm.embedding.call_count == 3
+        assert emb._litellm.aembedding.call_count == 3
 
-    def test_persistent_transient_failure_raises_after_attempt_cap(self):
+    async def test_persistent_transient_failure_raises_after_attempt_cap(self):
         emb = _make_embeddings(FAST_POLICY)
-        emb._litellm.embedding.side_effect = _InternalServerError()
+        emb._litellm.aembedding.side_effect = _InternalServerError()
 
         with pytest.raises(_InternalServerError):
-            emb.encode(["query"])
+            await emb.encode(["query"])
 
         # max_retries=4 -> 5 attempts total, then the original error propagates.
-        assert emb._litellm.embedding.call_count == FAST_POLICY.max_retries + 1
+        assert emb._litellm.aembedding.call_count == FAST_POLICY.max_retries + 1
 
-    def test_auth_error_raises_immediately_with_no_retries(self):
+    async def test_auth_error_raises_immediately_with_no_retries(self):
         emb = _make_embeddings(FAST_POLICY)
-        emb._litellm.embedding.side_effect = _AuthenticationError()
+        emb._litellm.aembedding.side_effect = _AuthenticationError()
 
         with pytest.raises(_AuthenticationError):
-            emb.encode(["query"])
+            await emb.encode(["query"])
 
-        assert emb._litellm.embedding.call_count == 1
+        assert emb._litellm.aembedding.call_count == 1
 
     @pytest.mark.parametrize("status", [400, 403, 404, 422])
-    def test_other_client_errors_raise_immediately(self, status):
+    async def test_other_client_errors_raise_immediately(self, status):
         emb = _make_embeddings(FAST_POLICY)
-        emb._litellm.embedding.side_effect = _StatusError(status)
+        emb._litellm.aembedding.side_effect = _StatusError(status)
 
         with pytest.raises(_StatusError):
-            emb.encode(["query"])
+            await emb.encode(["query"])
 
-        assert emb._litellm.embedding.call_count == 1
+        assert emb._litellm.aembedding.call_count == 1
 
-    def test_retries_disabled_by_zero_max_retries(self):
+    async def test_retries_disabled_by_zero_max_retries(self):
         emb = _make_embeddings(RetryPolicy(max_retries=0, budget_seconds=5.0))
-        emb._litellm.embedding.side_effect = _InternalServerError()
+        emb._litellm.aembedding.side_effect = _InternalServerError()
 
         with pytest.raises(_InternalServerError):
-            emb.encode(["query"])
+            await emb.encode(["query"])
 
-        assert emb._litellm.embedding.call_count == 1
+        assert emb._litellm.aembedding.call_count == 1
 
 
 class TestRetryBudget:
     """The budget is what keeps a degraded upstream from stalling a recall."""
 
-    def test_budget_cuts_retries_short_and_bounds_wall_clock(self):
+    async def test_budget_cuts_retries_short_and_bounds_wall_clock(self):
         # Each failed attempt burns ~0.2s, so a 0.5s budget cannot fund the full
         # 5 attempts even though max_retries would allow them.
         policy = RetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.5)
         emb = _make_embeddings(policy)
 
-        def slow_failure(**kwargs):
-            time.sleep(0.2)
+        async def slow_failure(**kwargs):
+            await asyncio.sleep(0.2)
             raise _InternalServerError()
 
-        emb._litellm.embedding.side_effect = slow_failure
+        emb._litellm.aembedding.side_effect = slow_failure
 
         started = time.monotonic()
         with pytest.raises(_InternalServerError):
-            emb.encode(["query"])
+            await emb.encode(["query"])
         elapsed = time.monotonic() - started
 
-        assert emb._litellm.embedding.call_count < policy.max_retries + 1
+        assert emb._litellm.aembedding.call_count < policy.max_retries + 1
         # Budget + one in-flight attempt is the ceiling; the point is that it is
         # bounded and small, not the exact figure.
         assert elapsed < policy.budget_seconds + 0.5
 
-    def test_budget_is_shared_across_batches(self):
+    async def test_budget_is_shared_across_batches(self):
         # 6 texts at batch_size=2 -> 3 batches. A per-batch budget would let the
         # call spend 3x the configured ceiling.
         policy = RetryPolicy(max_retries=4, initial_backoff=0.05, max_backoff=0.2, budget_seconds=0.4)
         emb = _make_embeddings(policy, batch_size=2)
 
-        def slow_failure(**kwargs):
-            time.sleep(0.15)
+        async def slow_failure(**kwargs):
+            await asyncio.sleep(0.15)
             raise _InternalServerError()
 
-        emb._litellm.embedding.side_effect = slow_failure
+        emb._litellm.aembedding.side_effect = slow_failure
 
         started = time.monotonic()
         with pytest.raises(_InternalServerError):
-            emb.encode([f"text {i}" for i in range(6)])
+            await emb.encode([f"text {i}" for i in range(6)])
         elapsed = time.monotonic() - started
 
         # The first batch never succeeds, so the call aborts there.
         assert elapsed < policy.budget_seconds + 0.5
 
-    def test_budget_not_consumed_by_successful_batches(self):
+    async def test_budget_not_consumed_by_successful_batches(self):
         # A long run of successful batches must not starve a later batch of its
         # retries — only failures and backoff sleeps count against the budget.
         policy = RetryPolicy(max_retries=4, initial_backoff=0.01, max_backoff=0.04, budget_seconds=0.5)
         emb = _make_embeddings(policy, batch_size=1)
         calls = {"n": 0}
 
-        def side_effect(**kwargs):
+        async def side_effect(**kwargs):
             calls["n"] += 1
-            time.sleep(0.1)  # successful but slow
+            await asyncio.sleep(0.1)  # successful but slow
             if calls["n"] == 4:
                 raise _InternalServerError()
             return _response_for(kwargs["input"])
 
-        emb._litellm.embedding.side_effect = side_effect
+        emb._litellm.aembedding.side_effect = side_effect
 
-        result = emb.encode([f"text {i}" for i in range(5)])
+        result = await emb.encode([f"text {i}" for i in range(5)])
 
         assert len(result) == 5
         # 5 batches + 1 retry of the batch that failed.
-        assert emb._litellm.embedding.call_count == 6
+        assert emb._litellm.aembedding.call_count == 6
 
 
 class TestInitializeRetries:
@@ -338,55 +342,46 @@ class TestLiteLLMProxyEncodeRetries:
     through to the caller.
     """
 
-    def _make_proxy(self, policy: RetryPolicy, batch_size: int = 100) -> LiteLLMEmbeddings:
-        emb = LiteLLMEmbeddings(
-            api_base="https://proxy.invalid",
-            api_key="test_key",
-            model="text-embedding-3-small",
-            batch_size=batch_size,
-            retry_policy=policy,
-        )
-        emb._client = MagicMock()
-        emb._dimension = 768
-        return emb
+    async def _run(self, statuses: list[int], texts: list[str]) -> tuple[int, list[list[float]] | Exception]:
+        """Encode ``texts`` against a proxy that answers with ``statuses`` in turn."""
+        calls = {"n": 0}
 
-    def _http_response(self, status_code: int, texts: list[str] | None = None) -> MagicMock:
-        response = MagicMock()
-        response.status_code = status_code
-        if status_code >= 400:
-            request = httpx.Request("POST", "https://proxy.invalid/embeddings")
-            error = httpx.HTTPStatusError(
-                f"{status_code} error", request=request, response=httpx.Response(status_code, request=request)
+        async def handler(request: web.Request) -> web.StreamResponse:
+            status = statuses[min(calls["n"], len(statuses) - 1)]
+            calls["n"] += 1
+            if status >= 400:
+                return web.json_response({"error": "upstream"}, status=status)
+            return web.json_response({"data": [{"embedding": [0.1] * 768, "index": i} for i in range(len(texts))]})
+
+        async with stub_server(handler) as base_url:
+            emb = LiteLLMEmbeddings(
+                api_base=base_url,
+                api_key="test_key",
+                model="text-embedding-3-small",
+                dimensions=768,
+                retry_policy=FAST_POLICY,
             )
-            response.raise_for_status.side_effect = error
-        else:
-            response.json.return_value = {
-                "data": [{"embedding": [0.1] * 768, "index": i} for i in range(len(texts or []))]
-            }
-        return response
+            await emb.initialize()  # declared width: no probe request
+            try:
+                result: list[list[float]] | Exception = await emb.encode(texts)
+            except Exception as exc:
+                result = exc
+        return calls["n"], result
 
-    def test_proxy_5xx_is_retried_then_succeeds(self):
-        emb = self._make_proxy(FAST_POLICY)
-        texts = ["what did we decide about embeddings?"]
-        emb._client.post.side_effect = [
-            self._http_response(503),
-            self._http_response(200, texts),
-        ]
+    async def test_proxy_5xx_is_retried_then_succeeds(self):
+        calls, result = await self._run([503, 200], ["what did we decide about embeddings?"])
 
-        result = emb.encode(texts)
-
+        assert isinstance(result, list)
         assert len(result) == 1
         assert len(result[0]) == 768
-        assert emb._client.post.call_count == 2
+        assert calls == 2
 
-    def test_proxy_4xx_raises_immediately_without_retrying(self):
-        emb = self._make_proxy(FAST_POLICY)
-        emb._client.post.return_value = self._http_response(401)
+    async def test_proxy_4xx_raises_immediately_without_retrying(self):
+        calls, result = await self._run([401], ["query"])
 
-        with pytest.raises(httpx.HTTPStatusError):
-            emb.encode(["query"])
-
-        assert emb._client.post.call_count == 1
+        assert isinstance(result, UpstreamHTTPError)
+        assert result.status_code == 401
+        assert calls == 1
 
 
 class TestEveryRemoteProviderRetries:

@@ -9,16 +9,60 @@ Tests cover:
 - Backpressure/semaphore behavior
 - Retry logic on transient errors
 - Multiple queries handling
+
+The upstream is a real in-process HTTP server (``tests/aiohttp_stub.py``), so these
+exercise the actual aiohttp transport rather than a mocked client.
 """
 
 import asyncio
 import time
-from unittest.mock import MagicMock, patch
+from collections.abc import Awaitable, Callable
+from typing import Any
+from unittest.mock import patch
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.cross_encoder import RemoteTEICrossEncoder
+from tests.aiohttp_stub import stub_server
+
+# Nothing listens on port 1, so connecting is refused immediately.
+UNREACHABLE_URL = "http://127.0.0.1:1"
+
+
+def rerank_handler(
+    score_for: Callable[[dict[str, Any]], list[dict[str, Any]]],
+    *,
+    calls: list[dict[str, Any]] | None = None,
+    before: Callable[[], Awaitable[None]] | None = None,
+) -> Callable[[web.Request], Awaitable[web.StreamResponse]]:
+    """A TEI stub: answers /info, and /rerank with ``score_for(body)``."""
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        if request.path == "/info":
+            return web.json_response({"model_id": "test-model"})
+        if request.path == "/rerank":
+            body = await request.json()
+            if calls is not None:
+                calls.append({"body": body, "headers": dict(request.headers)})
+            if before is not None:
+                await before()
+            return web.json_response(score_for(body))
+        return web.Response(status=404)
+
+    return handler
+
+
+def constant_scores(body: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"index": i, "score": 0.5} for i in range(len(body["texts"]))]
+
+
+def ready_encoder(base_url: str, **kwargs: Any) -> RemoteTEICrossEncoder:
+    """An encoder marked initialized without the /info round trip."""
+    encoder = RemoteTEICrossEncoder(base_url=base_url, **kwargs)
+    encoder._model_id = "test-model"
+    return encoder
 
 
 class TestRemoteTEICrossEncoderInitialization:
@@ -28,85 +72,49 @@ class TestRemoteTEICrossEncoderInitialization:
     async def test_initialize_success(self):
         """Test successful initialization with valid TEI server."""
 
-        async def mock_handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/info":
-                return httpx.Response(
-                    200,
-                    json={"model_id": "BAAI/bge-reranker-base", "version": "1.0"},
-                )
-            return httpx.Response(404)
+        async def handler(request: web.Request) -> web.StreamResponse:
+            if request.path == "/info":
+                return web.json_response({"model_id": "BAAI/bge-reranker-base", "version": "1.0"})
+            return web.Response(status=404)
 
-        transport = httpx.MockTransport(mock_handler)
-
-        with patch.object(httpx, "AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
-            encoder = RemoteTEICrossEncoder(base_url="http://localhost:8080")
+        async with stub_server(handler) as base_url:
+            encoder = RemoteTEICrossEncoder(base_url=base_url)
             await encoder.initialize()
 
             assert encoder._model_id == "BAAI/bge-reranker-base"
-            assert encoder._async_client is not None
 
     @pytest.mark.asyncio
     async def test_initialize_server_unreachable(self):
         """Test initialization fails when server is unreachable."""
+        encoder = RemoteTEICrossEncoder(
+            base_url=UNREACHABLE_URL,
+            max_retries=1,
+            retry_delay=0.01,
+        )
 
-        async def mock_handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("Connection refused")
-
-        transport = httpx.MockTransport(mock_handler)
-
-        with patch.object(httpx, "AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
-            encoder = RemoteTEICrossEncoder(
-                base_url="http://localhost:8080",
-                max_retries=1,
-                retry_delay=0.01,
-            )
-
-            with pytest.raises(RuntimeError, match="Failed to connect to TEI server"):
-                await encoder.initialize()
+        with pytest.raises(RuntimeError, match="Failed to connect to TEI server"):
+            await encoder.initialize()
+        assert encoder._model_id is None
 
     @pytest.mark.asyncio
     async def test_initialize_idempotent(self):
         """Test that initialize() is idempotent."""
         call_count = 0
 
-        async def mock_handler(request: httpx.Request) -> httpx.Response:
+        async def handler(request: web.Request) -> web.StreamResponse:
             nonlocal call_count
-            if request.url.path == "/info":
+            if request.path == "/info":
                 call_count += 1
-                return httpx.Response(200, json={"model_id": "test-model"})
-            return httpx.Response(404)
+                return web.json_response({"model_id": "test-model"})
+            return web.Response(status=404)
 
-        transport = httpx.MockTransport(mock_handler)
-
-        with patch.object(httpx, "AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
-            encoder = RemoteTEICrossEncoder(base_url="http://localhost:8080")
+        async with stub_server(handler) as base_url:
+            encoder = RemoteTEICrossEncoder(base_url=base_url)
             await encoder.initialize()
             await encoder.initialize()
             await encoder.initialize()
 
-            assert call_count == 1
-
-
-def create_mock_async_client(handler):
-    """Create a mock AsyncClient that uses the given handler for requests."""
-
-    class MockAsyncClient:
-        def __init__(self, **kwargs):
-            self.timeout = kwargs.get("timeout", 30.0)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def post(self, url, **kwargs):
-            return await handler("POST", url, **kwargs)
-
-        async def get(self, url, **kwargs):
-            return await handler("GET", url, **kwargs)
-
-    return MockAsyncClient()
+        assert call_count == 1
 
 
 class TestRemoteTEICrossEncoderPredict:
@@ -122,10 +130,8 @@ class TestRemoteTEICrossEncoderPredict:
 
     @pytest.mark.asyncio
     async def test_predict_empty_pairs(self):
-        """Test predict returns empty list for empty input."""
-        encoder = RemoteTEICrossEncoder(base_url="http://localhost:8080")
-        encoder._async_client = httpx.AsyncClient()
-        encoder._model_id = "test-model"
+        """Test predict returns empty list for empty input (no request made)."""
+        encoder = ready_encoder(UNREACHABLE_URL)
 
         result = await encoder.predict([])
         assert result == []
@@ -133,27 +139,11 @@ class TestRemoteTEICrossEncoderPredict:
     @pytest.mark.asyncio
     async def test_predict_single_query(self):
         """Test predict with single query and multiple documents."""
-        rerank_calls = []
-        rerank_headers = []
+        calls: list[dict[str, Any]] = []
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                body = kwargs.get("json", {})
-                rerank_calls.append(body)
-                rerank_headers.append(kwargs.get("headers", {}))
-                texts = body["texts"]
-                # Return scores in descending order with original indices
-                results = [{"index": i, "score": 1.0 - (i * 0.1)} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(base_url="http://localhost:8080")
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
+        def descending(body: dict[str, Any]) -> list[dict[str, Any]]:
+            # Return scores in descending order with original indices
+            return [{"index": i, "score": 1.0 - (i * 0.1)} for i in range(len(body["texts"]))]
 
         pairs = [
             ("What is Python?", "Python is a programming language."),
@@ -161,17 +151,20 @@ class TestRemoteTEICrossEncoderPredict:
             ("What is Python?", "Java is also a language."),
         ]
 
-        with patch(
-            "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
-            return_value={"X-Hindsight-Bank-Id": "bank-tei"},
-        ):
-            scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(descending, calls=calls)) as base_url:
+            encoder = ready_encoder(base_url)
+            with patch(
+                "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+                return_value={"X-Hindsight-Bank-Id": "bank-tei"},
+            ):
+                scores = await encoder.predict(pairs)
 
         assert len(scores) == 3
-        assert len(rerank_calls) == 1
-        assert rerank_calls[0]["query"] == "What is Python?"
-        assert len(rerank_calls[0]["texts"]) == 3
-        assert rerank_headers == [{"X-Hindsight-Bank-Id": "bank-tei"}]
+        assert len(calls) == 1
+        assert calls[0]["body"]["query"] == "What is Python?"
+        assert len(calls[0]["body"]["texts"]) == 3
+        assert calls[0]["body"]["return_text"] is False
+        assert calls[0]["headers"]["X-Hindsight-Bank-Id"] == "bank-tei"
         # Scores should be mapped back correctly
         assert scores[0] == 1.0
         assert scores[1] == 0.9
@@ -180,24 +173,10 @@ class TestRemoteTEICrossEncoderPredict:
     @pytest.mark.asyncio
     async def test_predict_multiple_queries(self):
         """Test predict with multiple different queries."""
-        rerank_calls = []
+        calls: list[dict[str, Any]] = []
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                body = kwargs.get("json", {})
-                rerank_calls.append(body)
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5 + (i * 0.1)} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(base_url="http://localhost:8080")
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
+        def ascending(body: dict[str, Any]) -> list[dict[str, Any]]:
+            return [{"index": i, "score": 0.5 + (i * 0.1)} for i in range(len(body["texts"]))]
 
         pairs = [
             ("Query A", "Doc A1"),
@@ -206,11 +185,12 @@ class TestRemoteTEICrossEncoderPredict:
             ("Query B", "Doc B2"),
         ]
 
-        scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(ascending, calls=calls)) as base_url:
+            scores = await ready_encoder(base_url).predict(pairs)
 
         assert len(scores) == 4
         # Two queries = two rerank calls (run in parallel)
-        assert len(rerank_calls) == 2
+        assert len(calls) == 2
 
 
 class TestRemoteTEICrossEncoderBatching:
@@ -219,74 +199,35 @@ class TestRemoteTEICrossEncoderBatching:
     @pytest.mark.asyncio
     async def test_batch_splitting(self):
         """Test that large inputs are split into batches."""
-        rerank_calls = []
-
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                body = kwargs.get("json", {})
-                rerank_calls.append(body)
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            batch_size=3,  # Small batch for testing
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
+        calls: list[dict[str, Any]] = []
 
         # 7 documents with same query, batch_size=3 -> 3 batches (3+3+1)
         pairs = [("Query", f"Doc {i}") for i in range(7)]
 
-        scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(constant_scores, calls=calls)) as base_url:
+            scores = await ready_encoder(base_url, batch_size=3).predict(pairs)
 
         assert len(scores) == 7
-        assert len(rerank_calls) == 3
+        assert len(calls) == 3
         # Check batch sizes
-        batch_sizes = sorted([len(call["texts"]) for call in rerank_calls])
+        batch_sizes = sorted([len(call["body"]["texts"]) for call in calls])
         assert batch_sizes == [1, 3, 3]
 
     @pytest.mark.asyncio
     async def test_score_mapping_across_batches(self):
         """Test that scores are correctly mapped back across batches."""
-        call_counter = [0]
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                body = kwargs.get("json", {})
-                batch_num = call_counter[0]
-                call_counter[0] += 1
-                texts = body["texts"]
-                # Each batch returns different scores to verify mapping
-                base_score = batch_num * 10
-                results = [{"index": i, "score": float(base_score + i)} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            batch_size=3,
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
+        def score_by_text(body: dict[str, Any]) -> list[dict[str, Any]]:
+            # Score each doc by the number in its text, so the mapping is checkable
+            # regardless of the order batches arrive in.
+            return [{"index": i, "score": float(text.split()[-1])} for i, text in enumerate(body["texts"])]
 
         pairs = [("Query", f"Doc {i}") for i in range(7)]
 
-        scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(score_by_text)) as base_url:
+            scores = await ready_encoder(base_url, batch_size=3).predict(pairs)
 
-        assert len(scores) == 7
-        # All scores should be present (exact values depend on batch ordering)
-        assert all(isinstance(s, (int, float)) for s in scores)
+        assert scores == [float(i) for i in range(7)]
 
 
 class TestRemoteTEICrossEncoderParallelism:
@@ -298,44 +239,30 @@ class TestRemoteTEICrossEncoderParallelism:
         concurrent_count = [0]
         max_concurrent_observed = [0]
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                concurrent_count[0] += 1
-                max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
-
-                await asyncio.sleep(0.1)  # Simulate latency
-
-                concurrent_count[0] -= 1
-                body = kwargs.get("json", {})
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            batch_size=2,
-            max_concurrent=10,  # High limit to allow parallelism
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
+        async def simulate_latency() -> None:
+            concurrent_count[0] += 1
+            max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
+            await asyncio.sleep(0.1)
+            concurrent_count[0] -= 1
 
         # 6 docs = 3 batches, should run in parallel
         pairs = [("Query", f"Doc {i}") for i in range(6)]
 
-        start = time.time()
-        scores = await encoder.predict(pairs)
-        elapsed = time.time() - start
+        async with stub_server(rerank_handler(constant_scores, before=simulate_latency)) as base_url:
+            encoder = ready_encoder(
+                base_url,
+                batch_size=2,
+                max_concurrent=10,  # High limit to allow parallelism
+            )
+            start = time.time()
+            scores = await encoder.predict(pairs)
+            elapsed = time.time() - start
 
         assert len(scores) == 6
         # 6 docs = 3 batches at ~0.1s each: ~0.1s if parallel vs ~0.3s if serial.
         # Assert comfortably below the serial time so CI scheduling jitter can't flake
-        # it (the previous ~0.08s bound was too tight); max_concurrent_observed below is
-        # the deterministic proof that the batches actually overlapped.
+        # it; max_concurrent_observed below is the deterministic proof that the batches
+        # actually overlapped.
         assert elapsed < 0.25, f"Requests should run in parallel, took {elapsed}s"
         assert max_concurrent_observed[0] > 1, "Multiple requests should run concurrently"
 
@@ -345,42 +272,47 @@ class TestRemoteTEICrossEncoderParallelism:
         concurrent_count = [0]
         max_concurrent_observed = [0]
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                concurrent_count[0] += 1
-                max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
-
-                await asyncio.sleep(0.01)  # Simulate latency
-
-                concurrent_count[0] -= 1
-                body = kwargs.get("json", {})
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
+        async def simulate_latency() -> None:
+            concurrent_count[0] += 1
+            max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
+            await asyncio.sleep(0.01)
+            concurrent_count[0] -= 1
 
         max_concurrent_limit = 2
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            batch_size=1,  # 1 doc per batch to maximize requests
-            max_concurrent=max_concurrent_limit,
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
-
         # 10 docs = 10 batches, but only 2 should run at a time
         pairs = [("Query", f"Doc {i}") for i in range(10)]
 
-        scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(constant_scores, before=simulate_latency)) as base_url:
+            encoder = ready_encoder(
+                base_url,
+                batch_size=1,  # 1 doc per batch to maximize requests
+                max_concurrent=max_concurrent_limit,
+            )
+            scores = await encoder.predict(pairs)
 
         assert len(scores) == 10
         assert max_concurrent_observed[0] <= max_concurrent_limit, (
             f"Semaphore should limit to {max_concurrent_limit}, observed {max_concurrent_observed[0]}"
         )
+
+
+class _RefuseFirstConnects:
+    """Session wrapper whose first ``failures`` requests go to a port nothing listens on.
+
+    That produces a genuine aiohttp connect error from the real transport, then lets
+    later attempts through to the stub.
+    """
+
+    def __init__(self, session: Any, failures: int) -> None:
+        self._session = session
+        self._failures = failures
+        self.attempts = 0
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        self.attempts += 1
+        if self.attempts <= self._failures:
+            url = f"{UNREACHABLE_URL}/rerank"
+        return self._session.request(method, url, **kwargs)
 
 
 class TestRemoteTEICrossEncoderRetry:
@@ -389,36 +321,15 @@ class TestRemoteTEICrossEncoderRetry:
     @pytest.mark.asyncio
     async def test_retry_on_connect_error(self):
         """Test that connect errors trigger retries."""
-        attempt_count = [0]
-
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                attempt_count[0] += 1
-                if attempt_count[0] < 3:
-                    raise httpx.ConnectError("Connection refused")
-                body = kwargs.get("json", {})
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            max_retries=3,
-            retry_delay=0.01,
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
-
-        pairs = [("Query", "Doc 1")]
-        scores = await encoder.predict(pairs)
+        async with stub_server(rerank_handler(constant_scores)) as base_url:
+            encoder = ready_encoder(base_url, max_retries=3, retry_delay=0.01)
+            session = encoder._session.get()
+            wrapper = _RefuseFirstConnects(session, failures=2)
+            with patch.object(encoder._session, "get", return_value=wrapper):
+                scores = await encoder.predict([("Query", "Doc 1")])
 
         assert len(scores) == 1
-        assert attempt_count[0] == 3  # 2 failures + 1 success
+        assert wrapper.attempts == 3  # 2 failures + 1 success
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -429,43 +340,16 @@ class TestRemoteTEICrossEncoderRetry:
         """TEI overload and 5xx responses should trigger retries."""
         attempt_count = [0]
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                attempt_count[0] += 1
-                if attempt_count[0] < 2:
-                    response = MagicMock()
-                    response.status_code = status_code
+        async def handler(request: web.Request) -> web.StreamResponse:
+            attempt_count[0] += 1
+            if attempt_count[0] < 2:
+                return web.json_response({"error": error_message}, status=status_code)
+            body = await request.json()
+            return web.json_response(constant_scores(body))
 
-                    def raise_for_status():
-                        raise httpx.HTTPStatusError(
-                            error_message,
-                            request=MagicMock(),
-                            response=response,
-                        )
-
-                    response.raise_for_status = raise_for_status
-                    return response
-
-                body = kwargs.get("json", {})
-                texts = body["texts"]
-                results = [{"index": i, "score": 0.5} for i in range(len(texts))]
-                response = MagicMock()
-                response.status_code = 200
-                response.raise_for_status = MagicMock()
-                response.json = MagicMock(return_value=results)
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            max_retries=3,
-            retry_delay=0.01,
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
-
-        pairs = [("Query", "Doc 1")]
-        scores = await encoder.predict(pairs)
+        async with stub_server(handler) as base_url:
+            encoder = ready_encoder(base_url, max_retries=3, retry_delay=0.01)
+            scores = await encoder.predict([("Query", "Doc 1")])
 
         assert len(scores) == 1
         assert attempt_count[0] == 2
@@ -475,35 +359,14 @@ class TestRemoteTEICrossEncoderRetry:
         """Test that 4xx errors do not trigger retries."""
         attempt_count = [0]
 
-        async def mock_handler(method, url, **kwargs):
-            if "/rerank" in url:
-                attempt_count[0] += 1
-                response = MagicMock()
-                response.status_code = 400
+        async def handler(request: web.Request) -> web.StreamResponse:
+            attempt_count[0] += 1
+            return web.json_response({"error": "Bad request"}, status=400)
 
-                def raise_for_status():
-                    raise httpx.HTTPStatusError(
-                        "Bad request",
-                        request=MagicMock(),
-                        response=response,
-                    )
-
-                response.raise_for_status = raise_for_status
-                return response
-            raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=MagicMock())
-
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            max_retries=3,
-            retry_delay=0.01,
-        )
-        encoder._async_client = create_mock_async_client(mock_handler)
-        encoder._model_id = "test-model"
-
-        pairs = [("Query", "Doc 1")]
-
-        with pytest.raises(RuntimeError, match="TEI rerank request failed"):
-            await encoder.predict(pairs)
+        async with stub_server(handler) as base_url:
+            encoder = ready_encoder(base_url, max_retries=3, retry_delay=0.01)
+            with pytest.raises(RuntimeError, match="TEI rerank request failed"):
+                await encoder.predict([("Query", "Doc 1")])
 
         assert attempt_count[0] == 1  # No retries for 4xx
 
@@ -512,32 +375,23 @@ class TestRemoteTEICrossEncoderRetry:
         """A persistent overload should make exactly max_retries + 1 attempts."""
         attempt_count = 0
 
-        async def handler(request: httpx.Request) -> httpx.Response:
+        async def handler(request: web.Request) -> web.StreamResponse:
             nonlocal attempt_count
             attempt_count += 1
-            return httpx.Response(
-                429,
-                request=request,
+            return web.json_response(
+                {"error": "Model is overloaded"},
+                status=429,
                 headers={"Retry-After": "Infinity"},
-                json={"error": "Model is overloaded"},
             )
 
-        encoder = RemoteTEICrossEncoder(
-            base_url="http://localhost:8080",
-            max_retries=2,
-            retry_delay=0,
-        )
-        encoder._async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        encoder._model_id = "test-model"
-
-        try:
+        async with stub_server(handler) as base_url:
+            encoder = ready_encoder(base_url, max_retries=2, retry_delay=0)
             with pytest.raises(RuntimeError, match="TEI rerank request failed") as exc_info:
                 await encoder.predict([("Query", "Doc 1")])
-        finally:
-            await encoder._async_client.aclose()
 
         assert attempt_count == 3
-        assert isinstance(exc_info.value.__context__, httpx.HTTPStatusError)
+        assert isinstance(exc_info.value.__context__, UpstreamHTTPError)
+        assert exc_info.value.__context__.status_code == 429
 
 
 class TestRemoteTEICrossEncoderConfig:
@@ -651,12 +505,11 @@ async def test_tei_reranker_performance():
         TEI_RERANKER_URL=http://localhost:8000 \
         pytest tests/test_tei_cross_encoder.py::test_tei_reranker_performance -v -s -n0
     """
-    import httpx
+    import aiohttp
 
     # Get server info
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{TEI_RERANKER_URL}/info")
-        info = response.json()
+    async with aiohttp.ClientSession() as client, client.get(f"{TEI_RERANKER_URL}/info") as response:
+        info = await response.json()
         print("\n📊 TEI Server Info:")
         print(f"   URL: {TEI_RERANKER_URL}")
         print(f"   Model: {info.get('model_id', 'unknown')}")
@@ -817,23 +670,26 @@ async def test_tei_reranker_latency_breakdown():
 
     This helps identify where time is spent: network vs processing.
     """
-    import httpx
+    import aiohttp
 
     print("\n⏱️  Latency Breakdown Test:\n")
 
+    timeout = aiohttp.ClientTimeout(total=30.0)
+
     # Test single document latency (network overhead)
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with aiohttp.ClientSession(timeout=timeout) as client:
         times = []
         for _ in range(10):
             start = time.time()
-            await client.post(
+            async with client.post(
                 f"{TEI_RERANKER_URL}/rerank",
                 json={
                     "query": "test query",
                     "texts": ["test document"],
                     "return_text": False,
                 },
-            )
+            ) as response:
+                await response.read()
             times.append((time.time() - start) * 1000)
 
         avg_single = sum(times) / len(times)
@@ -843,18 +699,19 @@ async def test_tei_reranker_latency_breakdown():
     batch_sizes = [10, 50, 100, 200, 500]
     for batch_size in batch_sizes:
         texts = [f"Document {i} about machine learning" for i in range(batch_size)]
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with aiohttp.ClientSession(timeout=timeout) as client:
             times = []
             for _ in range(5):
                 start = time.time()
-                await client.post(
+                async with client.post(
                     f"{TEI_RERANKER_URL}/rerank",
                     json={
                         "query": "What about machine learning?",
                         "texts": texts,
                         "return_text": False,
                     },
-                )
+                ) as response:
+                    await response.read()
                 times.append((time.time() - start) * 1000)
 
             avg = sum(times) / len(times)

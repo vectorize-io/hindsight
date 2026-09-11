@@ -50,21 +50,21 @@ timestamps, scope names and status codes only.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import json
 import logging
 import os
 import sys
 import tempfile
-import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
+import aiohttp
 
 from ...config import (
     DEFAULT_XAI_OAUTH_CLIENT_ID,
@@ -73,11 +73,8 @@ from ...config import (
     DEFAULT_XAI_OAUTH_SCOPE,
     get_config,
 )
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
+from ..aiohttp_session import LoopLocalSession, per_phase_timeout
+from .oauth_store_lock import oauth_store_lock
 
 logger = logging.getLogger(__name__)
 
@@ -179,8 +176,7 @@ TERMINAL_REFRESH_STATUSES = frozenset({400, 401})
 
 LOGIN_COMMAND = "python -m hindsight_api.engine.providers.xai_oauth_auth login"
 
-_STORE_LOCKS_GUARD = threading.Lock()
-_STORE_LOCKS: dict[Path, threading.Lock] = {}
+_FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
 
 
 # ---------------------------------------------------------------------------
@@ -248,49 +244,18 @@ def default_token_path() -> Path:
     return Path.home() / ".hindsight" / "xai_oauth.json"
 
 
-def _path_scoped_lock(token_path: Path) -> threading.Lock:
-    """Return the process-wide lock for one store path."""
-    key = token_path.expanduser().resolve(strict=False)
-    with _STORE_LOCKS_GUARD:
-        lock = _STORE_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _STORE_LOCKS[key] = lock
-        return lock
-
-
-@contextlib.contextmanager
-def token_store_lock(token_path: Path, timeout_seconds: float = AUTH_LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+@contextlib.asynccontextmanager
+async def token_store_lock(token_path: Path, timeout_seconds: float = AUTH_LOCK_TIMEOUT_SECONDS) -> AsyncIterator[None]:
     """Hold the advisory lock for one token store.
 
-    An in-process lock keyed by the resolved path serialises this process's own
-    managers; a ``fcntl.flock`` on ``<store>.lock`` extends that across
-    processes. Where ``fcntl`` is unavailable (Windows) only the in-process lock
-    applies — the same degradation ``codex_auth.py`` and ``nous_auth.py`` take.
+    A per-event-loop lock keyed by the resolved path serialises this process's
+    own coroutines; a ``fcntl.flock`` on ``<store>.lock`` extends that across
+    event loops and processes (see :func:`oauth_store_lock`). Where ``fcntl`` is
+    unavailable (Windows) only the per-loop lock applies — the same degradation
+    ``codex_auth.py`` and ``nous_auth.py`` take.
     """
-    with _path_scoped_lock(token_path):
-        if fcntl is None:  # pragma: no cover - Windows
-            logger.debug("fcntl unavailable; xai-oauth refresh proceeds without a cross-process lock.")
-            yield
-            return
-
-        lock_path = token_path.with_suffix(".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as lock_file:
-            deadline = time.monotonic() + max(1.0, timeout_seconds)
-            while True:
-                try:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except (BlockingIOError, OSError):
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("Timed out waiting for the xai-oauth token store lock") from None
-                    time.sleep(0.05)
-            try:
-                yield
-            finally:
-                with contextlib.suppress(OSError):
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    async with oauth_store_lock(token_path, timeout_seconds=timeout_seconds, label="xai-oauth token store"):
+        yield
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -453,7 +418,22 @@ def validate_oauth_endpoint(url: str, *, field: str) -> str:
     return url
 
 
-def discover_endpoints(client: httpx.Client) -> dict[str, str]:
+@dataclass(frozen=True, slots=True)
+class _HttpReply:
+    """One fully read HTTP reply: status and body text."""
+
+    status_code: int
+    text: str
+
+    def json(self) -> Any:
+        return json.loads(self.text)
+
+
+async def _read_reply(response: aiohttp.ClientResponse) -> _HttpReply:
+    return _HttpReply(response.status, await response.text(errors="replace"))
+
+
+async def discover_endpoints(session: aiohttp.ClientSession) -> dict[str, str]:
     """Fetch the OIDC discovery document and return the endpoints we use.
 
     Returns ``token_endpoint`` and ``device_authorization_endpoint``. Both are
@@ -463,8 +443,9 @@ def discover_endpoints(client: httpx.Client) -> dict[str, str]:
     to publish it.
     """
     try:
-        response = client.get(XAI_OAUTH_DISCOVERY_URL, headers={"Accept": "application/json"})
-    except httpx.RequestError as exc:
+        async with session.get(XAI_OAUTH_DISCOVERY_URL, headers={"Accept": "application/json"}) as raw:
+            response = await _read_reply(raw)
+    except (aiohttp.ClientError, TimeoutError) as exc:
         raise XaiOAuthDiscoveryError(f"xAI OIDC discovery request failed: {type(exc).__name__}") from exc
 
     if response.status_code != 200:
@@ -496,17 +477,18 @@ def discover_endpoints(client: httpx.Client) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def request_device_code(client: httpx.Client, *, device_endpoint: str, client_id: str, scope: str) -> dict[str, Any]:
+async def request_device_code(
+    session: aiohttp.ClientSession, *, device_endpoint: str, client_id: str, scope: str
+) -> dict[str, Any]:
     """Start the device-code flow and return the authorization response.
 
     Raises :class:`XaiOAuthError` when the endpoint answers non-200 or omits a
     field RFC 8628 section 3.2 makes required.
     """
-    response = client.post(
-        device_endpoint,
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
-        data={"client_id": client_id, "scope": scope},
-    )
+    async with session.post(
+        device_endpoint, headers=_FORM_HEADERS, data={"client_id": client_id, "scope": scope}
+    ) as raw:
+        response = await _read_reply(raw)
     if response.status_code != 200:
         raise XaiOAuthError(f"xAI device-code request failed with HTTP {response.status_code}")
 
@@ -523,15 +505,15 @@ def request_device_code(client: httpx.Client, *, device_endpoint: str, client_id
     return payload
 
 
-def poll_device_token(
-    client: httpx.Client,
+async def poll_device_token(
+    session: aiohttp.ClientSession,
     *,
     token_endpoint: str,
     device_code: str,
     client_id: str,
     expires_in: int,
     interval: int,
-    sleeper: Callable[[float], None] = time.sleep,
+    sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Poll the token endpoint until the user approves, or the code dies.
@@ -548,15 +530,16 @@ def poll_device_token(
     current_interval = max(1, int(interval))
 
     while monotonic() < deadline:
-        response = client.post(
+        async with session.post(
             token_endpoint,
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+            headers=_FORM_HEADERS,
             data={
                 "grant_type": DEVICE_CODE_GRANT_TYPE,
                 "client_id": client_id,
                 "device_code": device_code,
             },
-        )
+        ) as raw:
+            response = await _read_reply(raw)
         if response.status_code == 200:
             payload = response.json()
             if not isinstance(payload, dict) or not payload.get("access_token"):
@@ -574,11 +557,11 @@ def poll_device_token(
 
         error_code = str(error_payload.get("error") or "") if isinstance(error_payload, dict) else ""
         if error_code == "authorization_pending":
-            sleeper(current_interval)
+            await sleeper(current_interval)
             continue
         if error_code == "slow_down":
             current_interval += 5
-            sleeper(current_interval)
+            await sleeper(current_interval)
             continue
         if error_code == "expired_token":
             raise XaiOAuthError("The xAI device code expired before it was approved. Start the login again.")
@@ -587,7 +570,7 @@ def poll_device_token(
     raise XaiOAuthError("Timed out waiting for xAI device-code approval.")
 
 
-def device_code_login(
+async def device_code_login(
     *,
     token_path: Path | None = None,
     client_id: str | None = None,
@@ -602,7 +585,8 @@ def device_code_login(
     ``writer`` (stdout by default) and is never passed to the logger.
 
     Returns the store path that was written. This function is only reachable
-    from the module's ``login`` entrypoint — no request path calls it.
+    from the module's ``login`` entrypoint (run under ``asyncio.run``) — no
+    request path calls it.
     """
     path = token_path or default_token_path()
     config = get_config()
@@ -610,10 +594,12 @@ def device_code_login(
     resolved_scope = scope or config.xai_oauth_scope
     timeout = timeout_seconds if timeout_seconds is not None else config.xai_oauth_refresh_timeout_seconds
 
-    with httpx.Client(timeout=httpx.Timeout(max(20.0, timeout)), headers={"Accept": "application/json"}) as client:
-        endpoints = discover_endpoints(client)
-        device = request_device_code(
-            client,
+    http = LoopLocalSession(timeout=per_phase_timeout(max(20.0, timeout)), headers={"Accept": "application/json"})
+    try:
+        session = http.get()
+        endpoints = await discover_endpoints(session)
+        device = await request_device_code(
+            session,
             device_endpoint=endpoints["device_authorization_endpoint"],
             client_id=resolved_client_id,
             scope=resolved_scope,
@@ -625,14 +611,16 @@ def device_code_login(
         writer(f"  2. If prompted, enter code: {device['user_code']}")
         writer("Waiting for approval...")
 
-        payload = poll_device_token(
-            client,
+        payload = await poll_device_token(
+            session,
             token_endpoint=endpoints["token_endpoint"],
             device_code=str(device["device_code"]),
             client_id=resolved_client_id,
             expires_in=int(device["expires_in"]),
             interval=int(device.get("interval") or 5),
         )
+    finally:
+        await http.close()
 
     now = time.time()
     expires_in = _coerce_float(payload.get("expires_in"))
@@ -644,7 +632,7 @@ def device_code_login(
         scope=str(payload.get("scope") or resolved_scope),
         token_endpoint=endpoints["token_endpoint"],
     )
-    with token_store_lock(path):
+    async with token_store_lock(path):
         write_credential(path, credential)
     logger.info(
         "xai-oauth credential stored at %s (scope=%s, expires_at=%s)",
@@ -678,7 +666,7 @@ class XaiOAuthManager:
         refresh_skew_seconds: float | None = None,
         refresh_timeout_seconds: float | None = None,
         min_refresh_gap_seconds: float = DEFAULT_MIN_REFRESH_GAP_SECONDS,
-        http_client: httpx.Client | None = None,
+        http_client: LoopLocalSession | None = None,
     ) -> None:
         self._token_path = token_path or default_token_path()
         self._client_id = client_id or get_config().xai_oauth_client_id
@@ -692,7 +680,8 @@ class XaiOAuthManager:
         )
         self._min_refresh_gap_seconds = min_refresh_gap_seconds
         self._owns_client = http_client is None
-        self._http_client = http_client or httpx.Client(timeout=httpx.Timeout(self._timeout_seconds))
+        # Created lazily per event loop, so one manager may serve several loops.
+        self._http_client = http_client or LoopLocalSession(timeout=per_phase_timeout(self._timeout_seconds))
 
     @property
     def token_path(self) -> Path:
@@ -702,7 +691,7 @@ class XaiOAuthManager:
     # Read path
     # ------------------------------------------------------------------
 
-    def get_access_token(self, min_ttl_seconds: float | None = None) -> str:
+    async def get_access_token(self, min_ttl_seconds: float | None = None) -> str:
         """Return an access token good for at least ``min_ttl_seconds``.
 
         ``min_ttl_seconds`` defaults to the configured skew. A credential whose
@@ -713,9 +702,9 @@ class XaiOAuthManager:
         credential = read_credential(self._token_path)
         if credential.access_token and credential.seconds_left() > required_ttl:
             return credential.access_token
-        return self.refresh(reason="proactive (token inside the refresh window)", required_ttl=required_ttl)
+        return await self.refresh(reason="proactive (token inside the refresh window)", required_ttl=required_ttl)
 
-    def refresh(
+    async def refresh(
         self,
         *,
         reason: str = "",
@@ -741,7 +730,9 @@ class XaiOAuthManager:
         """
         ttl = self._skew_seconds if required_ttl is None else required_ttl
 
-        with token_store_lock(self._token_path, timeout_seconds=max(AUTH_LOCK_TIMEOUT_SECONDS, self._timeout_seconds)):
+        async with token_store_lock(
+            self._token_path, timeout_seconds=max(AUTH_LOCK_TIMEOUT_SECONDS, self._timeout_seconds)
+        ):
             credential = read_credential(self._token_path)
 
             if rejected_token is None:
@@ -760,18 +751,18 @@ class XaiOAuthManager:
                     "was just issued."
                 )
 
-            return self._refresh_locked(credential, reason=reason)
+            return await self._refresh_locked(credential, reason=reason)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _token_endpoint(self, credential: StoredCredential) -> str:
+    async def _token_endpoint(self, credential: StoredCredential) -> str:
         if credential.token_endpoint:
             return validate_oauth_endpoint(credential.token_endpoint, field="token_endpoint")
-        return discover_endpoints(self._http_client)["token_endpoint"]
+        return (await discover_endpoints(self._http_client.get()))["token_endpoint"]
 
-    def _refresh_locked(self, credential: StoredCredential, *, reason: str) -> str:
+    async def _refresh_locked(self, credential: StoredCredential, *, reason: str) -> str:
         """Exchange the refresh token and persist the result. Lock must be held.
 
         A terminal status (see :data:`TERMINAL_REFRESH_STATUSES`) is retried
@@ -780,24 +771,25 @@ class XaiOAuthManager:
         a different grant, quarantines the store and raises the login
         remediation.
         """
-        endpoint = self._token_endpoint(credential)
+        endpoint = await self._token_endpoint(credential)
         log_reason = f" ({reason})" if reason else ""
         logger.info("Refreshing the xai-oauth access token%s", log_reason)
 
         last_status: int | None = None
         for attempt in (1, 2):
             try:
-                response = self._http_client.post(
+                async with self._http_client.get().post(
                     endpoint,
-                    headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                    headers=_FORM_HEADERS,
                     data={
                         "grant_type": "refresh_token",
                         "client_id": self._client_id,
                         "refresh_token": credential.refresh_token,
                     },
-                    timeout=self._timeout_seconds,
-                )
-            except httpx.RequestError as exc:
+                    timeout=per_phase_timeout(self._timeout_seconds),
+                ) as raw:
+                    response = await _read_reply(raw)
+            except (aiohttp.ClientError, TimeoutError) as exc:
                 raise XaiOAuthRefreshError(f"xai-oauth refresh network error: {type(exc).__name__}") from exc
 
             if response.status_code == 200:
@@ -817,7 +809,7 @@ class XaiOAuthManager:
         # rejection can simply mean some other writer spent this one first and
         # the store already holds its replacement. Quarantining then would
         # destroy a live grant and force an interactive login for nothing. The
-        # in-process lock plus the recheck in refresh() rule that out among
+        # store lock plus the recheck in refresh() rule that out among
         # this host's managers, but not against a store shared with a host
         # whose filesystem does not honour flock — so re-read before wiping.
         superseded = self._superseded_access_token(credential)
@@ -849,7 +841,7 @@ class XaiOAuthManager:
             return None
         return current.access_token
 
-    def _persist_refreshed(self, credential: StoredCredential, response: httpx.Response) -> str:
+    def _persist_refreshed(self, credential: StoredCredential, response: _HttpReply) -> str:
         try:
             payload = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
@@ -880,10 +872,10 @@ class XaiOAuthManager:
         )
         return access_token
 
-    def close(self) -> None:
-        """Close the HTTP client when this manager created it."""
+    async def close(self) -> None:
+        """Close the running loop's HTTP session when this manager created it."""
         if self._owns_client:
-            self._http_client.close()
+            await self._http_client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -901,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "login":
         try:
-            device_code_login(token_path=Path(args.token_path) if args.token_path else None)
+            asyncio.run(device_code_login(token_path=Path(args.token_path) if args.token_path else None))
         except XaiOAuthError as exc:
             print(f"xai-oauth login failed: {exc}", file=sys.stderr)
             return 1

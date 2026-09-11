@@ -49,7 +49,7 @@ async def _seed_memory(
     store = get_memories()
     fact = SimpleNamespace(
         fact_text=text,
-        embedding=memory.embeddings.encode([text])[0],
+        embedding=(await memory.embeddings.encode([text]))[0],
         fact_type="experience",
         tags=[],
         context=None,
@@ -132,7 +132,7 @@ class TestWritesThatMustStamp:
                 mem_id = await _seed_memory(memory, conn, bank_id, "Alice loves hiking.")
                 await _backdate(conn, mem_id)
 
-                embedding = str(list(map(float, memory.embeddings.encode(["Alice loves climbing."])[0])))
+                embedding = str(list(map(float, (await memory.embeddings.encode(["Alice loves climbing."]))[0])))
                 await get_memories().set_memory_embedding(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(mem_id), embedding=embedding
                 )

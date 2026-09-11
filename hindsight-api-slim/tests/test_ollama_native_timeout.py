@@ -1,54 +1,49 @@
 """The native Ollama path must use the configured LLM timeout, not a literal.
 
-`_call_ollama_native` built its own `httpx.AsyncClient(timeout=300.0)`, which is
-the one request path that ignored `HINDSIGHT_API_LLM_TIMEOUT`. On a CPU ollama
-host a single fact-extraction prompt can need longer than 300 s just to be
-ingested, and the call was aborted mid-prompt with a bare "Ollama connection
-error" that raising the configured timeout could not fix.
+`_call_ollama_native` used to build its own HTTP client with `timeout=300.0`, the
+one request path that ignored `HINDSIGHT_API_LLM_TIMEOUT`. On a CPU ollama host a
+single fact-extraction prompt can need longer than 300 s just to be ingested, and
+the call was aborted mid-prompt with a bare "Ollama connection error" that raising
+the configured timeout could not fix.
 
 Note the fix cuts both ways: `self.timeout` falls back to DEFAULT_LLM_TIMEOUT
 (120 s), which is LOWER than the old literal, so a deployment relying on the
 implicit 300 s must now set ENV_LLM_TIMEOUT. Both directions are asserted here.
 """
 
-import httpx
+import aiohttp
 import pytest
 
-from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT, clear_config_cache
 from hindsight_api.engine.providers import openai_compatible_llm
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 
-class _CapturingAsyncClient:
-    """Stand-in for httpx.AsyncClient that records the timeout it was built with."""
+class _CapturingSession:
+    """Stand-in for LoopLocalSession that records the timeout it was built with."""
 
-    captured: list[float | None] = []
+    captured: list[aiohttp.ClientTimeout] = []
 
-    def __init__(self, *args, timeout=None, **kwargs):
+    def __init__(self, *, timeout: aiohttp.ClientTimeout, **kwargs):
         type(self).captured.append(timeout)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def post(self, *args, **kwargs):
-        # Fail the call immediately: the assertion is about client construction,
-        # so the request itself never needs to succeed.
-        raise httpx.ConnectError("no ollama in tests")
 
 
 def _timeout_used(monkeypatch, env_value: str | None) -> float | None:
+    """The per-read timeout of the session the native path sends through."""
     if env_value is None:
         monkeypatch.delenv(ENV_LLM_TIMEOUT, raising=False)
     else:
         monkeypatch.setenv(ENV_LLM_TIMEOUT, env_value)
-    monkeypatch.setattr(openai_compatible_llm.httpx, "AsyncClient", _CapturingAsyncClient)
-    _CapturingAsyncClient.captured = []
+    clear_config_cache()
+    monkeypatch.setattr(openai_compatible_llm, "LoopLocalSession", _CapturingSession)
+    _CapturingSession.captured = []
 
-    llm = OpenAICompatibleLLM(provider="ollama", api_key="local", base_url="http://localhost:11434", model="qwen")
-    return llm.timeout
+    try:
+        OpenAICompatibleLLM(provider="ollama", api_key="local", base_url="http://localhost:11434", model="qwen")
+    finally:
+        clear_config_cache()
+    assert len(_CapturingSession.captured) == 1
+    return _CapturingSession.captured[0].sock_read
 
 
 def test_configured_timeout_is_not_capped_by_the_old_literal(monkeypatch):

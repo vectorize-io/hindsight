@@ -24,7 +24,10 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any, Callable
 
+import aiohttp
+
 from hindsight_api._cross_loop import CrossLoopLock
+from hindsight_api.engine.aiohttp_session import per_phase_timeout
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
 
@@ -220,8 +223,6 @@ class LlamaCppServer:
 
     async def _wait_for_ready(self, timeout: float = 120.0) -> None:
         """Wait for the llama.cpp server to accept connections."""
-        import httpx
-
         start = time.monotonic()
         url = f"http://127.0.0.1:{self.port}/v1/models"
         last_log = start
@@ -237,12 +238,14 @@ class LlamaCppServer:
                 raise RuntimeError(f"llama.cpp server exited with code {self._process.returncode}.\nstderr: {stderr}")
 
             try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, timeout=5.0)
-                    if resp.status_code == 200:
-                        logger.info(f"llama.cpp server ready on port {self.port}")
-                        return
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.ConnectTimeout):
+                async with aiohttp.ClientSession(timeout=per_phase_timeout(5.0)) as client:
+                    async with client.get(url) as resp:
+                        if resp.status == 200:
+                            logger.info(f"llama.cpp server ready on port {self.port}")
+                            return
+            except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
+                # Not listening yet, or still loading the model; aiohttp raises its
+                # timeouts as asyncio.TimeoutError subclasses.
                 pass
 
             # Log progress every 15s

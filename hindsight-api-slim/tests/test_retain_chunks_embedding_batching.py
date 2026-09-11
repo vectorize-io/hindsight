@@ -39,15 +39,15 @@ class CountingEmbeddings:
     async def initialize(self) -> None:
         await self._inner.initialize()
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        return self._inner.encode(texts)
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        return await self._inner.encode(texts)
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
         self.document_calls.append(len(texts))
-        return self._inner.encode_documents(texts)
+        return await self._inner.encode_documents(texts)
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return self._inner.encode_query(texts)
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self._inner.encode_query(texts)
 
 
 @pytest.fixture

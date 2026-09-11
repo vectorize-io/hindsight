@@ -1476,7 +1476,7 @@ class TestHierarchicalRetrieval:
 
         # Search mental models - should find our mental model
         async with memory._pool.acquire() as conn:
-            query_embedding = memory.embeddings.encode(["What does John like?"])[0]
+            query_embedding = (await memory.embeddings.encode(["What does John like?"]))[0]
             mental_model_result = await tool_search_mental_models(
                 memory_engine=memory,
                 conn=conn,
@@ -1538,7 +1538,7 @@ class TestHierarchicalRetrieval:
 
         # Search mental models - should find nothing
         async with memory._pool.acquire() as conn:
-            query_embedding = memory.embeddings.encode(["Where does Sarah work?"])[0]
+            query_embedding = (await memory.embeddings.encode(["Where does Sarah work?"]))[0]
             mental_model_result = await tool_search_mental_models(
                 memory_engine=memory,
                 conn=conn,

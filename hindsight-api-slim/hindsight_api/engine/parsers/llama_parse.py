@@ -1,12 +1,15 @@
 """LlamaParse parser implementation using the LlamaIndex Cloud parsing API."""
 
 import asyncio
+import json
 import logging
 import mimetypes
 import time
+from typing import Any
 
-import httpx
+import aiohttp
 
+from ..aiohttp_session import per_phase_timeout
 from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
@@ -47,7 +50,6 @@ class LlamaParseParser(FileParser):
         self._poll_interval = poll_interval
         self._timeout = timeout
         self._auth_headers = {"Authorization": f"Bearer {api_key}"}
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0))
 
     async def convert(self, file_data: bytes, filename: str) -> str:
         """
@@ -59,25 +61,25 @@ class LlamaParseParser(FileParser):
         """
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
+        # One session per conversion: parsers have no close hook to release a
+        # long-lived one, and a conversion is a rare, multi-second polling job.
+        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0)) as session:
+            return await self._convert(session, file_data, filename, content_type)
+
+    async def _convert(self, session: aiohttp.ClientSession, file_data: bytes, filename: str, content_type: str) -> str:
         # Step 1: Upload file and start parse job
-        upload_resp = await self._client.post(
-            f"{_LLAMA_PARSE_BASE_URL}/upload",
-            headers=self._auth_headers,
-            # Ensure file_data is plain bytes (storage backends may return obstore.Bytes)
-            files={"file": (filename, bytes(file_data), content_type)},
-        )
-        _raise_for_status(upload_resp, filename, "upload")
-        job_id: str = upload_resp.json()["id"]
+        form = aiohttp.FormData()
+        # Ensure file_data is plain bytes (storage backends may return obstore.Bytes)
+        form.add_field("file", bytes(file_data), filename=filename, content_type=content_type)
+        async with session.post(f"{_LLAMA_PARSE_BASE_URL}/upload", headers=self._auth_headers, data=form) as resp:
+            upload_data = await _json_or_raise(resp, filename, "upload")
+        job_id: str = upload_data["id"]
 
         # Step 2: Poll job status until SUCCESS or ERROR
         deadline = time.monotonic() + self._timeout
         while True:
-            status_resp = await self._client.get(
-                f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}",
-                headers=self._auth_headers,
-            )
-            _raise_for_status(status_resp, filename, "poll job status")
-            status_data = status_resp.json()
+            async with session.get(f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}", headers=self._auth_headers) as resp:
+                status_data = await _json_or_raise(resp, filename, "poll job status")
             status = status_data.get("status")
 
             if status == "SUCCESS":
@@ -92,12 +94,11 @@ class LlamaParseParser(FileParser):
             await asyncio.sleep(self._poll_interval)
 
         # Step 3: Fetch the markdown result
-        result_resp = await self._client.get(
-            f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}/result/markdown",
-            headers=self._auth_headers,
-        )
-        _raise_for_status(result_resp, filename, "fetch markdown result")
-        markdown = result_resp.json().get("markdown")
+        async with session.get(
+            f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}/result/markdown", headers=self._auth_headers
+        ) as resp:
+            result_data = await _json_or_raise(resp, filename, "fetch markdown result")
+        markdown = result_data.get("markdown")
         if not markdown:
             raise RuntimeError(f"No content extracted from '{filename}'")
         return markdown
@@ -107,19 +108,18 @@ class LlamaParseParser(FileParser):
         return "llama_parse"
 
 
-def _raise_for_status(response: httpx.Response, filename: str, step: str) -> None:
+async def _json_or_raise(response: aiohttp.ClientResponse, filename: str, step: str) -> Any:
     """
-    Raise an appropriate error for HTTP errors.
+    Return the decoded JSON body, or raise an appropriate error for HTTP errors.
 
     Raises UnsupportedFileTypeError for 400/415/422 (file rejected by the API).
     Raises RuntimeError for all other errors (auth, rate-limit, server errors).
     """
-    if not response.is_error:
-        return
-    body = response.text or "<empty>"
-    msg = (
-        f"LlamaParse API error during {step} for '{filename}': {response.status_code} {response.reason_phrase} — {body}"
-    )
-    if response.status_code in _UNSUPPORTED_FILE_STATUS_CODES:
+    text = await response.text()
+    if response.status < 400:
+        return json.loads(text)
+    body = text or "<empty>"
+    msg = f"LlamaParse API error during {step} for '{filename}': {response.status} {response.reason} — {body}"
+    if response.status in _UNSUPPORTED_FILE_STATUS_CODES:
         raise UnsupportedFileTypeError(msg)
     raise RuntimeError(msg)

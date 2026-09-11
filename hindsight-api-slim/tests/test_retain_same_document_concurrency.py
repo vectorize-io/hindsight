@@ -60,7 +60,7 @@ class _StubEmbeddings(Embeddings):
     async def initialize(self) -> None:
         return None
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    async def encode(self, texts: list[str]) -> list[list[float]]:
         out = []
         for t in texts:
             seed = hashlib.sha256(t.encode("utf-8")).digest()

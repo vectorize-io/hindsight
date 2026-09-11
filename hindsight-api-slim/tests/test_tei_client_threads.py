@@ -1,43 +1,67 @@
-"""The TEI client is not shared between threads.
+"""The TEI client works from every event loop that uses it.
 
-`encode` runs through `run_in_executor`, so several threads use this provider at once, and
-httpcore's sync pool has an unguarded check-then-use on shared connection state:
-
-    keepalive_expired = self._expire_at is not None and now > self._expire_at
-
-Another thread can null `_expire_at` between the two halves, and the comparison raises
-`'>' not supported between instances of 'float' and 'NoneType'` — seen as a 500 out of recall.
+An ``aiohttp.ClientSession`` binds to the loop that created it, and a Hindsight process
+runs more than one: provider ``initialize()`` is sometimes run under ``asyncio.run`` in an
+executor thread, and tests and tooling spin up their own. A session shared across loops
+fails with "attached to a different loop" or "Event loop is closed". The provider holds
+one session per loop (``LoopLocalSession``), created on first use there and reused after.
 """
 
 from __future__ import annotations
 
-import threading
+import asyncio
+
+import aiohttp
+from aiohttp import web
 
 from hindsight_api.engine.embeddings import RemoteTEIEmbeddings
+from tests.aiohttp_stub import stub_server
 
 
-def test_each_thread_gets_its_own_client():
-    tei = RemoteTEIEmbeddings(base_url="http://tei.invalid")
-    # Hold the clients themselves, not their id()s: a finished thread's thread-local client is
-    # freed, and CPython can hand the next thread's client the same address, so comparing ids
-    # reported distinct clients as "shared".
-    seen: dict[int, object] = {}
-    barrier = threading.Barrier(4)
-
-    def grab(i: int) -> None:
-        barrier.wait()
-        seen[i] = tei._client_for_thread()
-
-    threads = [threading.Thread(target=grab, args=(i,)) for i in range(4)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert len({id(c) for c in seen.values()}) == 4, f"threads shared a client: {seen}"
+async def _embed_handler(request: web.Request) -> web.StreamResponse:
+    inputs = (await request.json())["inputs"]
+    return web.json_response([[0.5, 0.5] for _ in inputs])
 
 
-def test_the_same_thread_reuses_its_client():
-    """Per thread, not per call: a client per request would open a pool per request."""
-    tei = RemoteTEIEmbeddings(base_url="http://tei.invalid")
-    assert tei._client_for_thread() is tei._client_for_thread()
+async def test_each_loop_gets_its_own_session_and_both_work() -> None:
+    async with stub_server(_embed_handler) as base_url:
+        tei = RemoteTEIEmbeddings(base_url=base_url)
+        tei._initialized = True
+        tei._dimension = 2
+        try:
+            assert await tei.encode(["here"]) == [[0.5, 0.5]]
+            main_session = tei._session.get()
+
+            async def on_another_loop() -> tuple[list[list[float]], aiohttp.ClientSession]:
+                session = tei._session.get()
+                try:
+                    return await tei.encode(["there"]), session
+                finally:
+                    await session.close()
+
+            # A fresh loop in a worker thread, as `asyncio.run(provider.initialize())` in an
+            # executor would be. The stub keeps serving on this loop meanwhile.
+            vectors, other_session = await asyncio.to_thread(asyncio.run, on_another_loop())
+
+            assert vectors == [[0.5, 0.5]]
+            assert other_session is not main_session
+            # The other loop's session is its own; this loop's is untouched and still usable.
+            assert not main_session.closed
+            assert await tei.encode(["again"]) == [[0.5, 0.5]]
+        finally:
+            await tei._session.close()
+
+
+async def test_the_same_loop_reuses_its_session() -> None:
+    """Per loop, not per call: a session per request would open a pool per request."""
+    async with stub_server(_embed_handler) as base_url:
+        tei = RemoteTEIEmbeddings(base_url=base_url)
+        tei._initialized = True
+        tei._dimension = 2
+        try:
+            first = tei._session.get()
+            await tei.encode(["one"])
+            await tei.encode(["two"])
+            assert tei._session.get() is first
+        finally:
+            await tei._session.close()

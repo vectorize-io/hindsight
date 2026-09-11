@@ -10,7 +10,7 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx>=0.27.0",
+    "aiohttp>=3.14.3",
     "rich>=13.0.0",
 ]
 
@@ -27,6 +27,8 @@ dev = [
     "ruff>=0.8.0",
     "ty>=0.0.1",
     "pytest>=8.0.0",
+    # Tests only: drive the control center's HTTP server as a client.
+    "httpx>=0.27.0",
 ]
 
 [tool.ruff]
@@ -44,11 +46,19 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
+    "TID251", # banned-api: outbound HTTP is aiohttp, async only
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"httpx".msg = "Outbound HTTP uses aiohttp (async only): see hindsight_embed/_http_probe.py"
+"requests".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"urllib.request".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"urllib3".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"http.client".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
 
 [tool.ruff.format]
 quote-style = "double"

@@ -2,15 +2,36 @@
 Tests for CohereCrossEncoder.
 
 Tests the Cohere cross-encoder implementation, including Azure AI Foundry endpoint support.
+The native API goes through the Cohere SDK's async client (mocked here); a custom
+base_url goes through our aiohttp client, stubbed with a real in-process server.
 """
 
 import os
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.cross_encoder import CohereCrossEncoder, create_cross_encoder_from_env
+from tests.aiohttp_stub import stub_server
+
+AZURE_INVOKE_PATH = "/models/cohere-rerank-v3-english/invoke"
+
+
+def _mock_cohere_module(async_client: Any = None) -> MagicMock:
+    """A stand-in for the ``cohere`` package whose AsyncClient returns ``async_client``."""
+    mock_cohere = MagicMock()
+    mock_cohere.AsyncClient = MagicMock(return_value=async_client if async_client is not None else MagicMock())
+    return mock_cohere
+
+
+def _rerank_result(index: int, score: float) -> MagicMock:
+    result = MagicMock()
+    result.index = index
+    result.relevance_score = score
+    return result
 
 
 class TestCohereCrossEncoder:
@@ -30,18 +51,21 @@ class TestCohereCrossEncoder:
         assert encoder._client is None
         assert encoder._http_client is None
 
-        # Mock the cohere import
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock()
+        mock_cohere = _mock_cohere_module()
         with patch.dict("sys.modules", {"cohere": mock_cohere}):
             await encoder.initialize()
             assert encoder._client is not None
             assert encoder._http_client is None
-            mock_cohere.Client.assert_called_once_with(api_key="test_key", timeout=60.0)
+            # Built lazily per loop: its pooled connections belong to the loop that opened them.
+            mock_cohere.AsyncClient.assert_not_called()
+            encoder._client.get()
+            # The async client: a sync one would need a thread per in-flight rerank.
+            mock_cohere.AsyncClient.assert_called_once_with(api_key="test_key", timeout=60.0)
+            mock_cohere.Client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_initialization_azure_endpoint(self):
-        """Test initialization with Azure AI Foundry endpoint (uses httpx)."""
+        """Test initialization with Azure AI Foundry endpoint (uses our aiohttp client)."""
         encoder = CohereCrossEncoder(
             api_key="test_key",
             model="cohere-rerank-v3-english",
@@ -54,7 +78,7 @@ class TestCohereCrossEncoder:
 
         assert encoder._http_client is not None
         assert encoder._client is None
-        assert isinstance(encoder._http_client._async_client, httpx.AsyncClient)
+        assert encoder._http_client.initialized
         assert encoder._http_client.include_top_n is False
         assert (
             encoder._http_client.rerank_url
@@ -81,48 +105,32 @@ class TestCohereCrossEncoder:
             model="rerank-english-v3.0",
         )
 
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock()
+        mock_cohere = _mock_cohere_module()
         with patch.dict("sys.modules", {"cohere": mock_cohere}):
             await encoder.initialize()
             assert encoder._client is not None
 
             # Second call should be no-op
             await encoder.initialize()
-            # Should only create client once
-            mock_cohere.Client.assert_called_once()
+            # Should only create one client per loop
+            assert encoder._client.get() is encoder._client.get()
+            mock_cohere.AsyncClient.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_predict_native_cohere_single_query(self):
-        """Test prediction with native Cohere SDK."""
+        """Test prediction with native Cohere SDK (awaited on the loop)."""
         encoder = CohereCrossEncoder(
             api_key="test_key",
             model="rerank-english-v3.0",
         )
 
-        # Create mock Cohere response
-        mock_result_1 = MagicMock()
-        mock_result_1.index = 0
-        mock_result_1.relevance_score = 0.9
-
-        mock_result_2 = MagicMock()
-        mock_result_2.index = 1
-        mock_result_2.relevance_score = 0.7
-
-        mock_result_3 = MagicMock()
-        mock_result_3.index = 2
-        mock_result_3.relevance_score = 0.5
-
         mock_response = MagicMock()
-        mock_response.results = [mock_result_1, mock_result_2, mock_result_3]
+        mock_response.results = [_rerank_result(0, 0.9), _rerank_result(1, 0.7), _rerank_result(2, 0.5)]
 
         mock_cohere_client = MagicMock()
-        mock_cohere_client.rerank = MagicMock(return_value=mock_response)
+        mock_cohere_client.rerank = AsyncMock(return_value=mock_response)
 
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock(return_value=mock_cohere_client)
-
-        with patch.dict("sys.modules", {"cohere": mock_cohere}):
+        with patch.dict("sys.modules", {"cohere": _mock_cohere_module(mock_cohere_client)}):
             await encoder.initialize()
 
             pairs = [
@@ -136,8 +144,8 @@ class TestCohereCrossEncoder:
             assert len(scores) == 3
             assert scores == [0.9, 0.7, 0.5]
 
-            # Verify rerank was called correctly
-            mock_cohere_client.rerank.assert_called_once()
+            # Verify rerank was awaited correctly
+            mock_cohere_client.rerank.assert_awaited_once()
             call_args = mock_cohere_client.rerank.call_args
             assert call_args.kwargs["model"] == "rerank-english-v3.0"
             assert call_args.kwargs["query"] == "What is Python?"
@@ -146,27 +154,20 @@ class TestCohereCrossEncoder:
 
     @pytest.mark.asyncio
     async def test_predict_azure_endpoint_single_query(self):
-        """Test prediction with Azure AI Foundry endpoint (httpx direct call)."""
-        encoder = CohereCrossEncoder(
-            api_key="test_key",
-            model="cohere-rerank-v3-english",
-            base_url="https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke",
-        )
+        """Test prediction with Azure AI Foundry endpoint (direct HTTP call)."""
+        requests: list[dict[str, Any]] = []
 
-        await encoder.initialize()
-
-        # Mock async httpx response
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "results": [
-                {"index": 0, "relevance_score": 0.9},
-                {"index": 1, "relevance_score": 0.7},
-                {"index": 2, "relevance_score": 0.5},
-            ]
-        }
-        mock_response.raise_for_status = MagicMock()
-
-        encoder._http_client._async_client.post = AsyncMock(return_value=mock_response)
+        async def handler(request: web.Request) -> web.StreamResponse:
+            requests.append({"path": request.path, "headers": dict(request.headers), "json": await request.json()})
+            return web.json_response(
+                {
+                    "results": [
+                        {"index": 0, "relevance_score": 0.9},
+                        {"index": 1, "relevance_score": 0.7},
+                        {"index": 2, "relevance_score": 0.5},
+                    ]
+                }
+            )
 
         pairs = [
             ("What is Python?", "Python is a programming language"),
@@ -174,26 +175,35 @@ class TestCohereCrossEncoder:
             ("What is Python?", "Python is a British comedy group"),
         ]
 
-        with patch(
-            "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
-            return_value={"X-Hindsight-Bank-Id": "bank-cohere-http"},
-        ):
-            scores = await encoder.predict(pairs)
+        async with stub_server(handler) as base_url:
+            encoder = CohereCrossEncoder(
+                api_key="test_key",
+                model="cohere-rerank-v3-english",
+                base_url=f"{base_url}{AZURE_INVOKE_PATH}",
+            )
+            await encoder.initialize()
+
+            with patch(
+                "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+                return_value={"X-Hindsight-Bank-Id": "bank-cohere-http"},
+            ):
+                scores = await encoder.predict(pairs)
 
         assert len(scores) == 3
         assert scores == [0.9, 0.7, 0.5]
 
-        # Verify httpx.post was called with correct URL and payload
-        encoder._http_client._async_client.post.assert_called_once()
-        call_args = encoder._http_client._async_client.post.call_args
-        assert call_args[0][0] == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
-        assert call_args.kwargs["json"]["model"] == "cohere-rerank-v3-english"
-        assert call_args.kwargs["headers"] == {"X-Hindsight-Bank-Id": "bank-cohere-http"}
-        assert call_args.kwargs["json"]["query"] == "What is Python?"
-        assert len(call_args.kwargs["json"]["documents"]) == 3
-        assert call_args.kwargs["json"]["return_documents"] is False
+        # Verify the POST went to the full invoke URL with the right payload
+        assert len(requests) == 1
+        request = requests[0]
+        assert request["path"] == AZURE_INVOKE_PATH
+        assert request["headers"]["Authorization"] == "Bearer test_key"
+        assert request["headers"]["X-Hindsight-Bank-Id"] == "bank-cohere-http"
+        assert request["json"]["model"] == "cohere-rerank-v3-english"
+        assert request["json"]["query"] == "What is Python?"
+        assert len(request["json"]["documents"]) == 3
+        assert request["json"]["return_documents"] is False
         # Azure endpoints expect no top_n in the body
-        assert "top_n" not in call_args.kwargs["json"]
+        assert "top_n" not in request["json"]
 
     @pytest.mark.asyncio
     async def test_predict_multiple_queries(self):
@@ -203,33 +213,15 @@ class TestCohereCrossEncoder:
             model="rerank-english-v3.0",
         )
 
-        # First query response
-        mock_result_1_1 = MagicMock()
-        mock_result_1_1.index = 0
-        mock_result_1_1.relevance_score = 0.9
-
-        mock_result_1_2 = MagicMock()
-        mock_result_1_2.index = 1
-        mock_result_1_2.relevance_score = 0.7
-
         mock_response1 = MagicMock()
-        mock_response1.results = [mock_result_1_1, mock_result_1_2]
-
-        # Second query response
-        mock_result_2_1 = MagicMock()
-        mock_result_2_1.index = 0
-        mock_result_2_1.relevance_score = 0.8
-
+        mock_response1.results = [_rerank_result(0, 0.9), _rerank_result(1, 0.7)]
         mock_response2 = MagicMock()
-        mock_response2.results = [mock_result_2_1]
+        mock_response2.results = [_rerank_result(0, 0.8)]
 
         mock_cohere_client = MagicMock()
-        mock_cohere_client.rerank = MagicMock(side_effect=[mock_response1, mock_response2])
+        mock_cohere_client.rerank = AsyncMock(side_effect=[mock_response1, mock_response2])
 
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock(return_value=mock_cohere_client)
-
-        with patch.dict("sys.modules", {"cohere": mock_cohere}):
+        with patch.dict("sys.modules", {"cohere": _mock_cohere_module(mock_cohere_client)}):
             await encoder.initialize()
 
             pairs = [
@@ -246,7 +238,7 @@ class TestCohereCrossEncoder:
             assert scores[2] == 0.8  # Second query, first doc
 
             # Verify rerank was called twice (once per unique query)
-            assert mock_cohere_client.rerank.call_count == 2
+            assert mock_cohere_client.rerank.await_count == 2
 
     @pytest.mark.asyncio
     async def test_predict_empty_pairs(self):
@@ -256,9 +248,7 @@ class TestCohereCrossEncoder:
             model="rerank-english-v3.0",
         )
 
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock()
-        with patch.dict("sys.modules", {"cohere": mock_cohere}):
+        with patch.dict("sys.modules", {"cohere": _mock_cohere_module()}):
             await encoder.initialize()
             scores = await encoder.predict([])
             assert scores == []
@@ -278,29 +268,25 @@ class TestCohereCrossEncoder:
 
     @pytest.mark.asyncio
     async def test_azure_endpoint_http_error(self):
-        """Test that HTTP errors from Azure endpoint are raised."""
-        encoder = CohereCrossEncoder(
-            api_key="test_key",
-            model="cohere-rerank-v3-english",
-            base_url="https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke",
-        )
+        """Test that HTTP errors from Azure endpoint are raised, carrying status and body."""
 
-        await encoder.initialize()
+        async def handler(request: web.Request) -> web.StreamResponse:
+            return web.Response(status=404, text="deployment not found")
 
-        # Mock httpx to raise HTTP error
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=MagicMock(status_code=404),
-        )
-        encoder._http_client._async_client.post = AsyncMock(return_value=mock_response)
+        async with stub_server(handler) as base_url:
+            encoder = CohereCrossEncoder(
+                api_key="test_key",
+                model="cohere-rerank-v3-english",
+                base_url=f"{base_url}{AZURE_INVOKE_PATH}",
+            )
+            await encoder.initialize()
 
-        pairs = [("What is Python?", "Python is a programming language")]
+            # Should raise the HTTP error
+            with pytest.raises(UpstreamHTTPError) as exc_info:
+                await encoder.predict([("What is Python?", "Python is a programming language")])
 
-        # Should raise the HTTP error
-        with pytest.raises(httpx.HTTPStatusError):
-            await encoder.predict(pairs)
+        assert exc_info.value.status_code == 404
+        assert "deployment not found" in exc_info.value.body
 
 
 class TestFactoryFunction:

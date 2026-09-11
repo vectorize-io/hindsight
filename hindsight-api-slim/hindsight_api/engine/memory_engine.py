@@ -29,7 +29,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast, overload
 
 import asyncpg
-import httpx
 from pydantic import ValidationError
 
 from .._vector_index import (
@@ -505,6 +504,7 @@ if TYPE_CHECKING:
     )
     from hindsight_api.models import RequestContext
 
+    from ..webhooks.url_guard import GuardedWebhookClient
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoryScopeWatermark
     from .prompt_preview import PromptPreview
@@ -2206,7 +2206,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Webhook manager (will be created in initialize() after pool is ready)
         self._webhook_manager = None
-        self._http_client: httpx.AsyncClient | None = None
+        self._webhook_client: GuardedWebhookClient | None = None
 
         # Initialize entity resolver (will be created in initialize())
         self.entity_resolver = None
@@ -3869,6 +3869,7 @@ class MemoryEngine(MemoryEngineInterface):
         from ..webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS
         from ..webhooks.models import WebhookHttpConfig
         from ..webhooks.url_guard import WebhookURLError
+        from .aiohttp_session import UpstreamHTTPError
 
         url = task_dict["url"]
         secret = task_dict.get("secret")
@@ -3907,23 +3908,21 @@ class MemoryEngine(MemoryEngineInterface):
                 secret, payload_bytes, int(datetime.now(UTC).timestamp())
             )
 
-        if self._http_client is None:
+        if self._webhook_client is None:
             raise RuntimeError("HTTP client not initialized")
 
-        response = None
+        is_get = http_config.method.upper() == "GET"
         try:
-            request_kwargs: dict[str, Any] = {
-                "headers": headers,
-                "params": http_config.params if http_config.params else None,
-                "timeout": http_config.timeout_seconds,
-            }
-            if http_config.method.upper() == "GET":
-                response = await self._http_client.get(url, **request_kwargs)
-            else:
-                response = await self._http_client.post(url, content=payload_bytes, **request_kwargs)
-            response.raise_for_status()
+            response = await self._webhook_client.request(
+                "GET" if is_get else "POST",
+                url,
+                headers=headers,
+                params=http_config.params,
+                body=None if is_get else payload_bytes,
+                timeout_seconds=http_config.timeout_seconds,
+            )
             if operation_id:
-                await self._update_webhook_delivery_metadata(operation_id, response.status_code, response.text)
+                await self._update_webhook_delivery_metadata(operation_id, response.status_code, response.body)
         except WebhookURLError as e:
             # Destination is disallowed (SSRF guard). This never becomes valid on
             # retry, so fail permanently instead of burning the retry schedule.
@@ -3932,8 +3931,10 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._update_webhook_delivery_metadata(operation_id, None, None)
             raise
         except Exception as e:
-            status_code = response.status_code if response is not None else None
-            response_body = response.text if response is not None else None
+            # A non-2xx response carries its status and body; a transport failure
+            # (connect error, timeout) has neither.
+            status_code = e.status_code if isinstance(e, UpstreamHTTPError) else None
+            response_body = e.body if isinstance(e, UpstreamHTTPError) else None
             if operation_id:
                 await self._update_webhook_delivery_metadata(operation_id, status_code, response_body)
             if retry_count >= MAX_ATTEMPTS - 1:
@@ -4940,17 +4941,13 @@ class MemoryEngine(MemoryEngineInterface):
         self._ext_ctx.webhook_manager = self._webhook_manager
         logger.debug("Webhook manager initialized")
 
-        # Long-lived HTTP client for webhook delivery tasks. All delivery
-        # traffic flows through the guarded transport, which rejects
-        # private/loopback/link-local destinations (SSRF) and pins the
-        # connection to a validated IP. See webhooks/url_guard.py.
-        from ..webhooks.url_guard import GuardedAsyncTransport, parse_allowlist
+        # HTTP client for webhook delivery tasks (its aiohttp session is created
+        # lazily per event loop). All delivery traffic flows through it: it
+        # rejects private/loopback/link-local destinations (SSRF) and only
+        # connects to addresses its resolver validated. See webhooks/url_guard.py.
+        from ..webhooks.url_guard import GuardedWebhookClient, parse_allowlist
 
-        _webhook_allowlist = parse_allowlist(get_config().webhook_allowed_hosts)
-        self._http_client = httpx.AsyncClient(
-            timeout=30.0,
-            transport=GuardedAsyncTransport(_webhook_allowlist),
-        )
+        self._webhook_client = GuardedWebhookClient(parse_allowlist(get_config().webhook_allowed_hosts))
 
         # Set executor for task backend and initialize
         self._task_backend.set_executor(self.execute_task)
@@ -5073,9 +5070,15 @@ class MemoryEngine(MemoryEngineInterface):
             logger.warning(f"Error shutting down memories store: {e}")
 
         # Close HTTP client used for webhook delivery
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        if self._webhook_client is not None:
+            await self._webhook_client.close()
+            self._webhook_client = None
+
+        # Embedding, reranker and LLM provider clients have no close hook of their
+        # own; close the aiohttp sessions they opened on this loop.
+        from .aiohttp_session import close_loop_sessions
+
+        await close_loop_sessions()
 
         if self._read_backend is not None and self._read_backend is not self._backend:
             await self._read_backend.shutdown()

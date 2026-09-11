@@ -31,11 +31,14 @@ nesting defensively. Confirm against a live key via the integration path.
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
+import aiohttp
+from yarl import URL
 
+from ..aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout
 from .openai_compatible_llm import OpenAICompatibleLLM
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,16 @@ _HTTP_TIMEOUT_SECONDS = 60.0
 _DEFAULT_MAX_WAIT_SECONDS = 86_400
 
 
+class FireworksAPIError(UpstreamHTTPError):
+    """A non-2xx control-plane response, with the method and Fireworks' error body in the message."""
+
+    def __init__(self, method: str, status_code: int, body: str, headers: Mapping[str, str], url: str) -> None:
+        super().__init__(status_code, body, headers, url)
+        # Fireworks returns JSON describing why a 4xx/5xx happened; a longer slice
+        # than the base class keeps is what makes a malformed request debuggable.
+        self.args = (f"Fireworks API {status_code} for {method} {url}: {body[:2000]}",)
+
+
 class FireworksLLM(OpenAICompatibleLLM):
     """Fireworks provider: OpenAI-compatible online inference + native batch."""
 
@@ -67,7 +80,6 @@ class FireworksLLM(OpenAICompatibleLLM):
         account_id: str | None = None,
         batch_base_url: str | None = None,
         max_wait_seconds: int | None = None,
-        http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -98,8 +110,8 @@ class FireworksLLM(OpenAICompatibleLLM):
         self._max_wait_seconds: int = (
             int(max_wait_seconds) if max_wait_seconds is not None else _DEFAULT_MAX_WAIT_SECONDS
         )
-        self._http_client = http_client
-        self._owns_http_client = http_client is None
+        # Control-plane HTTP; lazily created per event loop.
+        self._http = LoopLocalSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS))
 
     # ----- interface: batch members -------------------------------------
 
@@ -132,7 +144,7 @@ class FireworksLLM(OpenAICompatibleLLM):
             "POST",
             self._datasets_url(),
             headers=headers,
-            json={
+            json_body={
                 "datasetId": input_dataset_id,
                 "dataset": {"format": "CHAT", "exampleCount": str(len(requests))},
             },
@@ -142,20 +154,20 @@ class FireworksLLM(OpenAICompatibleLLM):
             "POST",
             f"{self._datasets_url()}/{input_dataset_id}:upload",
             headers=headers,
-            files={"file": ("batch_input.jsonl", jsonl.encode("utf-8"), "application/jsonl")},
+            form=_upload_form("batch_input.jsonl", jsonl.encode("utf-8"), "application/jsonl"),
         )
 
-        job_resp = await self._request(
+        job_body = await self._request(
             "POST",
             self._jobs_url(),
             headers=headers,
-            json={
+            json_body={
                 "model": self.model,
                 "inputDatasetId": self._dataset_resource(input_dataset_id),
                 "outputDatasetId": self._dataset_resource(output_dataset_id),
             },
         )
-        job = job_resp.json()
+        job = json.loads(job_body)
         job_id = self._last_segment(job.get("name")) or output_dataset_id
 
         logger.info(f"Fireworks batch job submitted: {job_id}, state={job.get('state')}")
@@ -171,7 +183,7 @@ class FireworksLLM(OpenAICompatibleLLM):
 
     async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
         self._require_account_id()
-        job = (await self._request("GET", self._job_url(batch_id), headers=self._auth_headers())).json()
+        job = json.loads(await self._request("GET", self._job_url(batch_id), headers=self._auth_headers()))
 
         status = self._normalize_state(job.get("state", ""))
         progress = job.get("jobProgress") or {}
@@ -212,7 +224,7 @@ class FireworksLLM(OpenAICompatibleLLM):
 
     async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
         self._require_account_id()
-        job = (await self._request("GET", self._job_url(batch_id), headers=self._auth_headers())).json()
+        job = json.loads(await self._request("GET", self._job_url(batch_id), headers=self._auth_headers()))
 
         status = self._normalize_state(job.get("state", ""))
         if status != "completed":
@@ -227,9 +239,9 @@ class FireworksLLM(OpenAICompatibleLLM):
             raise ValueError(
                 f"Fireworks batch {batch_id} reported an unparseable output dataset: {output_dataset_id!r}"
             )
-        download = (
+        download = json.loads(
             await self._request("GET", self._download_endpoint_url(output_short_id), headers=self._auth_headers())
-        ).json()
+        )
         signed_urls = (download or {}).get("filenameToSignedUrls") or {}
         if not signed_urls:
             raise ValueError(f"Fireworks batch {batch_id} returned no downloadable output files")
@@ -240,8 +252,8 @@ class FireworksLLM(OpenAICompatibleLLM):
         results: list[dict[str, Any]] = []
         for url in signed_urls.values():
             # Signed URLs are pre-authenticated — do not attach the bearer token.
-            file_resp = await self._request("GET", url)
-            for line in file_resp.text.strip().split("\n"):
+            file_text = await self._request("GET", url)
+            for line in file_text.strip().split("\n"):
                 if line.strip():
                     results.append(self._normalize_output_line(json.loads(line)))
 
@@ -250,8 +262,7 @@ class FireworksLLM(OpenAICompatibleLLM):
 
     async def cleanup(self) -> None:
         await super().cleanup()
-        if self._owns_http_client and self._http_client is not None:
-            await self._http_client.aclose()
+        await self._http.close()
 
     # ----- pure translation/normalization helpers (unit-tested) ----------
 
@@ -324,31 +335,27 @@ class FireworksLLM(OpenAICompatibleLLM):
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    def _http(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT_SECONDS))
-        return self._http_client
-
     async def _request(
         self,
         method: str,
         url: str,
         *,
         headers: dict[str, str] | None = None,
-        json: dict[str, Any] | None = None,
-        files: dict[str, Any] | None = None,
-    ) -> httpx.Response:
-        resp = await self._http().request(method, url, headers=headers, json=json, files=files)
-        if resp.is_error:
-            # Surface the API's error body. Fireworks returns JSON describing why a
-            # 4xx/5xx happened; raise_for_status() alone discards it, which makes
-            # failures (e.g. a malformed dataset/job request) undebuggable.
-            raise httpx.HTTPStatusError(
-                f"Fireworks API {resp.status_code} for {method} {url}: {resp.text[:2000]}",
-                request=resp.request,
-                response=resp,
-            )
-        return resp
+        json_body: dict[str, Any] | None = None,
+        form: aiohttp.FormData | None = None,
+    ) -> str:
+        """Send one request and return the response body; raise :class:`FireworksAPIError` on non-2xx."""
+        # encoded=True: the download URLs are pre-signed, and re-quoting their query
+        # string would invalidate the signature.
+        async with self._http.get().request(
+            method, URL(url, encoded=True), headers=headers, json=json_body, data=form
+        ) as resp:
+            body = await resp.text()
+            if resp.status >= 400:
+                # Surface the API's error body; failures such as a malformed
+                # dataset/job request are undebuggable without it.
+                raise FireworksAPIError(method, resp.status, body, resp.headers, url)
+            return body
 
     def _accounts_base(self) -> str:
         return f"{self._batch_base_url}/v1/accounts/{self._account_id}"
@@ -386,6 +393,12 @@ class FireworksLLM(OpenAICompatibleLLM):
             return (datetime.now(timezone.utc) - created).total_seconds()
         except (ValueError, TypeError):
             return None
+
+
+def _upload_form(filename: str, content: bytes, content_type: str) -> aiohttp.FormData:
+    form = aiohttp.FormData()
+    form.add_field("file", content, filename=filename, content_type=content_type)
+    return form
 
 
 def _to_int(value: Any) -> int:

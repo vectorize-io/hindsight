@@ -78,9 +78,6 @@ def setup_logging(verbose: bool = False):
         stream=sys.stderr,
     )
 
-    # Set httpx to warning level to reduce noise
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-
     return logging.getLogger(__name__)
 
 

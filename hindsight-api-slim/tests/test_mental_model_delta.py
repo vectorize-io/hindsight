@@ -144,7 +144,7 @@ async def _seed_fact_row(memory: MemoryEngine, bank_id: str, text: str) -> str:
             facts=[
                 SimpleNamespace(
                     fact_text=text,
-                    embedding=memory.embeddings.encode([text])[0],
+                    embedding=(await memory.embeddings.encode([text]))[0],
                     fact_type="observation",
                     tags=[],
                     context=None,

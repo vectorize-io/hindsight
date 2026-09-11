@@ -178,6 +178,9 @@ class MarkitdownParser(FileParser):
             client_kwargs["default_headers"] = default_headers
 
         return MarkitdownOcrOptions(
+            # Sync client on purpose: markitdown's image captioning calls
+            # client.chat.completions.create() synchronously and has no async API.
+            # It only ever runs inside convert()'s executor thread, never on the loop.
             llm_client=OpenAI(**client_kwargs),
             llm_model=model.strip(),
             llm_prompt=prompt or DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT,

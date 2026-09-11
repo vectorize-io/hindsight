@@ -1,8 +1,11 @@
 """Tests for the ``xai-oauth`` SuperGrok subscription provider.
 
-No test here touches the network or the operator's real home directory: the
-credential store is written under ``tmp_path``, the HTTP clients are hand-rolled
-fakes (house style — the repo uses no respx/vcr), and every timing rule is
+No test here touches the external network or the operator's real home
+directory: the credential store is written under ``tmp_path``, the HTTP sessions
+are hand-rolled fakes shaped like aiohttp's (house style — the repo uses no
+respx/vcr; the credential side has to be faked rather than served locally because
+every OAuth endpoint is pinned to HTTPS on the xAI origin), one test drives the
+real aiohttp transport against a local stub upstream, and every timing rule is
 driven through injected ``sleeper``/``monotonic`` callables rather than real
 waits.
 
@@ -21,12 +24,15 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Awaitable
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
+from aiohttp import web
+from multidict import CIMultiDict
 from pydantic import BaseModel
 
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
@@ -71,6 +77,7 @@ from hindsight_api.engine.providers.xai_oauth_llm import (
     _error_detail,
     _token_counts,
 )
+from tests.aiohttp_stub import stub_server
 
 ACCESS_TOKEN = "access-token-do-not-log"
 REFRESH_TOKEN = "refresh-token-do-not-log"
@@ -94,23 +101,58 @@ class _FakeResponse:
         return json.loads(self.text)
 
 
+class _FakeWire:
+    """What ``async with session.post(...) as response`` yields: aiohttp's reply shape."""
+
+    def __init__(self, reply: _FakeResponse) -> None:
+        self.status = reply.status_code
+        self.headers = CIMultiDict(reply.headers)
+        self._text = reply.text
+
+    async def text(self, errors: str = "strict") -> str:
+        return self._text
+
+
+class _FakeExchange:
+    """The async context manager ``session.post(...)`` / ``session.get(...)`` returns."""
+
+    def __init__(self, reply: Awaitable[_FakeResponse]) -> None:
+        self._reply = reply
+
+    async def __aenter__(self) -> _FakeWire:
+        return _FakeWire(await self._reply)
+
+    async def __aexit__(self, *exc: Any) -> bool:
+        return False
+
+
 class _FakeAsyncHttp:
-    """Stand-in for ``httpx.AsyncClient`` recording every request it is given."""
+    """Stand-in for the provider's per-loop session source, recording every request it is given.
+
+    Plays both roles: ``get()`` (``LoopLocalSession.get``) hands back itself as the
+    session, whose ``post`` records the request and answers from ``replies``.
+    """
 
     def __init__(self, replies: list[_FakeResponse]) -> None:
         self._replies = list(replies)
         self.calls: list[dict[str, Any]] = []
 
-    async def post(self, url: str, json: Any = None, headers: Any = None) -> _FakeResponse:
+    def get(self) -> "_FakeAsyncHttp":
+        return self
+
+    def post(self, url: str, json: Any = None, headers: Any = None) -> _FakeExchange:
+        return _FakeExchange(self._respond(url, json, headers))
+
+    async def _respond(self, url: str, json: Any, headers: Any) -> _FakeResponse:
         self.calls.append({"url": url, "json": json, "headers": dict(headers or {})})
         return self._replies[min(len(self.calls) - 1, len(self._replies) - 1)]
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         pass
 
 
-class _FakeSyncHttp:
-    """Stand-in for ``httpx.Client`` used by the credential manager and login."""
+class _FakeAuthHttp:
+    """Stand-in for the ``aiohttp.ClientSession`` the credential manager and login use."""
 
     def __init__(
         self,
@@ -118,39 +160,64 @@ class _FakeSyncHttp:
         get_replies: list[_FakeResponse] | None = None,
         *,
         on_post: Any = None,
+        delay: float = 0.0,
     ) -> None:
         self._post_replies = list(post_replies or [])
         self._get_replies = list(get_replies or [])
         self.posts: list[dict[str, Any]] = []
         self.gets: list[dict[str, Any]] = []
         self._on_post = on_post
+        self.delay = delay
 
-    def __enter__(self) -> "_FakeSyncHttp":
-        return self
+    def post(self, url: str, headers: Any = None, data: Any = None, timeout: Any = None) -> _FakeExchange:
+        return _FakeExchange(self._post(url, headers, data, timeout))
 
-    def __exit__(self, *exc: Any) -> bool:
-        return False
-
-    def post(self, url: str, headers: Any = None, data: Any = None, timeout: Any = None) -> _FakeResponse:
+    async def _post(self, url: str, headers: Any, data: Any, timeout: Any) -> _FakeResponse:
         self.posts.append({"url": url, "headers": dict(headers or {}), "data": dict(data or {}), "timeout": timeout})
         if self._on_post is not None:
             self._on_post()
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if not self._post_replies:
             raise AssertionError("the fake HTTP client ran out of queued POST replies")
         return self._post_replies[min(len(self.posts) - 1, len(self._post_replies) - 1)]
 
-    def get(self, url: str, headers: Any = None) -> _FakeResponse:
+    def get(self, url: str, headers: Any = None) -> _FakeExchange:
+        return _FakeExchange(self._get(url, headers))
+
+    async def _get(self, url: str, headers: Any) -> _FakeResponse:
         self.gets.append({"url": url, "headers": dict(headers or {})})
         if not self._get_replies:
             raise AssertionError("the fake HTTP client ran out of queued GET replies")
         return self._get_replies[min(len(self.gets) - 1, len(self._get_replies) - 1)]
 
-    def close(self) -> None:
-        pass
-
     @property
     def post_count(self) -> int:
         return len(self.posts)
+
+
+class _Sessions:
+    """Stand-in for ``LoopLocalSession``: hands out one fake session on every loop."""
+
+    def __init__(self, session: _FakeAuthHttp) -> None:
+        self._session = session
+
+    def get(self) -> _FakeAuthHttp:
+        return self._session
+
+    async def close(self) -> None:
+        pass
+
+
+def _recording_sleeper(slept: list[float]) -> Any:
+    async def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    return _sleep
+
+
+async def _no_wait(_: float) -> None:
+    return None
 
 
 @contextmanager
@@ -164,6 +231,10 @@ def _bound_trace(trace_id: str):
 
 
 def _never_called(*args: Any, **kwargs: Any) -> Any:
+    raise AssertionError("this code path must never be entered by an unattended request")
+
+
+async def _never_awaited(*args: Any, **kwargs: Any) -> Any:
     raise AssertionError("this code path must never be entered by an unattended request")
 
 
@@ -223,15 +294,15 @@ def _make_manager(
     skew: float = 60.0,
     timeout: float = 20.0,
     store: Path | None = None,
-) -> tuple[XaiOAuthManager, _FakeSyncHttp, Path]:
+) -> tuple[XaiOAuthManager, _FakeAuthHttp, Path]:
     path = store or (tmp_path / "xai_oauth.json")
-    http = _FakeSyncHttp(post_replies, get_replies)
+    http = _FakeAuthHttp(post_replies, get_replies)
     manager = XaiOAuthManager(
         path,
         refresh_skew_seconds=skew,
         refresh_timeout_seconds=timeout,
         min_refresh_gap_seconds=min_gap,
-        http_client=http,  # type: ignore[arg-type]
+        http_client=_Sessions(http),  # type: ignore[arg-type]
     )
     return manager, http, path
 
@@ -271,20 +342,20 @@ def _make_llm(
 # ===========================================================================
 
 
-def test_device_poll_waits_the_advertised_interval_between_polls():
+async def test_device_poll_waits_the_advertised_interval_between_polls():
     slept: list[float] = []
     pending = _FakeResponse(400, json.dumps({"error": "authorization_pending"}))
     granted = _FakeResponse(200, json.dumps({"access_token": "a", "refresh_token": "r", "expires_in": 3600}))
-    client = _FakeSyncHttp([pending, pending, granted])
+    client = _FakeAuthHttp([pending, pending, granted])
 
-    payload = poll_device_token(
+    payload = await poll_device_token(
         client,  # type: ignore[arg-type]
         token_endpoint=TOKEN_ENDPOINT,
         device_code="dev-code",
         client_id=DEFAULT_CLIENT_ID,
         expires_in=900,
         interval=5,
-        sleeper=slept.append,
+        sleeper=_recording_sleeper(slept),
         monotonic=lambda: 0.0,
     )
 
@@ -294,83 +365,83 @@ def test_device_poll_waits_the_advertised_interval_between_polls():
     assert client.posts[0]["data"]["grant_type"] == DEVICE_CODE_GRANT_TYPE
 
 
-def test_device_poll_widens_the_interval_by_five_seconds_on_slow_down():
+async def test_device_poll_widens_the_interval_by_five_seconds_on_slow_down():
     """RFC 8628 section 3.5: a ``slow_down`` adds 5 seconds to the interval."""
     slept: list[float] = []
     slow_down = _FakeResponse(400, json.dumps({"error": "slow_down"}))
     pending = _FakeResponse(400, json.dumps({"error": "authorization_pending"}))
     granted = _FakeResponse(200, json.dumps({"access_token": "a", "refresh_token": "r"}))
-    client = _FakeSyncHttp([slow_down, pending, granted])
+    client = _FakeAuthHttp([slow_down, pending, granted])
 
-    poll_device_token(
+    await poll_device_token(
         client,  # type: ignore[arg-type]
         token_endpoint=TOKEN_ENDPOINT,
         device_code="dev-code",
         client_id=DEFAULT_CLIENT_ID,
         expires_in=900,
         interval=5,
-        sleeper=slept.append,
+        sleeper=_recording_sleeper(slept),
         monotonic=lambda: 0.0,
     )
 
     assert slept == [10, 10]
 
 
-def test_device_poll_raises_when_the_device_code_expires():
-    client = _FakeSyncHttp([_FakeResponse(400, json.dumps({"error": "expired_token"}))])
+async def test_device_poll_raises_when_the_device_code_expires():
+    client = _FakeAuthHttp([_FakeResponse(400, json.dumps({"error": "expired_token"}))])
 
     with pytest.raises(XaiOAuthError, match="expired"):
-        poll_device_token(
+        await poll_device_token(
             client,  # type: ignore[arg-type]
             token_endpoint=TOKEN_ENDPOINT,
             device_code="dev-code",
             client_id=DEFAULT_CLIENT_ID,
             expires_in=900,
             interval=5,
-            sleeper=lambda _: None,
+            sleeper=_no_wait,
             monotonic=lambda: 0.0,
         )
     assert client.post_count == 1
 
 
-def test_device_poll_stops_at_the_advertised_deadline():
+async def test_device_poll_stops_at_the_advertised_deadline():
     # Clock reads: deadline base (0), inside the window (10 -> one poll),
     # past it (100 -> stop). One poll proves the loop ran at all, so the
     # timeout is a real stop rather than a window that was never open.
     clock = iter([0.0, 10.0, 100.0])
-    client = _FakeSyncHttp([_FakeResponse(400, json.dumps({"error": "authorization_pending"}))])
+    client = _FakeAuthHttp([_FakeResponse(400, json.dumps({"error": "authorization_pending"}))])
 
     with pytest.raises(XaiOAuthError, match="Timed out"):
-        poll_device_token(
+        await poll_device_token(
             client,  # type: ignore[arg-type]
             token_endpoint=TOKEN_ENDPOINT,
             device_code="dev-code",
             client_id=DEFAULT_CLIENT_ID,
             expires_in=60,
             interval=5,
-            sleeper=lambda _: None,
+            sleeper=_no_wait,
             monotonic=lambda: next(clock),
         )
     assert client.post_count == 1
 
 
-def test_device_poll_rejects_a_grant_without_a_refresh_token():
-    client = _FakeSyncHttp([_FakeResponse(200, json.dumps({"access_token": "a"}))])
+async def test_device_poll_rejects_a_grant_without_a_refresh_token():
+    client = _FakeAuthHttp([_FakeResponse(200, json.dumps({"access_token": "a"}))])
 
     with pytest.raises(XaiOAuthError, match="refresh_token"):
-        poll_device_token(
+        await poll_device_token(
             client,  # type: ignore[arg-type]
             token_endpoint=TOKEN_ENDPOINT,
             device_code="dev-code",
             client_id=DEFAULT_CLIENT_ID,
             expires_in=900,
             interval=5,
-            sleeper=lambda _: None,
+            sleeper=_no_wait,
             monotonic=lambda: 0.0,
         )
 
 
-def test_device_login_prints_the_user_code_and_never_logs_it(tmp_path, monkeypatch, caplog):
+async def test_device_login_prints_the_user_code_and_never_logs_it(tmp_path, monkeypatch, caplog):
     """The user code reaches stdout and no log record at any level.
 
     The same assertion also proves the probe works: the code IS found in the
@@ -398,15 +469,15 @@ def test_device_login_prints_the_user_code_and_never_logs_it(tmp_path, monkeypat
         200,
         json.dumps({"access_token": ACCESS_TOKEN, "refresh_token": REFRESH_TOKEN, "expires_in": 3600}),
     )
-    fake = _FakeSyncHttp([device, granted], [discovery])
-    monkeypatch.setattr(auth_mod.httpx, "Client", lambda *a, **kw: fake)
+    fake = _FakeAuthHttp([device, granted], [discovery])
+    monkeypatch.setattr(auth_mod, "LoopLocalSession", lambda **kw: _Sessions(fake))
 
     printed: list[str] = []
     caplog.set_level(logging.DEBUG)
     caplog.clear()
 
     store = tmp_path / "xai_oauth.json"
-    device_code_login(token_path=store, writer=printed.append)
+    await device_code_login(token_path=store, writer=printed.append)
 
     joined = "\n".join(printed)
     assert user_code in joined
@@ -421,7 +492,7 @@ def test_device_login_prints_the_user_code_and_never_logs_it(tmp_path, monkeypat
     assert stored.token_endpoint == TOKEN_ENDPOINT
 
 
-def test_device_login_requests_the_published_client_id_and_scope(tmp_path, monkeypatch):
+async def test_device_login_requests_the_published_client_id_and_scope(tmp_path, monkeypatch):
     discovery = _FakeResponse(200, json.dumps({"token_endpoint": TOKEN_ENDPOINT}))
     device = _FakeResponse(
         200,
@@ -436,17 +507,17 @@ def test_device_login_requests_the_published_client_id_and_scope(tmp_path, monke
         ),
     )
     granted = _FakeResponse(200, json.dumps({"access_token": "a", "refresh_token": "r", "expires_in": 60}))
-    fake = _FakeSyncHttp([device, granted], [discovery])
-    monkeypatch.setattr(auth_mod.httpx, "Client", lambda *a, **kw: fake)
+    fake = _FakeAuthHttp([device, granted], [discovery])
+    monkeypatch.setattr(auth_mod, "LoopLocalSession", lambda **kw: _Sessions(fake))
 
-    device_code_login(token_path=tmp_path / "store.json", writer=lambda _: None)
+    await device_code_login(token_path=tmp_path / "store.json", writer=lambda _: None)
 
     assert fake.posts[0]["data"] == {"client_id": DEFAULT_CLIENT_ID, "scope": DEFAULT_SCOPE}
     # Discovery omitted device_authorization_endpoint, so the vendor fallback applies.
     assert fake.posts[0]["url"] == auth_mod.XAI_OAUTH_DEVICE_CODE_URL
 
 
-def test_device_login_honors_the_client_id_and_scope_overrides(tmp_path, monkeypatch):
+async def test_device_login_honors_the_client_id_and_scope_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv(ENV_CLIENT_ID, "override-client")
     monkeypatch.setenv(ENV_SCOPE, "openid custom:scope")
     discovery = _FakeResponse(200, json.dumps({"token_endpoint": TOKEN_ENDPOINT}))
@@ -463,10 +534,10 @@ def test_device_login_honors_the_client_id_and_scope_overrides(tmp_path, monkeyp
         ),
     )
     granted = _FakeResponse(200, json.dumps({"access_token": "a", "refresh_token": "r", "expires_in": 60}))
-    fake = _FakeSyncHttp([device, granted], [discovery])
-    monkeypatch.setattr(auth_mod.httpx, "Client", lambda *a, **kw: fake)
+    fake = _FakeAuthHttp([device, granted], [discovery])
+    monkeypatch.setattr(auth_mod, "LoopLocalSession", lambda **kw: _Sessions(fake))
 
-    device_code_login(token_path=tmp_path / "store.json", writer=lambda _: None)
+    await device_code_login(token_path=tmp_path / "store.json", writer=lambda _: None)
 
     assert fake.posts[0]["data"] == {"client_id": "override-client", "scope": "openid custom:scope"}
 
@@ -475,12 +546,12 @@ def test_device_login_honors_the_client_id_and_scope_overrides(tmp_path, monkeyp
     "endpoint",
     ["http://auth.x.ai/oauth2/token", "https://auth.evil.example/oauth2/token", "https://notx.ai/token"],
 )
-def test_discovery_refuses_an_endpoint_off_the_xai_origin(endpoint):
+async def test_discovery_refuses_an_endpoint_off_the_xai_origin(endpoint):
     """A substituted token_endpoint would receive every future refresh token."""
-    client = _FakeSyncHttp(get_replies=[_FakeResponse(200, json.dumps({"token_endpoint": endpoint}))])
+    client = _FakeAuthHttp(get_replies=[_FakeResponse(200, json.dumps({"token_endpoint": endpoint}))])
 
     with pytest.raises(XaiOAuthDiscoveryError):
-        auth_mod.discover_endpoints(client)  # type: ignore[arg-type]
+        await auth_mod.discover_endpoints(client)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -493,7 +564,8 @@ def test_proactive_refresh_happens_exactly_once_under_concurrent_managers(tmp_pa
 
     Without the re-read after taking the store lock, the second manager would
     refresh a credential its sibling had already rotated, so the assertion is
-    ``post_count == 1`` rather than "a refresh happened".
+    ``post_count == 1`` rather than "a refresh happened". Each manager runs on its
+    own thread and event loop, so only the store's file lock can serialise them.
     """
     store = _write_store(tmp_path / "xai_oauth.json", expires_in=10.0, obtained_ago=3600.0)
     entered_http = threading.Event()
@@ -503,16 +575,16 @@ def test_proactive_refresh_happens_exactly_once_under_concurrent_managers(tmp_pa
         entered_http.set()
         release_http.wait()
 
-    http = _FakeSyncHttp([_refresh_ok()], on_post=_park)
+    http = _FakeAuthHttp([_refresh_ok()], on_post=_park)
     managers = [
-        XaiOAuthManager(store, refresh_skew_seconds=60.0, min_refresh_gap_seconds=0.0, http_client=http)  # type: ignore[arg-type]
+        XaiOAuthManager(store, refresh_skew_seconds=60.0, min_refresh_gap_seconds=0.0, http_client=_Sessions(http))  # type: ignore[arg-type]
         for _ in range(2)
     ]
 
     results: dict[int, str] = {}
 
     def _run(index: int) -> None:
-        results[index] = managers[index].get_access_token()
+        results[index] = asyncio.run(managers[index].get_access_token())
 
     first = threading.Thread(target=_run, args=(0,))
     first.start()
@@ -529,64 +601,64 @@ def test_proactive_refresh_happens_exactly_once_under_concurrent_managers(tmp_pa
     assert results == {0: NEW_ACCESS_TOKEN, 1: NEW_ACCESS_TOKEN}
 
 
-def test_a_fresh_token_is_served_without_any_refresh_request(tmp_path):
+async def test_a_fresh_token_is_served_without_any_refresh_request(tmp_path):
     manager, http, _ = _make_manager(tmp_path, store=_write_store(tmp_path / "s.json", expires_in=3600.0))
 
-    assert manager.get_access_token() == ACCESS_TOKEN
+    assert await manager.get_access_token() == ACCESS_TOKEN
     assert http.post_count == 0
 
 
-def test_a_token_inside_the_skew_window_is_refreshed(tmp_path):
+async def test_a_token_inside_the_skew_window_is_refreshed(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=30.0, obtained_ago=3600.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], skew=60.0, store=store)
 
-    assert manager.get_access_token() == NEW_ACCESS_TOKEN
+    assert await manager.get_access_token() == NEW_ACCESS_TOKEN
     assert http.post_count == 1
     assert read_credential(store).access_token == NEW_ACCESS_TOKEN
 
 
-def test_an_unreadable_expiry_refreshes_rather_than_assuming_validity(tmp_path):
+async def test_an_unreadable_expiry_refreshes_rather_than_assuming_validity(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=None, obtained_ago=3600.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], store=store)
 
-    assert manager.get_access_token() == NEW_ACCESS_TOKEN
+    assert await manager.get_access_token() == NEW_ACCESS_TOKEN
     assert http.post_count == 1
 
 
-def test_the_minimum_gap_suppresses_a_second_refresh(tmp_path):
+async def test_the_minimum_gap_suppresses_a_second_refresh(tmp_path):
     """A credential obtained seconds ago is not refreshed again (anti-spin)."""
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=2.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], min_gap=30.0, store=store)
 
     with pytest.raises(XaiOAuthRefreshError, match="minimum gap"):
-        manager.get_access_token()
+        await manager.get_access_token()
     assert http.post_count == 0
 
 
-def test_the_minimum_gap_rides_the_store_not_an_in_memory_clock(tmp_path):
+async def test_the_minimum_gap_rides_the_store_not_an_in_memory_clock(tmp_path):
     """A sibling's just-written credential blocks this manager's first refresh."""
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=0.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], min_gap=30.0, store=store)
 
     with pytest.raises(XaiOAuthRefreshError):
-        manager.refresh(reason="first call from a brand new manager")
+        await manager.refresh(reason="first call from a brand new manager")
     assert http.post_count == 0
 
 
-def test_the_configured_timeout_reaches_the_refresh_request(tmp_path):
+async def test_the_configured_timeout_reaches_the_refresh_request(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], timeout=7.5, store=store)
 
-    manager.get_access_token()
+    await manager.get_access_token()
 
-    assert http.posts[0]["timeout"] == 7.5
+    assert http.posts[0]["timeout"].sock_read == 7.5
 
 
-def test_refresh_posts_the_standard_oauth_grant(tmp_path):
+async def test_refresh_posts_the_standard_oauth_grant(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_refresh_ok()], store=store)
 
-    manager.get_access_token()
+    await manager.get_access_token()
 
     assert http.posts[0]["url"] == TOKEN_ENDPOINT
     assert http.posts[0]["data"] == {
@@ -596,7 +668,7 @@ def test_refresh_posts_the_standard_oauth_grant(tmp_path):
     }
 
 
-def test_a_rotated_refresh_token_is_persisted(tmp_path):
+async def test_a_rotated_refresh_token_is_persisted(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     rotated = _FakeResponse(
         200,
@@ -604,7 +676,7 @@ def test_a_rotated_refresh_token_is_persisted(tmp_path):
     )
     manager, _, _ = _make_manager(tmp_path, post_replies=[rotated], store=store)
 
-    manager.get_access_token()
+    await manager.get_access_token()
 
     assert read_credential(store).refresh_token == "rotated-refresh"
 
@@ -651,14 +723,14 @@ def test_a_failed_store_write_leaves_the_previous_credential_intact(tmp_path, mo
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
 
 
-def test_a_terminal_rejection_is_retried_once_then_quarantines(tmp_path):
+async def test_a_terminal_rejection_is_retried_once_then_quarantines(tmp_path):
     """400/401 from the token endpoint: one retry, then the grant is dead."""
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     denied = _FakeResponse(400, json.dumps({"error": "invalid_grant"}))
     manager, http, _ = _make_manager(tmp_path, post_replies=[denied, denied], store=store)
 
     with pytest.raises(XaiOAuthLoginRequiredError, match="xai_oauth_auth login"):
-        manager.get_access_token()
+        await manager.get_access_token()
 
     assert http.post_count == 2
     payload = json.loads(store.read_text())
@@ -669,27 +741,27 @@ def test_a_terminal_rejection_is_retried_once_then_quarantines(tmp_path):
     assert REFRESH_TOKEN not in store.read_text()
 
 
-def test_a_terminal_rejection_that_clears_on_the_retry_succeeds(tmp_path):
+async def test_a_terminal_rejection_that_clears_on_the_retry_succeeds(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     denied = _FakeResponse(401, json.dumps({"error": "invalid_grant"}))
     manager, http, _ = _make_manager(tmp_path, post_replies=[denied, _refresh_ok()], store=store)
 
-    assert manager.get_access_token() == NEW_ACCESS_TOKEN
+    assert await manager.get_access_token() == NEW_ACCESS_TOKEN
     assert http.post_count == 2
 
 
-def test_a_server_error_is_not_quarantined(tmp_path):
+async def test_a_server_error_is_not_quarantined(tmp_path):
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     manager, http, _ = _make_manager(tmp_path, post_replies=[_FakeResponse(503, "upstream down")], store=store)
 
     with pytest.raises(XaiOAuthRefreshError, match="503"):
-        manager.get_access_token()
+        await manager.get_access_token()
 
     assert http.post_count == 1
     assert read_credential(store).refresh_token == REFRESH_TOKEN
 
 
-def test_a_403_from_the_token_endpoint_is_not_quarantined(tmp_path):
+async def test_a_403_from_the_token_endpoint_is_not_quarantined(tmp_path):
     """A 403 is an edge/policy answer, not an OAuth "this grant is dead".
 
     RFC 6749 spells a spent or revoked refresh token as 400 ``invalid_grant``;
@@ -701,14 +773,14 @@ def test_a_403_from_the_token_endpoint_is_not_quarantined(tmp_path):
     manager, http, _ = _make_manager(tmp_path, post_replies=[_FakeResponse(403, "forbidden")], store=store)
 
     with pytest.raises(XaiOAuthRefreshError, match="403"):
-        manager.get_access_token()
+        await manager.get_access_token()
 
     assert http.post_count == 1
     assert read_credential(store).refresh_token == REFRESH_TOKEN
     assert "last_auth_error" not in json.loads(store.read_text())
 
 
-def test_a_rejection_is_not_quarantined_when_the_store_moved_to_another_grant(tmp_path):
+async def test_a_rejection_is_not_quarantined_when_the_store_moved_to_another_grant(tmp_path):
     """xAI rotates the refresh token, so a rejection can mean "already spent".
 
     A writer this host's lock does not cover (a store shared with a host whose
@@ -728,30 +800,30 @@ def test_a_rejection_is_not_quarantined_when_the_store_moved_to_another_grant(tm
         )
 
     denied = _FakeResponse(400, json.dumps({"error": "invalid_grant"}))
-    http = _FakeSyncHttp([denied, denied], on_post=_sibling_rotates_the_grant)
+    http = _FakeAuthHttp([denied, denied], on_post=_sibling_rotates_the_grant)
     manager = XaiOAuthManager(
         store,
         refresh_skew_seconds=60.0,
         refresh_timeout_seconds=20.0,
         min_refresh_gap_seconds=0.0,
-        http_client=http,  # type: ignore[arg-type]
+        http_client=_Sessions(http),  # type: ignore[arg-type]
     )
 
-    assert manager.get_access_token() == "sibling-access-token"
+    assert await manager.get_access_token() == "sibling-access-token"
     assert http.post_count == 2
     payload = json.loads(store.read_text())
     assert payload["tokens"]["refresh_token"] == "sibling-refresh-token"
     assert "last_auth_error" not in payload
 
 
-def test_a_rejection_still_quarantines_when_the_store_holds_the_same_grant(tmp_path):
+async def test_a_rejection_still_quarantines_when_the_store_holds_the_same_grant(tmp_path):
     """The recheck must not become a blanket excuse to never quarantine."""
     store = _write_store(tmp_path / "s.json", expires_in=10.0, obtained_ago=3600.0)
     denied = _FakeResponse(400, json.dumps({"error": "invalid_grant"}))
     manager, _, _ = _make_manager(tmp_path, post_replies=[denied, denied], store=store)
 
     with pytest.raises(XaiOAuthLoginRequiredError):
-        manager.get_access_token()
+        await manager.get_access_token()
 
     assert json.loads(store.read_text())["tokens"] == {}
 
@@ -767,9 +839,9 @@ async def test_a_dead_credential_fails_the_call_without_entering_the_device_flow
     Every device-flow entrypoint is replaced with a callable that raises if it
     is reached, so the assertion is structural rather than incidental.
     """
-    monkeypatch.setattr(auth_mod, "device_code_login", _never_called)
-    monkeypatch.setattr(auth_mod, "request_device_code", _never_called)
-    monkeypatch.setattr(auth_mod, "poll_device_token", _never_called)
+    monkeypatch.setattr(auth_mod, "device_code_login", _never_awaited)
+    monkeypatch.setattr(auth_mod, "request_device_code", _never_awaited)
+    monkeypatch.setattr(auth_mod, "poll_device_token", _never_awaited)
 
     store = tmp_path / "xai_oauth.json"  # never created: nothing to refresh
     monkeypatch.setenv(ENV_TOKEN_PATH, str(store))
@@ -787,7 +859,7 @@ async def test_a_dead_credential_fails_the_call_without_entering_the_device_flow
 
 
 async def test_a_quarantined_store_fails_the_call_with_the_login_remediation(tmp_path, monkeypatch):
-    monkeypatch.setattr(auth_mod, "device_code_login", _never_called)
+    monkeypatch.setattr(auth_mod, "device_code_login", _never_awaited)
     store = tmp_path / "xai_oauth.json"
     store.write_text(json.dumps({"tokens": {}, "last_auth_error": {"code": "refresh_rejected_400"}}))
     monkeypatch.setenv(ENV_TOKEN_PATH, str(store))
@@ -1380,7 +1452,7 @@ async def test_call_usage_surfaces_cached_tokens(tmp_path, monkeypatch):
 # ===========================================================================
 
 
-def test_the_configured_timeout_lands_on_the_http_client(tmp_path, monkeypatch):
+async def test_the_configured_timeout_lands_on_the_http_client(tmp_path, monkeypatch):
     store = _write_store(tmp_path / "xai_oauth.json")
     monkeypatch.setenv(ENV_TOKEN_PATH, str(store))
     manager, _, _ = _make_manager(tmp_path, store=store)
@@ -1390,7 +1462,10 @@ def test_the_configured_timeout_lands_on_the_http_client(tmp_path, monkeypatch):
     )
 
     assert llm.timeout == 12.5
-    assert llm._client.timeout.read == 12.5
+    try:
+        assert llm._client.get().timeout.sock_read == 12.5
+    finally:
+        await llm.cleanup()
 
 
 def test_the_admission_bar_is_the_larger_of_the_skew_and_the_timeout(tmp_path, monkeypatch):
@@ -1541,8 +1616,39 @@ async def test_cleanup_closes_both_clients(tmp_path, monkeypatch):
     await llm.cleanup()  # must not raise; the manager owns no client it did not create
 
 
-def test_the_event_loop_is_never_blocked_by_a_refresh(tmp_path, monkeypatch):
-    """The refresh runs in a worker thread, so ``call`` stays cooperative."""
+async def test_the_real_transport_sends_the_request_and_reads_the_reply(tmp_path, monkeypatch):
+    """End to end over aiohttp against a local upstream: body, headers, status, usage."""
+    seen: list[dict[str, Any]] = []
+    usage = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+
+    async def upstream(request: web.Request) -> web.StreamResponse:
+        seen.append({"path": request.path, "headers": dict(request.headers), "json": await request.json()})
+        if len(seen) == 1:
+            return web.Response(status=429, text="slow down", headers={"Retry-After": "0"})
+        return web.json_response(_completion("over the wire", usage))
+
+    async with stub_server(upstream) as base_url:
+        monkeypatch.setenv(ENV_BASE_URL, f"{base_url}/v1")
+        llm = _make_llm(tmp_path, monkeypatch)
+        llm._client = llm._new_client()  # the real per-loop aiohttp session, not the fake
+        try:
+            result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1, initial_backoff=0.0)
+        finally:
+            await llm.cleanup()
+
+    assert result.content == "over the wire"
+    assert result.usage.input_tokens == 3
+    assert [request["path"] for request in seen] == ["/v1/chat/completions"] * 2
+    assert seen[0]["headers"]["Authorization"] == f"Bearer {ACCESS_TOKEN}"
+    assert seen[0]["json"]["model"] == "grok-4.5"
+
+
+async def test_the_event_loop_is_never_blocked_by_a_refresh(tmp_path, monkeypatch):
+    """The refresh awaits the token endpoint on the loop, so ``call`` stays cooperative.
+
+    A ticker keeps running while the (slow) refresh is in flight; a refresh that
+    blocked the loop would leave it with no turns at all.
+    """
     llm = _make_llm(
         tmp_path,
         monkeypatch,
@@ -1550,18 +1656,25 @@ def test_the_event_loop_is_never_blocked_by_a_refresh(tmp_path, monkeypatch):
         expires_in=10.0,
         refresh_replies=[_refresh_ok()],
     )
-    thread_ids: list[int] = []
+    llm._refresh_http.delay = 0.05
+    ticks = 0
+    stop = asyncio.Event()
 
-    original = llm._auth.get_access_token
+    async def _tick() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            ticks += 1
+            await asyncio.sleep(0.005)
 
-    def _record(*args: Any, **kwargs: Any) -> str:
-        thread_ids.append(threading.get_ident())
-        return original(*args, **kwargs)
+    ticker = asyncio.create_task(_tick())
+    try:
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+    finally:
+        stop.set()
+        await ticker
 
-    llm._auth.get_access_token = _record  # type: ignore[method-assign]
-    asyncio.run(llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0))
-
-    assert thread_ids and thread_ids[0] != threading.get_ident()
+    assert llm._refresh_http.post_count == 1
+    assert ticks >= 3
 
 
 # ===========================================================================
@@ -1641,12 +1754,12 @@ async def test_call_with_tools_also_recycles_the_connection_on_a_5xx(tmp_path, m
 
 
 async def test_recycling_closes_the_stale_client(tmp_path, monkeypatch):
-    """The stale client's own aclose() is awaited, releasing its connections."""
+    """The stale client's own close() is awaited, releasing its connections."""
 
     closed: list[Any] = []
 
     class _TrackedFakeAsyncHttp(_FakeAsyncHttp):
-        async def aclose(self) -> None:
+        async def close(self) -> None:
             closed.append(self)
 
     async def _no_sleep(_: float) -> None:
@@ -1673,7 +1786,7 @@ class _GatedFakeAsyncHttp(_FakeAsyncHttp):
         self.closed = False
         self._gate_on_call = gate_on_call
 
-    async def post(self, url: str, json: Any = None, headers: Any = None) -> _FakeResponse:
+    async def _respond(self, url: str, json: Any, headers: Any) -> _FakeResponse:
         index = len(self.calls)
         self.calls.append({"url": url, "json": json, "headers": dict(headers or {})})
         if index == self._gate_on_call:
@@ -1681,7 +1794,7 @@ class _GatedFakeAsyncHttp(_FakeAsyncHttp):
             await self.gate.wait()
         return self._replies[min(index, len(self._replies) - 1)]
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         self.closed = True
 
 
@@ -1696,7 +1809,7 @@ async def test_a_recycle_leaves_a_sibling_request_on_the_stale_client_alive(tmp_
 
     A provider instance is shared by every concurrent call on its lane. Closing
     the stale client on the spot yanks the connection out from under siblings
-    mid-response — measured, they surface ``httpx.ReadError`` and retry, which
+    mid-response — measured, they surface a read error and retry, which
     re-sends a completion the upstream already accepted and fails outright any
     sibling that was on its final attempt.
     """
@@ -1744,7 +1857,7 @@ async def test_cleanup_closes_a_retired_client_whose_drain_task_was_cancelled(tm
 
     cleanup() cancels each drain task so shutdown does not block on a request that may
     never land. That cancellation is delivered at the task's next await — which is the
-    `await stale.aclose()` in its own `finally` — so the close never runs, and
+    `await stale.close()` in its own `finally` — so the close never runs, and
     CancelledError is a BaseException, so the `suppress(Exception)` around it does not
     catch it either. The client then leaked its connections on every shutdown that
     happened while a recycle was still draining.
@@ -1817,10 +1930,10 @@ async def test_a_transient_refresh_failure_is_retried_like_any_other_blip(tmp_pa
     llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply("recovered")])
     attempts: list[float] = []
 
-    def _flaky(min_ttl: float) -> str:
+    async def _flaky(min_ttl: float) -> str:
         attempts.append(min_ttl)
         if len(attempts) == 1:
-            raise XaiOAuthRefreshError("xai-oauth refresh network error: ConnectError")
+            raise XaiOAuthRefreshError("xai-oauth refresh network error: ClientConnectorError")
         return ACCESS_TOKEN
 
     llm._auth.get_access_token = _flaky  # type: ignore[method-assign]
@@ -1838,10 +1951,10 @@ async def test_a_transient_refresh_failure_is_retried_in_the_tool_loop(tmp_path,
     llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply("recovered")])
     attempts: list[float] = []
 
-    def _flaky(min_ttl: float) -> str:
+    async def _flaky(min_ttl: float) -> str:
         attempts.append(min_ttl)
         if len(attempts) == 1:
-            raise XaiOAuthRefreshError("xai-oauth refresh network error: ConnectError")
+            raise XaiOAuthRefreshError("xai-oauth refresh network error: ClientConnectorError")
         return ACCESS_TOKEN
 
     llm._auth.get_access_token = _flaky  # type: ignore[method-assign]
@@ -1863,7 +1976,7 @@ async def test_a_login_required_credential_is_still_fatal_on_the_first_attempt(t
     llm = _make_llm(tmp_path, monkeypatch)
     attempts: list[float] = []
 
-    def _dead(min_ttl: float) -> str:
+    async def _dead(min_ttl: float) -> str:
         attempts.append(min_ttl)
         raise XaiOAuthLoginRequiredError("no credential")
 
@@ -1908,7 +2021,7 @@ async def test_verification_does_not_mistake_a_byte_count_for_a_rate_limit(tmp_p
     server_error = _FakeResponse(500, "x" * 429)
     llm = _make_llm(tmp_path, monkeypatch, replies=[server_error])
     # verify_connection retries, and a >=500 recycles the client: without this
-    # the replacement would be a real httpx.AsyncClient and the retry would
+    # the replacement would be a real aiohttp session and the retry would
     # leave the process for api.x.ai, which no test here may do.
     llm._new_client = lambda: _FakeAsyncHttp([server_error])  # type: ignore[method-assign]
 

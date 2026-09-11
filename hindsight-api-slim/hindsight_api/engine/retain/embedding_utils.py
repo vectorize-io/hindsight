@@ -2,8 +2,6 @@
 Embedding generation utilities for memory units.
 """
 
-import asyncio
-import contextvars
 import logging
 from typing import Literal, Protocol
 
@@ -22,9 +20,9 @@ class EmbeddingsBackend(Protocol):
     @property
     def dimension(self) -> int: ...
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]: ...
+    async def encode_query(self, texts: list[str]) -> list[list[float]]: ...
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
 
 
 def _prefix_tokens(backend: EmbeddingsBackend, input_type: EmbeddingInputType) -> int:
@@ -89,12 +87,12 @@ def _validate_embedding_vector(vector: list[float], *, index: int, expected_dime
     return vector
 
 
-def _encode_with_input_type(
+async def _encode_with_input_type(
     embeddings_backend: EmbeddingsBackend, texts: list[str], input_type: EmbeddingInputType
 ) -> list[list[float]]:
     if input_type == "query":
-        return embeddings_backend.encode_query(texts)
-    return embeddings_backend.encode_documents(texts)
+        return await embeddings_backend.encode_query(texts)
+    return await embeddings_backend.encode_documents(texts)
 
 
 async def generate_embeddings_batch(
@@ -103,8 +101,8 @@ async def generate_embeddings_batch(
     """
     Generate embeddings for multiple texts using the provided embeddings backend.
 
-    Runs the embedding generation in a thread pool to avoid blocking the event loop
-    for CPU-bound operations.
+    Remote backends await their HTTP calls on the loop; in-process backends move the
+    CPU-bound model call to a worker thread themselves.
 
     Args:
         embeddings_backend: Embeddings instance to use for encoding
@@ -121,27 +119,10 @@ async def generate_embeddings_batch(
     if max_input_tokens is not None and texts:
         texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
 
-    # A backend that can embed a query without leaving the event loop does so; None means
-    # "not this time" and the thread path below handles it, retries included. Either way the
-    # result goes through the same alignment and vector checks below.
-    embeddings = None
-    aencode_query = getattr(embeddings_backend, "aencode_query", None) if input_type == "query" else None
-    if aencode_query is not None and texts:
-        embeddings = await aencode_query(texts)
-
-    if embeddings is None:
-        try:
-            loop = asyncio.get_event_loop()
-            # run_in_executor runs the encode in a worker thread, which does NOT inherit
-            # the caller's contextvars. Capture the current context and run the encode
-            # inside it so context-dependent behavior (e.g. per-bank `user` attribution
-            # read via get_current_bank_id()) survives the thread hop.
-            ctx = contextvars.copy_context()
-            embeddings = await loop.run_in_executor(
-                None, lambda: ctx.run(_encode_with_input_type, embeddings_backend, texts, input_type)
-            )
-        except Exception as e:
-            raise Exception(f"Failed to generate batch embeddings: {str(e)}")
+    try:
+        embeddings = await _encode_with_input_type(embeddings_backend, texts, input_type)
+    except Exception as e:
+        raise Exception(f"Failed to generate batch embeddings: {str(e)}")
 
     # Guarantee 1:1 alignment with input texts. A silent length mismatch here
     # propagates downstream as zip() drops items, eventually surfacing as an

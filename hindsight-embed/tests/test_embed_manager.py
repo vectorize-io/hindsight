@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from hindsight_embed import get_embed_manager
+from hindsight_embed._http_probe import ProbeResponse
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
 
@@ -499,23 +500,15 @@ def test_is_ui_running_detects_ipv6_only_ui(tmp_path, monkeypatch):
 
     requested = []
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    # A ::1 listener is not guaranteed on CI hosts, so the probe is stood in for
+    # here; the probe's own transport is covered by test_http_probe.py.
+    def fake_probe(url, **kwargs):
+        requested.append(url)
+        if url.startswith("http://[::1]:"):
+            return ProbeResponse(status_code=200, text="")
+        return None  # connection refused
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def get(self, url):
-            requested.append(url)
-            if url.startswith("http://[::1]:"):
-                return MagicMock(status_code=200)
-            raise OSError("Connection refused")
-
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.probe_get", fake_probe)
 
     assert manager.is_ui_running("hermes", 19177) is True
     assert requested == [
@@ -530,22 +523,19 @@ def test_is_ui_running_false_when_no_loopback_answers(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     manager = DaemonEmbedManager()
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    requested = []
 
-        def __enter__(self):
-            return self
+    def refused(url, **kwargs):
+        requested.append(url)
+        return None
 
-        def __exit__(self, *args):
-            return False
-
-        def get(self, url):
-            raise OSError("Connection refused")
-
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.probe_get", refused)
 
     assert manager.is_ui_running("hermes", 19177) is False
+    assert requested == [
+        "http://127.0.0.1:19177/api/health",
+        "http://[::1]:19177/api/health",
+    ]
 
 
 def test_is_port_in_use_checks_both_loopback_families(monkeypatch):
@@ -577,22 +567,17 @@ def test_is_port_in_use_checks_both_loopback_families(monkeypatch):
     assert attempted == ["127.0.0.1", "::1"]
 
 
-class _RecordingClient:
-    """httpx.Client stand-in that records the timeout each probe was given."""
+class _RecordingProbe:
+    """probe_get stand-in that answers 200 and records each probe's timeouts."""
 
-    timeouts: list = []
+    def __init__(self):
+        self.reads: list[float] = []
+        self.connects: list[float | None] = []
 
-    def __init__(self, *args, **kwargs):
-        _RecordingClient.timeouts.append(kwargs.get("timeout"))
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def get(self, url):
-        return MagicMock(status_code=200)
+    def __call__(self, url, *, read_timeout, connect_timeout=None):
+        self.reads.append(read_timeout)
+        self.connects.append(connect_timeout)
+        return ProbeResponse(status_code=200, text="")
 
 
 def test_reclaim_probe_waits_long_enough_for_a_busy_daemon(monkeypatch):
@@ -605,12 +590,12 @@ def test_reclaim_probe_waits_long_enough_for_a_busy_daemon(monkeypatch):
 
     assert daemon_embed_manager.HEALTH_PROBE_TIMEOUT >= 10.0
 
-    _RecordingClient.timeouts = []
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", _RecordingClient)
+    probe = _RecordingProbe()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.probe_get", probe)
     monkeypatch.setattr(daemon_embed_manager, "HEALTH_PROBE_TIMEOUT", 25.0)
 
     DaemonEmbedManager._port_health_ok(9177)
-    assert [t.read for t in _RecordingClient.timeouts] == [25.0]
+    assert probe.reads == [25.0]
 
 
 def test_liveness_probes_stay_short(tmp_path, monkeypatch):
@@ -626,14 +611,14 @@ def test_liveness_probes_stay_short(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     manager = DaemonEmbedManager()
 
-    _RecordingClient.timeouts = []
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", _RecordingClient)
+    probe = _RecordingProbe()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.probe_get", probe)
 
     assert manager.is_running("hermes") is True
     assert manager.is_ui_running("hermes", 19177) is True
 
-    assert [t.read for t in _RecordingClient.timeouts] == [2.0, 2.0]
-    assert all(t.connect == daemon_embed_manager.PROBE_CONNECT_TIMEOUT for t in _RecordingClient.timeouts)
+    assert probe.reads == [2.0, 2.0]
+    assert all(c == daemon_embed_manager.PROBE_CONNECT_TIMEOUT for c in probe.connects)
 
     # An address that swallows the SYN hangs in connect, not in read, so the
     # connect cap is what bounds the delete handler's three serial probes

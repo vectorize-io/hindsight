@@ -16,7 +16,8 @@ tests pin the new automatic-refresh behavior:
 - ``auth.json`` is persisted atomically via tempfile+rename with mode 0600.
 
 Tests construct ``CodexLLM`` with ``_load_codex_auth`` mocked, then drive
-JWT exp / network / persistence paths through targeted patches.
+JWT exp / persistence paths through targeted patches and the network through a
+local stub of the OAuth refresh endpoint (``tests/aiohttp_stub.py``).
 """
 
 from __future__ import annotations
@@ -26,24 +27,26 @@ import base64
 import json
 import stat
 import sys
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.providers import codex_auth
 from hindsight_api.engine.providers.codex_llm import (
     _CODEX_CLIENT_ID,
-    _CODEX_REFRESH_TOKEN_URL,
     CodexAuthManager,
     CodexLLM,
     CodexRefreshExpiredError,
 )
-from tests.codex_stream_stub import stub_codex_stream_with
+from tests.aiohttp_stub import stub_server
+from tests.codex_stream_stub import CodexReply, stub_codex_stream_with
 
 
 @pytest.fixture(autouse=True)
@@ -248,24 +251,73 @@ def test_persist_auth_atomic_does_not_leak_tempfile_on_success(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Refresh endpoint stub
+# ---------------------------------------------------------------------------
+
+# A scripted reply: (status, JSON body dict or raw text), or a callable that
+# receives the request's JSON body and returns one — for tests that rotate
+# auth.json "while the request is in flight".
+_Reply = tuple[int, dict | str] | Callable[[dict], tuple[int, dict | str]]
+
+
+@dataclass
+class _SeenRequest:
+    path: str
+    headers: dict[str, str]
+    json: dict
+
+
+class _RefreshEndpoint:
+    """Stub of the Codex OAuth token endpoint: records requests, answers from a script.
+
+    The last reply repeats once the script runs out.
+    """
+
+    def __init__(self, *replies: _Reply, delay: float = 0.0) -> None:
+        self._replies = replies
+        self._delay = delay
+        self.requests: list[_SeenRequest] = []
+
+    async def handle(self, request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        self.requests.append(_SeenRequest(path=request.path, headers=dict(request.headers), json=body))
+        reply = self._replies[min(len(self.requests) - 1, len(self._replies) - 1)]
+        if self._delay:
+            # Non-zero refresh latency so concurrent callers actually queue.
+            await asyncio.sleep(self._delay)
+        status, payload = reply(body) if callable(reply) else reply
+        if isinstance(payload, dict):
+            return web.json_response(payload, status=status)
+        return web.Response(status=status, text=payload)
+
+    @property
+    def sent_refresh_tokens(self) -> list[str]:
+        return [seen.json["refresh_token"] for seen in self.requests]
+
+
+@asynccontextmanager
+async def _serve_refresh(monkeypatch: pytest.MonkeyPatch, endpoint: _RefreshEndpoint) -> AsyncIterator[None]:
+    """Point every CodexAuthManager at ``endpoint`` for the duration of the block."""
+    async with stub_server(endpoint.handle) as base_url:
+        monkeypatch.setattr(codex_auth, "_CODEX_REFRESH_TOKEN_URL", f"{base_url}/oauth/token")
+        yield
+
+
+def _auth_json(access_token: str, refresh_token: str) -> str:
+    return json.dumps(
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": access_token, "refresh_token": refresh_token, "account_id": "acct-test"},
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # _refresh_oauth_tokens — request shape, in-memory update, rotation
 # ---------------------------------------------------------------------------
 
 
-def _refresh_response(status_code: int, body: dict | str) -> MagicMock:
-    response = MagicMock()
-    response.status_code = status_code
-    if isinstance(body, dict):
-        response.json.return_value = body
-        response.text = json.dumps(body)
-    else:
-        response.json.side_effect = json.JSONDecodeError("nope", body, 0)
-        response.text = body
-    return response
-
-
-@pytest.mark.asyncio
-async def test_refresh_sends_canonical_request_shape(tmp_path: Path):
+async def test_refresh_sends_canonical_request_shape(tmp_path: Path, monkeypatch):
     """POST JSON body with client_id + grant_type=refresh_token + refresh_token."""
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-current", access_token=expired)
@@ -273,40 +325,38 @@ async def test_refresh_sends_canonical_request_shape(tmp_path: Path):
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-current"}}))
 
     fresh_access = _make_jwt(int(time.time()) + 3600)
-    refresh_resp = _refresh_response(200, {"access_token": fresh_access, "refresh_token": "rt-rotated"})
+    endpoint = _RefreshEndpoint((200, {"access_token": fresh_access, "refresh_token": "rt-rotated"}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp) as mock_post:
+    async with _serve_refresh(monkeypatch, endpoint):
         await llm._refresh_oauth_tokens()
 
-    call_args = mock_post.call_args
-    assert call_args.args[0] == _CODEX_REFRESH_TOKEN_URL
-    assert call_args.kwargs["headers"]["Content-Type"] == "application/json"
-    assert call_args.kwargs["json"] == {
+    [seen] = endpoint.requests
+    assert seen.path == "/oauth/token"
+    assert seen.headers["Content-Type"] == "application/json"
+    assert seen.json == {
         "client_id": _CODEX_CLIENT_ID,
         "grant_type": "refresh_token",
         "refresh_token": "rt-current",
     }
 
 
-@pytest.mark.asyncio
-async def test_refresh_updates_in_memory_credentials(tmp_path: Path):
+async def test_refresh_updates_in_memory_credentials(tmp_path: Path, monkeypatch):
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-old", access_token=expired)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-old"}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         await llm._refresh_oauth_tokens()
 
     assert llm.access_token == new_access
     assert llm.refresh_token == "rt-new"
 
 
-@pytest.mark.asyncio
-async def test_refresh_keeps_existing_refresh_token_when_server_omits_one(tmp_path: Path):
+async def test_refresh_keeps_existing_refresh_token_when_server_omits_one(tmp_path: Path, monkeypatch):
     """If the OAuth response has no ``refresh_token`` field, keep the one we have."""
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-keep", access_token=expired)
@@ -314,61 +364,74 @@ async def test_refresh_keeps_existing_refresh_token_when_server_omits_one(tmp_pa
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-keep"}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
-    refresh_resp = _refresh_response(200, {"access_token": new_access})
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         await llm._refresh_oauth_tokens()
 
     assert llm.refresh_token == "rt-keep"
 
 
-@pytest.mark.asyncio
-async def test_refresh_raises_permanent_error_on_terminal_oauth_code(tmp_path: Path):
+async def test_refresh_raises_permanent_error_on_terminal_oauth_code(tmp_path: Path, monkeypatch):
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-stale", access_token=expired)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-stale"}}))
 
-    bad_resp = _refresh_response(401, {"error": {"code": "refresh_token_expired"}})
+    endpoint = _RefreshEndpoint((401, {"error": {"code": "refresh_token_expired"}}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         with pytest.raises(CodexRefreshExpiredError):
             await llm._refresh_oauth_tokens()
 
 
-@pytest.mark.asyncio
-async def test_refresh_raises_permanent_error_on_unknown_401(tmp_path: Path):
+async def test_refresh_raises_permanent_error_on_unknown_401(tmp_path: Path, monkeypatch):
     """Any 401 from the refresh endpoint is treated as permanent — matches upstream Rust classification."""
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-stale", access_token=expired)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-stale"}}))
 
-    bad_resp = _refresh_response(401, {"error": "something_else"})
+    endpoint = _RefreshEndpoint((401, {"error": "something_else"}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         with pytest.raises(CodexRefreshExpiredError):
             await llm._refresh_oauth_tokens()
 
 
-@pytest.mark.asyncio
-async def test_refresh_raises_runtime_error_on_5xx(tmp_path: Path):
+async def test_refresh_raises_runtime_error_on_5xx(tmp_path: Path, monkeypatch):
     """5xx is transient from the caller's perspective — surface as RuntimeError, not CodexRefreshExpiredError."""
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt-current", access_token=expired)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-current"}}))
 
-    bad_resp = _refresh_response(503, "service unavailable")
+    endpoint = _RefreshEndpoint((503, "service unavailable"))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         with pytest.raises(RuntimeError) as exc_info:
             await llm._refresh_oauth_tokens()
     assert not isinstance(exc_info.value, CodexRefreshExpiredError)
 
 
-@pytest.mark.asyncio
-async def test_refresh_does_not_log_token_values(tmp_path: Path, caplog):
+async def test_refresh_raises_runtime_error_on_network_failure(tmp_path: Path, monkeypatch):
+    """An unreachable refresh endpoint is a RuntimeError naming the transport failure."""
+    expired = _make_jwt(int(time.time()) - 60)
+    llm = _build_llm(refresh_token="rt-current", access_token=expired)
+    llm._auth_file = tmp_path / "auth.json"
+    llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt-current"}}))
+
+    async with stub_server(_RefreshEndpoint((200, {})).handle) as base_url:
+        dead_url = f"{base_url}/oauth/token"
+    # The server is closed: the connection is refused.
+    monkeypatch.setattr(codex_auth, "_CODEX_REFRESH_TOKEN_URL", dead_url)
+
+    with pytest.raises(RuntimeError, match="network error") as exc_info:
+        await llm._refresh_oauth_tokens()
+    assert not isinstance(exc_info.value, CodexRefreshExpiredError)
+
+
+async def test_refresh_does_not_log_token_values(tmp_path: Path, caplog, monkeypatch):
     expired = _make_jwt(int(time.time()) - 60)
     secret_rt = "rt-DO-NOT-LEAK-THIS"
     llm = _build_llm(refresh_token=secret_rt, access_token=expired)
@@ -376,9 +439,9 @@ async def test_refresh_does_not_log_token_values(tmp_path: Path, caplog):
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": secret_rt}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-also-secret"})
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-also-secret"}))
 
-    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
+    async with _serve_refresh(monkeypatch, endpoint):
         with caplog.at_level("DEBUG"):
             await llm._refresh_oauth_tokens()
 
@@ -393,30 +456,22 @@ async def test_refresh_does_not_log_token_values(tmp_path: Path, caplog):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_concurrent_ensure_fresh_token_calls_produce_one_refresh(tmp_path: Path):
+async def test_concurrent_ensure_fresh_token_calls_produce_one_refresh(tmp_path: Path, monkeypatch):
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt", access_token=expired)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": "x", "refresh_token": "rt"}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
-    call_count = 0
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}), delay=0.01)
 
-    def fake_post(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # Simulate non-zero refresh latency so concurrent callers actually queue.
-        time.sleep(0.01)
-        return _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
-
-    with patch.object(llm._auth_manager._http_client, "post", new=fake_post):
+    async with _serve_refresh(monkeypatch, endpoint):
         await asyncio.gather(*(llm._ensure_fresh_token() for _ in range(10)))
 
-    assert call_count == 1, f"expected 1 network refresh under contention, got {call_count}"
+    assert len(endpoint.requests) == 1, f"expected 1 network refresh under contention, got {len(endpoint.requests)}"
 
 
-def test_sibling_auth_manager_adopts_rotated_codex_credentials(tmp_path: Path):
+async def test_sibling_auth_manager_adopts_rotated_codex_credentials(tmp_path: Path, monkeypatch):
     """A stale sibling manager should adopt auth.json rotation before reusing the old RT."""
     expired = _make_jwt(int(time.time()) - 60)
     new_access = _make_jwt(int(time.time()) + 3600)
@@ -425,55 +480,41 @@ def test_sibling_auth_manager_adopts_rotated_codex_credentials(tmp_path: Path):
     first = CodexAuthManager.from_file(auth_file)
     sibling = CodexAuthManager.from_file(auth_file)
 
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
-    with patch.object(first._http_client, "post", return_value=refresh_resp):
-        first.refresh_tokens(reason="test")
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}))
+    async with _serve_refresh(monkeypatch, endpoint):
+        await first.refresh_tokens(reason="test")
+        await sibling.refresh_tokens(reason="test", force=True)
 
-    def unexpected_post(*args, **kwargs):
-        raise AssertionError("stale sibling should not call refresh endpoint with old refresh_token")
-
-    with patch.object(sibling._http_client, "post", new=unexpected_post):
-        sibling.refresh_tokens(reason="test", force=True)
-
+    # The stale sibling must not call the refresh endpoint with the old refresh_token.
+    assert endpoint.sent_refresh_tokens == ["rt-old"]
     assert sibling.access_token == new_access
     assert sibling.refresh_token == "rt-new"
 
 
-def test_refresh_token_reused_adopts_fresh_disk_access_token_without_second_refresh(tmp_path: Path):
+async def test_refresh_token_reused_adopts_fresh_disk_access_token_without_second_refresh(tmp_path: Path, monkeypatch):
     """If auth.json has a fresh access token after reuse, adopt it without refreshing again."""
     expired = _make_jwt(int(time.time()) - 60)
     disk_access = _make_jwt(int(time.time()) + 3600)
     auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-old")
 
     manager = CodexAuthManager.from_file(auth_file)
-    requests: list[str] = []
 
-    def fake_post(url, **kwargs):
-        request_json = kwargs["json"]
-        requests.append(request_json["refresh_token"])
-        auth_file.write_text(
-            json.dumps(
-                {
-                    "auth_mode": "chatgpt",
-                    "tokens": {
-                        "access_token": disk_access,
-                        "refresh_token": "rt-disk-new",
-                        "account_id": "acct-test",
-                    },
-                }
-            )
-        )
-        return _refresh_response(401, {"error": {"code": "refresh_token_reused"}})
+    def rotate_then_reject(body: dict) -> tuple[int, dict]:
+        auth_file.write_text(_auth_json(disk_access, "rt-disk-new"))
+        return 401, {"error": {"code": "refresh_token_reused"}}
 
-    with patch.object(manager._http_client, "post", new=fake_post):
-        manager.refresh_tokens(reason="test")
+    endpoint = _RefreshEndpoint(rotate_then_reject)
+    async with _serve_refresh(monkeypatch, endpoint):
+        await manager.refresh_tokens(reason="test")
 
-    assert requests == ["rt-old"]
+    assert endpoint.sent_refresh_tokens == ["rt-old"]
     assert manager.access_token == disk_access
     assert manager.refresh_token == "rt-disk-new"
 
 
-def test_refresh_token_reused_retries_with_newer_disk_refresh_token_when_disk_access_is_stale(tmp_path: Path):
+async def test_refresh_token_reused_retries_with_newer_disk_refresh_token_when_disk_access_is_stale(
+    tmp_path: Path, monkeypatch
+):
     """If auth.json moves but disk access is stale, retry once with disk refresh token."""
     expired = _make_jwt(int(time.time()) - 60)
     replacement_access = _make_jwt(int(time.time()) - 30)
@@ -481,41 +522,29 @@ def test_refresh_token_reused_retries_with_newer_disk_refresh_token_when_disk_ac
     auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-old")
 
     manager = CodexAuthManager.from_file(auth_file)
-    requests: list[str] = []
 
-    def fake_post(url, **kwargs):
-        request_json = kwargs["json"]
-        requests.append(request_json["refresh_token"])
-        if len(requests) == 1:
-            assert request_json["refresh_token"] == "rt-old"
-            # Simulate another Codex process rotating auth.json while this
-            # request is in flight, leaving an access token that is still stale
-            # for this caller but a newer refresh token that can recover.
-            auth_file.write_text(
-                json.dumps(
-                    {
-                        "auth_mode": "chatgpt",
-                        "tokens": {
-                            "access_token": replacement_access,
-                            "refresh_token": "rt-disk-new",
-                            "account_id": "acct-test",
-                        },
-                    }
-                )
-            )
-            return _refresh_response(401, {"error": {"code": "refresh_token_reused"}})
-        assert request_json["refresh_token"] == "rt-disk-new"
-        return _refresh_response(200, {"access_token": final_access, "refresh_token": "rt-final"})
+    def first_reply(body: dict) -> tuple[int, dict]:
+        assert body["refresh_token"] == "rt-old"
+        # Simulate another Codex process rotating auth.json while this
+        # request is in flight, leaving an access token that is still stale
+        # for this caller but a newer refresh token that can recover.
+        auth_file.write_text(_auth_json(replacement_access, "rt-disk-new"))
+        return 401, {"error": {"code": "refresh_token_reused"}}
 
-    with patch.object(manager._http_client, "post", new=fake_post):
-        manager.refresh_tokens(reason="test")
+    def second_reply(body: dict) -> tuple[int, dict]:
+        assert body["refresh_token"] == "rt-disk-new"
+        return 200, {"access_token": final_access, "refresh_token": "rt-final"}
 
-    assert requests == ["rt-old", "rt-disk-new"]
+    endpoint = _RefreshEndpoint(first_reply, second_reply)
+    async with _serve_refresh(monkeypatch, endpoint):
+        await manager.refresh_tokens(reason="test")
+
+    assert endpoint.sent_refresh_tokens == ["rt-old", "rt-disk-new"]
     assert manager.access_token == final_access
     assert manager.refresh_token == "rt-final"
 
 
-def test_force_refresh_retries_with_newer_disk_refresh_token_after_reuse_401(tmp_path: Path):
+async def test_force_refresh_retries_with_newer_disk_refresh_token_after_reuse_401(tmp_path: Path, monkeypatch):
     """The reuse-401 retry is reachable from the reactive path too.
 
     ``force=True`` bypasses the JWT-clock gate, so a token the client still
@@ -528,37 +557,27 @@ def test_force_refresh_retries_with_newer_disk_refresh_token_after_reuse_401(tmp
     auth_file = _make_codex_auth_file(tmp_path, old_fresh_access, refresh_token="rt-old")
 
     manager = CodexAuthManager.from_file(auth_file)
-    requests: list[str] = []
 
-    def fake_post(url, **kwargs):
-        request_json = kwargs["json"]
-        requests.append(request_json["refresh_token"])
-        if len(requests) == 1:
-            auth_file.write_text(
-                json.dumps(
-                    {
-                        "auth_mode": "chatgpt",
-                        "tokens": {
-                            "access_token": disk_stale_access,
-                            "refresh_token": "rt-disk-new",
-                            "account_id": "acct-test",
-                        },
-                    }
-                )
-            )
-            return _refresh_response(401, {"error": {"code": "refresh_token_reused"}})
-        assert request_json["refresh_token"] == "rt-disk-new"
-        return _refresh_response(200, {"access_token": final_access, "refresh_token": "rt-final"})
+    def first_reply(body: dict) -> tuple[int, dict]:
+        auth_file.write_text(_auth_json(disk_stale_access, "rt-disk-new"))
+        return 401, {"error": {"code": "refresh_token_reused"}}
 
-    with patch.object(manager._http_client, "post", new=fake_post):
-        manager.refresh_tokens(reason="reactive", force=True)
+    def second_reply(body: dict) -> tuple[int, dict]:
+        assert body["refresh_token"] == "rt-disk-new"
+        return 200, {"access_token": final_access, "refresh_token": "rt-final"}
 
-    assert requests == ["rt-old", "rt-disk-new"]
+    endpoint = _RefreshEndpoint(first_reply, second_reply)
+    async with _serve_refresh(monkeypatch, endpoint):
+        await manager.refresh_tokens(reason="reactive", force=True)
+
+    assert endpoint.sent_refresh_tokens == ["rt-old", "rt-disk-new"]
     assert manager.access_token == final_access
     assert manager.refresh_token == "rt-final"
 
 
-def test_force_refresh_does_not_skip_when_disk_already_rotated_to_a_stale_access_token(tmp_path: Path):
+async def test_force_refresh_does_not_skip_when_disk_already_rotated_to_a_stale_access_token(
+    tmp_path: Path, monkeypatch
+):
     """Adopting a *different* on-disk token is not enough to skip the refresh.
 
     Reactive callers get exactly one retry (``CodexOAuthEmbeddings.encode``
@@ -576,65 +595,64 @@ def test_force_refresh_does_not_skip_when_disk_already_rotated_to_a_stale_access
     manager = CodexAuthManager.from_file(auth_file)
 
     # Another Codex process rotated auth.json before this caller takes the lock.
-    auth_file.write_text(
-        json.dumps(
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": disk_stale_access,
-                    "refresh_token": "rt-disk-new",
-                    "account_id": "acct-test",
-                },
-            }
-        )
-    )
+    auth_file.write_text(_auth_json(disk_stale_access, "rt-disk-new"))
 
-    requests: list[str] = []
+    endpoint = _RefreshEndpoint((200, {"access_token": final_access, "refresh_token": "rt-final"}))
+    async with _serve_refresh(monkeypatch, endpoint):
+        await manager.refresh_tokens(reason="reactive (401 from embeddings API)", force=True)
 
-    def fake_post(url, **kwargs):
-        requests.append(kwargs["json"]["refresh_token"])
-        return _refresh_response(200, {"access_token": final_access, "refresh_token": "rt-final"})
-
-    with patch.object(manager._http_client, "post", new=fake_post):
-        manager.refresh_tokens(reason="reactive (401 from embeddings API)", force=True)
-
-    assert requests == ["rt-disk-new"], "force refresh returned without refreshing"
+    assert endpoint.sent_refresh_tokens == ["rt-disk-new"], "force refresh returned without refreshing"
     assert manager.access_token == final_access
     assert manager.refresh_token == "rt-final"
 
 
-def test_parallel_auth_managers_share_one_refresh_for_same_auth_file(tmp_path: Path):
-    """Separate managers in one process should single-flight per canonical auth path."""
+async def test_parallel_auth_managers_share_one_refresh_for_same_auth_file(tmp_path: Path, monkeypatch):
+    """Separate managers on separate event loops single-flight per canonical auth path.
+
+    Each manager refreshes from its own thread under its own ``asyncio.run``, so
+    no asyncio lock is shared between them: only the auth store's file lock can
+    serialise the two, and the second must then adopt the first's rotation.
+    """
     expired = _make_jwt(int(time.time()) - 60)
     new_access = _make_jwt(int(time.time()) + 3600)
     auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-old")
 
     managers = [CodexAuthManager.from_file(auth_file), CodexAuthManager.from_file(auth_file)]
-    call_count = 0
-    call_count_lock = threading.Lock()
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}), delay=0.05)
 
-    def fake_post(*args, **kwargs):
-        nonlocal call_count
-        with call_count_lock:
-            call_count += 1
-        time.sleep(0.02)
-        return _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+    async def refresh_and_close(manager: CodexAuthManager) -> None:
+        try:
+            await manager.refresh_tokens("test")
+        finally:
+            await manager.close()
 
-    patches = [patch.object(manager._http_client, "post", new=fake_post) for manager in managers]
-    for patcher in patches:
-        patcher.start()
-    try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(manager.refresh_tokens, "test") for manager in managers]
-            for future in futures:
-                future.result()
-    finally:
-        for patcher in patches:
-            patcher.stop()
+    async with _serve_refresh(monkeypatch, endpoint):
+        await asyncio.gather(*(asyncio.to_thread(asyncio.run, refresh_and_close(m)) for m in managers))
 
-    assert call_count == 1
+    assert len(endpoint.requests) == 1
     assert [manager.access_token for manager in managers] == [new_access, new_access]
     assert [manager.refresh_token for manager in managers] == ["rt-new", "rt-new"]
+
+
+async def test_one_manager_refreshes_from_two_event_loops(tmp_path: Path, monkeypatch):
+    """A manager shared across loops keeps working: its session and lock are per loop."""
+    auth_file = _make_codex_auth_file(tmp_path, _make_jwt(int(time.time()) - 60), refresh_token="rt-old")
+    manager = CodexAuthManager.from_file(auth_file)
+    endpoint = _RefreshEndpoint(
+        lambda body: (200, {"access_token": _make_jwt(int(time.time()) + 3600), "refresh_token": body["refresh_token"]})
+    )
+
+    async def force_refresh() -> None:
+        try:
+            await manager.refresh_tokens("test", force=True)
+        finally:
+            await manager.close()
+
+    async with _serve_refresh(monkeypatch, endpoint):
+        await asyncio.to_thread(asyncio.run, force_refresh())
+        await asyncio.to_thread(asyncio.run, force_refresh())
+
+    assert len(endpoint.requests) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -642,8 +660,7 @@ def test_parallel_auth_managers_share_one_refresh_for_same_auth_file(tmp_path: P
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
+async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path, monkeypatch):
     """A backend 401 triggers one refresh + retry instead of immediately raising."""
     fresh = _make_jwt(int(time.time()) + 3600)  # not stale; the 401 is the trigger
     llm = _build_llm(refresh_token="rt", access_token=fresh)
@@ -651,53 +668,34 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": fresh, "refresh_token": "rt"}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}))
 
-    success_resp = MagicMock()
-    success_resp.status_code = 200
-    success_resp.raise_for_status = MagicMock(return_value=None)
+    posts = 0
+    sent_headers: list[Any] = []
 
-    fail_response = MagicMock()
-    fail_response.status_code = 401
-    fail_response.text = "unauthorized"
-
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
-
-    call_count = {"refresh": 0, "post": 0}
-    sent_headers: list[httpx.Headers] = []
-
-    # Sync mock for the auth manager's HTTP client (used for token refresh).
-    def fake_refresh_post(*args, **kwargs):
-        call_count["refresh"] += 1
-        return refresh_resp
-
-    fail_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
-    )
-    fail_response.aread = AsyncMock(return_value=b"unauthorized")
-
-    # Stub for the LLM's HTTP client (used for backend calls).
     def fake_backend_stream(url, **kwargs):
-        call_count["post"] += 1
-        sent_headers.append(httpx.Headers(kwargs["headers"]))
-        return fail_response if call_count["post"] == 1 else success_resp
+        nonlocal posts
+        posts += 1
+        sent_headers.append(kwargs["headers"])
+        return CodexReply(401, "unauthorized") if posts == 1 else CodexReply()
 
-    with (
-        patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
-        stub_codex_stream_with(llm, fake_backend_stream),
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
-    ):
-        result = (
-            await llm.call(
-                messages=[{"role": "user", "content": "ping"}],
-                max_retries=0,
-                initial_backoff=0.0,
-                max_backoff=0.0,
-            )
-        ).content
+    async with _serve_refresh(monkeypatch, endpoint):
+        with (
+            stub_codex_stream_with(llm, fake_backend_stream),
+            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        ):
+            result = (
+                await llm.call(
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_retries=0,
+                    initial_backoff=0.0,
+                    max_backoff=0.0,
+                )
+            ).content
 
     assert result == "ok"
-    assert call_count["refresh"] == 1
-    assert call_count["post"] == 2  # one 401, one success after refresh
+    assert len(endpoint.requests) == 1
+    assert posts == 2  # one 401, one success after refresh
     assert llm.access_token == new_access
     assert sent_headers[0]["Authorization"] == f"Bearer {fresh}"
     assert sent_headers[1]["Authorization"] == f"Bearer {new_access}"
@@ -705,8 +703,30 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
         assert sent_headers[1][header_name] == sent_headers[0][header_name]
 
 
-@pytest.mark.asyncio
-async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path):
+async def test_call_with_tools_reactively_refreshes_on_401_and_retries(tmp_path: Path, monkeypatch):
+    """The tool-call path gets the same single refresh + retry on a backend 401."""
+    fresh = _make_jwt(int(time.time()) + 3600)
+    llm = _build_llm(refresh_token="rt", access_token=fresh)
+    llm._auth_file = tmp_path / "auth.json"
+    llm._auth_file.write_text(json.dumps({"tokens": {"access_token": fresh, "refresh_token": "rt"}}))
+
+    new_access = _make_jwt(int(time.time()) + 3600)
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}))
+    replies = [CodexReply(401, "unauthorized"), CodexReply()]
+
+    async with _serve_refresh(monkeypatch, endpoint):
+        with (
+            stub_codex_stream_with(llm, lambda url, **kwargs: replies.pop(0)) as stream,
+            patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+        ):
+            await llm.call_with_tools(messages=[{"role": "user", "content": "ping"}], tools=[], max_retries=0)
+
+    assert stream.call_count == 2
+    assert len(endpoint.requests) == 1
+    assert stream.call_args.kwargs["headers"]["Authorization"] == f"Bearer {new_access}"
+
+
+async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path, monkeypatch):
     """A near-expiry token triggers refresh BEFORE the request is sent."""
     expired = _make_jwt(int(time.time()) - 60)
     llm = _build_llm(refresh_token="rt", access_token=expired)
@@ -714,68 +734,54 @@ async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path):
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": expired, "refresh_token": "rt"}}))
 
     new_access = _make_jwt(int(time.time()) + 3600)
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
-
-    success_resp = MagicMock()
-    success_resp.status_code = 200
-    success_resp.raise_for_status.return_value = None
-
     call_order: list[str] = []
 
-    def fake_refresh_post(*args, **kwargs):
+    def refresh_reply(body: dict) -> tuple[int, dict]:
         call_order.append("refresh")
-        return refresh_resp
+        return 200, {"access_token": new_access, "refresh_token": "rt-new"}
 
     def fake_backend_stream(url, **kwargs):
         call_order.append("backend")
         # Assert that by the time the backend is called, the new token is in use.
         assert kwargs["headers"]["Authorization"] == f"Bearer {new_access}"
-        return success_resp
+        return CodexReply()
 
-    with (
-        patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
-        stub_codex_stream_with(llm, fake_backend_stream),
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
-    ):
-        await llm.call(
-            messages=[{"role": "user", "content": "ping"}],
-            max_retries=0,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
+    async with _serve_refresh(monkeypatch, _RefreshEndpoint(refresh_reply)):
+        with (
+            stub_codex_stream_with(llm, fake_backend_stream),
+            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        ):
+            await llm.call(
+                messages=[{"role": "user", "content": "ping"}],
+                max_retries=0,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
 
     assert call_order == ["refresh", "backend"], "expected proactive refresh BEFORE the backend call"
 
 
-@pytest.mark.asyncio
-async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path):
+async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path, monkeypatch):
     fresh = _make_jwt(int(time.time()) + 3600)
     llm = _build_llm(refresh_token="rt", access_token=fresh)
     llm._auth_file = tmp_path / "auth.json"
     llm._auth_file.write_text(json.dumps({"tokens": {"access_token": fresh, "refresh_token": "rt"}}))
 
-    success_resp = MagicMock()
-    success_resp.status_code = 200
-    success_resp.raise_for_status.return_value = None
+    endpoint = _RefreshEndpoint((500, "must not be called"))
+    async with _serve_refresh(monkeypatch, endpoint):
+        with (
+            stub_codex_stream_with(llm, lambda url, **kwargs: CodexReply()) as stream,
+            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        ):
+            await llm.call(
+                messages=[{"role": "user", "content": "ping"}],
+                max_retries=0,
+                initial_backoff=0.0,
+                max_backoff=0.0,
+            )
 
-    call_count = {"backend": 0}
-
-    def fake_backend_stream(url, **kwargs):
-        call_count["backend"] += 1
-        return success_resp
-
-    with (
-        stub_codex_stream_with(llm, fake_backend_stream),
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
-    ):
-        await llm.call(
-            messages=[{"role": "user", "content": "ping"}],
-            max_retries=0,
-            initial_backoff=0.0,
-            max_backoff=0.0,
-        )
-
-    assert call_count == {"backend": 1}
+    assert stream.call_count == 1
+    assert endpoint.requests == []
 
 
 # ---------------------------------------------------------------------------
@@ -788,24 +794,17 @@ def _make_codex_auth_file(tmp_path: Path, access_token: str, refresh_token: str 
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir(parents=True, exist_ok=True)
     auth_file = codex_dir / "auth.json"
-    auth_file.write_text(
-        json.dumps(
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "account_id": "acct-test",
-                },
-            }
-        )
-    )
+    auth_file.write_text(_auth_json(access_token, refresh_token))
     return auth_file
 
 
-def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Path, monkeypatch):
-    """encode() calls ensure_fresh_token() and updates api_key when the token rotated."""
-    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings
+async def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Path, monkeypatch):
+    """encode() awaits ensure_fresh_token() and updates api_key when the token rotated.
+
+    The OpenAI embeddings call itself (the parent ``encode``) is stubbed: what is
+    under test is the token handling around it.
+    """
+    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings, OpenAIEmbeddings
 
     expired = _make_jwt(int(time.time()) - 60)
     new_access = _make_jwt(int(time.time()) + 3600)
@@ -814,29 +813,30 @@ def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Pat
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
+    seen_keys: list[str] = []
 
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+    async def fake_parent_encode(self, texts):
+        seen_keys.append(self.api_key)
+        return [[0.1] * 1536]
 
-    fake_embeddings = [SimpleNamespace(index=0, embedding=[0.1] * 1536)]
-    fake_create_resp = SimpleNamespace(data=fake_embeddings)
-
-    with patch.object(emb._auth_manager._http_client, "post", return_value=refresh_resp):
-        emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=lambda **kw: fake_create_resp))
-        emb._dimension = 1536
-        result = emb.encode(["hello"])
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-new"}))
+    async with _serve_refresh(monkeypatch, endpoint):
+        with patch.object(OpenAIEmbeddings, "encode", new=fake_parent_encode):
+            result = await emb.encode(["hello"])
 
     assert result == [[0.1] * 1536]
-    # After proactive refresh the manager's token should be the new one.
+    # After proactive refresh the manager's token should be the new one...
     assert emb._auth_manager.access_token == new_access
-    # api_key on the embeddings object should also be updated.
+    # ...and the embeddings call already went out carrying it.
     assert emb.api_key == new_access
+    assert seen_keys == [new_access]
 
 
-def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypatch):
+async def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypatch):
     """On AuthenticationError from OpenAI, encode() refreshes and retries once."""
     from openai import AuthenticationError as OAIAuthError
 
-    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings
+    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings, OpenAIEmbeddings
 
     fresh = _make_jwt(int(time.time()) + 3600)
     new_access = _make_jwt(int(time.time()) + 7200)
@@ -845,15 +845,11 @@ def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypa
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
-    emb._dimension = 1536
+    seen_keys: list[str] = []
 
-    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-rotated"})
-
-    call_count = {"create": 0}
-
-    def fake_create(**kwargs):
-        call_count["create"] += 1
-        if call_count["create"] == 1:
+    async def fake_parent_encode(self, texts):
+        seen_keys.append(self.api_key)
+        if len(seen_keys) == 1:
             # Simulate OpenAI returning 401.
             mock_response = MagicMock()
             mock_response.status_code = 401
@@ -862,13 +858,15 @@ def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypa
                 response=mock_response,
                 body={"error": {"message": "invalid api key"}},
             )
-        return SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.2] * 1536)])
+        return [[0.2] * 1536]
 
-    with patch.object(emb._auth_manager._http_client, "post", return_value=refresh_resp):
-        emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
-        result = emb.encode(["world"])
+    endpoint = _RefreshEndpoint((200, {"access_token": new_access, "refresh_token": "rt-rotated"}))
+    async with _serve_refresh(monkeypatch, endpoint):
+        with patch.object(OpenAIEmbeddings, "encode", new=fake_parent_encode):
+            result = await emb.encode(["world"])
 
     assert result == [[0.2] * 1536]
-    assert call_count["create"] == 2  # first failed with 401, second succeeded
+    assert seen_keys == [fresh, new_access]  # first failed with 401, second succeeded
+    assert len(endpoint.requests) == 1
     assert emb._auth_manager.access_token == new_access
     assert emb.api_key == new_access

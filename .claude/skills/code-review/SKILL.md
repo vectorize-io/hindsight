@@ -92,6 +92,12 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **Prefer moving the work down a layer when it needs routing context.** Anything that has to know which endpoint was hit — its parameters, its signature, its body model — belongs in an `APIRoute` subclass (`app.router.route_class = ...`), not in a middleware that re-derives the route by walking `app.routes` and calling `route.matches()`. The route is already resolved there, and per-route facts can be computed once at startup instead of per request. See `api/unknown_params.py`. Note that `include_router` does not apply the app's `route_class` to a router's own routes — FastAPI <= 0.140 keeps each source route's class, >= 0.141 materialises from the source router's `route_class` — so routes from an included/extension router need `use_unknown_params_routes(router)` before the include.
 - **Header values built from client input must be sanitised** before they reach `message["headers"]`: query-param and body-field names are percent-decoded attacker input, so a non-latin-1 name raises mid-`send` (a 500 from a typo) and a name containing CR/LF splits the response.
 
+### Outbound HTTP: aiohttp, async only
+- **Production code makes HTTP calls with aiohttp, never httpx.** httpx's async client costs noticeably more per request than aiohttp (httpcore pool, anyio layers), and that overhead lands on the hottest paths we have — embeddings, reranking and LLM calls on every retain and recall. Build clients with `hindsight_api/engine/aiohttp_session.py`: `LoopLocalSession` (one `ClientSession` per event loop, created lazily — never create a session in `__init__` or in an `initialize()` that may run under `asyncio.run` in another thread), `per_phase_timeout` (httpx-style per-phase timeouts; aiohttp's `total` would cut off a long streamed body), and `raise_for_status` (raises `UpstreamHTTPError`, which keeps the body and a `status_code` that `remote_retry` classifies on).
+- **Sync HTTP is forbidden in production code** — no `requests`, `urllib.request`, `urllib3`, `http.client`, `httpx.Client`, and no sync SDK client (`openai.OpenAI`, `cohere.Client`, `litellm.embedding`, …) where the SDK has an async one. A sync call either blocks the event loop or needs a thread per in-flight request; use the async form on the loop instead. Wrapping a sync call in `asyncio.to_thread` / `run_in_executor` is not a fix. The only accepted exception is an SDK that offers no async API at all (e.g. `google.auth` credential refresh) — run that in a thread and say why in a comment.
+- **Enforced by ruff** (`TID251`, `banned-api` in `hindsight-api-slim/pyproject.toml`). `import httpx` is allowed only to *configure or classify* a third-party SDK that is built on it (`llm_transport.build_sdk_timeout` for the OpenAI/Anthropic SDKs, `remote_retry` classifying their errors), with a `# noqa: TID251` plus a comment naming the SDK. Reject any other `noqa: TID251`. `http_probe.py` is the one per-file exemption (stdlib-only readiness probe, its own process).
+- **Tests are exempt.** FastAPI's `TestClient` / `httpx.ASGITransport` are fine. To stub an upstream for an aiohttp client, serve it from `tests/aiohttp_stub.py::stub_server` rather than mocking the session.
+
 ### Bank/Tenant Isolation in Queries
 - **Bank isolation is a hard security invariant: no query may read, count, update, or delete another bank's rows.** Tenant isolation is enforced at the schema level (the resolved `search_path` / `fq_table(...)` qualifier, gated by `_authenticate_tenant`); bank isolation is enforced *within* a schema by a `bank_id` predicate on every statement that touches a multi-bank table.
 - **Every SQL statement against a multi-bank table must be constrained by `bank_id`** — directly in the `WHERE`, or transitively (see below). Multi-bank tables carry a `bank_id` column: `memory_units`, `documents`, `entities`, `entity_links`, `mental_models`, `knowledge_pages`, `memory_links`, `observation_history`, and similar.
@@ -437,6 +443,18 @@ Any new `@app.middleware("http")` or `BaseHTTPMiddleware` subclass is a **must f
 see "HTTP Middleware" above. Ask for a pure-ASGI middleware (or an `APIRoute` subclass
 if the logic needs routing context), and check that a `send` wrapper sanitises any
 header value derived from client input.
+
+### 11f. Check outbound HTTP is aiohttp and async
+
+```bash
+git diff main...HEAD -- '*.py' ':!**/tests/**' | grep -nE "^\+.*(import httpx|from httpx|import requests|urllib\.request|http\.client|noqa: TID251|\.Client\(|asyncio\.to_thread|run_in_executor)"
+```
+
+Any new httpx use or sync HTTP call in production code is a **must fix** — see
+"Outbound HTTP" above. `ruff` catches the imports; review catches what it can't: a sync
+SDK client where an async one exists, a sync call pushed into `to_thread` /
+`run_in_executor`, an `aiohttp.ClientSession` created outside `LoopLocalSession`, and any
+`# noqa: TID251` that is not configuring or classifying a third-party SDK.
 
 ### 11d. Check concurrency primitives
 

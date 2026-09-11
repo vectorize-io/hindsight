@@ -110,7 +110,7 @@ async def _insert_memory(memory: MemoryEngine, conn, bank_id: str, text: str) ->
     store = get_memories()
     fact = SimpleNamespace(
         fact_text=text,
-        embedding=memory.embeddings.encode([text])[0],
+        embedding=(await memory.embeddings.encode([text]))[0],
         fact_type="world",
         tags=[],
         context=None,

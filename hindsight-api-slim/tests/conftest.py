@@ -4,6 +4,7 @@ Pytest configuration and shared fixtures.
 
 import asyncio
 import importlib.util
+import inspect
 import os
 from pathlib import Path
 
@@ -80,6 +81,27 @@ async def _teardown_memory_engine(mem: MemoryEngine) -> None:
         pass
     finally:
         unregister_span_recorder(mem._llm_recorder)
+
+
+@pytest_asyncio.fixture
+async def _close_aiohttp_sessions():
+    """Close the aiohttp sessions a test's clients opened, on the test's own loop.
+
+    Providers open a session per loop lazily and have no close hook, so without this
+    each async test's loop ends with open sessions and aiohttp logs "Unclosed client
+    session" for every one of them.
+    """
+    from hindsight_api.engine.aiohttp_session import close_loop_sessions
+
+    yield
+    await close_loop_sessions()
+
+
+def pytest_collection_modifyitems(config, items):
+    # Only async tests: an async autouse fixture would give every sync test a loop too.
+    for item in items:
+        if inspect.iscoroutinefunction(getattr(item, "obj", None)):
+            item.fixturenames.append("_close_aiohttp_sessions")
 
 
 @pytest.fixture(autouse=True)

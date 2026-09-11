@@ -8,9 +8,8 @@ this module is what the tests exercise directly.
 
 from dataclasses import asdict, dataclass
 
-import httpx
-
 from .. import daemon_client
+from .._http_probe import ProbeResponse, probe_get
 from ..profile_manager import ENV_API_PORT, ENV_CP_PORT, ProfileManager
 
 # Env var names the wizard owns. Writing config replaces these; everything else
@@ -314,13 +313,9 @@ def _daemon_config(name: str) -> dict[str, str]:
     return ProfileManager().load_profile_config(name)
 
 
-def _http_get(url: str, timeout: float = 2.0) -> httpx.Response | None:
+def _http_get(url: str, timeout: float = 2.0) -> ProbeResponse | None:
     """GET helper that returns the response or None on failure (patchable in tests)."""
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            return client.get(url)
-    except Exception:
-        return None
+    return probe_get(url, read_timeout=timeout)
 
 
 def health(name: str) -> HealthView:

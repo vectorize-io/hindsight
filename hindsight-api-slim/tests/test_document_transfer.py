@@ -2297,7 +2297,7 @@ class _RecordingEmbedder:
     def __init__(self):
         self.batch_sizes: list[int] = []
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
         self.batch_sizes.append(len(texts))
         return [[float(len(text)), 0.0] for text in texts]
 

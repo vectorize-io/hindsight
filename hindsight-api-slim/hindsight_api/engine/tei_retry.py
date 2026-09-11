@@ -3,10 +3,9 @@
 import errno
 import math
 import random
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-
-import httpx
 
 # Ceiling for a single backoff sleep, independent of the client's request
 # timeout. The reranker holds its concurrency semaphore across the sleep, so a
@@ -26,7 +25,7 @@ JITTER_RATIO = 0.5
 
 # TEI requests are usually against a pooled HTTP client. If the underlying
 # socket dies while idle, the first failure often shows up as a bare OSError
-# instead of a structured httpx timeout/connect error.
+# instead of a structured client timeout/connect error.
 RETRYABLE_OS_ERRNOS = {
     errno.EBADF,
     errno.ECONNABORTED,
@@ -66,18 +65,19 @@ def _delay_limit(request_timeout: float) -> float:
 
 
 def tei_retry_delay(
-    response: httpx.Response,
+    headers: Mapping[str, str],
     fallback_delay: float,
     *,
     request_timeout: float,
 ) -> float:
     """Seconds to sleep before retrying a transient TEI response.
 
-    A server-supplied ``Retry-After`` wins over the caller's exponential
-    backoff, and both are bounded by :func:`_delay_limit`. The result is spread
-    over a jitter window so concurrent callers do not resume in lockstep.
+    ``headers`` are the transient response's headers. A server-supplied
+    ``Retry-After`` wins over the caller's exponential backoff, and both are
+    bounded by :func:`_delay_limit`. The result is spread over a jitter window so
+    concurrent callers do not resume in lockstep.
     """
-    retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
+    retry_after = _retry_after_seconds(headers.get("Retry-After"))
     limit = _delay_limit(request_timeout)
     fallback = fallback_delay if math.isfinite(fallback_delay) else 0.0
     requested_delay = max(fallback, retry_after or 0.0, 0.0)

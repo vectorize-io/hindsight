@@ -125,19 +125,19 @@ class FakePooledOnnxSession:
         return [np.array([[3.0, 4.0]] * batch, dtype=np.float32)]
 
 
-def test_onnx_embeddings_mean_pooling_normalizes_and_filters_inputs():
+async def test_onnx_embeddings_mean_pooling_normalizes_and_filters_inputs():
     emb = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, max_tokens=17)
     emb._tokenizer = FakeTokenizer()
     emb._session = FakeOnnxSession()
     emb._dimension = 2
 
-    result = emb.encode(["hello"])
+    result = await emb.encode(["hello"])
 
     assert result == [pytest.approx([0.6, 0.8])]
     assert emb._tokenizer.calls[-1]["max_length"] == 17
 
 
-def test_onnx_embeddings_cls_pooling_and_normalize_false():
+async def test_onnx_embeddings_cls_pooling_and_normalize_false():
     emb = OnnxEmbeddings(
         model_id="intfloat/multilingual-e5-small",
         dimensions=2,
@@ -148,12 +148,12 @@ def test_onnx_embeddings_cls_pooling_and_normalize_false():
     emb._session = FakeOnnxSession()
     emb._dimension = 2
 
-    result = emb.encode(["hello"])
+    result = await emb.encode(["hello"])
 
     assert result == [pytest.approx([3.0, 4.0])]
 
 
-def test_onnx_embeddings_output_name_uses_pre_pooled_2d_output():
+async def test_onnx_embeddings_output_name_uses_pre_pooled_2d_output():
     emb = OnnxEmbeddings(
         model_id="intfloat/multilingual-e5-small",
         dimensions=2,
@@ -163,7 +163,7 @@ def test_onnx_embeddings_output_name_uses_pre_pooled_2d_output():
     emb._session = FakePooledOnnxSession()
     emb._dimension = 2
 
-    result = emb.encode(["hello"])
+    result = await emb.encode(["hello"])
 
     assert result == [pytest.approx([0.6, 0.8])]
 
@@ -183,7 +183,7 @@ def test_onnx_embeddings_warns_when_local_model_path_has_no_tokenizer(caplog):
     assert "model_path is set without tokenizer_name_or_path" in caplog.text
 
 
-def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
+async def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
     tokenizer = FakeTokenizer()
     emb = OnnxEmbeddings(
         model_id="intfloat/multilingual-e5-small",
@@ -195,8 +195,8 @@ def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
     emb._session = FakeOnnxSession()
     emb._dimension = 2
 
-    emb.encode_query(["weather"])
-    emb.encode_documents(["weather"])
+    await emb.encode_query(["weather"])
+    await emb.encode_documents(["weather"])
 
     assert tokenizer.calls[0]["texts"] == ["query: weather"]
     assert tokenizer.calls[1]["texts"] == ["passage: weather"]
@@ -286,12 +286,12 @@ def test_create_embeddings_from_env_supports_onnx_provider():
     assert emb.cpu_mem_arena is False
 
 
-def test_onnx_embeddings_chunks_into_batches_and_preserves_order():
+async def test_onnx_embeddings_chunks_into_batches_and_preserves_order():
     """One forward pass per batch, with the caller's ordering restored (issue #3891)."""
     emb = _length_embedder(batch_size=2)
     texts = ["a", "bbbb", "cc", "ddddddd", "e"]
 
-    result = emb.encode(texts)
+    result = await emb.encode(texts)
 
     assert emb._session.batch_sizes == [2, 2, 1]
     # Each vector carries its own text's length, so a misplaced scatter-back shows up here.
@@ -300,10 +300,10 @@ def test_onnx_embeddings_chunks_into_batches_and_preserves_order():
     assert [call["texts"] for call in emb._tokenizer.calls] == [["ddddddd", "bbbb"], ["cc", "a"], ["e"]]
 
 
-def test_onnx_embeddings_single_batch_when_input_fits():
+async def test_onnx_embeddings_single_batch_when_input_fits():
     emb = _length_embedder(batch_size=8)
 
-    result = emb.encode(["a", "bbb", "cc"])
+    result = await emb.encode(["a", "bbb", "cc"])
 
     assert emb._session.batch_sizes == [3]
     # Input order is untouched when nothing needs splitting.
@@ -311,14 +311,14 @@ def test_onnx_embeddings_single_batch_when_input_fits():
     assert result == [pytest.approx([1.0, 1.0]), pytest.approx([3.0, 1.0]), pytest.approx([2.0, 1.0])]
 
 
-def test_onnx_embeddings_batching_does_not_change_vectors():
+async def test_onnx_embeddings_batching_does_not_change_vectors():
     """Batch composition cannot move a vector: pooling masks padding."""
     texts = [f"text {'x' * index}" for index in range(10)]
 
     unbatched = _length_embedder(batch_size=len(texts))
     batched = _length_embedder(batch_size=3)
 
-    assert batched.encode(texts) == unbatched.encode(texts)
+    assert await batched.encode(texts) == await unbatched.encode(texts)
     # The two runs really did pad to different widths — otherwise this proves nothing.
     assert unbatched._session.batch_sizes == [10]
     assert batched._session.batch_sizes == [3, 3, 3, 1]

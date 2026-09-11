@@ -10,12 +10,15 @@ These tests cover:
 6. Factory function (create from env, validation errors)
 """
 
+import asyncio
 import os
+import socket
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from hindsight_api.config import HindsightConfig
@@ -43,7 +46,7 @@ def _make_mock_genai(embed_result: Any = None) -> MagicMock:
         embed_result = _make_mock_embed_result([[0.1] * 768])
     mock_genai = MagicMock()
     mock_client = MagicMock()
-    mock_client.models.embed_content = MagicMock(return_value=embed_result)
+    mock_client.aio.models.embed_content = AsyncMock(return_value=embed_result)
     mock_genai.Client = MagicMock(return_value=mock_client)
     return mock_genai
 
@@ -86,7 +89,7 @@ class TestGeminiEmbeddings:
         assert emb.dimension == 768
         assert emb.provider_name == "google"
         assert emb._is_vertexai is False
-        mock_genai.Client.return_value.models.embed_content.assert_called_once()
+        mock_genai.Client.return_value.aio.models.embed_content.assert_called_once()
 
     async def test_initialization_vertexai_success(self):
         """Test successful Vertex AI initialization."""
@@ -139,7 +142,7 @@ class TestGeminiEmbeddings:
         would show up here as three texts back in one call.
         """
         mock_genai = _make_mock_genai()
-        embed_content = mock_genai.Client.return_value.models.embed_content
+        embed_content = mock_genai.Client.return_value.aio.models.embed_content
         emb = GeminiEmbeddings(
             model=model,
             api_key=None if vertexai else "test-key",
@@ -153,7 +156,7 @@ class TestGeminiEmbeddings:
         # check inside _embed_batch passes for either shape.
         embed_content.side_effect = lambda **kw: _make_mock_embed_result([[0.1] * 768] * len(kw["contents"]))
         embed_content.reset_mock()
-        vectors = emb.encode(texts)
+        vectors = await emb.encode(texts)
 
         assert len(vectors) == len(texts)
         assert embed_content.call_count == expected_requests
@@ -213,7 +216,7 @@ class TestGeminiEmbeddings:
 
         assert emb.dimension == 256
         assert emb._embed_config is not None
-        call_kwargs = mock_genai.Client.return_value.models.embed_content.call_args
+        call_kwargs = mock_genai.Client.return_value.aio.models.embed_content.call_args
         assert "config" in call_kwargs.kwargs
 
     async def test_no_output_dimensionality(self):
@@ -225,135 +228,157 @@ class TestGeminiEmbeddings:
             await emb.initialize()
 
         assert emb._embed_config is None
-        call_kwargs = mock_genai.Client.return_value.models.embed_content.call_args
+        call_kwargs = mock_genai.Client.return_value.aio.models.embed_content.call_args
         assert "config" not in call_kwargs.kwargs
 
-    async def test_force_ipv4_passes_http_options(self):
-        """Test that force_ipv4 configures the Gemini client with custom HTTP options."""
+    async def test_force_ipv4_passes_an_ipv4_only_aiohttp_session(self):
+        """force_ipv4 hands the SDK an aiohttp session whose connector dials IPv4 only."""
         mock_genai = _make_mock_genai()
-        mock_transport = MagicMock()
-        mock_httpx_client = MagicMock()
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", force_ipv4=True)
 
         with _patch_google_import(mock_genai):
-            with patch("httpx.HTTPTransport", return_value=mock_transport) as mock_http_transport:
-                with patch("httpx.Client", return_value=mock_httpx_client) as mock_http_client:
-                    await emb.initialize()
+            await emb.initialize()
 
-        mock_http_transport.assert_called_once_with(local_address="0.0.0.0")
-        mock_http_client.assert_called_once_with(timeout=10, transport=mock_transport)
-        assert emb._httpx_client is mock_httpx_client
-        assert "http_options" in mock_genai.Client.call_args.kwargs
+        http_options = mock_genai.Client.call_args.kwargs["http_options"]
+        assert http_options.timeout == 10000
+        session = http_options.aiohttp_client
+        assert isinstance(session, aiohttp.ClientSession)
+        assert session.connector is not None
+        assert session.connector.family == socket.AF_INET
+        await session.close()
 
-    def test_auto_detect_vertexai(self):
+    async def test_force_ipv4_builds_one_genai_client_per_event_loop(self):
+        """A session binds to its loop, so another loop must get its own client and session."""
+        mock_genai = _make_mock_genai()
+        mock_genai.Client.side_effect = lambda **kwargs: MagicMock(http_options=kwargs["http_options"])
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", force_ipv4=True)
+
+        with _patch_google_import(mock_genai):
+            emb._init_gemini(mock_genai, _make_mock_google_module(mock_genai).genai.types)
+
+        assert emb._ipv4_clients is not None
+        here = emb._ipv4_clients.get()
+        assert emb._ipv4_clients.get() is here
+
+        async def other_loop_client() -> Any:
+            client = emb._ipv4_clients.get()
+            await client.http_options.aiohttp_client.close()
+            return client
+
+        elsewhere = await asyncio.to_thread(asyncio.run, other_loop_client())
+        assert elsewhere is not here
+        assert elsewhere.http_options.aiohttp_client is not here.http_options.aiohttp_client
+        await here.http_options.aiohttp_client.close()
+
+    async def test_auto_detect_vertexai(self):
         """Test that _is_vertexai is auto-detected from vertexai_project_id."""
         assert GeminiEmbeddings(model="m", api_key="k")._is_vertexai is False
         assert GeminiEmbeddings(model="m", vertexai_project_id="p")._is_vertexai is True
 
-    def test_encode_single_text(self):
+    async def test_encode_single_text(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1, 0.2, 0.3]]))
+        mock_client.aio.models.embed_content = AsyncMock(return_value=_make_mock_embed_result([[0.1, 0.2, 0.3]]))
         emb._client = mock_client
         emb._dimension = 3
 
-        assert emb.encode(["hello"]) == [[0.1, 0.2, 0.3]]
+        assert await emb.encode(["hello"]) == [[0.1, 0.2, 0.3]]
 
-    def test_encode_multiple_texts(self):
+    async def test_encode_multiple_texts(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(
+        mock_client.aio.models.embed_content = AsyncMock(
             return_value=_make_mock_embed_result([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
         )
         emb._client = mock_client
         emb._dimension = 2
 
-        result = emb.encode(["a", "b", "c"])
+        result = await emb.encode(["a", "b", "c"])
         assert len(result) == 3
         assert result[1] == [0.3, 0.4]
 
-    def test_encode_batching(self):
+    async def test_encode_batching(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", batch_size=2)
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(
+        mock_client.aio.models.embed_content = AsyncMock(
             side_effect=[_make_mock_embed_result([[0.1], [0.2]]), _make_mock_embed_result([[0.3]])]
         )
         emb._client = mock_client
         emb._dimension = 1
 
-        assert emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
-        assert mock_client.models.embed_content.call_count == 2
+        assert await emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
+        assert mock_client.aio.models.embed_content.call_count == 2
 
-    def test_encode_passes_config(self):
+    async def test_encode_passes_config(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1, 0.2]]))
+        mock_client.aio.models.embed_content = AsyncMock(return_value=_make_mock_embed_result([[0.1, 0.2]]))
         emb._client = mock_client
         emb._dimension = 2
         emb._embed_config = MagicMock()
 
-        emb.encode(["hello"])
-        assert mock_client.models.embed_content.call_args.kwargs["config"] is emb._embed_config
+        await emb.encode(["hello"])
+        assert mock_client.aio.models.embed_content.call_args.kwargs["config"] is emb._embed_config
 
-    def test_encode_gemini_embedding_2_batches_multiple_inputs(self):
+    async def test_encode_gemini_embedding_2_batches_multiple_inputs(self):
         """Gemini Embedding 2+ wraps inputs in Content objects so batch_size=100
         correctly batches texts into a single request with 1:1 vector alignment."""
         emb = GeminiEmbeddings(model="gemini-embedding-2-preview", api_key="test-key", batch_size=100)
         mock_client = MagicMock()
-        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1], [0.2], [0.3]]))
+        mock_client.aio.models.embed_content = AsyncMock(return_value=_make_mock_embed_result([[0.1], [0.2], [0.3]]))
         emb._client = mock_client
         emb._dimension = 1
 
-        assert emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
+        assert await emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
         # 1 call for 3 inputs when batch_size=100
-        assert mock_client.models.embed_content.call_count == 1
-        call_contents = mock_client.models.embed_content.call_args.kwargs["contents"]
+        assert mock_client.aio.models.embed_content.call_count == 1
+        call_contents = mock_client.aio.models.embed_content.call_args.kwargs["contents"]
         assert len(call_contents) == 3
 
-    def test_encode_raises_on_misaligned_vector_count(self):
+    async def test_encode_raises_on_misaligned_vector_count(self):
         """A backend that aggregates inputs (returns fewer vectors than texts)
         must raise rather than silently misalign vectors with inputs."""
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", batch_size=100)
         mock_client = MagicMock()
         # 3 inputs in one batch but only 1 vector returned (aggregation).
-        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1]]))
+        mock_client.aio.models.embed_content = AsyncMock(return_value=_make_mock_embed_result([[0.1]]))
         emb._client = mock_client
         emb._dimension = 1
 
         with pytest.raises(RuntimeError, match="expected exact 1:1 alignment"):
-            emb.encode(["a", "b", "c"])
+            await emb.encode(["a", "b", "c"])
 
-    def test_encode_empty_list(self):
+    async def test_encode_empty_list(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         emb._client = MagicMock()
         emb._dimension = 768
-        assert emb.encode([]) == []
+        assert await emb.encode([]) == []
 
-    def test_encode_before_initialization(self):
+    async def test_encode_before_initialization(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         with pytest.raises(RuntimeError, match="not initialized"):
-            emb.encode(["test"])
+            await emb.encode(["test"])
 
-    def test_dimension_before_initialization(self):
+    async def test_dimension_before_initialization(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         with pytest.raises(RuntimeError, match="not initialized"):
             _ = emb.dimension
 
-    def test_provider_name_always_google(self):
+    async def test_provider_name_always_google(self):
         assert GeminiEmbeddings(model="m", api_key="k").provider_name == "google"
         assert GeminiEmbeddings(model="m", vertexai_project_id="p").provider_name == "google"
 
-    def test_vertexai_strips_google_prefix(self):
+    async def test_vertexai_strips_google_prefix(self):
         mock_genai = _make_mock_genai()
         emb = GeminiEmbeddings(model="google/gemini-embedding-001", vertexai_project_id="test-project")
         emb._init_vertexai(mock_genai)
         assert emb.model == "gemini-embedding-001"
 
-    def test_default_region(self):
+    async def test_default_region(self):
         emb = GeminiEmbeddings(model="m", vertexai_project_id="proj")
         assert emb.vertexai_region == "us-central1"
 
-    def test_custom_region(self):
+    async def test_custom_region(self):
         emb = GeminiEmbeddings(model="m", vertexai_project_id="proj", vertexai_region="europe-west1")
         assert emb.vertexai_region == "europe-west1"
 
@@ -382,12 +407,12 @@ class TestGeminiEmbeddingsRetry:
     def _make_embeddings(self, side_effect, policy: RetryPolicy = _FAST_POLICY) -> GeminiEmbeddings:
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", retry_policy=policy)
         client = MagicMock()
-        client.models.embed_content = MagicMock(side_effect=side_effect)
+        client.aio.models.embed_content = AsyncMock(side_effect=side_effect)
         emb._client = client
         emb._dimension = 768
         return emb
 
-    def test_transient_status_then_success(self):
+    async def test_transient_status_then_success(self):
         """A 429 is retried and the later success is returned."""
         calls = {"n": 0}
 
@@ -398,10 +423,10 @@ class TestGeminiEmbeddingsRetry:
             return _make_mock_embed_result([[0.1] * 768])
 
         emb = self._make_embeddings(flaky)
-        assert emb.encode(["hello"]) == [[0.1] * 768]
+        assert await emb.encode(["hello"]) == [[0.1] * 768]
         assert calls["n"] == 2
 
-    def test_transient_5xx_is_retried(self):
+    async def test_transient_5xx_is_retried(self):
         calls = {"n": 0}
 
         def flaky(**kwargs):
@@ -411,11 +436,11 @@ class TestGeminiEmbeddingsRetry:
             return _make_mock_embed_result([[0.2] * 768])
 
         emb = self._make_embeddings(flaky)
-        assert emb.encode(["hello"]) == [[0.2] * 768]
+        assert await emb.encode(["hello"]) == [[0.2] * 768]
         assert calls["n"] == 3
 
     @pytest.mark.parametrize("code", [400, 401, 403, 404])
-    def test_permanent_client_errors_fail_fast(self, code):
+    async def test_permanent_client_errors_fail_fast(self, code):
         """Auth and validation failures must not be retried — retrying cannot fix them."""
         calls = {"n": 0}
 
@@ -425,10 +450,10 @@ class TestGeminiEmbeddingsRetry:
 
         emb = self._make_embeddings(always_fail)
         with pytest.raises(_GenAIError):
-            emb.encode(["hello"])
+            await emb.encode(["hello"])
         assert calls["n"] == 1
 
-    def test_exhausted_retries_propagate(self):
+    async def test_exhausted_retries_propagate(self):
         """A sustained outage still surfaces to the worker, after a bounded attempt count."""
         calls = {"n": 0}
 
@@ -438,10 +463,10 @@ class TestGeminiEmbeddingsRetry:
 
         emb = self._make_embeddings(always_429)
         with pytest.raises(_GenAIError):
-            emb.encode(["hello"])
+            await emb.encode(["hello"])
         assert calls["n"] == _FAST_POLICY.max_retries + 1
 
-    def test_retry_budget_is_shared_across_batches(self):
+    async def test_retry_budget_is_shared_across_batches(self):
         """Batching must not multiply the worst-case added latency of one encode().
 
         The batches of one encode() go out concurrently, so a per-batch budget would let
@@ -464,7 +489,7 @@ class TestGeminiEmbeddingsRetry:
 
         started = time.monotonic()
         with pytest.raises(_GenAIError):
-            emb.encode(["a", "b", "c", "d"])
+            await emb.encode(["a", "b", "c", "d"])
 
         assert calls["n"] < 4 * (policy.max_retries + 1) / 2
         # The budget caps wall-clock too, not just the attempt count.
@@ -481,7 +506,7 @@ class TestGeminiEmbeddingsRetry:
                 raise _GenAIError(429)
             return _make_mock_embed_result([[0.3] * 768])
 
-        mock_genai.Client.return_value.models.embed_content = MagicMock(side_effect=flaky)
+        mock_genai.Client.return_value.aio.models.embed_content = AsyncMock(side_effect=flaky)
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", retry_policy=_FAST_POLICY)
 
         with _patch_google_import(mock_genai):
@@ -651,7 +676,7 @@ async def test_gemini_embedding_2_vertexai_one_vector_per_input():
 
     try:
         await emb.initialize()
-        vectors = emb.encode(texts)
+        vectors = await emb.encode(texts)
     except APIError as e:
         # gemini-embedding-2 is a preview/allowlisted model not enabled in every
         # Vertex project (e.g. CI returns 400 FAILED_PRECONDITION). Skip rather

@@ -13,10 +13,12 @@ import json
 import os
 from types import SimpleNamespace
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.embeddings import Embeddings
+from tests.aiohttp_stub import stub_server
 
 # Providers that are plain text-in/vector-out and therefore honour the generic prefixes.
 # Each entry is (provider, extra env, expected concrete class name).
@@ -86,7 +88,7 @@ class _RecordingEmbeddings(Embeddings):
     async def initialize(self) -> None:
         pass
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    async def encode(self, texts: list[str]) -> list[list[float]]:
         self.sent.append(list(texts))
         return [[0.0, 1.0] for _ in texts]
 
@@ -210,15 +212,15 @@ def test_onnx_keeps_its_own_prefix_config():
     assert embeddings.passage_prefix == "passage: "
 
 
-def test_query_and_document_inputs_are_prefixed_asymmetrically():
+async def test_query_and_document_inputs_are_prefixed_asymmetrically():
     """The prefix is applied to the text actually handed to encode()."""
     recorder = _RecordingEmbeddings(
         query_prefix="task: search result | query: ",
         passage_prefix="title: none | text: ",
     )
 
-    recorder.encode_query(["refund policy?"])
-    recorder.encode_documents(["We refund within 30 days."])
+    await recorder.encode_query(["refund policy?"])
+    await recorder.encode_documents(["We refund within 30 days."])
 
     assert recorder.sent == [
         ["task: search result | query: refund policy?"],
@@ -226,27 +228,27 @@ def test_query_and_document_inputs_are_prefixed_asymmetrically():
     ]
 
 
-def test_unset_prefixes_leave_inputs_untouched():
+async def test_unset_prefixes_leave_inputs_untouched():
     """Default construction must pass through exactly what the caller passed."""
     recorder = _RecordingEmbeddings()
 
-    recorder.encode_query(["refund policy?"])
-    recorder.encode_documents(["We refund within 30 days."])
-    recorder.encode(["plain"])
+    await recorder.encode_query(["refund policy?"])
+    await recorder.encode_documents(["We refund within 30 days."])
+    await recorder.encode(["plain"])
 
     assert recorder.sent == [["refund policy?"], ["We refund within 30 days."], ["plain"]]
 
 
-def test_encode_stays_unprefixed_when_prefixes_are_configured():
+async def test_encode_stays_unprefixed_when_prefixes_are_configured():
     """encode() is the raw entry point — only the asymmetric wrappers prefix."""
     recorder = _RecordingEmbeddings(query_prefix="query: ", passage_prefix="passage: ")
 
-    recorder.encode(["plain"])
+    await recorder.encode(["plain"])
 
     assert recorder.sent == [["plain"]]
 
 
-def test_prefixed_inputs_still_respect_batch_size():
+async def test_prefixed_inputs_still_respect_batch_size():
     """Prefixing happens before batching, so oversized calls are still split."""
     from hindsight_api.engine.embeddings import OpenAIEmbeddings
 
@@ -254,33 +256,36 @@ def test_prefixed_inputs_still_respect_batch_size():
 
     sent: list[list[str]] = []
 
-    def fake_create(*, model, input, **kwargs):
+    async def fake_create(*, model, input, **kwargs):
         sent.append(list(input))
         return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.0, 1.0]) for i in range(len(input))])
 
-    emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+    fake_client = SimpleNamespace(api_key="sk-test", embeddings=SimpleNamespace(create=fake_create))
+    emb._clients = LoopLocal(lambda: fake_client)
     emb._dimension = 2
 
-    emb.encode_documents(["a", "b", "c"])
+    await emb.encode_documents(["a", "b", "c"])
 
     assert sent == [["passage: a", "passage: b"], ["passage: c"]]
 
 
-def test_tei_sends_prefixed_inputs_to_the_embed_endpoint():
+async def test_tei_sends_prefixed_inputs_to_the_embed_endpoint():
     """End-to-end payload check for TEI, which had no asymmetry mechanism at all before."""
     from hindsight_api.engine.embeddings import RemoteTEIEmbeddings
 
     sent: list[list[str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        inputs = json.loads(request.content)["inputs"]
+    async def handler(request: web.Request) -> web.StreamResponse:
+        inputs = (await request.json())["inputs"]
         sent.append(list(inputs))
-        return httpx.Response(200, json=[[0.0, 1.0] for _ in inputs])
+        return web.json_response([[0.0, 1.0] for _ in inputs])
 
-    emb = RemoteTEIEmbeddings(base_url="http://localhost:8080", query_prefix="query: ", passage_prefix="passage: ")
-    emb._client = httpx.Client(transport=httpx.MockTransport(handler))
+    async with stub_server(handler) as base_url:
+        emb = RemoteTEIEmbeddings(base_url=base_url, query_prefix="query: ", passage_prefix="passage: ")
+        emb._initialized = True
+        emb._dimension = 2
 
-    emb.encode_query(["where?"])
-    emb.encode_documents(["here."])
+        await emb.encode_query(["where?"])
+        await emb.encode_documents(["here."])
 
     assert sent == [["query: where?"], ["passage: here."]]

@@ -22,7 +22,7 @@ from tests import consolidation_actions
 class _ZeroLengthEmbeddings:
     dimension = 384
 
-    def encode_documents(self, texts):
+    async def encode_documents(self, texts):
         assert texts == ["Consolidated observation text."]
         return [[]]
 

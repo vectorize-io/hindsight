@@ -3,19 +3,26 @@
 This module implements LiteLLM's CustomLogger interface to intercept
 LLM calls and integrate with Hindsight for memory injection and storage.
 
-Uses direct HTTP calls via requests/httpx to avoid async event loop conflicts
-when the hindsight_client's async methods are called from LiteLLM callbacks.
+HTTP: the async hooks call Hindsight with aiohttp on the running event loop.
+The sync hooks still use ``requests``: LiteLLM calls ``log_pre_api_call``
+synchronously (for native-async providers, on the event-loop thread itself; it
+never calls ``async_log_pre_api_call``), and the recalled memories must be in
+``messages`` before the provider request is sent, so that hook has no async
+form to move to.
 """
 
 import asyncio
-import concurrent.futures
 import fnmatch
 import hashlib
 import logging
 import threading
+import weakref
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import aiohttp
+import requests
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.types.utils import ModelResponse
 
@@ -47,22 +54,6 @@ def _hindsight_enable_active() -> bool:
         return False
 
 
-# Use requests for sync HTTP calls to avoid async event loop issues
-try:
-    import requests
-
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
-
-try:
-    import httpx
-
-    HAS_HTTPX = True
-except ImportError:
-    HAS_HTTPX = False
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -76,8 +67,25 @@ class HindsightError(Exception):
     pass
 
 
-# Thread pool for running async operations in background
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="hindsight-")
+# Applied per phase (connect, and each socket read), as requests' timeout=30 is.
+_HTTP_TIMEOUT_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class _HindsightRequest:
+    """A Hindsight API call: where it goes and its JSON body."""
+
+    url: str
+    body: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _StorePlan:
+    """What a successful LLM call contributes to the bank, worked out before any HTTP."""
+
+    bank_id: str
+    new_conversation_text: str
+    metadata: Dict[str, str]
 
 
 class HindsightCallback(CustomLogger):
@@ -115,14 +123,19 @@ class HindsightCallback(CustomLogger):
     def __init__(self):
         """Initialize the Hindsight callback handler."""
         super().__init__()
-        self._http_session = None
+        self._http_session: Optional[requests.Session] = None
+        # One aiohttp session per event loop: a session binds to the loop that
+        # created it. The lock guards these maps only (no await inside it).
+        self._aiohttp_sessions: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, aiohttp.ClientSession]" = (
+            weakref.WeakKeyDictionary()
+        )
         self._http_lock = threading.Lock()
         # Track recently stored conversation hashes for deduplication.
         # OrderedDict gives us true LRU eviction (popitem(last=False)
         # removes the *oldest* entry, unlike set.pop() which is arbitrary)
         # and the lock makes the cache safe across the sync
-        # log_success_event path and the async-callback path that runs
-        # storage on an executor thread.
+        # log_success_event path (LiteLLM runs it on an executor thread) and
+        # the async path on the event loop.
         self._recent_hashes: "OrderedDict[str, None]" = OrderedDict()
         self._hash_lock = threading.Lock()
         self._max_hash_cache = 1000
@@ -142,52 +155,64 @@ class HindsightCallback(CustomLogger):
         defaults = get_defaults() or HindsightCallSettings()
         return _merge_call_settings(defaults, kwargs)
 
-    def _get_http_session(self):
-        """Get or create a requests Session (thread-safe)."""
+    @staticmethod
+    def _headers(config: HindsightConfig, *, json_body: bool) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"} if json_body else {}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        return headers
+
+    def _get_http_session(self) -> requests.Session:
+        """Get or create the requests Session used by the sync hooks (thread-safe)."""
         if self._http_session is None:
             with self._http_lock:
                 if self._http_session is None:
-                    if HAS_REQUESTS:
-                        self._http_session = requests.Session()
-                    elif HAS_HTTPX:
-                        self._http_session = httpx.Client(timeout=30.0)
-                    else:
-                        raise RuntimeError(
-                            "Neither 'requests' nor 'httpx' is installed. Please install one: pip install requests"
-                        )
+                    self._http_session = requests.Session()
         return self._http_session
 
+    def _get_aiohttp_session(self) -> aiohttp.ClientSession:
+        """The running loop's aiohttp session, created on first use."""
+        loop = asyncio.get_running_loop()
+        with self._http_lock:
+            # Drop sessions of loops that have closed (e.g. a caller's per-call
+            # asyncio.run). The session holds its loop, so the weak map alone never
+            # releases it; its close() needs that loop, so release the connector
+            # synchronously — BaseConnector._close is the sync half of close().
+            for dead in [dead for dead in self._aiohttp_sessions if dead.is_closed()]:
+                stale = self._aiohttp_sessions.pop(dead)
+                connector = stale.connector
+                stale.detach()
+                if connector is not None:
+                    connector._close()
+            session = self._aiohttp_sessions.get(loop)
+            if session is None or session.closed:
+                session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(
+                        total=None, connect=_HTTP_TIMEOUT_SECONDS, sock_read=_HTTP_TIMEOUT_SECONDS
+                    )
+                )
+                self._aiohttp_sessions[loop] = session
+            return session
+
     def _http_post(self, url: str, json_data: dict, config: HindsightConfig) -> dict:
-        """Make a synchronous HTTP POST request.
+        """Make a synchronous HTTP POST request (sync hooks only).
 
         Raises:
             HindsightError: If the request fails for any reason.
         """
-        session = self._get_http_session()
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-
         try:
-            if HAS_REQUESTS:
-                response = session.post(url, json=json_data, headers=headers, timeout=30)
-                response.raise_for_status()
-                return response.json()
-            elif HAS_HTTPX:
-                response = session.post(url, json=json_data, headers=headers)
-                response.raise_for_status()
-                return response.json()
-            else:
-                raise HindsightError("No HTTP client available (install requests or httpx)")
-        except HindsightError:
-            raise
+            response = self._get_http_session().post(
+                url, json=json_data, headers=self._headers(config, json_body=True), timeout=_HTTP_TIMEOUT_SECONDS
+            )
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             if config.verbose:
                 logger.error(f"HTTP POST failed: {e}")
             raise HindsightError(f"Hindsight API request failed: {e}") from e
 
     def _http_get(self, url: str, config: HindsightConfig) -> Optional[dict]:
-        """Make a synchronous HTTP GET request.
+        """Make a synchronous HTTP GET request (sync hooks only).
 
         Returns:
             Response JSON dict, or None if 404 (not found).
@@ -195,28 +220,51 @@ class HindsightCallback(CustomLogger):
         Raises:
             HindsightError: If the request fails for reasons other than 404.
         """
-        session = self._get_http_session()
-        headers = {}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-
         try:
-            if HAS_REQUESTS:
-                response = session.get(url, headers=headers, timeout=30)
-                if response.status_code == 404:
+            response = self._get_http_session().get(
+                url, headers=self._headers(config, json_body=False), timeout=_HTTP_TIMEOUT_SECONDS
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if config.verbose:
+                logger.error(f"HTTP GET failed: {e}")
+            raise HindsightError(f"Hindsight API request failed: {e}") from e
+
+    async def _ahttp_post(self, url: str, json_data: dict, config: HindsightConfig) -> dict:
+        """Async HTTP POST on the running loop.
+
+        Raises:
+            HindsightError: If the request fails for any reason.
+        """
+        try:
+            async with self._get_aiohttp_session().post(
+                url, json=json_data, headers=self._headers(config, json_body=True)
+            ) as response:
+                response.raise_for_status()
+                return await response.json(content_type=None)
+        except Exception as e:
+            if config.verbose:
+                logger.error(f"HTTP POST failed: {e}")
+            raise HindsightError(f"Hindsight API request failed: {e}") from e
+
+    async def _ahttp_get(self, url: str, config: HindsightConfig) -> Optional[dict]:
+        """Async HTTP GET on the running loop.
+
+        Returns:
+            Response JSON dict, or None if 404 (not found).
+
+        Raises:
+            HindsightError: If the request fails for reasons other than 404.
+        """
+        try:
+            async with self._get_aiohttp_session().get(url, headers=self._headers(config, json_body=False)) as response:
+                if response.status == 404:
                     return None
                 response.raise_for_status()
-                return response.json()
-            elif HAS_HTTPX:
-                response = session.get(url, headers=headers)
-                if response.status_code == 404:
-                    return None
-                response.raise_for_status()
-                return response.json()
-            else:
-                raise HindsightError("No HTTP client available (install requests or httpx)")
-        except HindsightError:
-            raise
+                return await response.json(content_type=None)
         except Exception as e:
             if config.verbose:
                 logger.error(f"HTTP GET failed: {e}")
@@ -354,24 +402,21 @@ class HindsightCallback(CustomLogger):
 
         return updated_messages
 
-    def _recall_memories_sync(
-        self, query: str, settings: HindsightDefaults, config: HindsightConfig
-    ) -> List[Dict[str, Any]]:
-        """Recall relevant memories from Hindsight (sync) using direct HTTP.
-
-        Raises:
-            HindsightError: If inject_memories=True and recall fails.
-        """
+    @staticmethod
+    def _require_bank_id(settings: HindsightDefaults) -> str:
         bank_id = settings.bank_id
         if not bank_id:
             raise HindsightError(
                 "No bank_id configured. Call set_defaults(bank_id=...) "
                 "or pass hindsight_bank_id=... to the completion call."
             )
+        return bank_id
 
-        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories/recall"
+    def _recall_request(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> _HindsightRequest:
+        """Build the recall call. Raises HindsightError when no bank_id is configured."""
+        bank_id = self._require_bank_id(settings)
 
-        request_data = {
+        request_data: Dict[str, Any] = {
             "query": query,
             "budget": settings.budget or "mid",
             "max_tokens": settings.max_memory_tokens or 4096,
@@ -394,48 +439,54 @@ class HindsightCallback(CustomLogger):
         else:
             request_data["include"] = {"entities": None}
 
-        try:
-            response = self._http_post(url, request_data, config)
-            if response and "results" in response:
-                return response["results"]
-            return []
-        except HindsightError as e:
-            if config.verbose:
-                logger.error(f"Failed to recall memories: {e}")
-            raise HindsightError(f"Memory recall failed: {e}") from e
+        return _HindsightRequest(
+            url=f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories/recall",
+            body=request_data,
+        )
 
-    async def _recall_memories_async(
+    @staticmethod
+    def _recall_results(response: Optional[dict]) -> List[Dict[str, Any]]:
+        if response and "results" in response:
+            return response["results"]
+        return []
+
+    def _recall_memories_sync(
         self, query: str, settings: HindsightDefaults, config: HindsightConfig
-    ) -> List[Any]:
-        """Recall relevant memories from Hindsight (async).
-
-        Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+    ) -> List[Dict[str, Any]]:
+        """Recall relevant memories from Hindsight (sync) using direct HTTP.
 
         Raises:
             HindsightError: If inject_memories=True and recall fails.
         """
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(_executor, lambda: self._recall_memories_sync(query, settings, config))
+        request = self._recall_request(query, settings, config)
+        try:
+            response = self._http_post(request.url, request.body, config)
+        except HindsightError as e:
+            if config.verbose:
+                logger.error(f"Failed to recall memories: {e}")
+            raise HindsightError(f"Memory recall failed: {e}") from e
+        return self._recall_results(response)
 
-        return results if isinstance(results, list) else []
-
-    def _reflect_sync(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> Optional[str]:
-        """Generate a reflection response from Hindsight (sync) using direct HTTP.
-
-        Returns:
-            The reflect response text, or None if no response.
+    async def _recall_memories_async(
+        self, query: str, settings: HindsightDefaults, config: HindsightConfig
+    ) -> List[Dict[str, Any]]:
+        """Recall relevant memories from Hindsight (async, aiohttp on the running loop).
 
         Raises:
-            HindsightError: If inject_memories=True and reflect fails.
+            HindsightError: If inject_memories=True and recall fails.
         """
-        bank_id = settings.bank_id
-        if not bank_id:
-            raise HindsightError(
-                "No bank_id configured. Call set_defaults(bank_id=...) "
-                "or pass hindsight_bank_id=... to the completion call."
-            )
+        request = self._recall_request(query, settings, config)
+        try:
+            response = await self._ahttp_post(request.url, request.body, config)
+        except HindsightError as e:
+            if config.verbose:
+                logger.error(f"Failed to recall memories: {e}")
+            raise HindsightError(f"Memory recall failed: {e}") from e
+        return self._recall_results(response)
 
-        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/reflect"
+    def _reflect_request(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> _HindsightRequest:
+        """Build the reflect call. Raises HindsightError when no bank_id is configured."""
+        bank_id = self._require_bank_id(settings)
 
         request_data: Dict[str, Any] = {
             "query": query,
@@ -460,27 +511,26 @@ class HindsightCallback(CustomLogger):
         if settings.reflect_include_facts:
             request_data["include"] = {"facts": {}}
 
-        try:
-            response = self._http_post(url, request_data, config)
-            if response:
-                # Handle structured output if schema was provided
-                if settings.reflect_response_schema and "structured_output" in response:
-                    # Return structured output as JSON string for injection
-                    import json
+        return _HindsightRequest(
+            url=f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/reflect",
+            body=request_data,
+        )
 
-                    return json.dumps(response["structured_output"], indent=2)
-                # Otherwise return text response
-                return response.get("text", "")
+    @staticmethod
+    def _reflect_text(response: Optional[dict], settings: HindsightDefaults) -> Optional[str]:
+        if not response:
             return None
-        except HindsightError as e:
-            if config.verbose:
-                logger.error(f"Failed to reflect: {e}")
-            raise HindsightError(f"Reflect failed: {e}") from e
+        # Handle structured output if schema was provided
+        if settings.reflect_response_schema and "structured_output" in response:
+            # Return structured output as JSON string for injection
+            import json
 
-    async def _reflect_async(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> Optional[str]:
-        """Generate a reflection response from Hindsight (async).
+            return json.dumps(response["structured_output"], indent=2)
+        # Otherwise return text response
+        return response.get("text", "")
 
-        Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+    def _reflect_sync(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> Optional[str]:
+        """Generate a reflection response from Hindsight (sync) using direct HTTP.
 
         Returns:
             The reflect response text, or None if no response.
@@ -488,19 +538,42 @@ class HindsightCallback(CustomLogger):
         Raises:
             HindsightError: If inject_memories=True and reflect fails.
         """
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(_executor, lambda: self._reflect_sync(query, settings, config))
-        return result
+        request = self._reflect_request(query, settings, config)
+        try:
+            response = self._http_post(request.url, request.body, config)
+        except HindsightError as e:
+            if config.verbose:
+                logger.error(f"Failed to reflect: {e}")
+            raise HindsightError(f"Reflect failed: {e}") from e
+        return self._reflect_text(response, settings)
 
-    def _store_conversation_sync(
+    async def _reflect_async(self, query: str, settings: HindsightDefaults, config: HindsightConfig) -> Optional[str]:
+        """Generate a reflection response from Hindsight (async, aiohttp on the running loop).
+
+        Returns:
+            The reflect response text, or None if no response.
+
+        Raises:
+            HindsightError: If inject_memories=True and reflect fails.
+        """
+        request = self._reflect_request(query, settings, config)
+        try:
+            response = await self._ahttp_post(request.url, request.body, config)
+        except HindsightError as e:
+            if config.verbose:
+                logger.error(f"Failed to reflect: {e}")
+            raise HindsightError(f"Reflect failed: {e}") from e
+        return self._reflect_text(response, settings)
+
+    def _plan_store(
         self,
         messages: List[Dict[str, Any]],
         response: ModelResponse,
         model: str,
         settings: HindsightDefaults,
         config: HindsightConfig,
-    ) -> None:
-        """Store the conversation to Hindsight (sync) using direct HTTP.
+    ) -> Optional[_StorePlan]:
+        """Work out what to store for this LLM call, or None when there is nothing to store.
 
         IMPORTANT: This intentionally sends the FULL conversation history each call,
         not just the new messages. This is required because Hindsight's retain API
@@ -523,20 +596,15 @@ class HindsightCallback(CustomLogger):
         the complete conversation for Hindsight to process.
 
         Raises:
-            HindsightError: If store_conversations=True and store fails.
+            HindsightError: If no bank_id is configured.
         """
-        bank_id = settings.bank_id
-        if not bank_id:
-            raise HindsightError(
-                "No bank_id configured. Call set_defaults(bank_id=...) "
-                "or pass hindsight_bank_id=... to the completion call."
-            )
+        bank_id = self._require_bank_id(settings)
 
         # Streaming responses (CustomStreamWrapper) don't have .choices — skip storage
         if not hasattr(response, "choices"):
             if config.verbose:
                 logger.debug("Skipping storage for streaming response (no .choices attribute)")
-            return
+            return None
 
         # Extract assistant response from the LLM response
         assistant_output = ""
@@ -553,7 +621,7 @@ class HindsightCallback(CustomLogger):
 
         # Skip if no content AND no tool calls - nothing to store
         if not assistant_output and not assistant_tool_calls:
-            return
+            return None
 
         # Build conversation items - each message becomes a separate item
         # All linked by document_id for Hindsight to process together
@@ -611,7 +679,7 @@ class HindsightCallback(CustomLogger):
             items.append(f"ASSISTANT_TOOL_CALLS: {'; '.join(assistant_tool_calls)}")
 
         if not items:
-            return
+            return None
 
         # Use last user message for deduplication hash
         user_input = self._extract_user_query(messages) or ""
@@ -622,28 +690,7 @@ class HindsightCallback(CustomLogger):
         if self._is_duplicate(conv_hash):
             if config.verbose:
                 logger.debug(f"Skipping duplicate conversation: {conv_hash}")
-            return
-
-        # Build the full conversation as a single item for now
-        # (Future: could store each message as separate item in same document)
-        new_conversation_text = "\n\n".join(items)
-
-        # If document_id is set, fetch existing content and append
-        # This ensures the full conversation accumulates in one document
-        conversation_text = new_conversation_text
-        if settings.effective_document_id:
-            try:
-                doc_url = (
-                    f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/documents/{settings.effective_document_id}"
-                )
-                existing_doc = self._http_get(doc_url, config)
-                if existing_doc and existing_doc.get("original_text"):
-                    conversation_text = f"{existing_doc['original_text']}\n\n{new_conversation_text}"
-                    if config.verbose:
-                        logger.debug(f"Appending to existing document: {settings.effective_document_id}")
-            except Exception as e:
-                if config.verbose:
-                    logger.debug(f"No existing document found, creating new: {e}")
+            return None
 
         # Build metadata
         metadata = {
@@ -656,25 +703,75 @@ class HindsightCallback(CustomLogger):
             if hasattr(response.usage, "total_tokens"):
                 metadata["tokens"] = str(response.usage.total_tokens)
 
-        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories"
+        # Build the full conversation as a single item for now
+        # (Future: could store each message as separate item in same document)
+        return _StorePlan(bank_id=bank_id, new_conversation_text="\n\n".join(items), metadata=metadata)
 
-        item_data = {
+    @staticmethod
+    def _document_url(plan: _StorePlan, settings: HindsightDefaults, config: HindsightConfig) -> str:
+        return f"{config.hindsight_api_url}/v1/default/banks/{plan.bank_id}/documents/{settings.effective_document_id}"
+
+    @staticmethod
+    def _store_request(
+        plan: _StorePlan,
+        model: str,
+        settings: HindsightDefaults,
+        config: HindsightConfig,
+        existing_doc: Optional[dict],
+    ) -> _HindsightRequest:
+        """Build the retain call, appending to the existing document's text when there is one."""
+        conversation_text = plan.new_conversation_text
+        if existing_doc and existing_doc.get("original_text"):
+            conversation_text = f"{existing_doc['original_text']}\n\n{plan.new_conversation_text}"
+            if config.verbose:
+                logger.debug(f"Appending to existing document: {settings.effective_document_id}")
+
+        item_data: Dict[str, Any] = {
             "content": conversation_text,
             "context": f"conversation:litellm:{model}",
-            "metadata": metadata,
+            "metadata": plan.metadata,
             "document_id": settings.effective_document_id,  # Group by session/document
         }
         if settings.tags:
             item_data["tags"] = settings.tags
 
-        request_data = {
-            "items": [item_data],
-        }
+        return _HindsightRequest(
+            url=f"{config.hindsight_api_url}/v1/default/banks/{plan.bank_id}/memories",
+            body={"items": [item_data]},
+        )
 
+    def _store_conversation_sync(
+        self,
+        messages: List[Dict[str, Any]],
+        response: ModelResponse,
+        model: str,
+        settings: HindsightDefaults,
+        config: HindsightConfig,
+    ) -> None:
+        """Store the conversation to Hindsight (sync) using direct HTTP. See ``_plan_store``.
+
+        Raises:
+            HindsightError: If store_conversations=True and store fails.
+        """
+        plan = self._plan_store(messages, response, model, settings, config)
+        if plan is None:
+            return
+
+        # If document_id is set, fetch existing content and append
+        # This ensures the full conversation accumulates in one document
+        existing_doc = None
+        if settings.effective_document_id:
+            try:
+                existing_doc = self._http_get(self._document_url(plan, settings, config), config)
+            except Exception as e:
+                if config.verbose:
+                    logger.debug(f"No existing document found, creating new: {e}")
+
+        request = self._store_request(plan, model, settings, config, existing_doc)
         try:
-            self._http_post(url, request_data, config)
+            self._http_post(request.url, request.body, config)
             if config.verbose:
-                logger.info(f"Stored conversation to Hindsight bank: {bank_id}")
+                logger.info(f"Stored conversation to Hindsight bank: {plan.bank_id}")
         except HindsightError as e:
             if config.verbose:
                 logger.error(f"Failed to store conversation: {e}")
@@ -688,18 +785,32 @@ class HindsightCallback(CustomLogger):
         settings: HindsightDefaults,
         config: HindsightConfig,
     ) -> None:
-        """Store the conversation to Hindsight (async).
-
-        Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+        """Store the conversation to Hindsight (async, aiohttp on the running loop). See ``_plan_store``.
 
         Raises:
             HindsightError: If store_conversations=True and store fails.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            _executor,
-            lambda: self._store_conversation_sync(messages, response, model, settings, config),
-        )
+        plan = self._plan_store(messages, response, model, settings, config)
+        if plan is None:
+            return
+
+        existing_doc = None
+        if settings.effective_document_id:
+            try:
+                existing_doc = await self._ahttp_get(self._document_url(plan, settings, config), config)
+            except Exception as e:
+                if config.verbose:
+                    logger.debug(f"No existing document found, creating new: {e}")
+
+        request = self._store_request(plan, model, settings, config, existing_doc)
+        try:
+            await self._ahttp_post(request.url, request.body, config)
+            if config.verbose:
+                logger.info(f"Stored conversation to Hindsight bank: {plan.bank_id}")
+        except HindsightError as e:
+            if config.verbose:
+                logger.error(f"Failed to store conversation: {e}")
+            raise HindsightError(f"Memory storage failed: {e}") from e
 
     # ========== LiteLLM CustomLogger Interface ==========
 
@@ -914,18 +1025,28 @@ class HindsightCallback(CustomLogger):
         pass
 
     def close(self) -> None:
-        """Clean up resources."""
+        """Clean up resources.
+
+        An aiohttp session can only be closed on its own loop (``aclose()`` does
+        that for the running one); here the per-loop sessions are just dropped.
+        """
         with self._http_lock:
             if self._http_session is not None:
                 try:
-                    if HAS_REQUESTS:
-                        self._http_session.close()
-                    elif HAS_HTTPX:
-                        self._http_session.close()
+                    self._http_session.close()
                 except Exception:
                     pass
                 self._http_session = None
+            self._aiohttp_sessions.clear()
         self._recent_hashes.clear()
+
+    async def aclose(self) -> None:
+        """Close the running loop's aiohttp session, then release everything ``close()`` does."""
+        with self._http_lock:
+            session = self._aiohttp_sessions.pop(asyncio.get_running_loop(), None)
+        if session is not None and not session.closed:
+            await session.close()
+        self.close()
 
 
 # Global callback instance

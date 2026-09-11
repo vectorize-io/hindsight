@@ -20,16 +20,17 @@ integration/manual path with a live key.
 import json
 from datetime import datetime, timedelta, timezone
 
-import httpx
 import pytest
+from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.providers.fireworks_llm import FireworksLLM
+from tests.aiohttp_stub import stub_server
 
 
 def _make_fireworks(
     *,
     account_id: str | None = "acct-test",
-    http_client: httpx.AsyncClient | None = None,
     max_wait_seconds: int = 86_400,
     batch_base_url: str = "https://api.fireworks.ai",
     model: str = "accounts/fireworks/models/llama-v3p1-8b-instruct",
@@ -43,7 +44,6 @@ def _make_fireworks(
         account_id=account_id,
         batch_base_url=batch_base_url,
         max_wait_seconds=max_wait_seconds,
-        http_client=http_client,
     )
 
 
@@ -215,7 +215,7 @@ def test_normalize_output_line_surfaces_errors():
 
 
 # --------------------------------------------------------------------------
-# submit_batch: dataset create -> upload -> job create (httpx MockTransport)
+# submit_batch: dataset create -> upload -> job create (stub control plane)
 # --------------------------------------------------------------------------
 
 
@@ -223,35 +223,33 @@ def test_normalize_output_line_surfaces_errors():
 async def test_submit_batch_runs_dataset_upload_job_workflow():
     paths: list[str] = []
     upload_body: list[str] = []
+    upload_content_type: list[str] = []
     job_body: list[dict] = []
     dataset_body: list[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
+    async def handler(request: web.Request) -> web.StreamResponse:
+        path = request.path
         paths.append(f"{request.method} {path}")
         assert request.headers["authorization"] == "Bearer fw-test-key"
 
         if request.method == "POST" and path.endswith("/datasets"):
-            body = json.loads(request.content)
+            body = await request.json()
             dataset_body.append(body)
-            return httpx.Response(200, json={"name": f"accounts/acct-test/datasets/{body['datasetId']}"})
+            return web.json_response({"name": f"accounts/acct-test/datasets/{body['datasetId']}"})
         if request.method == "POST" and path.endswith(":upload"):
-            upload_body.append(request.content.decode("utf-8", errors="replace"))
-            return httpx.Response(200, json={})
+            upload_content_type.append(request.content_type)
+            upload_body.append((await request.read()).decode("utf-8", errors="replace"))
+            return web.json_response({})
         if request.method == "POST" and path.endswith("/batchInferenceJobs"):
-            job_body.append(json.loads(request.content))
-            return httpx.Response(
-                200,
-                json={
+            job_body.append(await request.json())
+            return web.json_response(
+                {
                     "name": "accounts/acct-test/batchInferenceJobs/job-xyz",
                     "state": "JOB_STATE_CREATING",
                     "createTime": "2026-05-28T00:00:00Z",
-                },
+                }
             )
         raise AssertionError(f"unexpected request: {request.method} {path}")
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client)
 
     requests = [
         {
@@ -261,7 +259,10 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
             "body": {"model": "m", "messages": []},
         },
     ]
-    result = await llm.submit_batch(requests)
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url)
+        result = await llm.submit_batch(requests)
+        await llm.cleanup()
 
     # batch_id is the Fireworks jobId, used as the polling handle.
     assert result["batch_id"]
@@ -274,6 +275,8 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
     assert ":upload" in paths[1]
     assert paths[2].endswith("/batchInferenceJobs")
 
+    # The input file is a multipart upload.
+    assert upload_content_type[0] == "multipart/form-data"
     # Uploaded JSONL is Fireworks-shaped (no method/url leaked through).
     assert "custom_id" in upload_body[0]
     assert '"method"' not in upload_body[0]
@@ -286,8 +289,6 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
     # datasets without example_count; it's the JSONL line count, as a string).
     assert dataset_body[0]["dataset"]["format"] == "CHAT"
     assert dataset_body[0]["dataset"]["exampleCount"] == str(len(requests))
-
-    await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -302,16 +303,17 @@ async def test_api_errors_surface_the_response_body():
     """A 4xx must include Fireworks' error body in the raised error — otherwise a
     malformed dataset/job request is undebuggable (raise_for_status drops it)."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"error": "invalid field 'userUploaded' in dataset"})
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response({"error": "invalid field 'userUploaded' in dataset"}, status=400)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client)
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url)
+        with pytest.raises(UpstreamHTTPError, match="Fireworks API 400 for POST .*invalid field 'userUploaded'") as exc:
+            await llm.submit_batch([{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}])
+        await llm.cleanup()
 
-    with pytest.raises(httpx.HTTPStatusError, match="invalid field 'userUploaded'"):
-        await llm.submit_batch([{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}])
-
-    await client.aclose()
+    # status_code is what remote_retry classifies on.
+    assert exc.value.status_code == 400
 
 
 # --------------------------------------------------------------------------
@@ -321,12 +323,11 @@ async def test_api_errors_surface_the_response_body():
 
 @pytest.mark.asyncio
 async def test_get_batch_status_maps_state_and_counts():
-    def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: web.Request) -> web.StreamResponse:
         assert request.method == "GET"
-        assert request.url.path == "/v1/accounts/acct-test/batchInferenceJobs/job-xyz"
-        return httpx.Response(
-            200,
-            json={
+        assert request.path == "/v1/accounts/acct-test/batchInferenceJobs/job-xyz"
+        return web.json_response(
+            {
                 "name": "accounts/acct-test/batchInferenceJobs/job-xyz",
                 "state": "JOB_STATE_COMPLETED",
                 "createTime": "2026-05-28T00:00:00Z",
@@ -336,21 +337,19 @@ async def test_get_batch_status_maps_state_and_counts():
                     "successfullyProcessedRequests": "2",
                     "failedRequests": "0",
                 },
-            },
+            }
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client)
-
-    status = await llm.get_batch_status("job-xyz")
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url)
+        status = await llm.get_batch_status("job-xyz")
+        await llm.cleanup()
 
     assert status["batch_id"] == "job-xyz"
     assert status["status"] == "completed"
     assert status["request_counts"]["total"] == 2
     assert status["request_counts"]["completed"] == 2
     assert status["request_counts"]["failed"] == 0
-
-    await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -360,27 +359,24 @@ async def test_get_batch_status_times_out_when_stuck_pending():
     provider must surface a terminal status once createTime is too old."""
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response(
+            {
                 "name": "accounts/acct-test/batchInferenceJobs/job-stuck",
                 "state": "JOB_STATE_PENDING",
                 "createTime": stale,
                 "jobProgress": {"totalInputRequests": "1"},
-            },
+            }
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client, max_wait_seconds=60)
-
-    status = await llm.get_batch_status("job-stuck")
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url, max_wait_seconds=60)
+        status = await llm.get_batch_status("job-stuck")
+        await llm.cleanup()
 
     # Driver treats expired/failed/cancelled as fatal and raises — no infinite poll.
     assert status["status"] in ("expired", "failed")
     assert status.get("errors")
-
-    await client.aclose()
 
 
 # --------------------------------------------------------------------------
@@ -390,9 +386,6 @@ async def test_get_batch_status_times_out_when_stuck_pending():
 
 @pytest.mark.asyncio
 async def test_retrieve_batch_results_normalizes_and_merges_error_file():
-    results_url = "https://signed.example/results.jsonl"
-    errors_url = "https://signed.example/errors.jsonl"
-
     results_jsonl = json.dumps(
         {
             "custom_id": "chunk_0",
@@ -404,33 +397,40 @@ async def test_retrieve_batch_results_normalizes_and_merges_error_file():
         }
     )
     errors_jsonl = json.dumps({"custom_id": "chunk_1", "response": None, "error": {"code": "oops", "message": "bad"}})
+    # A pre-signed query string: percent-escapes must reach the server untouched.
+    signature = "X-Goog-Signature=ab%2Fcd%3D%3D"
+    download_auth: list[str | None] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
+    async def handler(request: web.Request) -> web.StreamResponse:
+        path = request.path
         if path.endswith("/batchInferenceJobs/job-done"):
-            return httpx.Response(
-                200,
-                json={
+            return web.json_response(
+                {
                     "state": "JOB_STATE_COMPLETED",
                     "createTime": "2026-05-28T00:00:00Z",
                     "outputDatasetId": "accounts/acct-test/datasets/out-1",
-                },
+                }
             )
         if path.endswith(":getDownloadEndpoint"):
-            return httpx.Response(
-                200,
-                json={"filenameToSignedUrls": {"results.jsonl": results_url, "errors.jsonl": errors_url}},
+            base = f"{request.scheme}://{request.host}"
+            return web.json_response(
+                {
+                    "filenameToSignedUrls": {
+                        "results.jsonl": f"{base}/signed/results.jsonl?{signature}",
+                        "errors.jsonl": f"{base}/signed/errors.jsonl?{signature}",
+                    }
+                }
             )
-        if str(request.url) == results_url:
-            return httpx.Response(200, text=results_jsonl)
-        if str(request.url) == errors_url:
-            return httpx.Response(200, text=errors_jsonl)
+        if path.startswith("/signed/"):
+            assert request.raw_path.partition("?")[2] == signature
+            download_auth.append(request.headers.get("Authorization"))
+            return web.Response(text=results_jsonl if path.endswith("results.jsonl") else errors_jsonl)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client)
-
-    results = await llm.retrieve_batch_results("job-done")
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url)
+        results = await llm.retrieve_batch_results("job-done")
+        await llm.cleanup()
     by_id = {r["custom_id"]: r for r in results}
 
     assert set(by_id) == {"chunk_0", "chunk_1"}
@@ -439,22 +439,20 @@ async def test_retrieve_batch_results_normalizes_and_merges_error_file():
     assert not by_id["chunk_0"].get("error")
     # Error-file line merged in as a per-custom_id error (not dropped).
     assert by_id["chunk_1"]["error"] == {"code": "oops", "message": "bad"}
-
-    await client.aclose()
+    # Signed URLs are pre-authenticated: the bearer token is not sent to them.
+    assert download_auth == [None, None]
 
 
 @pytest.mark.asyncio
 async def test_retrieve_batch_results_raises_when_not_completed():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"state": "JOB_STATE_RUNNING", "createTime": "2026-05-28T00:00:00Z"})
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response({"state": "JOB_STATE_RUNNING", "createTime": "2026-05-28T00:00:00Z"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    llm = _make_fireworks(http_client=client)
-
-    with pytest.raises(ValueError, match="not completed"):
-        await llm.retrieve_batch_results("job-running")
-
-    await client.aclose()
+    async with stub_server(handler) as base_url:
+        llm = _make_fireworks(batch_base_url=base_url)
+        with pytest.raises(ValueError, match="not completed"):
+            await llm.retrieve_batch_results("job-running")
+        await llm.cleanup()
 
 
 # --------------------------------------------------------------------------

@@ -8,16 +8,15 @@ provider validation, and the proactive/reactive token-refresh plumbing on
 
 from __future__ import annotations
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from openai import APIStatusError
 
 from hindsight_api.engine.llm_wrapper import requires_api_key
 from hindsight_api.engine.providers.nous_auth import NousAuthManager
 from hindsight_api.engine.providers.nous_llm import NousLLM
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 
 class _FakeAuth:
@@ -33,12 +32,12 @@ class _FakeAuth:
     def _token_is_stale(self) -> bool:
         return self.stale
 
-    def refresh_tokens(self, reason: str = "", *, force: bool = False) -> None:
+    async def refresh_tokens(self, reason: str = "", *, force: bool = False) -> None:
         self.refresh_calls.append((reason, force))
         self.access_token = self.next_token
         self.stale = False
 
-    def close(self) -> None:  # pragma: no cover - trivial
+    async def close(self) -> None:  # pragma: no cover - trivial
         pass
 
 
@@ -110,11 +109,7 @@ async def test_call_refreshes_once_on_401_then_retries() -> None:
     async def fake_super_call(*args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise APIStatusError(
-                "unauthorized",
-                response=httpx.Response(401, request=httpx.Request("POST", "http://x")),
-                body=None,
-            )
+            raise APIStatusError("unauthorized", response=MagicMock(status_code=401, headers={}), body=None)
         return LLMCallResult(content="ok", usage=TokenUsage())
 
     with patch.object(NousLLM.__bases__[0], "call", side_effect=fake_super_call, autospec=False):

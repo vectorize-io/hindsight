@@ -1,8 +1,8 @@
 """Regression tests for Codex request identity headers."""
 
+from collections.abc import Mapping
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from hindsight_api.engine.providers.codex_llm import CodexLLM
@@ -22,7 +22,7 @@ def build_llm() -> CodexLLM:
         )
 
 
-def assert_codex_request_identity(headers: httpx.Headers) -> None:
+def assert_codex_request_identity(headers: Mapping[str, str]) -> None:
     assert headers["originator"] == "codex_cli_rs"
     assert headers["User-Agent"] == "codex_cli_rs/0.0.0 (Hindsight)"
 

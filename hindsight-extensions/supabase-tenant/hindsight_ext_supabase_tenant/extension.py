@@ -51,16 +51,16 @@ License: MIT
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 
-import httpx
+import aiohttp
 import jwt as pyjwt
-from jwt import PyJWK
-
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
+from jwt import PyJWK
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +129,11 @@ class SupabaseTenantExtension(TenantExtension):
         # Track initialized schemas to avoid redundant migrations
         self._initialized_schemas: set[str] = set()
 
-        # Reusable HTTP client (created on startup)
-        self._http_client: httpx.AsyncClient | None = None
+        # Reusable HTTP session, created in on_startup. Startup, shutdown and every
+        # authenticate() run on the server's event loop, which the session binds to.
+        # A plain aiohttp session rather than hindsight_api's LoopLocalSession: this
+        # extension installs into already-released server images that predate it.
+        self._http: aiohttp.ClientSession | None = None
 
         # JWKS state
         self._jwks_keys: dict[str, PyJWK] = {}
@@ -164,7 +167,12 @@ class SupabaseTenantExtension(TenantExtension):
         logger.info("Supabase URL: %s", self.supabase_url)
         logger.info("Schema prefix: %s_", self.schema_prefix)
 
-        self._http_client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
+        # Per phase (connect, each socket read), like the httpx timeout this replaced.
+        self._http = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=None, connect=REQUEST_TIMEOUT_SECONDS, sock_read=REQUEST_TIMEOUT_SECONDS
+            )
+        )
 
         # Attempt to fetch JWKS for fast local JWT verification
         await self._try_init_jwks()
@@ -176,9 +184,9 @@ class SupabaseTenantExtension(TenantExtension):
     async def on_shutdown(self) -> None:
         """Called when Hindsight shuts down. Closes the HTTP client."""
         logger.info("Shutting down Supabase tenant extension")
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
+        if self._http is not None:
+            await self._http.close()
+            self._http = None
 
     # ------------------------------------------------------------------
     # JWKS management
@@ -220,14 +228,13 @@ class SupabaseTenantExtension(TenantExtension):
 
     async def _fetch_jwks(self) -> None:
         """Fetch public signing keys from the Supabase JWKS endpoint."""
-        if self._http_client is None:
+        if self._http is None:
             raise RuntimeError("HTTP client not initialized")
 
         url = f"{self.supabase_url}/auth/v1/.well-known/jwks.json"
-        response = await self._http_client.get(url)
-        response.raise_for_status()
-
-        jwks_data = response.json()
+        async with self._http.get(url) as response:
+            response.raise_for_status()
+            jwks_data = await response.json(content_type=None)
         keys: dict[str, PyJWK] = {}
         for key_data in jwks_data.get("keys", []):
             kid = key_data.get("kid")
@@ -297,7 +304,7 @@ class SupabaseTenantExtension(TenantExtension):
         if len(token) < MIN_TOKEN_LENGTH:
             raise AuthenticationError("Invalid token format")
 
-        if self._http_client is None:
+        if self._http is None:
             raise AuthenticationError("Extension not initialized")
 
         # Verify the JWT and extract user ID
@@ -367,22 +374,23 @@ class SupabaseTenantExtension(TenantExtension):
         Raises:
             AuthenticationError: If the token is invalid or the request fails.
         """
+        assert self._http is not None  # authenticate() checks this before dispatching here
         try:
-            response = await self._http_client.get(
+            async with self._http.get(
                 f"{self.supabase_url}/auth/v1/user",
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "apikey": self.supabase_service_key,
+                    "apikey": self.supabase_service_key or "",
                 },
-            )
+            ) as response:
+                if response.status == 401:
+                    raise AuthenticationError("Invalid or expired token")
 
-            if response.status_code == 401:
-                raise AuthenticationError("Invalid or expired token")
+                if response.status != 200:
+                    raise AuthenticationError(f"Authentication failed: {response.status}")
 
-            if response.status_code != 200:
-                raise AuthenticationError(f"Authentication failed: {response.status_code}")
+                user_data = await response.json(content_type=None)
 
-            user_data = response.json()
             user_id = user_data.get("id")
 
             if not user_id:
@@ -392,9 +400,10 @@ class SupabaseTenantExtension(TenantExtension):
 
         except AuthenticationError:
             raise
-        except httpx.TimeoutException:
+        # TimeoutError first: aiohttp's read timeout is also a ClientError.
+        except asyncio.TimeoutError:
             raise AuthenticationError("Authentication timeout - please retry")
-        except httpx.RequestError as e:
+        except aiohttp.ClientError as e:
             raise AuthenticationError(f"Connection error: {e!s}")
 
     # ------------------------------------------------------------------
@@ -422,14 +431,16 @@ class SupabaseTenantExtension(TenantExtension):
 
     async def _health_check(self) -> None:
         """Verify connectivity to Supabase using the auth health endpoint."""
+        if self._http is None:
+            return
         try:
-            response = await self._http_client.get(
+            async with self._http.get(
                 f"{self.supabase_url}/auth/v1/health",
-                headers={"apikey": self.supabase_service_key},
-            )
-            if response.status_code == 200:
-                logger.info("Supabase connection verified")
-            else:
-                logger.warning("Supabase health check returned %d", response.status_code)
+                headers={"apikey": self.supabase_service_key or ""},
+            ) as response:
+                if response.status == 200:
+                    logger.info("Supabase connection verified")
+                else:
+                    logger.warning("Supabase health check returned %d", response.status)
         except Exception as e:
             logger.warning("Could not verify Supabase connection: %s", e)

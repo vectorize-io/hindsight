@@ -46,9 +46,13 @@ def embed_observations(
         return np.zeros((0, 0), dtype=np.float32)
 
     embeddings = LocalSTEmbeddings(model_name=model_name, force_cpu=force_cpu)
-    asyncio.run(embeddings.initialize())
-    # encode_documents matches how Hindsight embeds stored facts (no query prefix).
-    vectors = embeddings.encode_documents([obs.text for obs in observations])
+
+    async def embed() -> list[list[float]]:
+        await embeddings.initialize()
+        # encode_documents matches how Hindsight embeds stored facts (no query prefix).
+        return await embeddings.encode_documents([obs.text for obs in observations])
+
+    vectors = asyncio.run(embed())
     matrix = np.asarray(vectors, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0.0] = 1.0

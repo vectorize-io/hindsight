@@ -31,10 +31,11 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, urlunparse
 
-import httpx
+import aiohttp
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
 from hindsight_api.config import get_config
+from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cache_affinity import (
     CacheAffinityMode,
@@ -52,7 +53,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import build_aiohttp_timeout, build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
@@ -857,6 +858,21 @@ class OpenAICompatibleLLM(LLMInterface):
             client_kwargs["timeout"] = build_sdk_timeout(self.timeout)
 
         self._client = AsyncOpenAI(**client_kwargs)
+        # Ollama's native /api/chat is not reachable through the SDK, so that path
+        # talks HTTP itself (see _call_ollama_native). Lazily created per loop.
+        #
+        # It honours the configured timeout like every other path does. A literal
+        # 300.0 used to sit there and silently capped ENV_LLM_TIMEOUT: on a CPU
+        # ollama host a single fact-extraction prompt can need longer than 300 s
+        # just to be ingested, and the call was aborted mid-prompt with a bare
+        # "Ollama connection error" that no configuration could fix.
+        #
+        # NOTE the other direction too: `self.timeout` is always set (see above —
+        # ENV_LLM_TIMEOUT or DEFAULT_LLM_TIMEOUT, currently 120 s), so for a
+        # deployment that never set ENV_LLM_TIMEOUT this LOWERS the native timeout
+        # from the old 300 s literal to 120 s. That is the point — one knob,
+        # honoured everywhere — and such a deployment must raise ENV_LLM_TIMEOUT.
+        self._ollama_http = LoopLocalSession(timeout=build_aiohttp_timeout(self.timeout))
         logger.info(
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}, "
@@ -1801,210 +1817,198 @@ class OpenAICompatibleLLM(LLMInterface):
         if self.api_key and self.api_key != "local":
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # The native path must honour the configured timeout like every other
-        # path does. The literal 300.0 that used to be here silently capped
-        # ENV_LLM_TIMEOUT: on a CPU ollama host a single fact-extraction prompt
-        # can need longer than 300 s just to be ingested, and the call was
-        # aborted mid-prompt with a bare "Ollama connection error" that no
-        # configuration could fix.
-        #
-        # NOTE the other direction too: `self.timeout` is always set (see
-        # __init__ — ENV_LLM_TIMEOUT or DEFAULT_LLM_TIMEOUT, currently 120 s),
-        # so for a deployment that never set ENV_LLM_TIMEOUT this LOWERS the
-        # native timeout from the old 300 s literal to 120 s. That is the point
-        # — one knob, honoured everywhere — but it is a behaviour change, not
-        # a pure bug fix, and such a deployment must raise ENV_LLM_TIMEOUT.
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(max_retries + 1):
-                try:
-                    async with attempt_context() if attempt_context is not None else nullcontext():
-                        set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                        response = await client.post(native_url, json=payload, headers=headers)
-                    response.raise_for_status()
+        session = self._ollama_http.get()
+        for attempt in range(max_retries + 1):
+            try:
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    async with session.post(native_url, json=payload, headers=headers) as response:
+                        await raise_for_status(response)
+                        body_text = await response.text()
 
-                    result = response.json()
-                    # Stash usage before the guards below, which can raise on a
-                    # capped response. Ollama charges for those tokens and the
-                    # capped calls are the expensive ones, so raising first would
-                    # drop exactly the calls worth accounting for.
-                    stash_response_usage(
-                        LLMResponseUsage(
-                            input_tokens=result.get("prompt_eval_count", 0) or 0,
-                            output_tokens=result.get("eval_count", 0) or 0,
-                        )
+                result = json.loads(body_text)
+                # Stash usage before the guards below, which can raise on a
+                # capped response. Ollama charges for those tokens and the
+                # capped calls are the expensive ones, so raising first would
+                # drop exactly the calls worth accounting for.
+                stash_response_usage(
+                    LLMResponseUsage(
+                        input_tokens=result.get("prompt_eval_count", 0) or 0,
+                        output_tokens=result.get("eval_count", 0) or 0,
                     )
-                    content = result.get("message", {}).get("content", "")
+                )
+                content = result.get("message", {}).get("content", "")
 
-                    # Same case as the OpenAI-compatible path, different key: Ollama
-                    # reports a token cap as done_reason "length". Raised ahead of the
-                    # free-form/structured split, and ahead of reading the content, for
-                    # the two reasons _content_or_error gives:
-                    #
-                    #   - a cap that lands on a closing brace still parses and still
-                    #     validates, so the structured path would return a short answer
-                    #     as a complete one;
-                    #   - a cap reached before the first visible token leaves content
-                    #     empty, and the free-form branch below reads that as a
-                    #     *retryable* ProviderResponseError, which re-sends the same
-                    #     request against the same limit (#3811).
-                    #
-                    # Free-form calls raise too, matching the sibling path since #3827:
-                    # a truncated reflect synthesis or mental-model page fails rather
-                    # than being returned as if it were complete.
-                    if result.get("done_reason") == "length":
-                        raise OutputTooLongError(
-                            f"LLM output exceeded token limits (ollama/{self.model}, scope={scope}). "
-                            "Input may need to be split into smaller chunks."
+                # Same case as the OpenAI-compatible path, different key: Ollama
+                # reports a token cap as done_reason "length". Raised ahead of the
+                # free-form/structured split, and ahead of reading the content, for
+                # the two reasons _content_or_error gives:
+                #
+                #   - a cap that lands on a closing brace still parses and still
+                #     validates, so the structured path would return a short answer
+                #     as a complete one;
+                #   - a cap reached before the first visible token leaves content
+                #     empty, and the free-form branch below reads that as a
+                #     *retryable* ProviderResponseError, which re-sends the same
+                #     request against the same limit (#3811).
+                #
+                # Free-form calls raise too, matching the sibling path since #3827:
+                # a truncated reflect synthesis or mental-model page fails rather
+                # than being returned as if it were complete.
+                if result.get("done_reason") == "length":
+                    raise OutputTooLongError(
+                        f"LLM output exceeded token limits (ollama/{self.model}, scope={scope}). "
+                        "Input may need to be split into smaller chunks."
+                    )
+
+                if response_format is None:
+                    # Free-form output: no schema, nothing to parse. Reasoning
+                    # models still wrap their chain-of-thought in <think> tags
+                    # in the message body, so strip them exactly like the
+                    # OpenAI-compatible path does.
+                    text = _strip_reasoning_tags(content)
+                    if not text:
+                        raise ProviderResponseError(
+                            f"Provider returned empty message content (ollama/{self.model}, "
+                            f"scope={scope}, done_reason={result.get('done_reason')})",
+                            retryable=True,
                         )
-
-                    if response_format is None:
-                        # Free-form output: no schema, nothing to parse. Reasoning
-                        # models still wrap their chain-of-thought in <think> tags
-                        # in the message body, so strip them exactly like the
-                        # OpenAI-compatible path does.
-                        text = _strip_reasoning_tags(content)
-                        if not text:
-                            raise ProviderResponseError(
-                                f"Provider returned empty message content (ollama/{self.model}, "
-                                f"scope={scope}, done_reason={result.get('done_reason')})",
-                                retryable=True,
-                            )
-                    else:
-                        # Strip markdown code fences if present (safety net —
-                        # Ollama with schema enforcement usually returns bare JSON,
-                        # but some models may still wrap in fences)
-                        clean_content = _strip_code_fences(content)
+                else:
+                    # Strip markdown code fences if present (safety net —
+                    # Ollama with schema enforcement usually returns bare JSON,
+                    # but some models may still wrap in fences)
+                    clean_content = _strip_code_fences(content)
+                    try:
+                        json_data = json.loads(clean_content)
+                    except json.JSONDecodeError:
+                        # Fallback to raw content
                         try:
-                            json_data = json.loads(clean_content)
-                        except json.JSONDecodeError:
-                            # Fallback to raw content
-                            try:
-                                json_data = json.loads(content)
-                            except json.JSONDecodeError as json_err:
-                                content_preview = content[:500] if content else "<empty>"
-                                if content and len(content) > 700:
-                                    content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
-                                logger.warning(
-                                    f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
-                                    f"  Model: ollama/{self.model}\n"
-                                    f"  Content length: {len(content) if content else 0} chars\n"
-                                    f"  Content preview: {content_preview!r}"
+                            json_data = json.loads(content)
+                        except json.JSONDecodeError as json_err:
+                            content_preview = content[:500] if content else "<empty>"
+                            if content and len(content) > 700:
+                                content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
+                            logger.warning(
+                                f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
+                                f"  Model: ollama/{self.model}\n"
+                                f"  Content length: {len(content) if content else 0} chars\n"
+                                f"  Content preview: {content_preview!r}"
+                            )
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                await asyncio.sleep(backoff)
+                                last_exception = json_err
+                                continue
+                            # Same last-resort repair as the
+                            # OpenAI-compatible path above, gated the same
+                            # way: only a generation that reported reaching
+                            # its own end gets structurally repaired.
+                            if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
+                                logger.error(
+                                    f"Ollama JSON parse error after {attempt + 1} attempts and no "
+                                    f"completion signal (done_reason={result.get('done_reason')!r}); "
+                                    "not repairing, the body may be truncated"
                                 )
-                                if attempt < max_retries:
-                                    backoff = min(initial_backoff * (2**attempt), max_backoff)
-                                    await asyncio.sleep(backoff)
-                                    last_exception = json_err
-                                    continue
-                                # Same last-resort repair as the
-                                # OpenAI-compatible path above, gated the same
-                                # way: only a generation that reported reaching
-                                # its own end gets structurally repaired.
-                                if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
-                                    logger.error(
-                                        f"Ollama JSON parse error after {attempt + 1} attempts and no "
-                                        f"completion signal (done_reason={result.get('done_reason')!r}); "
-                                        "not repairing, the body may be truncated"
-                                    )
-                                    raise
-                                try:
-                                    json_data = parse_llm_json(content)
-                                except json.JSONDecodeError:
-                                    logger.error(f"Ollama JSON parse error after {attempt + 1} attempts, giving up")
-                                    raise
+                                raise
+                            try:
+                                json_data = parse_llm_json(content)
+                            except json.JSONDecodeError:
+                                logger.error(f"Ollama JSON parse error after {attempt + 1} attempts, giving up")
+                                raise
 
-                    # Extract token usage from Ollama response
-                    duration = time.time() - start_time
-                    input_tokens = result.get("prompt_eval_count", 0) or 0
-                    output_tokens = result.get("eval_count", 0) or 0
-                    total_tokens = input_tokens + output_tokens
+                # Extract token usage from Ollama response
+                duration = time.time() - start_time
+                input_tokens = result.get("prompt_eval_count", 0) or 0
+                output_tokens = result.get("eval_count", 0) or 0
+                total_tokens = input_tokens + output_tokens
 
-                    # Record LLM metrics
-                    metrics = get_metrics_collector()
-                    metrics.record_llm_call(
-                        provider=self.provider,
-                        model=self.model,
-                        scope=scope,
-                        duration=duration,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        success=True,
-                    )
+                # Record LLM metrics
+                metrics = get_metrics_collector()
+                metrics.record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    duration=duration,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    success=True,
+                )
 
-                    # Return text as-is, or validate against the Pydantic model
-                    if response_format is None:
-                        validated_result = text
-                    elif skip_validation:
-                        validated_result = json_data
-                    else:
-                        validated_result = response_format.model_validate(json_data)
+                # Return text as-is, or validate against the Pydantic model
+                if response_format is None:
+                    validated_result = text
+                elif skip_validation:
+                    validated_result = json_data
+                else:
+                    validated_result = response_format.model_validate(json_data)
 
-                    # Record trace span. The native path carries every Ollama
-                    # structured call and, once num_ctx is set, the free-form ones
-                    # too, so without this those calls are missing from traces.
-                    from hindsight_api.tracing import _serialize_for_span, get_span_recorder
+                # Record trace span. The native path carries every Ollama
+                # structured call and, once num_ctx is set, the free-form ones
+                # too, so without this those calls are missing from traces.
+                from hindsight_api.tracing import _serialize_for_span, get_span_recorder
 
-                    get_span_recorder().record_llm_call(
-                        provider=self.provider,
-                        model=self.model,
-                        scope=scope,
-                        messages=payload["messages"],
-                        response_content=_serialize_for_span(validated_result),
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        duration=duration,
-                        finish_reason=result.get("done_reason"),
-                        error=None,
-                    )
+                get_span_recorder().record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    messages=payload["messages"],
+                    response_content=_serialize_for_span(validated_result),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    duration=duration,
+                    finish_reason=result.get("done_reason"),
+                    error=None,
+                )
 
-                    token_usage = TokenUsage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    return LLMCallResult(content=validated_result, usage=token_usage)
+                token_usage = TokenUsage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                )
+                return LLMCallResult(content=validated_result, usage=token_usage)
 
-                except ProviderResponseError as e:
-                    last_exception = e
-                    if e.retryable and attempt < max_retries:
-                        logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        await asyncio.sleep(backoff)
-                        continue
-                    logger.error(f"Ollama response error after {attempt + 1} attempts: {e}")
+            except ProviderResponseError as e:
+                last_exception = e
+                if e.retryable and attempt < max_retries:
+                    logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.error(f"Ollama response error after {attempt + 1} attempts: {e}")
+                raise
+
+            except UpstreamHTTPError as e:
+                last_exception = e
+                if attempt < max_retries:
+                    logger.warning(f"Ollama HTTP error (attempt {attempt + 1}/{max_retries + 1}): {e.status_code}")
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    logger.error(f"Ollama HTTP error after {max_retries + 1} attempts: {e}")
                     raise
 
-                except httpx.HTTPStatusError as e:
-                    last_exception = e
-                    if attempt < max_retries:
-                        logger.warning(
-                            f"Ollama HTTP error (attempt {attempt + 1}/{max_retries + 1}): {e.response.status_code}"
-                        )
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        await asyncio.sleep(backoff)
-                        continue
-                    else:
-                        logger.error(f"Ollama HTTP error after {max_retries + 1} attempts: {e}")
-                        raise
-
-                except httpx.RequestError as e:
-                    last_exception = e
-                    if attempt < max_retries:
-                        logger.warning(f"Ollama connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        await asyncio.sleep(backoff)
-                        continue
-                    else:
-                        logger.error(f"Ollama connection error after {max_retries + 1} attempts: {e}")
-                        raise
-
-                except OutputTooLongError:
-                    # Expected and handled upstream by splitting the input, so it
-                    # does not belong in the unexpected-error log below.
+            # Connection failures and per-phase timeouts (aiohttp raises the latter as
+            # asyncio.TimeoutError subclasses, not as ClientError).
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_exception = e
+                if attempt < max_retries:
+                    logger.warning(f"Ollama connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    logger.error(f"Ollama connection error after {max_retries + 1} attempts: {e}")
                     raise
 
-                except Exception as e:
-                    logger.error(f"Unexpected error during Ollama call: {type(e).__name__}: {e}")
-                    raise
+            except OutputTooLongError:
+                # Expected and handled upstream by splitting the input, so it
+                # does not belong in the unexpected-error log below.
+                raise
+
+            except Exception as e:
+                logger.error(f"Unexpected error during Ollama call: {type(e).__name__}: {e}")
+                raise
 
         if last_exception:
             raise last_exception
@@ -2160,6 +2164,8 @@ class OpenAICompatibleLLM(LLMInterface):
         """Clean up resources (close OpenAI client connections)."""
         if hasattr(self, "_client") and self._client:
             await self._client.close()
+        if hasattr(self, "_ollama_http"):
+            await self._ollama_http.close()
 
     def supports_attempt_scoped_concurrency(self) -> bool:
         return True

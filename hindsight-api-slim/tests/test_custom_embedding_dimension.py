@@ -21,7 +21,7 @@ from hindsight_api.engine.cross_encoder import (
     SiliconFlowCrossEncoder,
     ZeroEntropyCrossEncoder,
 )
-from hindsight_api.engine.embeddings import CohereEmbeddings, LocalSTEmbeddings, OpenAIEmbeddings
+from hindsight_api.engine.embeddings import CohereEmbeddings, OpenAIEmbeddings
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.extensions import TenantContext, TenantExtension
@@ -349,20 +349,16 @@ class TestEmbeddingDimension:
         # Cleanup
         clear_mental_model_embeddings(db_url, schema)
 
-    def test_local_embeddings_dimension_detection(self, embeddings):
+    async def test_local_embeddings_dimension_detection(self, embeddings):
         """Test that LocalSTEmbeddings correctly detects dimension."""
         # Initialize embeddings if not already done
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(embeddings.initialize())
-        finally:
-            loop.close()
+        await embeddings.initialize()
 
         # bge-small-en-v1.5 produces 384-dim embeddings
         assert embeddings.dimension == 384
 
         # Verify by generating an actual embedding
-        result = embeddings.encode(["test"])
+        result = await embeddings.encode(["test"])
         assert len(result) == 1
         assert len(result[0]) == 384
 
@@ -441,10 +437,10 @@ class TestOpenAIEmbeddings:
         assert openai_embeddings.dimension == 1536
         assert openai_embeddings.provider_name == "openai"
 
-    def test_openai_embeddings_encode(self, openai_embeddings):
+    async def test_openai_embeddings_encode(self, openai_embeddings):
         """Test that OpenAI embeddings can encode text."""
         texts = ["Hello, world!", "This is a test."]
-        embeddings = openai_embeddings.encode(texts)
+        embeddings = await openai_embeddings.encode(texts)
 
         assert len(embeddings) == 2
         assert len(embeddings[0]) == 1536
@@ -652,10 +648,10 @@ class TestCohereEmbeddings:
         assert cohere_embeddings.dimension == 1024
         assert cohere_embeddings.provider_name == "cohere"
 
-    def test_cohere_embeddings_encode(self, cohere_embeddings):
+    async def test_cohere_embeddings_encode(self, cohere_embeddings):
         """Test that Cohere embeddings can encode text."""
         texts = ["Hello, world!", "This is a test."]
-        embeddings = cohere_embeddings.encode(texts)
+        embeddings = await cohere_embeddings.encode(texts)
 
         assert len(embeddings) == 2
         assert len(embeddings[0]) == 1024

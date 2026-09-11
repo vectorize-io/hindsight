@@ -22,13 +22,18 @@ from __future__ import annotations
 
 import logging
 
-import httpx
+import aiohttp
+
+# Only to configure the third-party SDKs built on httpx (openai, anthropic); our own
+# HTTP calls go through aiohttp.
+import httpx  # noqa: TID251
 
 from ..config import (
     DEFAULT_LLM_HTTP_LOG_LEVEL,
     ENV_LLM_HTTP_LOG_LEVEL,
     get_config,
 )
+from .aiohttp_session import per_phase_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,14 @@ def build_sdk_timeout(total: float) -> httpx.Timeout:
     if connect_cap <= 0:
         return httpx.Timeout(total)
     return httpx.Timeout(total, connect=min(connect_cap, total))
+
+
+def build_aiohttp_timeout(total: float) -> aiohttp.ClientTimeout:
+    """:func:`build_sdk_timeout` for the providers that talk HTTP through aiohttp directly."""
+    connect_cap = get_config().llm_connect_timeout
+    if connect_cap <= 0:
+        return per_phase_timeout(total)
+    return per_phase_timeout(total, connect=min(connect_cap, total))
 
 
 def _qualified(exc: BaseException) -> str:

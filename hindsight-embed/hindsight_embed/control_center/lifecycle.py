@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
+from .._http_probe import probe_get
 
 ENV_CONTROL_PORT = "HINDSIGHT_EMBED_CONTROL_PORT"
 CONTROL_PORT_DEFAULT = 7878
@@ -106,11 +106,12 @@ class ControlStartResult:
 
 
 def _health_ok(port: int) -> bool:
+    resp = probe_get(f"http://127.0.0.1:{port}/api/health", read_timeout=2.0)
+    if resp is None or resp.status_code != 200:
+        return False
     try:
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"http://127.0.0.1:{port}/api/health")
-            return resp.status_code == 200 and resp.json().get("status") == "ok"
-    except Exception:
+        return resp.json().get("status") == "ok"
+    except (ValueError, AttributeError):
         return False
 
 

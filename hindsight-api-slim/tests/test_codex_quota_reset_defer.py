@@ -4,12 +4,12 @@ import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
 from hindsight_api.engine.providers.codex_llm import CodexLLM
-from tests.codex_stream_stub import stub_codex_stream
+from tests.codex_stream_stub import CodexReply, stub_codex_stream
 
 
 def _build_llm() -> CodexLLM:
@@ -25,21 +25,17 @@ def _build_llm() -> CodexLLM:
         )
 
 
-def _quota_response(resets_at: object, *, private_detail: str = "private diagnostic") -> httpx.Response:
-    request = httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses")
-    return httpx.Response(
-        429,
-        request=request,
-        json={
-            "error": {
-                "type": "usage_limit_reached",
-                "message": "The usage limit has been reached",
-                "plan_type": private_detail,
-                "resets_at": resets_at,
-                "resets_in_seconds": 3600,
-            }
-        },
-    )
+def _quota_response(resets_at: object, *, private_detail: str = "private diagnostic") -> CodexReply:
+    body = {
+        "error": {
+            "type": "usage_limit_reached",
+            "message": "The usage limit has been reached",
+            "plan_type": private_detail,
+            "resets_at": resets_at,
+            "resets_in_seconds": 3600,
+        }
+    }
+    return CodexReply(429, json.dumps(body), content_type="application/json")
 
 
 @pytest.mark.asyncio
@@ -72,7 +68,7 @@ async def test_invalid_reset_timestamp_keeps_normal_call_retry_behavior() -> Non
     with (
         stub_codex_stream(llm, response) as stream,
         patch("hindsight_api.engine.providers.codex_llm.asyncio.sleep", new_callable=AsyncMock) as sleep,
-        pytest.raises(httpx.HTTPStatusError),
+        pytest.raises(UpstreamHTTPError),
     ):
         await llm.call(messages=[{"role": "user", "content": "x"}], max_retries=2)
 
@@ -85,7 +81,7 @@ async def test_invalid_reset_timestamp_keeps_tool_call_http_error() -> None:
     llm = _build_llm()
     response = _quota_response(None)
 
-    with stub_codex_stream(llm, response) as stream, pytest.raises(httpx.HTTPStatusError):
+    with stub_codex_stream(llm, response) as stream, pytest.raises(UpstreamHTTPError):
         await llm.call_with_tools(messages=[{"role": "user", "content": "x"}], tools=[])
 
     assert stream.call_count == 1
@@ -107,4 +103,4 @@ async def test_quota_defer_message_and_logs_do_not_expose_response_body(method: 
 
     assert private_detail not in str(exc_info.value)
     assert private_detail not in caplog.text
-    assert json.dumps(response.json()) not in caplog.text
+    assert response.text not in caplog.text

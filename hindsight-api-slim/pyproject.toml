@@ -247,6 +247,7 @@ select = [
     "F",      # Pyflakes
     "I",      # isort
     "B021",   # flake8-bugbear: f-string used as docstring (leaves __doc__ None)
+    "TID251", # banned imports: sync HTTP clients and httpx (see banned-api below)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
@@ -257,6 +258,22 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-third-party = ["alembic"]
+
+# Production HTTP is aiohttp, async only (see .claude/skills/code-review/SKILL.md).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"httpx".msg = "Use aiohttp (async) via hindsight_api.engine.aiohttp_session. httpx is allowed only to configure or classify a third-party SDK built on it, with a `# noqa: TID251` saying so."
+"requests".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
+"urllib.request".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
+"urllib3".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
+"http.client".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
+
+[tool.ruff.lint.per-file-ignores]
+# The container readiness probe runs as its own short-lived process and is
+# stdlib-only by rule (tests/test_http_probe.py), so it is not on the event loop.
+"hindsight_api/http_probe.py" = ["TID251"]
+# Tests may use httpx (FastAPI TestClient / ASGITransport). `exclude` above already
+# skips them on a directory run; this covers ruff invoked on an explicit test path.
+"tests/**" = ["TID251"]
 
 [tool.ruff.format]
 quote-style = "double"

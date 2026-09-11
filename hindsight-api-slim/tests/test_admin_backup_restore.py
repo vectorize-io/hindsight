@@ -304,7 +304,7 @@ async def test_backup_restore_roundtrip(backup_test_schema):
 
         # Create some test memory units with embeddings
         # Convert embedding list to pgvector format string
-        embedding_list = embeddings.encode(["Test content about Alice"])[0]
+        embedding_list = (await embeddings.encode(["Test content about Alice"]))[0]
         embedding_str = "[" + ",".join(str(x) for x in embedding_list) + "]"
         for text in [
             "Alice is a software engineer who loves Python.",
@@ -480,7 +480,7 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
 
         # Create a memory unit with all column types
         # Convert embedding list to pgvector format string
-        embedding_list = embeddings.encode(["John Smith engineer"])[0]
+        embedding_list = (await embeddings.encode(["John Smith engineer"]))[0]
         embedding_str = "[" + ",".join(str(x) for x in embedding_list) + "]"
         await conn.execute(
             f"""INSERT INTO {_fq("memory_units")}

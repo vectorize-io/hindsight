@@ -1,12 +1,16 @@
 """Iris parser implementation using the Vectorize Iris HTTP API."""
 
 import asyncio
+import json
 import logging
 import mimetypes
 import time
+from typing import Any
 
-import httpx
+import aiohttp
+from yarl import URL
 
+from ..aiohttp_session import per_phase_timeout
 from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
@@ -62,45 +66,45 @@ class IrisParser(FileParser):
         """
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0)) as client:
+        # One session per conversion: a rare call, and the parser is built at startup
+        # possibly off the serving loop, so it does not hold a long-lived one.
+        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0)) as client:
             # Step 1: Request a presigned upload URL
-            init_resp = await client.post(
+            async with client.post(
                 f"{_IRIS_BASE_URL}/org/{self._org_id}/files",
                 headers=self._auth_headers,
                 json={"name": filename, "contentType": content_type},
-            )
-            _raise_for_status(init_resp, filename, "file upload init")
-            init_data = init_resp.json()
+            ) as resp:
+                init_data = await _json_or_raise(resp, filename, "file upload init")
             file_id: str = init_data["fileId"]
             upload_url: str = init_data["uploadUrl"]
 
             # Step 2: Upload the file bytes to the presigned URL (no auth header)
             # Ensure file_data is plain bytes (GCS storage may return obstore.Bytes)
-            upload_resp = await client.put(
-                upload_url,
-                content=bytes(file_data),
+            # encoded=True: re-quoting the presigned query string would break its signature.
+            async with client.put(
+                URL(upload_url, encoded=True),
+                data=bytes(file_data),
                 headers={"Content-Type": content_type},
-            )
-            _raise_for_status(upload_resp, filename, "file upload")
+            ) as resp:
+                await _read_or_raise(resp, filename, "file upload")
 
             # Step 3: Start extraction
-            extract_resp = await client.post(
+            async with client.post(
                 f"{_IRIS_BASE_URL}/org/{self._org_id}/extraction",
                 headers=self._auth_headers,
                 json={"fileId": file_id},
-            )
-            _raise_for_status(extract_resp, filename, "start extraction")
-            extraction_id: str = extract_resp.json()["extractionId"]
+            ) as resp:
+                extraction_id: str = (await _json_or_raise(resp, filename, "start extraction"))["extractionId"]
 
             # Step 4: Poll until ready or timeout
             deadline = time.monotonic() + self._timeout
             while True:
-                status_resp = await client.get(
+                async with client.get(
                     f"{_IRIS_BASE_URL}/org/{self._org_id}/extraction/{extraction_id}",
                     headers=self._auth_headers,
-                )
-                _raise_for_status(status_resp, filename, "poll extraction status")
-                status_data = status_resp.json()
+                ) as resp:
+                    status_data = await _json_or_raise(resp, filename, "poll extraction status")
 
                 if status_data.get("ready"):
                     data = status_data.get("data", {})
@@ -122,17 +126,23 @@ class IrisParser(FileParser):
         return "iris"
 
 
-def _raise_for_status(response: httpx.Response, filename: str, step: str) -> None:
+async def _json_or_raise(response: aiohttp.ClientResponse, filename: str, step: str) -> Any:
+    """Return the decoded JSON body; raise like :func:`_read_or_raise` on HTTP errors."""
+    return json.loads(await _read_or_raise(response, filename, step))
+
+
+async def _read_or_raise(response: aiohttp.ClientResponse, filename: str, step: str) -> str:
     """
-    Raise an appropriate error including the response body on HTTP errors.
+    Return the response body, raising an appropriate error including it on HTTP errors.
 
     Raises UnsupportedFileTypeError for 4xx responses (file rejected by the API),
     RuntimeError for other HTTP errors.
     """
-    if not response.is_error:
-        return
-    body = response.text or "<empty>"
-    msg = f"Iris API error during {step} for '{filename}': {response.status_code} {response.reason_phrase} — {body}"
-    if response.is_client_error:
+    text = await response.text()
+    if response.status < 400:
+        return text
+    body = text or "<empty>"
+    msg = f"Iris API error during {step} for '{filename}': {response.status} {response.reason} — {body}"
+    if response.status < 500:
         raise UnsupportedFileTypeError(msg)
     raise RuntimeError(msg)

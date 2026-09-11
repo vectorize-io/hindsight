@@ -13,10 +13,11 @@ import sys
 import threading
 import time
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.embeddings import (
     CohereEmbeddings,
     RetryPolicy,
@@ -69,8 +70,8 @@ _FAST_POLICY = RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02
 def _make_embeddings(side_effect, policy: RetryPolicy = _FAST_POLICY) -> CohereEmbeddings:
     emb = CohereEmbeddings(api_key="co-test", model="embed-english-v3.0", retry_policy=policy)
     client = MagicMock()
-    client.embed = MagicMock(side_effect=side_effect)
-    emb._client = client
+    client.embed = AsyncMock(side_effect=side_effect)
+    emb._clients = LoopLocal(lambda: client)
     emb._dimension = 1024
     return emb
 
@@ -82,7 +83,7 @@ def _response(batch: list[str]) -> MagicMock:
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408])
-def test_transient_status_then_success(status):
+async def test_transient_status_then_success(status):
     """Quota and transient service responses are retried, and the later success returned."""
     calls = {"n": 0}
 
@@ -93,12 +94,12 @@ def test_transient_status_then_success(status):
         return _response(texts)
 
     emb = _make_embeddings(flaky)
-    assert len(emb.encode(["hello"])) == 1
+    assert len(await emb.encode(["hello"])) == 1
     assert calls["n"] == 2
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
-def test_permanent_client_errors_fail_fast(status):
+async def test_permanent_client_errors_fail_fast(status):
     """Auth and validation failures must not be retried — retrying cannot fix them."""
     calls = {"n": 0}
 
@@ -108,11 +109,11 @@ def test_permanent_client_errors_fail_fast(status):
 
     emb = _make_embeddings(always_fail)
     with pytest.raises(_CohereApiError):
-        emb.encode(["hello"])
+        await emb.encode(["hello"])
     assert calls["n"] == 1
 
 
-def test_exhausted_retries_propagate():
+async def test_exhausted_retries_propagate():
     """A sustained outage still surfaces to the worker, after a bounded attempt count."""
     calls = {"n": 0}
 
@@ -122,11 +123,11 @@ def test_exhausted_retries_propagate():
 
     emb = _make_embeddings(always_429)
     with pytest.raises(_CohereApiError):
-        emb.encode(["hello"])
+        await emb.encode(["hello"])
     assert calls["n"] == _FAST_POLICY.max_retries + 1
 
 
-def test_v2_output_dimension_path_is_retried():
+async def test_v2_output_dimension_path_is_retried():
     """The Matryoshka path goes through client.v2.embed — it needs the same retry."""
     calls = {"n": 0}
 
@@ -145,15 +146,15 @@ def test_v2_output_dimension_path_is_retried():
         retry_policy=_FAST_POLICY,
     )
     client = MagicMock()
-    client.v2.embed = MagicMock(side_effect=flaky)
-    emb._client = client
+    client.v2.embed = AsyncMock(side_effect=flaky)
+    emb._clients = LoopLocal(lambda: client)
     emb._dimension = 256
 
-    assert len(emb.encode(["hello"])) == 1
+    assert len(await emb.encode(["hello"])) == 1
     assert calls["n"] == 2
 
 
-def test_retry_budget_is_shared_across_batches():
+async def test_retry_budget_is_shared_across_batches():
     """Batching must not multiply the worst-case added latency of one encode().
 
     Four concurrent batches at five retries each would be 24 upstream calls if every
@@ -174,7 +175,7 @@ def test_retry_budget_is_shared_across_batches():
 
     started = time.monotonic()
     with pytest.raises(_CohereApiError):
-        emb.encode(["a", "b", "c", "d"])
+        await emb.encode(["a", "b", "c", "d"])
 
     assert calls["n"] < 4 * (policy.max_retries + 1) / 2
     # The budget caps wall-clock too, not just the attempt count.
@@ -194,10 +195,10 @@ async def test_initialize_probe_retries_transient_failures():
     # An unknown model forces the probe — a model in MODEL_DIMENSIONS skips it.
     emb = CohereEmbeddings(api_key="co-test", model="embed-future-v9.0", retry_policy=_FAST_POLICY)
     client = MagicMock()
-    client.embed = MagicMock(side_effect=flaky)
+    client.embed = AsyncMock(side_effect=flaky)
 
     fake_cohere = types.ModuleType("cohere")
-    fake_cohere.Client = MagicMock(return_value=client)
+    fake_cohere.AsyncClient = MagicMock(return_value=client)
     with patch.dict(sys.modules, {"cohere": fake_cohere}):
         await emb.initialize()
 

@@ -3,7 +3,7 @@
 This makes REAL calls to Fireworks' batch API and runs the full retain fact
 extraction pipeline end-to-end (submit -> poll -> download -> normalize ->
 parse facts). It is the only test that validates the one assumption the unit
-tests (which use mocked httpx responses) cannot: that Fireworks' real output
+tests (which use a stub control-plane server) cannot: that Fireworks' real output
 JSONL shape matches what ``_normalize_output_line`` produces and what
 ``fact_extraction`` consumes. If the shape is wrong, this returns zero facts.
 

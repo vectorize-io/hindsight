@@ -44,19 +44,17 @@ class FakeBackend:
     async def initialize(self) -> None:
         return None
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    async def encode(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
         if self.delay:
-            import time
-
-            time.sleep(self.delay)
+            await asyncio.sleep(self.delay)
         return [[float(len(text)), float(hash(text) % 1000)] for text in texts]
 
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.encode(texts)
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self.encode(texts)
 
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return self.encode(texts)
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self.encode(texts)
 
 
 def _expected(text: str) -> list[float]:
@@ -139,7 +137,7 @@ async def test_backend_failure_reaches_every_caller_in_the_batch() -> None:
     """One bad request must fail all of its riders, not silently drop them."""
 
     class ExplodingBackend(FakeBackend):
-        def encode(self, texts: list[str]) -> list[list[float]]:
+        async def encode(self, texts: list[str]) -> list[list[float]]:
             raise RuntimeError("embeddings backend down")
 
     embedder = CoalescingEmbedder(ExplodingBackend(batch_size=100))

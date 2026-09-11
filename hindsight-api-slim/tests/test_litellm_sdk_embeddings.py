@@ -25,18 +25,10 @@ class TestLiteLLMSDKEmbeddings:
         """Mock litellm module."""
         mock = MagicMock()
 
-        # Mock aembedding (async) for initialization
+        # Mock aembedding (async) — initialize() and encode() both call it
         mock_response = MagicMock()
         mock_response.data = [{"embedding": [0.1] * 768, "index": 0}]
         mock.aembedding = AsyncMock(return_value=mock_response)
-
-        # Mock embedding (sync) for encode
-        mock_sync_response = MagicMock()
-        mock_sync_response.data = [
-            {"embedding": [0.1] * 768, "index": 0},
-            {"embedding": [0.2] * 768, "index": 1},
-        ]
-        mock.embedding = MagicMock(return_value=mock_sync_response)
 
         return mock
 
@@ -133,22 +125,22 @@ class TestLiteLLMSDKEmbeddings:
         )
         emb._litellm = mock_litellm
         emb._dimension = 2048
-        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 2048, "index": 0}]
+        mock_litellm.aembedding.return_value.data = [{"embedding": [0.5] * 2048, "index": 0}]
 
-        emb.encode_documents(["document"])
-        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "document"
+        await emb.encode_documents(["document"])
+        assert mock_litellm.aembedding.call_args.kwargs["input_type"] == "document"
 
-        emb.encode_query(["query"])
-        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "query"
+        await emb.encode_query(["query"])
+        assert mock_litellm.aembedding.call_args.kwargs["input_type"] == "query"
 
     async def test_non_voyage_query_keeps_provider_default(self, mock_litellm):
         emb = LiteLLMSDKEmbeddings(api_key="test_key", model="cohere/embed-english-v3.0")
         emb._litellm = mock_litellm
         emb._dimension = 768
-        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 768, "index": 0}]
+        mock_litellm.aembedding.return_value.data = [{"embedding": [0.5] * 768, "index": 0}]
 
-        emb.encode_query(["query"])
-        assert "input_type" not in mock_litellm.embedding.call_args.kwargs
+        await emb.encode_query(["query"])
+        assert "input_type" not in mock_litellm.aembedding.call_args.kwargs
 
     async def test_encode_without_api_key(self, mock_litellm):
         """Test encode omits api_key when not set (IAM/ambient credentials)."""
@@ -158,14 +150,14 @@ class TestLiteLLMSDKEmbeddings:
         emb._litellm = mock_litellm
         emb._dimension = 768
 
-        mock_litellm.embedding.return_value.data = [
+        mock_litellm.aembedding.return_value.data = [
             {"embedding": [0.5] * 768, "index": 0},
         ]
 
-        result = emb.encode(["Hello world"])
+        result = await emb.encode(["Hello world"])
 
         assert len(result) == 1
-        call_kwargs = mock_litellm.embedding.call_args.kwargs
+        call_kwargs = mock_litellm.aembedding.call_args.kwargs
         assert "api_key" not in call_kwargs
 
     async def test_initialization_missing_package(self):
@@ -202,11 +194,11 @@ class TestLiteLLMSDKEmbeddings:
     async def test_encode_single_text(self, embeddings, mock_litellm):
         """Test encoding a single text."""
         # Set up mock response
-        mock_litellm.embedding.return_value.data = [
+        mock_litellm.aembedding.return_value.data = [
             {"embedding": [0.5] * 768, "index": 0},
         ]
 
-        result = embeddings.encode(["Hello world"])
+        result = await embeddings.encode(["Hello world"])
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -215,7 +207,7 @@ class TestLiteLLMSDKEmbeddings:
         assert all(abs(x - 0.5) < 0.001 for x in result[0])
 
         # Verify call
-        mock_litellm.embedding.assert_called_once_with(
+        mock_litellm.aembedding.assert_called_once_with(
             model="cohere/embed-english-v3.0",
             input=["Hello world"],
             api_key="test_key",
@@ -226,14 +218,14 @@ class TestLiteLLMSDKEmbeddings:
     async def test_encode_multiple_texts(self, embeddings, mock_litellm):
         """Test encoding multiple texts."""
         # Set up mock response
-        mock_litellm.embedding.return_value.data = [
+        mock_litellm.aembedding.return_value.data = [
             {"embedding": [0.1] * 768, "index": 0},
             {"embedding": [0.2] * 768, "index": 1},
             {"embedding": [0.3] * 768, "index": 2},
         ]
 
         texts = ["First text", "Second text", "Third text"]
-        result = embeddings.encode(texts)
+        result = await embeddings.encode(texts)
 
         assert isinstance(result, list)
         assert len(result) == 3
@@ -264,28 +256,28 @@ class TestLiteLLMSDKEmbeddings:
             mock_response.data = [{"embedding": [float(i)] * 768, "index": i} for i in range(len(input))]
             return mock_response
 
-        mock_litellm.embedding.side_effect = mock_embedding_side_effect
+        mock_litellm.aembedding.side_effect = mock_embedding_side_effect
 
         # Encode 5 texts (should create 3 batches: 2, 2, 1)
         texts = [f"Text {i}" for i in range(5)]
-        result = emb.encode(texts)
+        result = await emb.encode(texts)
 
         assert isinstance(result, list)
         assert len(result) == 5
         assert all(len(embedding) == 768 for embedding in result)
 
         # Verify batching: should be called 3 times
-        assert mock_litellm.embedding.call_count == 3
+        assert mock_litellm.aembedding.call_count == 3
 
         # Verify batch sizes
-        calls = mock_litellm.embedding.call_args_list
+        calls = mock_litellm.aembedding.call_args_list
         assert len(calls[0][1]["input"]) == 2  # First batch
         assert len(calls[1][1]["input"]) == 2  # Second batch
         assert len(calls[2][1]["input"]) == 1  # Third batch
 
     async def test_encode_empty_list(self, embeddings):
         """Test encoding empty list returns empty list."""
-        result = embeddings.encode([])
+        result = await embeddings.encode([])
 
         assert isinstance(result, list)
         assert len(result) == 0
@@ -301,15 +293,15 @@ class TestLiteLLMSDKEmbeddings:
         )
 
         with pytest.raises(RuntimeError, match="not initialized"):
-            emb.encode(["test"])
+            await emb.encode(["test"])
 
     async def test_encode_error_handling(self, embeddings, mock_litellm):
         """Test error handling during encoding."""
         # Make embedding raise an error
-        mock_litellm.embedding.side_effect = Exception("API Error")
+        mock_litellm.aembedding.side_effect = Exception("API Error")
 
         with pytest.raises(Exception, match="API Error"):
-            embeddings.encode(["test"])
+            await embeddings.encode(["test"])
 
     async def test_dimension_property(self, embeddings):
         """Test dimension property."""
@@ -353,11 +345,12 @@ class TestLiteLLMSDKEmbeddings:
             assert call_args.kwargs["api_base"] == "https://custom.api.com"
 
             # Test encode also passes api_base
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            mock_litellm.embedding.assert_called_once()
-            call_args = mock_litellm.embedding.call_args
+            mock_litellm.aembedding.assert_called_once()
+            call_args = mock_litellm.aembedding.call_args
             assert call_args.kwargs["api_base"] == "https://custom.api.com"
 
     async def test_output_dimensions_passed_when_set(self, mock_litellm):
@@ -377,10 +370,11 @@ class TestLiteLLMSDKEmbeddings:
             assert init_call_args.kwargs["dimensions"] == 768
             assert "allowed_openai_params" not in init_call_args.kwargs
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert encode_call_args.kwargs["dimensions"] == 768
             assert "allowed_openai_params" not in encode_call_args.kwargs
 
@@ -402,10 +396,11 @@ class TestLiteLLMSDKEmbeddings:
             assert init_call_args.kwargs["dimensions"] == 2000
             assert init_call_args.kwargs["allowed_openai_params"] == ["dimensions"]
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 2000, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 2000, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert encode_call_args.kwargs["dimensions"] == 2000
             assert encode_call_args.kwargs["allowed_openai_params"] == ["dimensions"]
 
@@ -424,10 +419,11 @@ class TestLiteLLMSDKEmbeddings:
             init_call_args = mock_litellm.aembedding.call_args
             assert "dimensions" not in init_call_args.kwargs
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert "dimensions" not in encode_call_args.kwargs
 
     async def test_output_dimensions_and_api_base_passed_when_both_set(self, mock_litellm):
@@ -449,10 +445,11 @@ class TestLiteLLMSDKEmbeddings:
             assert init_call_args.kwargs["dimensions"] == 768
             assert "allowed_openai_params" not in init_call_args.kwargs
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert encode_call_args.kwargs["api_base"] == "https://custom.api.com"
             assert encode_call_args.kwargs["dimensions"] == 768
             assert "allowed_openai_params" not in encode_call_args.kwargs
@@ -478,10 +475,11 @@ class TestLiteLLMSDKEmbeddings:
             assert init_call_args.kwargs["model"] == "bedrock/amazon.titan-embed-text-v2:0"
             assert init_call_args.kwargs["model_id"] == arn
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert encode_call_args.kwargs["model"] == "bedrock/amazon.titan-embed-text-v2:0"
             assert encode_call_args.kwargs["model_id"] == arn
 
@@ -496,10 +494,11 @@ class TestLiteLLMSDKEmbeddings:
 
             assert "model_id" not in mock_litellm.aembedding.call_args.kwargs
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            assert "model_id" not in mock_litellm.embedding.call_args.kwargs
+            assert "model_id" not in mock_litellm.aembedding.call_args.kwargs
 
     async def test_encoding_format_default_is_float(self, mock_litellm):
         """Test that encoding_format defaults to 'float' for backwards compatibility."""
@@ -516,10 +515,11 @@ class TestLiteLLMSDKEmbeddings:
             init_call_args = mock_litellm.aembedding.call_args
             assert init_call_args.kwargs["encoding_format"] == "float"
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert encode_call_args.kwargs["encoding_format"] == "float"
 
     async def test_encoding_format_omitted_when_none(self, mock_litellm):
@@ -538,10 +538,11 @@ class TestLiteLLMSDKEmbeddings:
             init_call_args = mock_litellm.aembedding.call_args
             assert "encoding_format" not in init_call_args.kwargs
 
-            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
-            emb.encode(["test"])
+            mock_litellm.aembedding.reset_mock()
+            mock_litellm.aembedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            await emb.encode(["test"])
 
-            encode_call_args = mock_litellm.embedding.call_args
+            encode_call_args = mock_litellm.aembedding.call_args
             assert "encoding_format" not in encode_call_args.kwargs
 
     async def test_encoding_format_omitted_when_empty_string(self, mock_litellm):
@@ -696,7 +697,7 @@ class TestLiteLLMSDKCohereEmbeddings:
             "Python is a popular programming language",
         ]
 
-        result = litellm_cohere_embeddings.encode(texts)
+        result = await litellm_cohere_embeddings.encode(texts)
 
         # Verify result type and shape
         assert isinstance(result, list)
@@ -724,7 +725,7 @@ class TestLiteLLMSDKCohereEmbeddings:
     @pytest.mark.asyncio
     async def test_litellm_sdk_cohere_single_text(self, litellm_cohere_embeddings):
         """Test encoding single text with real Cohere API."""
-        result = litellm_cohere_embeddings.encode(["Hello world"])
+        result = await litellm_cohere_embeddings.encode(["Hello world"])
 
         assert isinstance(result, list)
         assert len(result) == 1

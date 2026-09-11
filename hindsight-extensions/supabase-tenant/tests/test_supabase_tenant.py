@@ -1,26 +1,42 @@
-"""Tests for the Supabase Tenant Extension."""
+"""Tests for the Supabase Tenant Extension.
 
+Supabase is stubbed as a real in-process ``aiohttp.web`` server, so the
+extension's actual aiohttp transport (status handling, JSON parsing, timeouts,
+connection errors) is exercised rather than a mocked client.
+"""
+
+import asyncio
+import socket
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import jwt as pyjwt
+import aiohttp
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from jwt import PyJWK
 
-from hindsight_ext_supabase_tenant.extension import (
-    JWKS_CACHE_TTL_SECONDS,
-    JWKS_MIN_REFRESH_INTERVAL_SECONDS,
-    MIN_TOKEN_LENGTH,
-    SupabaseTenantExtension,
-)
 from hindsight_api.extensions.context import ExtensionContext
 from hindsight_api.extensions.loader import load_extension
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
+from hindsight_ext_supabase_tenant.extension import (
+    JWKS_CACHE_TTL_SECONDS,
+    JWKS_MIN_REFRESH_INTERVAL_SECONDS,
+    MIN_TOKEN_LENGTH,
+    REQUEST_TIMEOUT_SECONDS,
+    SupabaseTenantExtension,
+)
 
 # A valid UUID for test user IDs
 VALID_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+JWKS_PATH = "/auth/v1/.well-known/jwks.json"
+USER_PATH = "/auth/v1/user"
+HEALTH_PATH = "/auth/v1/health"
 
 # Minimal JWKS response with one RSA key
 MOCK_JWKS_RESPONSE = {
@@ -37,31 +53,94 @@ MOCK_JWKS_RESPONSE = {
 }
 
 
-def _make_extension(
-    supabase_url: str = "https://test.supabase.co",
-    service_key: str | None = "test-service-key",
-    schema_prefix: str | None = None,
-) -> SupabaseTenantExtension:
-    """Helper to create a SupabaseTenantExtension with test config."""
-    config = {
-        "supabase_url": supabase_url,
-    }
-    if service_key is not None:
-        config["supabase_service_key"] = service_key
-    if schema_prefix is not None:
-        config["schema_prefix"] = schema_prefix
-    return SupabaseTenantExtension(config)
+# ----------------------------------------------------------------------
+# Supabase stub
+# ----------------------------------------------------------------------
+
+Responder = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
-def _make_mock_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
-    """Helper to create a mock httpx.Response."""
-    response = MagicMock(spec=httpx.Response)
-    response.status_code = status_code
-    response.json.return_value = json_data or {}
-    response.raise_for_status = MagicMock()
-    if status_code >= 400:
-        response.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=response)
-    return response
+@dataclass
+class RecordedRequest:
+    path: str
+    headers: dict[str, str]
+
+
+@dataclass
+class SupabaseStub:
+    """What the stub server has been asked, and how it answers (per path)."""
+
+    base_url: str = ""
+    requests: list[RecordedRequest] = field(default_factory=list)
+    routes: dict[str, Responder] = field(default_factory=dict)
+
+    def reply(self, path: str, status: int = 200, json_data: dict | None = None) -> None:
+        async def responder(_request: web.Request) -> web.StreamResponse:
+            return web.json_response(json_data or {}, status=status)
+
+        self.routes[path] = responder
+
+    def paths(self) -> list[str]:
+        return [r.path for r in self.requests]
+
+
+@pytest.fixture
+async def supabase():
+    stub = SupabaseStub()
+
+    async def dispatch(request: web.Request) -> web.StreamResponse:
+        stub.requests.append(RecordedRequest(path=request.path, headers=dict(request.headers)))
+        responder = stub.routes.get(request.path)
+        if responder is None:
+            return web.json_response({"error": "not stubbed"}, status=404)
+        return await responder(request)
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", dispatch)
+    server = TestServer(app)
+    await server.start_server()
+    stub.base_url = str(server.make_url("")).rstrip("/")
+    try:
+        yield stub
+    finally:
+        await server.close()
+
+
+def _closed_port_url() -> str:
+    """A loopback URL on which nothing listens (connection refused)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+async def make_extension():
+    """Build extensions; close any HTTP sessions they opened at teardown."""
+    created: list[SupabaseTenantExtension] = []
+
+    def factory(
+        supabase_url: str = "https://test.supabase.co",
+        service_key: str | None = "test-service-key",
+        schema_prefix: str | None = None,
+    ) -> SupabaseTenantExtension:
+        config = {"supabase_url": supabase_url}
+        if service_key is not None:
+            config["supabase_service_key"] = service_key
+        if schema_prefix is not None:
+            config["schema_prefix"] = schema_prefix
+        ext = SupabaseTenantExtension(config)
+        created.append(ext)
+        return ext
+
+    yield factory
+    for ext in created:
+        await ext.on_shutdown()
+
+
+def _started(ext: SupabaseTenantExtension, timeout: float = REQUEST_TIMEOUT_SECONDS) -> None:
+    """Put the extension in the post-startup state without running on_startup."""
+    ext._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, connect=timeout, sock_read=timeout))
 
 
 def _make_valid_token() -> str:
@@ -69,25 +148,23 @@ def _make_valid_token() -> str:
     return "a" * (MIN_TOKEN_LENGTH + 10)
 
 
-def _setup_jwks_ext() -> tuple[SupabaseTenantExtension, AsyncMock]:
-    """Create an extension in JWKS mode with mocked internals."""
-    ext = _make_extension()
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    ext._http_client = mock_client
+def _setup_jwks_ext(make_extension, supabase_url: str = "https://test.supabase.co") -> SupabaseTenantExtension:
+    """An extension in JWKS mode with a fresh key cache."""
+    ext = make_extension(supabase_url=supabase_url)
+    _started(ext)
     ext._use_jwks = True
     ext._jwks_keys = {"test-key-1": MagicMock(spec=PyJWK)}
     ext._jwks_keys["test-key-1"].key = "mock-public-key"
     ext._jwks_last_fetched = time.monotonic()
-    return ext, mock_client
+    return ext
 
 
-def _setup_legacy_ext() -> tuple[SupabaseTenantExtension, AsyncMock]:
-    """Create an extension in legacy mode with mocked internals."""
-    ext = _make_extension()
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    ext._http_client = mock_client
+def _setup_legacy_ext(make_extension, supabase_url: str, timeout: float = REQUEST_TIMEOUT_SECONDS):
+    """An extension in legacy (/auth/v1/user) mode."""
+    ext = make_extension(supabase_url=supabase_url)
+    _started(ext, timeout)
     ext._use_jwks = False
-    return ext, mock_client
+    return ext
 
 
 # ======================================================================
@@ -98,13 +175,13 @@ def _setup_legacy_ext() -> tuple[SupabaseTenantExtension, AsyncMock]:
 class TestSupabaseTenantExtensionInit:
     """Tests for extension initialization."""
 
-    def test_init_with_valid_config(self):
-        ext = _make_extension()
+    def test_init_with_valid_config(self, make_extension):
+        ext = make_extension()
         assert ext.supabase_url == "https://test.supabase.co"
         assert ext.supabase_service_key == "test-service-key"
         assert ext.schema_prefix == "user"
         assert ext._initialized_schemas == set()
-        assert ext._http_client is None
+        assert ext._http is None
         assert ext._use_jwks is False
         assert ext._jwks_keys == {}
 
@@ -112,42 +189,42 @@ class TestSupabaseTenantExtensionInit:
         with pytest.raises(ValueError, match="HINDSIGHT_API_TENANT_SUPABASE_URL is required"):
             SupabaseTenantExtension({})
 
-    def test_init_without_service_key(self):
+    def test_init_without_service_key(self, make_extension):
         """Service key is optional — JWKS mode doesn't require it."""
-        ext = _make_extension(service_key=None)
+        ext = make_extension(service_key=None)
         assert ext.supabase_service_key is None
 
-    def test_init_default_schema_prefix(self):
-        ext = _make_extension()
+    def test_init_default_schema_prefix(self, make_extension):
+        ext = make_extension()
         assert ext.schema_prefix == "user"
 
-    def test_init_custom_schema_prefix(self):
-        ext = _make_extension(schema_prefix="tenant")
+    def test_init_custom_schema_prefix(self, make_extension):
+        ext = make_extension(schema_prefix="tenant")
         assert ext.schema_prefix == "tenant"
 
-    def test_init_strips_trailing_slash(self):
-        ext = _make_extension(supabase_url="https://test.supabase.co/")
+    def test_init_strips_trailing_slash(self, make_extension):
+        ext = make_extension(supabase_url="https://test.supabase.co/")
         assert ext.supabase_url == "https://test.supabase.co"
 
-    def test_init_rejects_invalid_schema_prefix(self):
+    def test_init_rejects_invalid_schema_prefix(self, make_extension):
         """Schema prefix with special characters should be rejected."""
         with pytest.raises(ValueError, match="Invalid schema_prefix"):
-            _make_extension(schema_prefix='"; DROP TABLE')
+            make_extension(schema_prefix='"; DROP TABLE')
 
-    def test_init_rejects_empty_schema_prefix(self):
+    def test_init_rejects_empty_schema_prefix(self, make_extension):
         with pytest.raises(ValueError, match="Invalid schema_prefix"):
-            _make_extension(schema_prefix="")
+            make_extension(schema_prefix="")
 
-    def test_init_rejects_schema_prefix_starting_with_digit(self):
+    def test_init_rejects_schema_prefix_starting_with_digit(self, make_extension):
         with pytest.raises(ValueError, match="Invalid schema_prefix"):
-            _make_extension(schema_prefix="123abc")
+            make_extension(schema_prefix="123abc")
 
-    def test_init_allows_underscore_prefix(self):
-        ext = _make_extension(schema_prefix="_internal")
+    def test_init_allows_underscore_prefix(self, make_extension):
+        ext = make_extension(schema_prefix="_internal")
         assert ext.schema_prefix == "_internal"
 
-    def test_is_tenant_extension_subclass(self):
-        ext = _make_extension()
+    def test_is_tenant_extension_subclass(self, make_extension):
+        ext = make_extension()
         assert isinstance(ext, TenantExtension)
 
 
@@ -159,114 +236,85 @@ class TestSupabaseTenantExtensionInit:
 class TestSupabaseTenantExtensionStartup:
     """Tests for on_startup behavior."""
 
-    @pytest.mark.asyncio
-    async def test_on_startup_creates_http_client(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        # JWKS fetch returns keys
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+    async def test_on_startup_creates_http_client(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
+        supabase.reply(HEALTH_PATH, 200)
 
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
-                await ext.on_startup()
+        with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
+            await ext.on_startup()
 
-        assert ext._http_client is mock_client
+        assert isinstance(ext._http, aiohttp.ClientSession)
 
-    @pytest.mark.asyncio
-    async def test_on_startup_fetches_jwks(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+    async def test_on_startup_fetches_jwks(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
+        supabase.reply(HEALTH_PATH, 200)
 
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_ext_supabase_tenant.extension.PyJWK") as mock_pyjwk:
-                mock_pyjwk.return_value = MagicMock(spec=PyJWK)
-                await ext.on_startup()
+        with patch("hindsight_ext_supabase_tenant.extension.PyJWK") as mock_pyjwk:
+            mock_pyjwk.return_value = MagicMock(spec=PyJWK)
+            await ext.on_startup()
 
         assert ext._use_jwks is True
         # First call: JWKS fetch, second call: health check
-        assert mock_client.get.call_count == 2
-        jwks_call = mock_client.get.call_args_list[0]
-        assert jwks_call.args[0] == "https://test.supabase.co/auth/v1/.well-known/jwks.json"
+        assert supabase.paths() == [JWKS_PATH, HEALTH_PATH]
 
-    @pytest.mark.asyncio
-    async def test_on_startup_falls_back_to_legacy_when_jwks_empty(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-
+    async def test_on_startup_falls_back_to_legacy_when_jwks_empty(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url)
         # JWKS returns empty keys, health check succeeds
-        def mock_get(url, **kwargs):
-            if "jwks" in url:
-                return _make_mock_response(200, {"keys": []})
-            return _make_mock_response(200)
+        supabase.reply(JWKS_PATH, 200, {"keys": []})
+        supabase.reply(HEALTH_PATH, 200)
 
-        mock_client.get.side_effect = mock_get
-
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            await ext.on_startup()
+        await ext.on_startup()
 
         assert ext._use_jwks is False
 
-    @pytest.mark.asyncio
-    async def test_on_startup_falls_back_to_legacy_when_jwks_fetch_fails(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
+    async def test_on_startup_falls_back_to_legacy_when_jwks_fetch_fails(self, make_extension):
+        # Nothing listens: the JWKS fetch (and the health check) cannot connect.
+        ext = make_extension(supabase_url=_closed_port_url())
 
-        call_count = 0
-
-        def mock_get(url, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # JWKS fetch fails
-                raise httpx.ConnectError("Connection refused")
-            # health check
-            return _make_mock_response(200)
-
-        mock_client.get.side_effect = mock_get
-
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            await ext.on_startup()
+        await ext.on_startup()
 
         assert ext._use_jwks is False
 
-    @pytest.mark.asyncio
-    async def test_on_startup_raises_if_no_jwks_and_no_service_key(self):
-        ext = _make_extension(service_key=None)
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get.return_value = _make_mock_response(200, {"keys": []})
+    async def test_on_startup_falls_back_to_legacy_when_jwks_returns_error(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url)
+        supabase.reply(JWKS_PATH, 503)
+        supabase.reply(HEALTH_PATH, 200)
 
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ValueError, match="HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY is required"):
-                await ext.on_startup()
+        await ext.on_startup()
 
-    @pytest.mark.asyncio
-    async def test_on_startup_health_check_with_service_key(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+        assert ext._use_jwks is False
 
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
-                await ext.on_startup()
+    async def test_on_startup_raises_if_no_jwks_and_no_service_key(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url, service_key=None)
+        supabase.reply(JWKS_PATH, 200, {"keys": []})
+
+        with pytest.raises(ValueError, match="HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY is required"):
+            await ext.on_startup()
+
+    async def test_on_startup_health_check_with_service_key(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
+        supabase.reply(HEALTH_PATH, 200)
+
+        with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
+            await ext.on_startup()
 
         # Second call should be health check
-        health_call = mock_client.get.call_args_list[1]
-        assert health_call.args[0] == "https://test.supabase.co/auth/v1/health"
-        assert health_call.kwargs["headers"] == {"apikey": "test-service-key"}
+        health_call = supabase.requests[1]
+        assert health_call.path == HEALTH_PATH
+        assert health_call.headers["apikey"] == "test-service-key"
 
-    @pytest.mark.asyncio
-    async def test_on_startup_skips_health_check_without_service_key(self):
-        ext = _make_extension(service_key=None)
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+    async def test_on_startup_skips_health_check_without_service_key(self, supabase, make_extension):
+        ext = make_extension(supabase_url=supabase.base_url, service_key=None)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
 
-        with patch("hindsight_ext_supabase_tenant.extension.httpx.AsyncClient", return_value=mock_client):
-            with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
-                await ext.on_startup()
+        with patch("hindsight_ext_supabase_tenant.extension.PyJWK"):
+            await ext.on_startup()
 
         # Only one call: JWKS fetch, no health check
-        assert mock_client.get.call_count == 1
+        assert supabase.paths() == [JWKS_PATH]
 
 
 # ======================================================================
@@ -277,9 +325,8 @@ class TestSupabaseTenantExtensionStartup:
 class TestJWKSCacheManagement:
     """Tests for JWKS key fetching, caching, and rotation handling."""
 
-    @pytest.mark.asyncio
-    async def test_get_signing_key_from_cache(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_get_signing_key_from_cache(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
 
         with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
@@ -287,14 +334,13 @@ class TestJWKSCacheManagement:
 
         assert key is ext._jwks_keys["test-key-1"]
 
-    @pytest.mark.asyncio
-    async def test_get_signing_key_refreshes_stale_cache(self):
-        ext, mock_client = _setup_jwks_ext()
+    async def test_get_signing_key_refreshes_stale_cache(self, supabase, make_extension):
+        ext = _setup_jwks_ext(make_extension, supabase.base_url)
         # Make cache expired
         ext._jwks_last_fetched = time.monotonic() - JWKS_CACHE_TTL_SECONDS - 1
 
         new_key = MagicMock(spec=PyJWK)
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
@@ -304,17 +350,16 @@ class TestJWKSCacheManagement:
             key = await ext._get_signing_key("fake-token")
 
         assert key is new_key
-        mock_client.get.assert_called_once()
+        assert supabase.paths() == [JWKS_PATH]
 
-    @pytest.mark.asyncio
-    async def test_get_signing_key_handles_key_rotation(self):
+    async def test_get_signing_key_handles_key_rotation(self, supabase, make_extension):
         """When kid not in cache and cache is old enough, refresh once for key rotation."""
-        ext, mock_client = _setup_jwks_ext()
+        ext = _setup_jwks_ext(make_extension, supabase.base_url)
         # Make cache just old enough to allow a refresh
         ext._jwks_last_fetched = time.monotonic() - JWKS_MIN_REFRESH_INTERVAL_SECONDS - 1
 
         rotated_key = MagicMock(spec=PyJWK)
-        mock_client.get.return_value = _make_mock_response(200, MOCK_JWKS_RESPONSE)
+        supabase.reply(JWKS_PATH, 200, MOCK_JWKS_RESPONSE)
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
@@ -326,24 +371,20 @@ class TestJWKSCacheManagement:
                 await ext._get_signing_key("fake-token")
 
         # Should have attempted one refresh
-        mock_client.get.assert_called_once()
+        assert supabase.paths() == [JWKS_PATH]
 
-    @pytest.mark.asyncio
-    async def test_get_signing_key_missing_kid_header(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_get_signing_key_missing_kid_header(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
 
         with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"alg": "RS256"}  # no kid
             with pytest.raises(AuthenticationError, match="Token missing key ID"):
                 await ext._get_signing_key("fake-token")
 
-    @pytest.mark.asyncio
-    async def test_get_signing_key_refresh_network_error(self):
+    async def test_get_signing_key_refresh_network_error(self, make_extension):
         """If JWKS refresh fails during key rotation, error should propagate."""
-        ext, mock_client = _setup_jwks_ext()
+        ext = _setup_jwks_ext(make_extension, _closed_port_url())
         ext._jwks_last_fetched = time.monotonic() - JWKS_MIN_REFRESH_INTERVAL_SECONDS - 1
-
-        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
 
         with patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header:
             mock_header.return_value = {"kid": "unknown-key", "alg": "RS256"}
@@ -356,15 +397,18 @@ class TestJWKSCacheManagement:
 # ======================================================================
 
 
+def _mock_context() -> AsyncMock:
+    context = AsyncMock(spec=ExtensionContext)
+    context.run_migration = AsyncMock()
+    return context
+
+
 class TestAuthenticateJWKS:
     """Tests for JWKS-based JWT verification."""
 
-    @pytest.mark.asyncio
-    async def test_authenticate_valid_token(self):
-        ext, _ = _setup_jwks_ext()
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+    async def test_authenticate_valid_token(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
+        ext._context = _mock_context()
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
@@ -379,13 +423,10 @@ class TestAuthenticateJWKS:
         expected_schema = "user_" + VALID_UUID.replace("-", "_")
         assert result.schema_name == expected_schema
 
-    @pytest.mark.asyncio
-    async def test_authenticate_custom_prefix(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_authenticate_custom_prefix(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
         ext.schema_prefix = "org"
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+        ext._context = _mock_context()
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
@@ -398,114 +439,40 @@ class TestAuthenticateJWKS:
 
         assert result.schema_name.startswith("org_")
 
-    @pytest.mark.asyncio
-    async def test_authenticate_expired_token(self):
-        ext, _ = _setup_jwks_ext()
+    @pytest.mark.parametrize(
+        ("error", "message"),
+        [
+            (pyjwt.ExpiredSignatureError(), "Token has expired"),
+            (pyjwt.InvalidAudienceError(), "Invalid token audience"),
+            (pyjwt.InvalidIssuerError(), "Invalid token issuer"),
+            (pyjwt.DecodeError(), "Invalid token"),
+            (RuntimeError("unexpected internal error"), "Token verification failed"),
+        ],
+    )
+    async def test_authenticate_decode_failures(self, make_extension, error, message):
+        ext = _setup_jwks_ext(make_extension)
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch(
-                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
-                side_effect=pyjwt.ExpiredSignatureError(),
-            ),
+            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode", side_effect=error),
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
 
-            with pytest.raises(AuthenticationError, match="Token has expired"):
+            with pytest.raises(AuthenticationError, match=message):
                 await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_invalid_audience(self):
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch(
-                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
-                side_effect=pyjwt.InvalidAudienceError(),
-            ),
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-
-            with pytest.raises(AuthenticationError, match="Invalid token audience"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_invalid_issuer(self):
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch(
-                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
-                side_effect=pyjwt.InvalidIssuerError(),
-            ),
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-
-            with pytest.raises(AuthenticationError, match="Invalid token issuer"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_decode_error(self):
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch(
-                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
-                side_effect=pyjwt.DecodeError(),
-            ),
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-
-            with pytest.raises(AuthenticationError, match="Invalid token"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_missing_sub_claim(self):
-        ext, _ = _setup_jwks_ext()
+    @pytest.mark.parametrize("claims", [{"email": "test@example.com"}, {"sub": ""}])
+    async def test_authenticate_missing_or_empty_sub_claim(self, make_extension, claims):
+        ext = _setup_jwks_ext(make_extension)
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"email": "test@example.com"}  # no sub
+            mock_decode.return_value = claims
 
             with pytest.raises(AuthenticationError, match="missing subject"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_empty_sub_claim(self):
-        """Empty string sub claim should be treated as missing."""
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"sub": ""}
-
-            with pytest.raises(AuthenticationError, match="missing subject"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_generic_exception(self):
-        """Unexpected exceptions during decode should be caught and wrapped."""
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch(
-                "hindsight_ext_supabase_tenant.extension.pyjwt.decode",
-                side_effect=RuntimeError("unexpected internal error"),
-            ),
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-
-            with pytest.raises(AuthenticationError, match="Token verification failed"):
                 await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
 
@@ -517,14 +484,10 @@ class TestAuthenticateJWKS:
 class TestAuthenticateLegacy:
     """Tests for legacy /auth/v1/user endpoint verification."""
 
-    @pytest.mark.asyncio
-    async def test_authenticate_valid_token(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.return_value = _make_mock_response(200, {"id": VALID_UUID})
-
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+    async def test_authenticate_valid_token(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 200, {"id": VALID_UUID})
+        ext._context = _mock_context()
 
         result = await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
@@ -532,62 +495,54 @@ class TestAuthenticateLegacy:
         expected_schema = "user_" + VALID_UUID.replace("-", "_")
         assert result.schema_name == expected_schema
 
-    @pytest.mark.asyncio
-    async def test_authenticate_calls_user_endpoint(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.return_value = _make_mock_response(200, {"id": VALID_UUID})
-
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+    async def test_authenticate_calls_user_endpoint(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 200, {"id": VALID_UUID})
+        ext._context = _mock_context()
 
         token = _make_valid_token()
         await ext.authenticate(RequestContext(api_key=token))
 
-        mock_client.get.assert_called_once_with(
-            "https://test.supabase.co/auth/v1/user",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "apikey": "test-service-key",
-            },
-        )
+        assert supabase.paths() == [USER_PATH]
+        headers = supabase.requests[0].headers
+        assert headers["Authorization"] == f"Bearer {token}"
+        assert headers["apikey"] == "test-service-key"
 
-    @pytest.mark.asyncio
-    async def test_authenticate_expired_token_401(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.return_value = _make_mock_response(401)
+    async def test_authenticate_expired_token_401(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 401)
 
         with pytest.raises(AuthenticationError, match="Invalid or expired token"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_supabase_error_500(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.return_value = _make_mock_response(500)
+    async def test_authenticate_supabase_error_500(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 500)
 
         with pytest.raises(AuthenticationError, match="Authentication failed: 500"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_no_user_id(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.return_value = _make_mock_response(200, {"email": "test@example.com"})
+    async def test_authenticate_no_user_id(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 200, {"email": "test@example.com"})
 
         with pytest.raises(AuthenticationError, match="no user ID found"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_timeout(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.side_effect = httpx.TimeoutException("Request timed out")
+    async def test_authenticate_timeout(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url, timeout=0.2)
+
+        async def slow(_request: web.Request) -> web.StreamResponse:
+            await asyncio.sleep(2.0)
+            return web.json_response({"id": VALID_UUID})
+
+        supabase.routes[USER_PATH] = slow
 
         with pytest.raises(AuthenticationError, match="Authentication timeout"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_connection_error(self):
-        ext, mock_client = _setup_legacy_ext()
-        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+    async def test_authenticate_connection_error(self, make_extension):
+        ext = _setup_legacy_ext(make_extension, _closed_port_url())
 
         with pytest.raises(AuthenticationError, match="Connection error"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
@@ -601,61 +556,42 @@ class TestAuthenticateLegacy:
 class TestAuthenticateCommon:
     """Tests that apply regardless of verification mode."""
 
-    @pytest.mark.asyncio
-    async def test_authenticate_missing_token(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_authenticate_missing_token(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
 
         with pytest.raises(AuthenticationError, match="Missing Authorization header"):
             await ext.authenticate(RequestContext(api_key=None))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_empty_token(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_authenticate_empty_token(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
 
         with pytest.raises(AuthenticationError, match="Missing Authorization header"):
             await ext.authenticate(RequestContext(api_key=""))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_short_token(self):
-        ext, _ = _setup_jwks_ext()
+    async def test_authenticate_short_token(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
 
         with pytest.raises(AuthenticationError, match="Invalid token format"):
             await ext.authenticate(RequestContext(api_key="short"))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_not_initialized(self):
-        ext = _make_extension()
-        # _http_client is None by default
+    async def test_authenticate_not_initialized(self, make_extension):
+        ext = make_extension()
+        # on_startup has not run, so there is no HTTP session
 
         with pytest.raises(AuthenticationError, match="Extension not initialized"):
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
 
-    @pytest.mark.asyncio
-    async def test_authenticate_rejects_non_uuid_user_id(self):
-        """User IDs that aren't valid UUIDs should be rejected for schema safety."""
-        ext, _ = _setup_jwks_ext()
+    @pytest.mark.parametrize("sub", ["not-a-uuid", "'; DROP TABLE users;--"])
+    async def test_authenticate_rejects_non_uuid_user_id(self, make_extension, sub):
+        """User IDs that aren't valid UUIDs (incl. injection attempts) are rejected for schema safety."""
+        ext = _setup_jwks_ext(make_extension)
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
         ):
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"sub": "not-a-uuid"}
-
-            with pytest.raises(AuthenticationError, match="Invalid user ID format"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-
-    @pytest.mark.asyncio
-    async def test_authenticate_rejects_malicious_user_id(self):
-        """User IDs with SQL injection attempts should be rejected."""
-        ext, _ = _setup_jwks_ext()
-
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"sub": "'; DROP TABLE users;--"}
+            mock_decode.return_value = {"sub": sub}
 
             with pytest.raises(AuthenticationError, match="Invalid user ID format"):
                 await ext.authenticate(RequestContext(api_key=_make_valid_token()))
@@ -669,13 +605,7 @@ class TestAuthenticateCommon:
 class TestSupabaseTenantExtensionSchemaManagement:
     """Tests for schema initialization and caching."""
 
-    @pytest.mark.asyncio
-    async def test_schema_initialized_on_first_access(self):
-        ext, _ = _setup_jwks_ext()
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
-
+    async def _authenticate_once(self, ext: SupabaseTenantExtension) -> None:
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
@@ -683,48 +613,36 @@ class TestSupabaseTenantExtensionSchemaManagement:
             mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
             mock_decode.return_value = {"sub": VALID_UUID}
             await ext.authenticate(RequestContext(api_key=_make_valid_token()))
+
+    async def test_schema_initialized_on_first_access(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
+        ext._context = _mock_context()
+
+        await self._authenticate_once(ext)
 
         expected_schema = "user_" + VALID_UUID.replace("-", "_")
-        mock_context.run_migration.assert_called_once_with(expected_schema)
+        ext._context.run_migration.assert_called_once_with(expected_schema)
         assert expected_schema in ext._initialized_schemas
 
-    @pytest.mark.asyncio
-    async def test_schema_cached_on_second_access(self):
-        ext, _ = _setup_jwks_ext()
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+    async def test_schema_cached_on_second_access(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
+        ext._context = _mock_context()
 
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"sub": VALID_UUID}
-
-            await ext.authenticate(RequestContext(api_key=_make_valid_token()))
-            await ext.authenticate(RequestContext(api_key=_make_valid_token()))
+        await self._authenticate_once(ext)
+        await self._authenticate_once(ext)
 
         # run_migration should only be called once
         expected_schema = "user_" + VALID_UUID.replace("-", "_")
-        mock_context.run_migration.assert_called_once_with(expected_schema)
+        ext._context.run_migration.assert_called_once_with(expected_schema)
 
-    @pytest.mark.asyncio
-    async def test_schema_init_failure(self):
-        ext, _ = _setup_jwks_ext()
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock(side_effect=RuntimeError("Migration failed"))
-        ext._context = mock_context
+    async def test_schema_init_failure(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
+        context = AsyncMock(spec=ExtensionContext)
+        context.run_migration = AsyncMock(side_effect=RuntimeError("Migration failed"))
+        ext._context = context
 
-        with (
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
-            patch("hindsight_ext_supabase_tenant.extension.pyjwt.decode") as mock_decode,
-        ):
-            mock_header.return_value = {"kid": "test-key-1", "alg": "RS256"}
-            mock_decode.return_value = {"sub": VALID_UUID}
-
-            with pytest.raises(AuthenticationError, match="Failed to initialize tenant"):
-                await ext.authenticate(RequestContext(api_key=_make_valid_token()))
+        with pytest.raises(AuthenticationError, match="Failed to initialize tenant"):
+            await self._authenticate_once(ext)
 
         # Schema should NOT be cached on failure
         expected_schema = "user_" + VALID_UUID.replace("-", "_")
@@ -739,18 +657,14 @@ class TestSupabaseTenantExtensionSchemaManagement:
 class TestSupabaseTenantExtensionListTenants:
     """Tests for list_tenants behavior."""
 
-    @pytest.mark.asyncio
-    async def test_list_tenants_empty(self):
-        ext = _make_extension()
+    async def test_list_tenants_empty(self, make_extension):
+        ext = make_extension()
         tenants = await ext.list_tenants()
         assert tenants == []
 
-    @pytest.mark.asyncio
-    async def test_list_tenants_after_auth(self):
-        ext, _ = _setup_jwks_ext()
-        mock_context = AsyncMock(spec=ExtensionContext)
-        mock_context.run_migration = AsyncMock()
-        ext._context = mock_context
+    async def test_list_tenants_after_auth(self, make_extension):
+        ext = _setup_jwks_ext(make_extension)
+        ext._context = _mock_context()
 
         with (
             patch("hindsight_ext_supabase_tenant.extension.pyjwt.get_unverified_header") as mock_header,
@@ -775,21 +689,22 @@ class TestSupabaseTenantExtensionListTenants:
 class TestSupabaseTenantExtensionShutdown:
     """Tests for on_shutdown behavior."""
 
-    @pytest.mark.asyncio
-    async def test_on_shutdown_closes_client(self):
-        ext = _make_extension()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        ext._http_client = mock_client
+    async def test_on_shutdown_closes_client(self, supabase, make_extension):
+        ext = _setup_legacy_ext(make_extension, supabase.base_url)
+        supabase.reply(USER_PATH, 200, {"id": VALID_UUID})
+        ext._context = _mock_context()
+        await ext.authenticate(RequestContext(api_key=_make_valid_token()))
+        session = ext._http
+        assert not session.closed
 
         await ext.on_shutdown()
 
-        mock_client.aclose.assert_called_once()
-        assert ext._http_client is None
+        assert session.closed
+        assert ext._http is None
 
-    @pytest.mark.asyncio
-    async def test_on_shutdown_no_client(self):
-        ext = _make_extension()
-        # _http_client is None by default — should not raise
+    async def test_on_shutdown_no_client(self, make_extension):
+        ext = make_extension()
+        # No HTTP session before on_startup — should not raise
         await ext.on_shutdown()
 
 

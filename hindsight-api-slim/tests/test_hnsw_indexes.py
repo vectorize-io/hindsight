@@ -250,7 +250,7 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
             request_context=request_context,
         )
 
-        query_emb = memory.embeddings.encode(["software engineer Alice"])
+        query_emb = await memory.embeddings.encode(["software engineer Alice"])
         query_emb_str = str(query_emb[0])
 
         fact_types = ["world", "experience"]

@@ -4,8 +4,9 @@ The Nous provider mirrors the Codex provider: it reads OAuth state from the
 Hermes auth store (``~/.hermes/auth.json``, ``providers.nous``) and refreshes
 the inference JWT itself, with no dependency on the ``hermes_cli`` package.
 
-These tests pin that behaviour against a fake auth store on disk and a stubbed
-refresh endpoint — no network, no Hermes install required:
+These tests pin that behaviour against a fake auth store on disk and a local
+stub of the refresh endpoint (``tests/aiohttp_stub.py``) — no external network,
+no Hermes install required:
 
 - ``from_file`` loads access/refresh tokens (and raises a clear "logged out"
   error when ``providers.nous`` is absent / has no access_token).
@@ -25,13 +26,13 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import stat
 import time
 from pathlib import Path
+from typing import Any
 
-import httpx
 import pytest
+from aiohttp import web
 
 from hindsight_api.engine.providers.nous_auth import (
     _NOUS_TOKEN_REFRESH_SKEW_SECONDS,
@@ -39,6 +40,7 @@ from hindsight_api.engine.providers.nous_auth import (
     NousNotLoggedInError,
     NousRefreshExpiredError,
 )
+from tests.aiohttp_stub import stub_server
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,6 +66,20 @@ def _write_store(path: Path, state: dict | None, *, extra: dict | None = None) -
     path.write_text(json.dumps(store, indent=2))
 
 
+class _PortalTokenEndpoint:
+    """Stub of the Portal's ``/api/oauth/token``: records requests, answers with one reply."""
+
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
+        self._status = status
+        self._body = body
+        self.requests: list[dict[str, Any]] = []
+
+    async def handle(self, request: web.Request) -> web.StreamResponse:
+        form = await request.post()
+        self.requests.append({"path": request.path, "headers": dict(request.headers), "data": dict(form)})
+        return web.json_response(self._body, status=self._status)
+
+
 def _fresh_state(**overrides) -> dict:
     state = {
         "access_token": _jwt_with_exp(int(time.time()) + 3600),
@@ -81,7 +97,7 @@ def _fresh_state(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_from_file_loads_nous_oauth_state(tmp_path: Path) -> None:
+async def test_from_file_loads_nous_oauth_state(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     _write_store(auth, _fresh_state())
 
@@ -89,7 +105,7 @@ def test_from_file_loads_nous_oauth_state(tmp_path: Path) -> None:
 
     assert mgr.refresh_token == "rt-original"
     assert mgr.base_url == "https://inference-api.nousresearch.com/v1"
-    assert mgr.ensure_fresh_token() == mgr.access_token  # fresh JWT → no refresh
+    assert await mgr.ensure_fresh_token() == mgr.access_token  # fresh JWT → no refresh
 
 
 def test_from_file_missing_file_raises_not_logged_in(tmp_path: Path) -> None:
@@ -116,33 +132,26 @@ def test_from_file_without_access_token_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stale_token_triggers_refresh_with_hermes_request_shape(tmp_path: Path, monkeypatch) -> None:
+async def test_stale_token_triggers_refresh_with_hermes_request_shape(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     near_exp = int(time.time()) + (_NOUS_TOKEN_REFRESH_SKEW_SECONDS - 5)  # within skew → stale
-    _write_store(auth, _fresh_state(access_token=_jwt_with_exp(near_exp)))
-    mgr = NousAuthManager.from_file(auth)
-
     new_access = _jwt_with_exp(int(time.time()) + 3600)
-    captured: dict = {}
+    endpoint = _PortalTokenEndpoint(
+        200, {"access_token": new_access, "refresh_token": "rt-rotated", "expires_in": 3600}
+    )
 
-    def fake_post(url, *, headers=None, data=None, timeout=None):
-        captured["url"] = url
-        captured["headers"] = headers
-        captured["data"] = data
-        return httpx.Response(
-            200,
-            json={"access_token": new_access, "refresh_token": "rt-rotated", "expires_in": 3600},
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(mgr._http_client, "post", fake_post)
-
-    token = mgr.ensure_fresh_token()
+    async with stub_server(endpoint.handle) as portal:
+        _write_store(auth, _fresh_state(access_token=_jwt_with_exp(near_exp), portal_base_url=portal))
+        mgr = NousAuthManager.from_file(auth)
+        token = await mgr.ensure_fresh_token()
+        await mgr.close()
 
     assert token == new_access
-    assert captured["url"] == "https://portal.nousresearch.com/api/oauth/token"
-    assert captured["headers"]["x-nous-refresh-token"] == "rt-original"
-    assert captured["data"] == {"grant_type": "refresh_token", "client_id": "hermes-cli"}
+    [seen] = endpoint.requests
+    assert seen["path"] == "/api/oauth/token"
+    assert seen["headers"]["x-nous-refresh-token"] == "rt-original"
+    assert seen["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+    assert seen["data"] == {"grant_type": "refresh_token", "client_id": "hermes-cli"}
 
     # Rotated tokens persisted back into providers.nous, pool preserved.
     on_disk = json.loads(auth.read_text())
@@ -153,33 +162,29 @@ def test_stale_token_triggers_refresh_with_hermes_request_shape(tmp_path: Path, 
     assert stat.S_IMODE(auth.stat().st_mode) == 0o600
 
 
-def test_refresh_rereads_latest_refresh_token_from_disk(tmp_path: Path, monkeypatch) -> None:
+async def test_refresh_rereads_latest_refresh_token_from_disk(tmp_path: Path) -> None:
     """Single-use safety: a token Hermes rotated on disk is used, not the stale
     in-memory one the manager loaded at startup."""
     auth = tmp_path / "auth.json"
     near_exp = int(time.time()) + 10
-    _write_store(auth, _fresh_state(access_token=_jwt_with_exp(near_exp)))
-    mgr = NousAuthManager.from_file(auth)
-    assert mgr.refresh_token == "rt-original"
+    endpoint = _PortalTokenEndpoint(200, {"access_token": _jwt_with_exp(int(time.time()) + 3600), "expires_in": 3600})
 
-    # Simulate a concurrent Hermes refresh that rotated the RT on disk.
-    rotated = _fresh_state(access_token=_jwt_with_exp(near_exp), refresh_token="rt-from-hermes")
-    _write_store(auth, rotated)
+    async with stub_server(endpoint.handle) as portal:
+        _write_store(auth, _fresh_state(access_token=_jwt_with_exp(near_exp), portal_base_url=portal))
+        mgr = NousAuthManager.from_file(auth)
+        assert mgr.refresh_token == "rt-original"
 
-    sent_rt: dict = {}
-
-    def fake_post(url, *, headers=None, data=None, timeout=None):
-        sent_rt["value"] = headers["x-nous-refresh-token"]
-        return httpx.Response(
-            200,
-            json={"access_token": _jwt_with_exp(int(time.time()) + 3600), "expires_in": 3600},
-            request=httpx.Request("POST", url),
+        # Simulate a concurrent Hermes refresh that rotated the RT on disk.
+        rotated = _fresh_state(
+            access_token=_jwt_with_exp(near_exp), refresh_token="rt-from-hermes", portal_base_url=portal
         )
+        _write_store(auth, rotated)
 
-    monkeypatch.setattr(mgr._http_client, "post", fake_post)
-    mgr.refresh_tokens(force=True)
+        await mgr.refresh_tokens(force=True)
+        await mgr.close()
 
-    assert sent_rt["value"] == "rt-from-hermes"  # disk value, not the stale in-memory "rt-original"
+    # The disk value, not the stale in-memory "rt-original".
+    assert endpoint.requests[0]["headers"]["x-nous-refresh-token"] == "rt-from-hermes"
 
 
 # ---------------------------------------------------------------------------
@@ -188,25 +193,35 @@ def test_refresh_rereads_latest_refresh_token_from_disk(tmp_path: Path, monkeypa
 
 
 @pytest.mark.parametrize("status,body", [(400, {"error": "invalid_grant"}), (401, {"error": "refresh_token_reused"})])
-def test_terminal_refresh_error_raises_and_does_not_loop(tmp_path: Path, monkeypatch, status, body) -> None:
+async def test_terminal_refresh_error_raises_and_does_not_loop(tmp_path: Path, status, body) -> None:
     auth = tmp_path / "auth.json"
-    _write_store(auth, _fresh_state(access_token=_jwt_with_exp(int(time.time()) - 10)))
-    mgr = NousAuthManager.from_file(auth)
+    endpoint = _PortalTokenEndpoint(status, body)
 
-    calls = {"n": 0}
+    async with stub_server(endpoint.handle) as portal:
+        _write_store(auth, _fresh_state(access_token=_jwt_with_exp(int(time.time()) - 10), portal_base_url=portal))
+        mgr = NousAuthManager.from_file(auth)
+        with pytest.raises(NousRefreshExpiredError, match="hermes portal"):
+            await mgr.refresh_tokens(force=True)
+        await mgr.close()
 
-    def fake_post(url, *, headers=None, data=None, timeout=None):
-        calls["n"] += 1
-        return httpx.Response(status, json=body, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(mgr._http_client, "post", fake_post)
-
-    with pytest.raises(NousRefreshExpiredError, match="hermes portal"):
-        mgr.refresh_tokens(force=True)
-    assert calls["n"] == 1  # one attempt, no retry loop
+    assert len(endpoint.requests) == 1  # one attempt, no retry loop
 
 
-def test_missing_refresh_token_raises_runtime_error(tmp_path: Path) -> None:
+async def test_server_error_is_a_runtime_error_not_a_terminal_one(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    endpoint = _PortalTokenEndpoint(503, {"error": "unavailable"})
+
+    async with stub_server(endpoint.handle) as portal:
+        _write_store(auth, _fresh_state(access_token=_jwt_with_exp(int(time.time()) - 10), portal_base_url=portal))
+        mgr = NousAuthManager.from_file(auth)
+        with pytest.raises(RuntimeError, match="HTTP 503") as exc_info:
+            await mgr.refresh_tokens(force=True)
+        await mgr.close()
+
+    assert not isinstance(exc_info.value, NousRefreshExpiredError)
+
+
+async def test_missing_refresh_token_raises_runtime_error(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     state = _fresh_state(access_token=_jwt_with_exp(int(time.time()) - 10))
     del state["refresh_token"]
@@ -214,7 +229,7 @@ def test_missing_refresh_token_raises_runtime_error(tmp_path: Path) -> None:
     mgr = NousAuthManager.from_file(auth)
 
     with pytest.raises(RuntimeError, match="no refresh_token"):
-        mgr.refresh_tokens(force=True)
+        await mgr.refresh_tokens(force=True)
 
 
 # ---------------------------------------------------------------------------

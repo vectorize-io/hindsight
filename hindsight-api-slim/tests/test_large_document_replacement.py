@@ -231,11 +231,11 @@ async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
         "extract_facts_from_contents",
         _record_extraction,
     )
-    monkeypatch.setattr(
-        memory.embeddings,
-        "encode_documents",
-        lambda texts: [[0.0] * memory.embeddings.dimension for _ in texts],
-    )
+
+    async def _zero_vectors(texts: list[str]) -> list[list[float]]:
+        return [[0.0] * memory.embeddings.dimension for _ in texts]
+
+    monkeypatch.setattr(memory.embeddings, "encode_documents", _zero_vectors)
 
     try:
         await memory.retain_async(

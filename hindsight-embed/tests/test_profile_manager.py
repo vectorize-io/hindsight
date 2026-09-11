@@ -364,12 +364,13 @@ class TestProfileManager:
 
     def test_daemon_running_status(self, profile_manager):
         """Test that daemon running status is checked correctly."""
-        with patch("httpx.Client") as mock_client:
-            # Mock successful health check
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+        from hindsight_embed._http_probe import ProbeResponse
 
+        # Successful health check (the probe's transport is covered by test_http_probe.py)
+        with patch(
+            "hindsight_embed.profile_manager.probe_get",
+            return_value=ProbeResponse(status_code=200, text=""),
+        ):
             profile_manager.create_profile("test", {"KEY": "value"})
             profiles = profile_manager.list_profiles()
 

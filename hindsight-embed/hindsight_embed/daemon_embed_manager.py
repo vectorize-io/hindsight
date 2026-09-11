@@ -19,20 +19,17 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import IO, Optional
 
-import httpx
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
+from ._http_probe import ProbeResponse, probe_get
 from .embed_manager import EmbedManager
 from .profile_manager import ProfileLockTimeout, ProfileManager, lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
-
-# Suppress noisy httpx logs
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _parse_float_env(name: str, default: float) -> float:
@@ -140,9 +137,9 @@ _PROBE_TIMEOUT_S = 5.0
 _WINDOWS_PROBE_TIMEOUT_S = 30.0
 
 
-def _probe_timeout(read: float) -> httpx.Timeout:
-    """Timeout with a short connect and a caller-chosen read budget."""
-    return httpx.Timeout(read, connect=min(read, PROBE_CONNECT_TIMEOUT))
+def _probe(url: str, read: float) -> ProbeResponse | None:
+    """GET url with a short connect and a caller-chosen read budget; None if nothing answered."""
+    return probe_get(url, read_timeout=read, connect_timeout=min(read, PROBE_CONNECT_TIMEOUT))
 
 
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
@@ -255,12 +252,8 @@ class DaemonEmbedManager(EmbedManager):
         which consults the long probe before deciding anything destructive.
         """
         daemon_url = self.get_url(profile)
-        try:
-            with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
-                response = client.get(f"{daemon_url}/health")
-                return response.status_code == 200
-        except Exception:
-            return False
+        response = _probe(f"{daemon_url}/health", LIVENESS_PROBE_TIMEOUT)
+        return response is not None and response.status_code == 200
 
     def _dev_api_command(self) -> list[str] | None:
         """Return the dev-mode launch command when running inside the monorepo."""
@@ -568,17 +561,14 @@ class DaemonEmbedManager(EmbedManager):
     @staticmethod
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
+        response = _probe(f"http://127.0.0.1:{port}/health", HEALTH_PROBE_TIMEOUT)
+        if response is None or response.status_code != 200:
+            return False
         try:
-            with httpx.Client(timeout=_probe_timeout(HEALTH_PROBE_TIMEOUT)) as client:
-                response = client.get(f"http://127.0.0.1:{port}/health")
-                if response.status_code != 200:
-                    return False
-                try:
-                    health = response.json()
-                except Exception:
-                    return False
-                return health.get("status") == "healthy" and health.get("database") == "connected"
-        except Exception:
+            health = response.json()
+            return health.get("status") == "healthy" and health.get("database") == "connected"
+        except (ValueError, AttributeError):
+            # Not JSON, or JSON that is not an object: not Hindsight's payload.
             return False
 
     def _wait_for_port_health(self, port: int, timeout: float | None = None) -> bool:
@@ -999,12 +989,9 @@ class DaemonEmbedManager(EmbedManager):
         for host in LOOPBACK_HOSTS:
             # IPv6 literals have to be bracketed in a URL authority.
             base = f"http://[{host}]:{ui_port}" if ":" in host else f"http://{host}:{ui_port}"
-            try:
-                with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
-                    if client.get(f"{base}/api/health").status_code == 200:
-                        return host
-            except Exception:
-                continue
+            response = _probe(f"{base}/api/health", LIVENESS_PROBE_TIMEOUT)
+            if response is not None and response.status_code == 200:
+                return host
         return None
 
     @staticmethod

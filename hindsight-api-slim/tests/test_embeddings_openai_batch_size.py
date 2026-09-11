@@ -177,33 +177,36 @@ def test_non_numeric_batch_size_is_rejected():
         HindsightConfig.from_env()
 
 
-def test_openai_encode_splits_on_configured_batch_size(monkeypatch):
+async def test_openai_encode_splits_on_configured_batch_size(monkeypatch):
     """encode() sends multiple upstream requests when len(texts) > batch_size."""
     from types import SimpleNamespace
 
+    from hindsight_api.engine.aiohttp_session import LoopLocal
     from hindsight_api.engine.embeddings import OpenAIEmbeddings
 
     emb = OpenAIEmbeddings(api_key="sk-test", model="text-embedding-3-small", batch_size=10)
 
     calls: list[int] = []
 
-    def fake_create(*, model, input):
+    async def fake_create(*, model, input):
         calls.append(len(input))
         return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.0] * 1536) for i in range(len(input))])
 
-    emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+    fake_client = SimpleNamespace(api_key="sk-test", embeddings=SimpleNamespace(create=fake_create))
+    emb._clients = LoopLocal(lambda: fake_client)
     emb._dimension = 1536
 
-    vectors = emb.encode(["x"] * 25)
+    vectors = await emb.encode(["x"] * 25)
 
     assert calls == [10, 10, 5]
     assert len(vectors) == 25
 
 
-def test_openai_encode_passes_configured_dimensions():
+async def test_openai_encode_passes_configured_dimensions():
     """OpenAI embeddings requests include the optional dimensions parameter when configured."""
     from types import SimpleNamespace
 
+    from hindsight_api.engine.aiohttp_session import LoopLocal
     from hindsight_api.engine.embeddings import OpenAIEmbeddings
 
     emb = OpenAIEmbeddings(
@@ -215,14 +218,15 @@ def test_openai_encode_passes_configured_dimensions():
 
     calls: list[int | None] = []
 
-    def fake_create(*, model, input, dimensions=None):
+    async def fake_create(*, model, input, dimensions=None):
         calls.append(dimensions)
         return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.0] * 384) for i in range(len(input))])
 
-    emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+    fake_client = SimpleNamespace(api_key="sk-test", embeddings=SimpleNamespace(create=fake_create))
+    emb._clients = LoopLocal(lambda: fake_client)
     emb._dimension = 384
 
-    vectors = emb.encode(["x"] * 2)
+    vectors = await emb.encode(["x"] * 2)
 
     assert calls == [384]
     assert len(vectors) == 2

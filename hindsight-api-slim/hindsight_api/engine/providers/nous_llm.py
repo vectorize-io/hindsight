@@ -21,7 +21,6 @@ after a one-time ``hermes portal`` login.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -65,10 +64,6 @@ class NousLLM(OpenAICompatibleLLM):
                 "Or use a different provider (openai, anthropic, gemini) with an API key."
             ) from e
 
-        # Single-flight async refresh lock — concurrent coroutines racing toward
-        # an expired token produce one network refresh.
-        self._auth_lock = asyncio.Lock()
-
         token = self._auth.access_token
         resolved_base = base_url or self._auth.base_url
         # Parent validates provider against a fixed list; present as "openai"
@@ -105,25 +100,19 @@ class NousLLM(OpenAICompatibleLLM):
     async def _ensure_fresh_token(self) -> None:
         """Proactively refresh if the JWT is near expiry; rebuild on change.
 
-        Cheap when fresh (a JWT exp decode). The blocking refresh (network +
-        cross-process file lock) is offloaded to a thread so the event loop is
-        never stalled.
+        Cheap when fresh (a JWT exp decode).
         """
         if not self._auth._token_is_stale():
             return
         await self._refresh(reason="proactive (token near expiry)", force=False)
 
     async def _refresh(self, *, reason: str, force: bool) -> None:
-        token_before = self.api_key
-        async with self._auth_lock:
-            if force:
-                if self.api_key != token_before:
-                    return  # another coroutine already refreshed
-            elif not self._auth._token_is_stale():
-                return
-            await asyncio.to_thread(lambda: self._auth.refresh_tokens(reason, force=force))
-            if self._auth.access_token != self.api_key:
-                self._rebuild_client()
+        # The manager is single-flight (see ``oauth_store_lock``): a caller that
+        # waited behind another's refresh returns without a second request, and
+        # its rotated token is picked up below.
+        await self._auth.refresh_tokens(reason, force=force)
+        if self._auth.access_token != self.api_key:
+            self._rebuild_client()
 
     async def _with_auth_retry(self, fn: Any, label: str, *args: Any, **kwargs: Any) -> Any:
         """Run an OpenAI-compatible call, refreshing once on a 401.
@@ -163,7 +152,7 @@ class NousLLM(OpenAICompatibleLLM):
         return await self._with_auth_retry(super().call_with_tools, "call_with_tools", *args, **kwargs)
 
     async def cleanup(self) -> None:
-        self._auth.close()
+        await self._auth.close()
         parent_cleanup = getattr(super(), "cleanup", None)
         if parent_cleanup is not None:
             await parent_cleanup()

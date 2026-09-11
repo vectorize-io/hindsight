@@ -13,7 +13,7 @@ dependencies = [
     # the ones pinned in the Dockerfile; these are here so the tests run
     # against the same libraries.
     "PyJWT[crypto]>=2.12.0", # JWKS/RS256 verification; >=2.12 accepts unknown crit header extensions
-    "httpx>=0.27.0",
+    "aiohttp>=3.14.3",
     # The server provides the extension interfaces this is written against.
     # It is a test-time dependency only: at runtime the server is the host
     # process that imports the extension, not something it installs.

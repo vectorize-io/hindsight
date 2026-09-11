@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -22,6 +21,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _rate_limit_retry_at,
 )
 from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
+from tests.ollama_stub import OllamaStub, chat_body, ollama_stub
 
 
 class SimpleJsonResponse(BaseModel):
@@ -221,26 +221,16 @@ async def test_missing_choices_are_retryable_provider_response_errors():
     sleep_mock.assert_awaited_once()
 
 
-def _ollama_llm(*, num_ctx: int | None = None) -> OpenAICompatibleLLM:
-    return OpenAICompatibleLLM(
+def _ollama_llm(stub: OllamaStub, *, num_ctx: int | None = None) -> OpenAICompatibleLLM:
+    llm = OpenAICompatibleLLM(
         provider="ollama",
         api_key="",
-        base_url="http://localhost:11434/v1",
+        base_url=stub.openai_base_url,
         model="qwen3",
         ollama_num_ctx=num_ctx,
     )
-
-
-def _ollama_response(content: str, *, done_reason: str | None = None) -> httpx.Response:
-    body = {
-        "model": "qwen3",
-        "message": {"role": "assistant", "content": content},
-        "done": True,
-    }
-    if done_reason is not None:
-        body["done_reason"] = done_reason
-    request = httpx.Request("POST", "http://localhost:11434/api/chat")
-    return httpx.Response(200, json=body, request=request)
+    stub.clients.append(llm)
+    return llm
 
 
 @pytest.mark.asyncio
@@ -339,26 +329,17 @@ async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
     ``done_reason="stop"`` is what real Ollama sends on a completed generation,
     and repair is gated on it.
     """
-    llm = _ollama_llm()
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response('{"ok": true,}', done_reason="stop")
-    mock_client.__aenter__.return_value = mock_client
-
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        result = (
-            await llm.call(
-                messages=[{"role": "user", "content": "Return whether this worked."}],
-                response_format=SimpleJsonResponse,
-                max_retries=1,
-                initial_backoff=0,
-            )
-        ).content
+    async with ollama_stub(chat_body('{"ok": true,}', done_reason="stop")) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub)
+            result = (
+                await llm.call(
+                    messages=[{"role": "user", "content": "Return whether this worked."}],
+                    response_format=SimpleJsonResponse,
+                    max_retries=1,
+                    initial_backoff=0,
+                )
+            ).content
 
     assert result.ok is True
 
@@ -366,51 +347,33 @@ async def test_ollama_native_repairs_malformed_json_instead_of_dropping_it():
 @pytest.mark.asyncio
 async def test_ollama_native_reports_a_truncated_body_rather_than_repairing_it():
     """The native path carries the same risk under the done_reason key."""
-    llm = _ollama_llm()
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta", "gam', done_reason="length")
-    mock_client.__aenter__.return_value = mock_client
-
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        with pytest.raises(OutputTooLongError):
-            await llm.call(
-                messages=[{"role": "user", "content": "List the facts."}],
-                response_format=FactListResponse,
-                max_retries=1,
-                initial_backoff=0,
-            )
+    async with ollama_stub(chat_body('{"facts": ["alpha", "beta", "gam', done_reason="length")) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub)
+            with pytest.raises(OutputTooLongError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "List the facts."}],
+                    response_format=FactListResponse,
+                    max_retries=1,
+                    initial_backoff=0,
+                )
 
 
 @pytest.mark.asyncio
 async def test_ollama_native_reports_a_truncated_body_that_still_parses():
     """The native path has the same quiet case under done_reason."""
-    llm = _ollama_llm()
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta"]}', done_reason="length")
-    mock_client.__aenter__.return_value = mock_client
+    async with ollama_stub(chat_body('{"facts": ["alpha", "beta"]}', done_reason="length")) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub)
+            with pytest.raises(OutputTooLongError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "List the facts."}],
+                    response_format=FactListResponse,
+                    max_retries=3,
+                    initial_backoff=0,
+                )
 
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        with pytest.raises(OutputTooLongError):
-            await llm.call(
-                messages=[{"role": "user", "content": "List the facts."}],
-                response_format=FactListResponse,
-                max_retries=3,
-                initial_backoff=0,
-            )
-
-    assert mock_client.post.await_count == 1
+    assert len(stub.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -422,26 +385,17 @@ async def test_ollama_native_reports_a_capped_free_form_answer():
     reflect synthesis or mental-model page is a failure, not a short success.
     """
     # Free-form calls only take the native path once num_ctx is configured.
-    llm = _ollama_llm(num_ctx=8192)
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response("The three causes are, first,", done_reason="length")
-    mock_client.__aenter__.return_value = mock_client
+    async with ollama_stub(chat_body("The three causes are, first,", done_reason="length")) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub, num_ctx=8192)
+            with pytest.raises(OutputTooLongError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "Explain the causes."}],
+                    max_retries=3,
+                    initial_backoff=0,
+                )
 
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        with pytest.raises(OutputTooLongError):
-            await llm.call(
-                messages=[{"role": "user", "content": "Explain the causes."}],
-                max_retries=3,
-                initial_backoff=0,
-            )
-
-    assert mock_client.post.await_count == 1
+    assert len(stub.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -452,26 +406,17 @@ async def test_ollama_native_does_not_retry_a_capped_empty_free_form_answer():
     ProviderResponseError, so without the guard ahead of it the identical request
     goes back out against the identical limit.
     """
-    llm = _ollama_llm(num_ctx=8192)
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response("", done_reason="length")
-    mock_client.__aenter__.return_value = mock_client
+    async with ollama_stub(chat_body("", done_reason="length")) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub, num_ctx=8192)
+            with pytest.raises(OutputTooLongError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "Explain the causes."}],
+                    max_retries=3,
+                    initial_backoff=0,
+                )
 
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        with pytest.raises(OutputTooLongError):
-            await llm.call(
-                messages=[{"role": "user", "content": "Explain the causes."}],
-                max_retries=3,
-                initial_backoff=0,
-            )
-
-    assert mock_client.post.await_count == 1
+    assert len(stub.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -578,25 +523,16 @@ async def test_an_unknown_finish_reason_does_not_earn_a_repair():
 @pytest.mark.asyncio
 async def test_ollama_does_not_repair_a_truncated_list_without_done_reason():
     """The native path is gated the same way."""
-    llm = _ollama_llm()
-    mock_client = AsyncMock()
-    mock_client.post.return_value = _ollama_response('{"facts": ["alpha", "beta", "gam')
-    mock_client.__aenter__.return_value = mock_client
-
-    with (
-        patch(
-            "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-            return_value=mock_client,
-        ),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        with pytest.raises(json.JSONDecodeError):
-            await llm.call(
-                messages=[{"role": "user", "content": "List the facts."}],
-                response_format=FactListResponse,
-                max_retries=0,
-                initial_backoff=0,
-            )
+    async with ollama_stub(chat_body('{"facts": ["alpha", "beta", "gam')) as stub:
+        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+            llm = _ollama_llm(stub)
+            with pytest.raises(json.JSONDecodeError):
+                await llm.call(
+                    messages=[{"role": "user", "content": "List the facts."}],
+                    response_format=FactListResponse,
+                    max_retries=0,
+                    initial_backoff=0,
+                )
 
 
 @pytest.mark.asyncio
@@ -607,32 +543,20 @@ async def test_ollama_records_usage_for_a_capped_response_before_raising():
     without stashing here the most expensive responses would be the ones missing
     from accounting.
     """
-    llm = _ollama_llm()
-    mock_client = AsyncMock()
-    body = _ollama_response('{"facts": ["alpha", "beta", "gam', done_reason="length")
-    payload = json.loads(body.content)
-    payload["prompt_eval_count"] = 1234
-    payload["eval_count"] = 567
-    request = httpx.Request("POST", "http://localhost:11434/api/chat")
-    mock_client.post.return_value = httpx.Response(200, json=payload, request=request)
-    mock_client.__aenter__.return_value = mock_client
+    body = chat_body('{"facts": ["alpha", "beta", "gam', done_reason="length", prompt_eval_count=1234, eval_count=567)
 
     token = set_response_usage(None)
     try:
-        with (
-            patch(
-                "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
-                return_value=mock_client,
-            ),
-            patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-        ):
-            with pytest.raises(OutputTooLongError):
-                await llm.call(
-                    messages=[{"role": "user", "content": "List the facts."}],
-                    response_format=FactListResponse,
-                    max_retries=0,
-                    initial_backoff=0,
-                )
+        async with ollama_stub(body) as stub:
+            with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+                llm = _ollama_llm(stub)
+                with pytest.raises(OutputTooLongError):
+                    await llm.call(
+                        messages=[{"role": "user", "content": "List the facts."}],
+                        response_format=FactListResponse,
+                        max_retries=0,
+                        initial_backoff=0,
+                    )
         usage = current_response_usage()
         assert usage is not None
         assert usage.input_tokens == 1234

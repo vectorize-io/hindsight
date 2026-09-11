@@ -188,14 +188,14 @@ class TestEmbeddingsBatchLengthGuarantee:
         # through — `zip(extracted_facts, embeddings)` would otherwise drop
         # facts and break unit_id alignment downstream.
         backend = MagicMock()
-        backend.encode_documents.return_value = [[0.1, 0.2]]  # only 1 vector for 3 inputs
+        backend.encode_documents = AsyncMock(return_value=[[0.1, 0.2]])  # only 1 vector for 3 inputs
 
         with pytest.raises(RuntimeError, match="returned 1 vectors for 3 input texts"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b", "c"]))
 
     def test_raises_when_backend_returns_more_embeddings(self):
         backend = MagicMock()
-        backend.encode_documents.return_value = [[0.1], [0.2], [0.3]]
+        backend.encode_documents = AsyncMock(return_value=[[0.1], [0.2], [0.3]])
 
         with pytest.raises(RuntimeError, match="returned 3 vectors for 2 input texts"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
@@ -203,7 +203,7 @@ class TestEmbeddingsBatchLengthGuarantee:
     def test_passes_through_aligned_embeddings(self):
         backend = MagicMock()
         backend.dimension = 1
-        backend.encode_documents.return_value = [[0.1], [0.2]]
+        backend.encode_documents = AsyncMock(return_value=[[0.1], [0.2]])
 
         result = asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
 
@@ -212,7 +212,7 @@ class TestEmbeddingsBatchLengthGuarantee:
     def test_raises_when_backend_returns_empty_embedding_vector(self):
         backend = MagicMock()
         backend.dimension = 3
-        backend.encode_documents.return_value = [[0.1, 0.2, 0.3], []]
+        backend.encode_documents = AsyncMock(return_value=[[0.1, 0.2, 0.3], []])
 
         with pytest.raises(RuntimeError, match="embedding 1 has dimension 0; expected 3"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
@@ -220,7 +220,7 @@ class TestEmbeddingsBatchLengthGuarantee:
     def test_raises_when_backend_returns_wrong_embedding_dimension(self):
         backend = MagicMock()
         backend.dimension = 3
-        backend.encode_documents.return_value = [[0.1, 0.2, 0.3], [0.4, 0.5]]
+        backend.encode_documents = AsyncMock(return_value=[[0.1, 0.2, 0.3], [0.4, 0.5]])
 
         with pytest.raises(RuntimeError, match="embedding 1 has dimension 2; expected 3"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
