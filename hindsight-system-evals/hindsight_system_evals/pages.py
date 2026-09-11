@@ -64,17 +64,6 @@ class PageOutcome:
     hit_trap: bool = False
     trap_reason: str = ""
 
-    @property
-    def shrank(self) -> bool:
-        """Whether the page ever lost content.
-
-        Not a failure by itself — superseding a claim legitimately shrinks a page
-        — but an unexplained collapse is the signature of a destructive edit, and
-        that is invisible to a score that only reads the final text.
-        """
-        sizes = [w.chars for w in self.waves]
-        return any(b < a for a, b in zip(sizes, sizes[1:]))
-
 
 def split_into_waves(facts: list[HardFact], count: int = WAVES) -> list[list[HardFact]]:
     """Split the corpus into waves without separating any subject's facts."""
