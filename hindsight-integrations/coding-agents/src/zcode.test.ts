@@ -209,6 +209,8 @@ describe("ZCode prompt hook", () => {
       await runHook(zcode.prompt, () => ({
         reflect: async () => "",
         listPages: async () => ({ items: [] }),
+        searchKnowledgePages: async () => [],
+        recallObservations: async () => [],
         knowledgePagesSupported: false,
       }));
     } finally {

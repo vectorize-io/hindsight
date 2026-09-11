@@ -169,6 +169,31 @@ export class KnowledgePagesUnavailableError extends Error {
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
 /** Default cap on concurrent retain-related requests; configurable via `maxParallelRetains`. */
+/**
+ * A reflect that failed on the SERVER's side of the wire: our deadline expired or the server
+ * answered non-2xx. `status` is undefined for a timeout. Transport errors (connection refused,
+ * DNS) are NOT wrapped — they mean the server is unreachable, so no other endpoint would answer
+ * either.
+ */
+export class ReflectError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | undefined,
+    readonly timedOut: boolean,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "ReflectError";
+  }
+
+  /** A timeout or a 5xx means reflect's synthesis (the slow LLM path) broke, while the cheap
+   *  retrieval endpoints may still answer — worth falling back. A 4xx will fail the same way on
+   *  every endpoint (auth, missing bank), so it is not. */
+  get fallbackEligible(): boolean {
+    return this.timedOut || (this.status !== undefined && this.status >= 500);
+  }
+}
+
 export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
@@ -279,14 +304,15 @@ export class HindsightClient {
     method: string,
     url: string,
     body?: unknown,
-    tolerate: number[] = []
+    tolerate: number[] = [],
+    timeoutMs = 15_000
   ): Promise<Response> {
     // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
     // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
     const r = await this.fetchWithAuth(url, {
       method,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
@@ -512,7 +538,7 @@ export class HindsightClient {
   /**
    * Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a
    * caller — but `timeoutMs` is REQUIRED, deliberately: the right deadline differs by an order of
-   * magnitude between the automatic hook (25s, to fit the host's window) and the agent-invoked
+   * magnitude between the automatic hook (20s, to fit the host's window) and the agent-invoked
    * tool (minutes, on a populated bank). This used to default to 120s, which silently overrode the
    * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
    */
@@ -527,19 +553,49 @@ export class HindsightClient {
       });
       // Keep the server's body: a bare "reflect 500" in the diag trail is undebuggable after the fact.
       if (!resp.ok)
-        throw new Error(
-          `reflect ${resp.status} ${(await resp.text()).slice(0, 1000)}${this.authHint(resp.status)}`
+        throw new ReflectError(
+          `reflect ${resp.status} ${(await resp.text()).slice(0, 1000)}${this.authHint(resp.status)}`,
+          resp.status,
+          false
         );
       const data = (await resp.json()) as { text?: string };
       return (data.text || "").trim();
     } catch (e) {
       // Our own deadline surfaces as a generic "This operation was aborted"; name it.
       if (ctrl.signal.aborted)
-        throw new Error(`reflect timed out after ${opts.timeoutMs}ms`, { cause: e });
+        throw new ReflectError(`reflect timed out after ${opts.timeoutMs}ms`, undefined, true, {
+          cause: e,
+        });
       throw e;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Raw recall restricted to consolidated observations — no LLM in the loop, so it still answers
+   * when reflect's synthesis times out or 5xxs. Returns the observation texts in rank order.
+   */
+  async recallObservations(
+    query: string,
+    opts: { maxTokens: number; timeoutMs: number }
+  ): Promise<string[]> {
+    const r = await this.req(
+      "POST",
+      this.bankUrl("/memories/recall"),
+      {
+        query,
+        types: ["observation"],
+        budget: "low",
+        max_tokens: opts.maxTokens,
+        include: { entities: null },
+      },
+      [],
+      opts.timeoutMs
+    );
+    if (r.status === 404) return [];
+    const j = (await r.json()) as { results?: { text?: string }[] };
+    return (j.results ?? []).map((x) => (x.text ?? "").trim()).filter(Boolean);
   }
 
   /**
@@ -611,11 +667,18 @@ export class HindsightClient {
    *  hindsight_search_knowledge_pages. */
   async searchKnowledgePages(
     query: string,
-    limit = 3
+    limit = 3,
+    timeoutMs?: number
   ): Promise<{ id: string; name: string; snippet: string; score: number }[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
     const q = `?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const r = await this.req("GET", this.bankUrl(`/knowledge-base/search${q}`));
+    const r = await this.req(
+      "GET",
+      this.bankUrl(`/knowledge-base/search${q}`),
+      undefined,
+      [],
+      timeoutMs
+    );
     const j = (await r.json()) as {
       results?: { id: string; name: string; snippet?: string; score?: number }[];
     };

@@ -25,9 +25,14 @@ import { diag, diagFilePath } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
 import type { ClientOpts } from "./hindsight";
-import { HindsightClient } from "./hindsight";
+import { HindsightClient, ReflectError } from "./hindsight";
 import { brandWord } from "./brand";
-import { buildReflectQuery, buildSystemInjection } from "./inject";
+import {
+  buildReflectQuery,
+  buildSystemInjection,
+  formatObservationFallback,
+  formatPageFallback,
+} from "./inject";
 import type { PageRef } from "./knowledge-injection";
 import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
 import {
@@ -66,19 +71,95 @@ export interface HookSpec {
 interface HookClient {
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
+  searchKnowledgePages(
+    query: string,
+    limit: number,
+    timeoutMs?: number
+  ): Promise<{ id: string; name: string; snippet: string }[]>;
+  recallObservations(
+    query: string,
+    opts: { maxTokens: number; timeoutMs: number }
+  ): Promise<string[]>;
   knowledgePagesSupported?: boolean;
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
 }
 
 /**
- * Cap on the once-per-session reflect. INVARIANT: this MUST stay below every harness's
- * UserPromptSubmit/PreInvocation hook timeout (currently 30s in the supported hook harnesses) —
- * otherwise the host kills the hook mid-reflect before the
- * result is cached, so the injection is discarded AND the reflect re-fires (uncached) every turn.
- * Raise the harness timeout in lockstep if you raise this.
+ * Cap on the once-per-session reflect. INVARIANT: this plus HOOK_FALLBACK_BUDGET_MS MUST stay
+ * below every harness's UserPromptSubmit/PreInvocation hook timeout (currently 30s in the
+ * supported hook harnesses) — otherwise the host kills the hook before the result is cached, so
+ * the injection is discarded AND the reflect re-fires (uncached) every turn.
+ * Raise the harness timeout in lockstep if you raise either.
  */
-const HOOK_REFLECT_CAP_MS = 25_000;
+const HOOK_REFLECT_CAP_MS = 20_000;
+/** Shared deadline for the whole fallback chain (page search, then observation recall) that runs
+ *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
+const HOOK_FALLBACK_BUDGET_MS = 7_000;
+const FALLBACK_PAGE_LIMIT = 3;
+const FALLBACK_RECALL_MAX_TOKENS = 2_000;
+
+/** What the reflect fallback produced: the memory body to inject and where it came from. */
+interface FallbackResult {
+  memory: string;
+  source: "knowledge_pages" | "observations";
+  count: number;
+}
+
+/**
+ * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
+ * curated knowledge pages first (search), and only when none match fall back to a raw recall
+ * over consolidated observations. Undefined when both came back empty or failed. Never throws.
+ */
+async function reflectFallback(
+  harness: string,
+  prompt: string,
+  client: HookClient
+): Promise<FallbackResult | undefined> {
+  const deadline = Date.now() + HOOK_FALLBACK_BUDGET_MS;
+  const remaining = () => Math.max(deadline - Date.now(), 1);
+  // The search query rides in a GET query string; the goal's opening carries its keywords.
+  const query = prompt.slice(0, 500);
+
+  let t0 = Date.now();
+  try {
+    const hits = await client.searchKnowledgePages(query, FALLBACK_PAGE_LIMIT, remaining());
+    diag(harness, "reflect_fallback_pages", { ms: Date.now() - t0, count: hits.length });
+    if (hits.length) {
+      return { memory: formatPageFallback(hits), source: "knowledge_pages", count: hits.length };
+    }
+  } catch (e) {
+    diag(harness, "reflect_fallback_pages_failed", {
+      ms: Date.now() - t0,
+      error: describeError(e),
+    });
+  }
+
+  t0 = Date.now();
+  try {
+    const observations = await client.recallObservations(prompt.slice(0, 2000), {
+      maxTokens: FALLBACK_RECALL_MAX_TOKENS,
+      timeoutMs: remaining(),
+    });
+    diag(harness, "reflect_fallback_observations", {
+      ms: Date.now() - t0,
+      count: observations.length,
+    });
+    if (observations.length) {
+      return {
+        memory: formatObservationFallback(observations),
+        source: "observations",
+        count: observations.length,
+      };
+    }
+  } catch (e) {
+    diag(harness, "reflect_fallback_observations_failed", {
+      ms: Date.now() - t0,
+      error: describeError(e),
+    });
+  }
+  return undefined;
+}
 
 export interface HookOutput {
   /** The model-facing injection block, or undefined when there's nothing to inject. */
@@ -114,6 +195,8 @@ export async function buildHookOutput(args: {
   // nothing to say on a sparse bank (diag records that as reflect_empty), and reporting it as a
   // failure would tell the user the plugin broke on exactly the sessions where it did not.
   let reflectFailed = false;
+  // Set when reflect timed out / 5xx'd and a retrieval-only fallback supplied the memory instead.
+  let fallback: FallbackResult | undefined;
   const deferInitialReflect = cached.deferInitialReflect === true;
   if (deferInitialReflect) {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
@@ -125,7 +208,7 @@ export async function buildHookOutput(args: {
     const timeoutMs = Math.min(cfg.reflectTimeoutMs, HOOK_REFLECT_CAP_MS);
     try {
       reflectAnswer = await client.reflect(buildReflectQuery(prompt), {
-        // Automatic reflection runs inside a hard 25s hook window. Hindsight's low budget is the
+        // Automatic reflection runs inside a hard 20s slot of the hook window. Hindsight's low budget is the
         // supported default for bounded reflect calls; callers that explicitly invoke the MCP
         // tool still get the deeper high-budget path.
         budget: "low",
@@ -153,6 +236,11 @@ export async function buildHookOutput(args: {
         error: describeError(e, 1500),
         query: prompt.slice(0, 80),
       });
+      if (e instanceof ReflectError && e.fallbackEligible) {
+        fallback = await reflectFallback(harness, prompt, client);
+        // The fallback body is cached exactly like a reflect answer: injected once, not retried.
+        if (fallback) reflectAnswer = fallback.memory;
+      }
     }
   }
 
@@ -203,7 +291,14 @@ export async function buildHookOutput(args: {
   // preview of what came back). Ordinary turns stay silent — page knowledge is now pulled via
   // the hindsight_search_knowledge_pages tool, which is visible as a real tool call.
   let notice: string | undefined;
-  if (reflectRanThisTurn && reflectAnswer) {
+  if (fallback) {
+    // Say which degraded source answered: a page list or raw observations is not a synthesis,
+    // and the user deserves to know the session got less than the usual memory.
+    const what = fallback.source === "knowledge_pages" ? "knowledge page" : "observation";
+    notice =
+      `${brandWord()} · reflect unavailable — fell back to ${fallback.count} ` +
+      `${what}${fallback.count === 1 ? "" : "s"} (see ${diagFilePath()})`;
+  } else if (reflectRanThisTurn && reflectAnswer) {
     const q = prompt.replace(/\s+/g, " ").trim();
     const excerpt = q.length > 48 ? `${q.slice(0, 48)}…` : q;
     const preview = reflectAnswer.replace(/\s+/g, " ").trim();

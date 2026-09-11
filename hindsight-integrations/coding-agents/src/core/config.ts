@@ -91,7 +91,7 @@ export interface RawConfig {
   reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
   /** Timeout for the agent-invoked `hindsight_reflect` tool (default 330000). Deliberately its own
    *  knob and much larger than `reflectTimeoutMs`: that one bounds an automatic hook that must fit
-   *  the host's 25s window, whereas this one bounds a call the agent made on purpose and waits on,
+   *  the host's 20s reflect slot, whereas this one bounds a call the agent made on purpose and waits on,
    *  whose `budget: "high"` synthesis on a populated bank can run for minutes. The default sits
    *  ABOVE the server's own reflect wall timeout (HINDSIGHT_API_REFLECT_WALL_TIMEOUT, 300s) so the
    *  server decides when to give up, not an arbitrary client deadline (#3590). Unset, it inherits

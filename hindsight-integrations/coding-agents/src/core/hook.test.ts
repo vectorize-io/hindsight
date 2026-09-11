@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { buildHookOutput, runHook } from "./hook";
 import { diagFilePath } from "./diag";
+import { ReflectError } from "./hindsight";
 import { buildReflectQuery } from "./inject";
 
 let root: string;
@@ -42,12 +43,23 @@ function makeClient(
     reflect: (query: string, opts: { budget?: string; timeoutMs: number }) => Promise<string>;
     listPages: () => Promise<unknown>;
     getPage: (pageId: string) => Promise<unknown>;
+    searchKnowledgePages: (
+      query: string,
+      limit: number,
+      timeoutMs?: number
+    ) => Promise<{ id: string; name: string; snippet: string }[]>;
+    recallObservations: (
+      query: string,
+      opts: { maxTokens: number; timeoutMs: number }
+    ) => Promise<string[]>;
   }> = {}
 ) {
   return {
     reflect: vi.fn(async () => "REFLECT_ANSWER"),
     listPages: vi.fn(async () => ({ items: [{ id: "p1", name: "Uploader guide" }] })),
     getPage: vi.fn(async () => ({ content: PAGE_CONTENT })),
+    searchKnowledgePages: vi.fn(async () => [] as { id: string; name: string; snippet: string }[]),
+    recallObservations: vi.fn(async () => [] as string[]),
     ...overrides,
   };
 }
@@ -182,7 +194,7 @@ describe("buildHookOutput", () => {
       .map((line) => JSON.parse(line))
       .find((entry) => entry.event === "reflect_failed");
     expect(failed.bank).toBe("coding-agent::demo");
-    expect(failed.timeoutMs).toBe(25_000);
+    expect(failed.timeoutMs).toBe(20_000);
     // Past describeError's default 200-char cut, where the root cause usually sits.
     expect(failed.error).toContain("upstream LLM rejected the turn");
   });
@@ -215,7 +227,7 @@ describe("buildHookOutput", () => {
     expect(result.context).toBeUndefined();
   });
 
-  it("uses a bounded low-budget reflect and caps its timeout at 25000ms", async () => {
+  it("uses a bounded low-budget reflect and caps its timeout at 20000ms", async () => {
     const cfg = resolveConfig({}); // reflectTimeoutMs default 120000
     const client = makeClient();
     await buildHookOutput({
@@ -227,11 +239,11 @@ describe("buildHookOutput", () => {
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
       budget: "low",
-      timeoutMs: 25000,
+      timeoutMs: 20000,
     });
   });
 
-  it("uses the configured reflect timeout when it is below the 25s cap", async () => {
+  it("uses the configured reflect timeout when it is below the 20s cap", async () => {
     const cfg = resolveConfig({ reflectTimeoutMs: 5000 });
     const client = makeClient();
     await buildHookOutput({
@@ -244,6 +256,167 @@ describe("buildHookOutput", () => {
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
       budget: "low",
       timeoutMs: 5000,
+    });
+  });
+
+  describe("reflect fallback (timeout / 5xx)", () => {
+    const timedOut = () => new ReflectError("reflect timed out after 20000ms", undefined, true);
+    const serverError = () => new ReflectError("reflect 502 bad gateway", 502, false);
+    const HIT = { id: "kp-1", name: "Upload retries", snippet: "200ms  jitter\nwindow" };
+
+    it("timeout -> injects matching knowledge pages, skips recall, caches it (no retry)", async () => {
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw timedOut();
+        }),
+        searchKnowledgePages: vi.fn(async () => [HIT]),
+      });
+      const args = {
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg: resolveConfig({}),
+        client,
+        cacheFile,
+      };
+
+      const t1 = await buildHookOutput(args);
+
+      expect(client.searchKnowledgePages).toHaveBeenCalledWith(
+        MATCHING_PROMPT,
+        3,
+        expect.any(Number)
+      );
+      expect(client.recallObservations).not.toHaveBeenCalled();
+      expect(t1.context).toContain("<hindsight_memory>");
+      expect(t1.context).toContain("- Upload retries (kp-1): 200ms jitter window");
+      expect(t1.context).toContain("hindsight_read_knowledge_page");
+      expect(t1.notice).toContain("reflect unavailable — fell back to 1 knowledge page ");
+      expect(t1.notice).not.toContain("no memory this turn");
+
+      const t2 = await buildHookOutput(args);
+      expect(client.reflect).toHaveBeenCalledTimes(1);
+      expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+      // Injected once, on the turn it ran — like a reflect answer.
+      expect(t2.context ?? "").not.toContain("Upload retries");
+    });
+
+    it("5xx with no matching page -> raw recall of observations is injected", async () => {
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw serverError();
+        }),
+        recallObservations: vi.fn(async () => [
+          "Retries back off exponentially.",
+          "Tokens rotate daily.",
+        ]),
+      });
+
+      const out = await buildHookOutput({
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg: resolveConfig({}),
+        client,
+        cacheFile,
+      });
+
+      expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+      expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT, {
+        maxTokens: 2000,
+        timeoutMs: expect.any(Number),
+      });
+      expect(out.context).toContain("consolidated observations");
+      expect(out.context).toContain("- Retries back off exponentially.\n- Tokens rotate daily.");
+      expect(out.notice).toContain("fell back to 2 observations");
+    });
+
+    it("a failing page search still falls through to observations", async () => {
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw timedOut();
+        }),
+        searchKnowledgePages: vi.fn(async () => {
+          throw new Error("knowledge pages unavailable");
+        }),
+        recallObservations: vi.fn(async () => ["An observation."]),
+      });
+
+      const out = await buildHookOutput({
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg: resolveConfig({}),
+        client,
+        cacheFile,
+      });
+
+      expect(out.context).toContain("- An observation.");
+    });
+
+    it("both empty -> no context, the usual no-memory notice, failure cached", async () => {
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw serverError();
+        }),
+      });
+
+      const out = await buildHookOutput({
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg: resolveConfig({}),
+        client,
+        cacheFile,
+      });
+
+      expect(client.recallObservations).toHaveBeenCalledTimes(1);
+      expect(out.context).toBeUndefined();
+      expect(out.notice).toContain("no memory this turn");
+      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    });
+
+    it("4xx or a transport error does NOT fall back: every endpoint would fail the same way", async () => {
+      for (const err of [new ReflectError("reflect 401", 401, false), new Error("fetch failed")]) {
+        rmSync(cacheFile, { force: true });
+        const client = makeClient({
+          reflect: vi.fn(async () => {
+            throw err;
+          }),
+        });
+        const out = await buildHookOutput({
+          harness: "claude-code",
+          prompt: MATCHING_PROMPT,
+          cfg: resolveConfig({}),
+          client,
+          cacheFile,
+        });
+        expect(client.searchKnowledgePages).not.toHaveBeenCalled();
+        expect(client.recallObservations).not.toHaveBeenCalled();
+        expect(out.notice).toContain("no memory this turn");
+      }
+    });
+
+    it("records each fallback step in the diag trail", async () => {
+      const diagFile = join(root, "diag.log");
+      vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw timedOut();
+        }),
+        recallObservations: vi.fn(async () => ["An observation."]),
+      });
+
+      await buildHookOutput({
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg: resolveConfig({}),
+        client,
+        cacheFile,
+      });
+
+      const events = readFileSync(diagFile, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(events.find((e) => e.event === "reflect_fallback_pages")?.count).toBe(0);
+      expect(events.find((e) => e.event === "reflect_fallback_observations")?.count).toBe(1);
     });
   });
 

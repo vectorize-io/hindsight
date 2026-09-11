@@ -32,6 +32,30 @@ export function buildReflectQuery(prompt: string): string {
   );
 }
 
+/** The memory body injected when reflect failed and knowledge-page search answered instead. */
+export function formatPageFallback(hits: { id: string; name: string; snippet: string }[]): string {
+  return (
+    "(Hindsight's synthesis was unavailable this turn; these knowledge pages matched the goal by " +
+    "search. Read one with hindsight_read_knowledge_page(<id>) if it looks relevant.)\n" +
+    hits
+      .map((h) => {
+        const snippet = h.snippet.replace(/\s+/g, " ").trim();
+        return `- ${h.name} (${h.id})${snippet ? `: ${snippet}` : ""}`;
+      })
+      .join("\n")
+  );
+}
+
+/** The memory body injected when reflect failed and no knowledge page matched, so raw recall
+ *  over the bank's consolidated observations answered instead. */
+export function formatObservationFallback(observations: string[]): string {
+  return (
+    "(Hindsight's synthesis was unavailable this turn; these consolidated observations were " +
+    "recalled from the bank for the goal, unsynthesized.)\n" +
+    observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n")
+  );
+}
+
 export function buildSystemInjection(memory: string): string {
   // The <hindsight_memory> wrapper is LOAD-BEARING: the transcript readers strip this exact tag
   // (transcript-util MEMORY_TAG_RE) so the session write-back never re-ingests the injected
