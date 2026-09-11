@@ -756,15 +756,29 @@ describe("hindsightApiKeyRef", () => {
     vi.restoreAllMocks();
   });
 
-  it("is declared as a secret-ref field", () => {
+  it("is declared as a secret-ref field that admits the picker's reference object", () => {
     const field = (
       manifest.instanceConfigSchema as {
-        properties: Record<string, { format?: string }>;
+        properties: Record<
+          string,
+          { format?: string; oneOf?: Array<Record<string, unknown>> }
+        >;
       }
     ).properties.hindsightApiKeyRef;
-    // Without this the host renders a plain text box, stores whatever is typed,
-    // and every resolve() fails closed on a bare string.
+
+    // Without `format` the host renders a plain text box, stores whatever is
+    // typed, and every resolve() fails closed on a bare string.
     expect(field?.format).toBe("secret-ref");
+
+    // With `format` alone but `type: "string"`, the host's Ajv pass rejects what
+    // its own picker submits: "Configuration does not match the plugin's
+    // instanceConfigSchema". The schema must admit the reference object too.
+    const objectBranch = field?.oneOf?.find((branch) => branch.type === "object") as
+      | { required?: string[]; properties?: Record<string, unknown> }
+      | undefined;
+    expect(objectBranch).toBeDefined();
+    expect(objectBranch?.required).toEqual(["type", "secretId"]);
+    expect(field?.oneOf?.some((branch) => branch.type === "string")).toBe(true);
   });
 
   it("resolves the stored reference for the run's company and authenticates recall", async () => {
