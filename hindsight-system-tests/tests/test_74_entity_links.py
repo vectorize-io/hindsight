@@ -4,15 +4,13 @@ Entities are derived from facts, so replacing or deleting a document has to move
 them: an entity only the old text named should disappear, one only the new text
 names should appear, and the traversal paths that hang off them should follow.
 
-That much works. What does not is the count. `mention_count` is what a caller
-sees on the entity list, what sizes a node in the graph, and what the curation
-listing sorts by — and it is only ever incremented (#4291). So a bank that
-updates documents accumulates entities whose stated prominence has no
-relationship to how many facts actually mention them, and the drift is
-proportional to how often documents change: the coding-agents integration
-re-retains a conversation under one `document_id` every turn.
-
-The last test here fails today for that reason.
+The count has to follow too. `mention_count` is what a caller sees on the entity
+list, what sizes a node in the graph, and what the curation listing sorts by —
+and until #4291 it was only ever incremented, so a bank that updated documents
+accumulated entities whose stated prominence had no relationship to how many
+facts actually mentioned them. The drift scaled with how often documents
+change, and the coding-agents integration re-retains under one `document_id`
+every turn.
 """
 
 from __future__ import annotations
@@ -109,12 +107,12 @@ async def test_deleting_a_document_removes_the_entities_only_it_named(client, tw
 
 
 async def test_the_mention_count_matches_the_facts_that_mention_it(client, two_documents, settled):
-    """The count has to come back down. It does not — #4291.
+    """The count comes back down when the mentions go (#4291).
 
     Alice is named by exactly two facts after the replacement, and the link table
-    agrees: filtering memories by her entity id returns two. Only the
-    denormalised counter disagrees, because it was incremented for the replaced
-    fact and never given back.
+    agrees. The denormalised counter used to disagree — incremented for the
+    replaced fact and never given back — which was invisible unless you compared
+    the two, as this does.
 
     Asserted against the links rather than a hardcoded number, so this keeps
     holding whatever the fixture grows into.
@@ -126,5 +124,5 @@ async def test_the_mention_count_matches_the_facts_that_mention_it(client, two_d
     linked = await client.memory.list_memories(two_documents, entity_id=alice.id, limit=100)
 
     assert alice.mention_count == linked.total, (
-        f"mention_count says {alice.mention_count}, but {linked.total} facts mention Alice — #4291"
+        f"mention_count says {alice.mention_count}, but {linked.total} facts mention Alice"
     )

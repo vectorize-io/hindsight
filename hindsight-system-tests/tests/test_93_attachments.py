@@ -107,19 +107,14 @@ async def test_the_attachment_hangs_off_the_chunk_it_appeared_in(client, bank_wi
 
 
 async def test_the_stored_image_is_byte_identical(client, bank_with_photo):
-    """The audit path, and it does not work today — #4292.
+    """The audit path. A fact drawn from a picture is unverifiable unless the
+    picture comes back exactly as sent.
 
-    A fact drawn from a picture is unverifiable unless the picture comes back
-    exactly as sent. The bytes survive on the server; the *client* destroys them,
-    because the endpoint declares `application/json` alongside
-    `application/octet-stream` in the spec and the generated method decodes the
-    body as text. `0x89` — the first byte of the PNG magic number — is where it
-    gives up.
-
-    Left going through the client rather than reaching around it with raw HTTP:
-    an SDK-inaccessible endpoint is exactly the defect this suite exists to
-    surface, and papering over it here would hide that every consumer has the
-    same problem.
+    Fetched through the published client on purpose: until #4292 the endpoint
+    declared `application/json` alongside `application/octet-stream`, and every
+    generated SDK decoded the bytes as text and died on `0x89`, the first byte of
+    the PNG magic number. The server was fine; only a client-driven test could
+    see it.
     """
     document = await client.documents.get_document(bank_with_photo, "d1")
     attachment = document.attachments[0]
