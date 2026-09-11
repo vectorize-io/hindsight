@@ -871,6 +871,47 @@ class RemoteTEIEmbeddings(Embeddings):
             return _orjson.loads(response.content)
         return response.json()
 
+    async def aencode_query(self, texts: list[str]) -> list[list[float]] | None:
+        """Embed a recall's query on the event loop, or return None to take the thread path.
+
+        A recall embeds one short string, and on the thread path that costs an executor hop
+        plus httpx's pure-Python sync stack — together ~10% of an API process's busy CPU
+        under recall load. aiohttp parses HTTP in C and stays on the loop. It is a single
+        attempt: any failure returns None and the caller falls back to the thread path,
+        which carries the full retry policy, so a transient error costs one extra attempt
+        rather than a second retry implementation.
+        """
+        if not self._initialized or self._injected_client is not None or len(texts) > (self.batch_size or len(texts)):
+            return None
+        try:
+            import aiohttp
+        except ImportError:
+            return None
+        loop = asyncio.get_running_loop()
+        session = getattr(self, "_aio_session", None)
+        # A session is bound to the loop it was created on; each worker process has its own.
+        if session is None or session.closed or getattr(self, "_aio_loop", None) is not loop:
+            session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                connector=aiohttp.TCPConnector(keepalive_timeout=TEI_KEEPALIVE_EXPIRY_SECONDS),
+            )
+            self._aio_session, self._aio_loop = session, loop
+        inputs = [f"{self.query_prefix}{t}" for t in texts] if self.query_prefix else texts
+        try:
+            async with session.post(f"{self.base_url}/embed", json={"inputs": inputs}) as resp:
+                if resp.status != 200:
+                    return None
+                body = await resp.read()
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            return None
+        if _orjson is not None:
+            vectors = _orjson.loads(body)
+        else:
+            import json
+
+            vectors = json.loads(body)
+        return vectors if len(vectors) == len(texts) else None
+
 
 class OpenAIEmbeddings(Embeddings):
     """
