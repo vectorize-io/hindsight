@@ -6,7 +6,7 @@ import {
   SURVEY_AGENT_CONFIG,
   SURVEY_PROMPT,
 } from "./survey";
-import { releaseLease, type SurveySupervisorSpec } from "./survey-lease";
+import { releaseLease, SURVEY_SPEC_ENV, type SurveySupervisorSpec } from "./survey-lease";
 
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, readdirSync, writeFileSync } from "node:fs";
@@ -83,10 +83,11 @@ describe("startCodebaseSurvey", () => {
   /** The survey agent is launched through the lease supervisor: decode the agent's bin + argv
    *  from the supervisor's spec; the options are the real spawn's (the agent inherits them). */
   function launched(spawn: ReturnType<typeof fakeSpawn>, i = 0) {
-    const [node, [script, specJson], options] = spawn.mock.calls[i];
+    const [node, argv, options] = spawn.mock.calls[i];
     expect(node).toBe("node");
-    expect(script).toBe("/x/survey-supervisor.js");
-    const spec = JSON.parse(specJson) as SurveySupervisorSpec;
+    // Only the script path on the command line: the payload rides in the environment (#4255).
+    expect(argv).toEqual(["/x/survey-supervisor.js"]);
+    const spec = JSON.parse(options.env[SURVEY_SPEC_ENV]) as SurveySupervisorSpec;
     return [spec.bin, spec.args, options, spec] as const;
   }
 
@@ -369,7 +370,7 @@ describe("startCodebaseSurvey", () => {
       JSON.stringify({ bankId: "bank-1", apiUrl: "https://api.example.test", apiToken: "t" })
     );
     // The stand-in agent records its pid and its supervisor's, then idles like a long survey.
-    const agent = `require('node:fs').writeFileSync(${JSON.stringify(lockDir)} + '/pid-' + process.pid + '-' + process.ppid, ''); setInterval(() => {}, 1000);`;
+    const agent = `const fs = require('node:fs'); if (process.env.${SURVEY_SPEC_ENV}) fs.writeFileSync(${JSON.stringify(lockDir)} + '/leaked-spec', ''); fs.writeFileSync(${JSON.stringify(lockDir)} + '/pid-' + process.pid + '-' + process.ppid, ''); setInterval(() => {}, 1000);`;
     const staleMs = 2_000;
     const hook = `
       import { startCodebaseSurvey } from ${JSON.stringify(pathToFileURL(bundle).href)};
@@ -380,9 +381,9 @@ describe("startCodebaseSurvey", () => {
         supervisorPath: ${JSON.stringify(supervisor)},
         lease: { dir: ${JSON.stringify(join(lockDir, "locks"))}, staleMs: ${staleMs}, heartbeatMs: 200 },
         // Swap the real agent for the stand-in; the supervisor itself runs for real.
-        spawn: (_node, [script, specJson], options) => {
-          const spec = { ...JSON.parse(specJson), bin: process.execPath, args: ['-e', ${JSON.stringify(agent)}] };
-          return spawn(process.execPath, [script, JSON.stringify(spec)], options);
+        spawn: (_node, argv, options) => {
+          const spec = { ...JSON.parse(options.env.${SURVEY_SPEC_ENV}), bin: process.execPath, args: ['-e', ${JSON.stringify(agent)}] };
+          return spawn(process.execPath, argv, { ...options, env: { ...options.env, ${SURVEY_SPEC_ENV}: JSON.stringify(spec) } });
         },
       });
       console.log(JSON.stringify(started));
@@ -423,6 +424,8 @@ describe("startCodebaseSurvey", () => {
     try {
       expect(await race()).toBe(1);
       await vi.waitFor(() => expect(agents()).toHaveLength(1));
+      // The supervisor strips the spec before starting the agent.
+      expect(readdirSync(lockDir)).not.toContain("leaked-spec");
       // Every hook has exited; past the stale window the heartbeat still holds the lease.
       await sleep(staleMs * 2);
       expect(await runHook()).toBe(false);

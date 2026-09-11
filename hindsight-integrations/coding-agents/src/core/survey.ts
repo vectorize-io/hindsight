@@ -48,6 +48,7 @@ import {
   acquireLease,
   LEASE_STALE_MS,
   releaseLease,
+  SURVEY_SPEC_ENV,
   type SurveySupervisorSpec,
 } from "./survey-lease";
 
@@ -362,13 +363,14 @@ export async function startCodebaseSurvey(
         join(dirname(fileURLToPath(import.meta.url)), "survey-supervisor.js");
       return await new Promise<boolean>((resolve) => {
         try {
-          // The agent inherits the supervisor's cwd and env.
-          const child = spawnFn("node", [supervisorPath, JSON.stringify(spec)], {
+          // The agent inherits the supervisor's cwd and env. The spec rides in the environment,
+          // never argv — see SURVEY_SPEC_ENV for the endpoint-security kill that argv triggers.
+          const child = spawnFn("node", [supervisorPath], {
             cwd: repoDir,
             detached: true,
             stdio: "ignore",
             windowsHide: true,
-            env: plan.env,
+            env: { ...plan.env, [SURVEY_SPEC_ENV]: JSON.stringify(spec) },
           });
           let spawned = false;
           // spawn() failures (node not found, EACCES, sandboxes) arrive as an async 'error' event;
