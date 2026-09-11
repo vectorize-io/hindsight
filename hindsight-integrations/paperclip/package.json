@@ -36,7 +36,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "^2026.720.0"
+    "@paperclipai/plugin-sdk": "^2026.403.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
