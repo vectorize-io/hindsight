@@ -35,6 +35,7 @@ import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildRetainStamp } from "./retain-stamp";
+import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
 import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-cache";
 
@@ -150,6 +151,9 @@ export async function buildSessionStartContext(args: {
   startSurvey?: typeof startCodebaseSurvey;
   headSha?: (dir: string) => string | null;
   commitsSince?: (dir: string, sinceSha: string) => number | null;
+  /** Registry key of the old Claude Code plugin still active for `cwd`; defaults to reading
+   *  Claude's plugin files, and only for the claude-code harness. */
+  detectLegacyPlugin?: (cwd: string) => string | undefined;
 }): Promise<SessionStartOutput> {
   const { cwd, bankId, cfg, client, stateDir } = args;
   const t0 = Date.now();
@@ -318,6 +322,16 @@ export async function buildSessionStartContext(args: {
     }).catch(() => undefined);
   }
   systemMessage = buildSeedBanner(bankId, cold === true, gitNote);
+
+  // The old per-agent plugin keeps running next to this one until the user removes it — say so
+  // where they will see it. Only Claude Code had that plugin.
+  const detectLegacy =
+    args.detectLegacyPlugin ?? (harness === "claude-code" ? detectLegacyClaudePlugin : undefined);
+  const legacyPlugin = detectLegacy?.(cwd);
+  if (legacyPlugin) {
+    systemMessage += `\n${legacyClaudePluginWarning(legacyPlugin)}`;
+    diag(harness, "legacy_plugin_active", { plugin: legacyPlugin });
+  }
 
   // ALWAYS record the session start (warm sessions used to log nothing — undebuggable).
   diag(harness, "session_start", { bank: bankId, cold, pages: pages.length, ms: Date.now() - t0 });

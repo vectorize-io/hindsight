@@ -11,6 +11,34 @@ import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
 const listPagesOk = async () => ({ items: [{ id: "p1", name: "Component map" }] });
 
 describe("buildSessionStartContext", () => {
+  it("warns in the user-visible banner when the old Claude Code plugin is still active", async () => {
+    const client = { listDocumentIds: async () => new Set(["git:a"]), listPages: listPagesOk };
+    const detectLegacyPlugin = vi.fn().mockReturnValue("hindsight-memory@hindsight");
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      detectLegacyPlugin,
+    });
+    expect(detectLegacyPlugin).toHaveBeenCalledWith("/repo/dir");
+    expect(out.systemMessage).toContain("bank-1");
+    expect(out.systemMessage).toContain("claude plugin uninstall hindsight-memory@hindsight");
+    expect(out.additionalContext).not.toContain("hindsight-memory@hindsight");
+  });
+
+  it("no warning when the old plugin is absent", async () => {
+    const client = { listDocumentIds: async () => new Set(["git:a"]), listPages: listPagesOk };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(out.systemMessage).not.toContain("plugin uninstall");
+  });
+
   it("cold git repo + autoSeed on -> seeds + surveys, note in systemMessage (user-visible) + roster in additionalContext (model)", async () => {
     const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
     const startSeed = vi.fn();
