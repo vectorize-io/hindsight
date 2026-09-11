@@ -18,12 +18,15 @@ from hindsight_api.engine.embeddings import RemoteTEIEmbeddings
 
 def test_each_thread_gets_its_own_client():
     tei = RemoteTEIEmbeddings(base_url="http://tei.invalid")
-    seen: dict[int, int] = {}
+    # Hold the clients themselves, not their id()s: a finished thread's thread-local client is
+    # freed, and CPython can hand the next thread's client the same address, so comparing ids
+    # reported distinct clients as "shared".
+    seen: dict[int, object] = {}
     barrier = threading.Barrier(4)
 
     def grab(i: int) -> None:
         barrier.wait()
-        seen[i] = id(tei._client_for_thread())
+        seen[i] = tei._client_for_thread()
 
     threads = [threading.Thread(target=grab, args=(i,)) for i in range(4)]
     for t in threads:
@@ -31,7 +34,7 @@ def test_each_thread_gets_its_own_client():
     for t in threads:
         t.join()
 
-    assert len(set(seen.values())) == 4, f"threads shared a client: {seen}"
+    assert len({id(c) for c in seen.values()}) == 4, f"threads shared a client: {seen}"
 
 
 def test_the_same_thread_reuses_its_client():
