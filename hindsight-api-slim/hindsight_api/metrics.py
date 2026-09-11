@@ -165,6 +165,10 @@ logger = logging.getLogger(__name__)
 _meter = None
 
 
+#: Event-loop lag in seconds. Healthy is well under 10 ms; a saturated loop runs into seconds.
+LOOP_LAG_BUCKETS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)
+
+
 def initialize_metrics(service_name: str = "hindsight-api", service_version: str = "1.0.0"):
     """
     Initialize OpenTelemetry metrics with Prometheus exporter.
@@ -213,7 +217,15 @@ def initialize_metrics(service_name: str = "hindsight-api", service_version: str
     provider = MeterProvider(
         resource=resource,
         metric_readers=[prometheus_reader],
-        views=[duration_view, llm_duration_view, http_duration_view],
+        views=[
+            duration_view,
+            llm_duration_view,
+            http_duration_view,
+            View(
+                instrument_name="hindsight.event_loop.lag",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=LOOP_LAG_BUCKETS),
+            ),
+        ],
     )
 
     # Set the global meter provider
@@ -321,6 +333,13 @@ class MetricsCollectorBase:
         """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
         raise NotImplementedError
 
+    def record_loop_lag(self, lag_seconds: float):
+        """Record one event-loop lag sample (see ``hindsight_api.loop_lag``).
+
+        A no-op here rather than abstract: the probe calls it on every tick, and a collector that
+        predates it must not kill the probe.
+        """
+
     def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
         """Record one consolidation LLM batch call that failed.
 
@@ -405,6 +424,10 @@ class NoOpMetricsCollector(MetricsCollectorBase):
 
     def record_loop_stall(self, stall_seconds: float):
         """No-op loop-stall recording."""
+        pass
+
+    def record_loop_lag(self, lag_seconds: float):
+        """No-op loop-lag recording."""
         pass
 
     def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
@@ -601,6 +624,14 @@ class MetricsCollector(MetricsCollectorBase):
         self.event_loop_stall_duration = self.meter.create_histogram(
             name="hindsight.event_loop.stall_duration",
             description="Duration of detected event-loop stalls in seconds",
+            unit="s",
+        )
+        # How long a ready coroutine waited for the loop (see hindsight_api.loop_lag). Unlike a
+        # stall, which only counts blocks past a threshold, this is the whole distribution, so a
+        # loop that is busy but never blocked still shows up.
+        self.event_loop_lag = self.meter.create_histogram(
+            name="hindsight.event_loop.lag",
+            description="Event-loop lag: extra time a ready coroutine waited before it ran",
             unit="s",
         )
 
@@ -883,6 +914,10 @@ class MetricsCollector(MetricsCollectorBase):
         """Record a detected event-loop stall. Called from the watchdog thread."""
         self.event_loop_stalls.add(1)
         self.event_loop_stall_duration.record(stall_seconds)
+
+    def record_loop_lag(self, lag_seconds: float):
+        """Record one event-loop lag sample. Called by the probe on every tick."""
+        self.event_loop_lag.record(lag_seconds)
 
     def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
         """Record one failed consolidation LLM batch call.
