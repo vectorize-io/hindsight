@@ -18,10 +18,6 @@ import os
 import random
 import re
 
-#: Record 1 in N recall-phase observations (HINDSIGHT_API_RECALL_PHASE_SAMPLE_EVERY). 1 = all.
-_RECALL_PHASE_SAMPLE_EVERY = max(1, int(os.environ.get("HINDSIGHT_API_RECALL_PHASE_SAMPLE_EVERY", "1")))
-_random = random.random
-
 _resource_mod = importlib.import_module("resource") if importlib.util.find_spec("resource") else None
 import threading
 import time
@@ -429,6 +425,7 @@ class MetricsCollector(MetricsCollectorBase):
 
         self._include_bank_id = get_config().metrics_include_bank_id
         self._record_diagnostic_phases = get_config().recall_diagnostic_phases
+        self._recall_phase_sample_every = get_config().recall_phase_sample_every
 
         # Operation latency histogram (in seconds)
         # Records duration of retain, recall, reflect operations
@@ -874,7 +871,7 @@ class MetricsCollector(MetricsCollectorBase):
         # ~4.6% of a recall-heavy API's busy CPU. Sampling each call independently at 1/N keeps
         # every phase's distribution (and so its percentiles) unbiased; only the histogram's
         # absolute counts scale by 1/N. Default 1 records every call, exactly as before.
-        if _RECALL_PHASE_SAMPLE_EVERY > 1 and _random() * _RECALL_PHASE_SAMPLE_EVERY >= 1.0:
+        if self._recall_phase_sample_every > 1 and random.random() * self._recall_phase_sample_every >= 1.0:
             return
         attrs = {"phase": phase, "tenant": _get_tenant(), "diagnostic": str(bool(diagnostic)).lower()}
         # One instrument, not two: the histogram already carries `_count` for this attribute set,

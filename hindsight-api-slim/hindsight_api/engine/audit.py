@@ -9,11 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-
-try:
-    import orjson as _orjson
-except ImportError:  # optional: stdlib json is the fallback
-    _orjson = None
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -21,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import orjson
 from pydantic import BaseModel, Field
 
 from ..engine.db_utils import acquire_with_retry
@@ -111,15 +107,15 @@ def _safe_json(data: Any) -> str | None:
     if data is None:
         return None
     try:
-        if _orjson is not None:
-            # A recall's audit row carries its whole response; stdlib json.dumps of it was ~3.5%
-            # of the API's busy CPU in a profile at 450 recalls/s. orjson emits the same JSON
-            # document (the column is JSON, so key order and escaping are not observable).
-            try:
-                return _orjson.dumps(data, default=_json_default, option=_orjson.OPT_NON_STR_KEYS).decode()
-            except TypeError:
-                pass
-        return json.dumps(data, default=_json_default)
+        # A recall's audit row carries its whole response; stdlib json.dumps of it was ~3.5%
+        # of the API's busy CPU in a profile at 450 recalls/s. orjson emits the same JSON
+        # document (the column is JSON, so key order and escaping are not observable). It
+        # raises TypeError on what it cannot encode (e.g. ints wider than 64 bits), which the
+        # stdlib still handles, so that stays the fallback.
+        try:
+            return orjson.dumps(data, default=_json_default, option=orjson.OPT_NON_STR_KEYS).decode()
+        except TypeError:
+            return json.dumps(data, default=_json_default)
     except Exception:
         logger.debug("Failed to serialize audit data", exc_info=True)
         return None
