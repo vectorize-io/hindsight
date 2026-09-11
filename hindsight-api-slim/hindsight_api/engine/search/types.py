@@ -92,6 +92,13 @@ class RetrievalResult:
     # re-fetch, so the two paths stay interchangeable rather than one being an approximation.
     source_memory_ids: list[str] | None = None
 
+    # Short ids of the attachments this fact was drawn from, if the backend carried them.
+    # ``None`` means "not carried" (the default store, which reads them back from
+    # ``memory_units.attachment_ids`` when the response is rendered); a list — possibly
+    # empty — means the backend returned them on the row, so the read surface resolves
+    # them without asking the store again.
+    attachment_ids: list[str] | None = None
+
     # Retrieval-specific scores (only one will be set depending on retrieval method)
     similarity: float | None = None  # Semantic retrieval
     bm25_score: float | None = None  # BM25 retrieval
@@ -216,6 +223,7 @@ class ScoredResult:
             "chunk_id": self.retrieval.chunk_id,
             "tags": self.retrieval.tags,
             "metadata": self.retrieval.metadata,
+            "attachment_ids": self.retrieval.attachment_ids,
             "semantic_similarity": self.retrieval.similarity,
             "bm25_score": self.retrieval.bm25_score,
         }

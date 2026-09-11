@@ -406,6 +406,11 @@ class MemoryFact(BaseModel):
         None,
         description="Recall scores from each pipeline stage (final/reranker/semantic/keyword). Not returned for source facts.",
     )
+    # Internal, never serialised: the short ids of the attachments this fact was drawn
+    # from, when the memories store returned them on the row. ``None`` means "not
+    # carried", and the HTTP layer then reads them from `memory_units` instead; a list
+    # (possibly empty) is resolved as-is, so a store that owns its rows is never asked twice.
+    attachment_ids: list[str] | None = Field(None, exclude=True)
 
 
 class ChunkInfo(BaseModel):

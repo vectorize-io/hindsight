@@ -22,7 +22,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
@@ -2015,6 +2015,36 @@ def _attachment_ids_of(value: "Any") -> list[str]:
             return []
         return [str(v) for v in decoded] if isinstance(decoded, list) else []
     return [str(v) for v in value]
+
+
+async def _resolve_memory_attachments(
+    conn,
+    bank_id: str,
+    refs: "Mapping[str, tuple[str | None, Sequence[str]]]",
+) -> "dict[str, list[StoredAttachment]]":
+    """Resolve each memory's attachment ids, keyed by unit id; ``refs`` is unit id -> (document_id, ids).
+
+    Where the ids came from — `memory_units` or the store's own rows — is the caller's
+    concern; this only reads the SQL ``attachments`` / ``document_attachments`` tables.
+    Resolved per document because the filename lives on the document edge, and a page
+    of memories usually spans very few documents. A memory whose ids all fail to
+    resolve (the blob was reclaimed) is omitted rather than mapped to an empty list.
+    """
+    from .retain.attachment_store import load_bank_attachments
+
+    by_document: dict[str | None, dict[str, StoredAttachment]] = {}
+    for document_id, ids in refs.values():
+        cached = by_document.setdefault(document_id, {})
+        missing = [i for i in dict.fromkeys(ids) if i not in cached]
+        if missing:
+            cached.update(await load_bank_attachments(conn, bank_id, missing, document_id=document_id))
+
+    resolved: dict[str, list[StoredAttachment]] = {}
+    for unit_id, (document_id, ids) in refs.items():
+        records = [by_document[document_id][i] for i in ids if i in by_document[document_id]]
+        if records:
+            resolved[unit_id] = records
+    return resolved
 
 
 def _provider_default_base_url(provider: str | None) -> str:
@@ -6663,6 +6693,8 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         unit_ids: "Sequence[str]",
         request_context: "RequestContext",
+        *,
+        carried: "Mapping[str, tuple[str | None, Sequence[str]]] | None" = None,
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each memory was actually drawn from, keyed by unit id.
 
@@ -6672,25 +6704,41 @@ class MemoryEngine(MemoryEngineInterface):
         mentioned it. A fact stated in the text has no ids and correctly shows
         nothing.
 
-        The ids live on ``memory_units.attachment_ids`` — an attribute of the
-        memory, like its tags — so this reads the column and resolves the ids,
-        rather than joining a junction table that only a Postgres-backed memory
-        store would ever have written.
+        The ids are an attribute of the memory, like its tags. For a Postgres-backed
+        bank they live on ``memory_units.attachment_ids`` and this reads the column.
+        For a store-owned bank they come back on the rows the store already returned
+        — recall results and list/detail items — and the caller hands them in as
+        ``carried``: unit id -> ``(document_id, attachment_ids)``. Either way only the
+        ids are resolved here, against the SQL ``attachments`` / ``document_attachments``
+        tables, which every bank writes and which carry no vector indexes.
         """
-        from .retain.attachment_store import load_bank_attachments
-
         if not unit_ids:
             return {}
-        # A store-owned bank keeps its memories outside SQL, so `memory_units` holds none of
-        # them and this read can only come back empty. It is not a cheap empty read either:
-        # the table carries partial vector indexes per bank, and the planner opens and locks
-        # every one of them to plan any statement against it. In a tenant with a few thousand
-        # banks that is ~15k locks and ~450ms of planning to return nothing -- on every recall,
-        # which is where this is called from.
         from .memories import get_memories
 
         if get_memories().store_owned_for(bank_id):
-            return {}
+            # Never `memory_units` for a store-owned bank. It holds none of the bank's memories,
+            # so the read can only come back empty, and it is not a cheap empty read: the table
+            # carries partial vector indexes per bank, and the planner opens and locks every one
+            # of them to plan any statement against it. In a tenant with a few thousand banks
+            # that is ~15k locks and ~450ms of planning to return nothing -- on every recall.
+            # The ids the store returned on its rows are the whole answer, so a page that
+            # carried none returns before touching Postgres at all.
+            wanted = {str(u) for u in unit_ids}
+            refs = {
+                unit_id: (document_id, list(ids))
+                for unit_id, (document_id, ids) in (carried or {}).items()
+                if unit_id in wanted and ids
+            }
+            if not refs:
+                return {}
+            profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+            if profile is None:
+                return {}
+            backend = await self._get_backend()
+            async with backend.acquire() as conn:
+                return await _resolve_memory_attachments(conn, bank_id, refs)
+
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}
@@ -6709,31 +6757,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
             if not rows:
                 return {}
-            ids_by_unit = {row["id"]: ids for row in rows if (ids := _attachment_ids_of(row["attachment_ids"]))}
-            document_by_unit = {row["id"]: row["document_id"] for row in rows}
-            # The filename lives on the document edge, so resolve per document.
-            # A page of memories usually spans very few documents, and the common
-            # case is one.
-            by_document: dict[str | None, dict[str, StoredAttachment]] = {}
-            for unit_id, ids in ids_by_unit.items():
-                document_id = document_by_unit.get(unit_id)
-                if document_id not in by_document:
-                    by_document[document_id] = {}
-                missing = [i for i in ids if i not in by_document[document_id]]
-                if missing:
-                    by_document[document_id].update(
-                        await load_bank_attachments(conn, bank_id, missing, document_id=document_id)
-                    )
-
-        return {
-            unit_id: [
-                by_document[document_by_unit.get(unit_id)][i]
-                for i in ids
-                if i in by_document[document_by_unit.get(unit_id)]
-            ]
-            for unit_id, ids in ids_by_unit.items()
-            if any(i in by_document[document_by_unit.get(unit_id)] for i in ids)
-        }
+            refs = {
+                row["id"]: (row["document_id"], ids)
+                for row in rows
+                if (ids := _attachment_ids_of(row["attachment_ids"]))
+            }
+            return await _resolve_memory_attachments(conn, bank_id, refs)
 
     async def retrieve_bank_attachment(
         self,
@@ -9004,6 +9033,7 @@ class MemoryEngine(MemoryEngineInterface):
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
                         scores=scores_by_id.get(result_id),
+                        attachment_ids=result_dict.get("attachment_ids"),
                     )
                 )
 

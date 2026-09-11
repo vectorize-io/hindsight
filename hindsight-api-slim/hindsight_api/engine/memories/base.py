@@ -127,6 +127,10 @@ META_CONSOLIDATED_AT = "consolidated_at"
 # query is "not yet consolidated", so it needs a value to match on: every memory is
 # written with "0" and flipped to "1" once folded into an observation.
 META_CONSOLIDATED_FLAG = "consolidated"
+#: The attachments a fact was drawn from, as a JSON list of short ids — the per-fact
+#: provenance the extractor records. Carried on the memory so read surfaces can resolve
+#: it from the rows the store already returned, without a second lookup.
+META_ATTACHMENT_IDS = "attachment_ids"
 CONSOLIDATED_NO = "0"
 CONSOLIDATED_YES = "1"
 
@@ -193,6 +197,9 @@ class StoredMemory:
     # outside SQL has no `memory_links` table to reconstruct these from, so without them
     # on the read model an export of such a bank silently loses every causal relation.
     causal_edges: list[CausalEdgeRecord] = field(default_factory=list)
+    # Short ids of the attachments this fact was drawn from (see META_ATTACHMENT_IDS).
+    # Carried so the list and detail views resolve them from this read alone.
+    attachment_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -377,6 +384,9 @@ class FactRecord:
     source_memory_ids: list[str] = field(default_factory=list)
     # When this memory was folded into an observation (sources only).
     consolidated_at: datetime | None = None
+    # Short ids of the attachments this fact was drawn from — what Postgres keeps in
+    # `memory_units.attachment_ids`. Empty for a fact stated in plain text.
+    attachment_ids: list[str] = field(default_factory=list)
 
     def metadata_bag(self) -> dict[str, str]:
         """Render the non-modelled columns as an opaque str→str bag."""
@@ -412,6 +422,9 @@ class FactRecord:
         # Observations are not themselves consolidated, so only sources carry the flag.
         if self.fact_type != "observation":
             bag[META_CONSOLIDATED_FLAG] = CONSOLIDATED_YES if self.consolidated_at else CONSOLIDATED_NO
+        if self.attachment_ids:
+            # Deduplicated in first-seen order, the same normalisation the SQL write applies.
+            bag[META_ATTACHMENT_IDS] = json.dumps(list(dict.fromkeys(self.attachment_ids)))
         return bag
 
 
@@ -495,6 +508,7 @@ def build_fact_records(
                 created_at=now,
                 entity_ids=entity_ids,
                 causal_edges=causal_edges,
+                attachment_ids=list(getattr(fact, "attachment_ids", None) or []),
             )
         )
     return records
@@ -1685,11 +1699,20 @@ class MemoriesExtension(Extension, ABC):
 
         ``total`` is the count matching the filters, not the page size, because
         the UI pages on it.
+
+        A store that owns its rows puts each memory's attachment ids on its item as
+        ``"attachment_ids": list[str]`` (see :data:`META_ATTACHMENT_IDS`). The HTTP
+        layer takes the key off and resolves the ids; it cannot read them back from
+        ``memory_units``, which holds none of a store-owned bank's memories. An item
+        without the key shows no attachments.
         """
 
     @abstractmethod
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id: str, unit_id: str) -> dict[str, Any] | None:
-        """One memory rendered for the curation detail view, or ``None``."""
+        """One memory rendered for the curation detail view, or ``None``.
+
+        Carries ``"attachment_ids"`` on the same terms as :meth:`list_memory_units`.
+        """
 
     # ------------------------------------------------------------------ curation archive
     #
@@ -2020,6 +2043,7 @@ class MemoriesExtension(Extension, ABC):
 __all__ = [
     "CONSOLIDATED_NO",
     "CONSOLIDATED_YES",
+    "META_ATTACHMENT_IDS",
     "META_CHUNK_ID",
     "META_CONSOLIDATED_AT",
     "META_CONSOLIDATED_FLAG",
