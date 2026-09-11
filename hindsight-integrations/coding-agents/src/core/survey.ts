@@ -37,11 +37,23 @@
  * missing binary or a spawn failure must silently no-op, never crash the caller.
  */
 import { spawn as realSpawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { binOnPath } from "./util";
+import { resolveHostConfig } from "./host-client";
 
 /** Deterministic doc ids of the survey's findings (its fixed titles slugified by
  *  hindsight_ingest_document). Their presence in the bank = the survey actually FINISHED —
@@ -278,13 +290,82 @@ function buildSurveyPlan(
   }
 }
 
+/** Remove only this generation's owner file. A replacement lock is nonempty and survives
+ * rmdir even if another contender acquires it between unlink and rmdir. */
+function releaseSurveyLock(directory: string, owner: string): void {
+  try {
+    unlinkSync(join(directory, owner));
+    try {
+      rmdirSync(directory);
+    } catch {
+      /* a new owner may already be there */
+    }
+  } catch {
+    /* already released/replaced; never remove an unknown generation */
+  }
+}
+
+/** Rename a POPULATED private directory into place: there is no empty-owner publication
+ * window, and competing renames cannot replace a nonempty lock. The old deepen-style
+ * read-then-write lock lets simultaneous hooks all win and launch paid work (#4255). */
+function acquireSurveyLock(
+  key: string,
+  root: string
+):
+  | {
+      handoff(pid: number): void;
+      release(): void;
+    }
+  | undefined {
+  let staging: string | undefined;
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    staging = mkdtempSync(join(root, "claim-"));
+    const token = randomUUID();
+    let owner = `${process.pid}-${token}`;
+    writeFileSync(join(staging, owner), "", { flag: "wx", mode: 0o600 });
+    const directory = join(root, `survey-${key}.lock`);
+    try {
+      renameSync(staging, directory);
+    } catch {
+      const owners = readdirSync(directory);
+      if (owners.length !== 1) return;
+      const match = /^(\d+)-[0-9a-f-]{36}$/.exec(owners[0]);
+      if (!match || Number(match[1]) <= 0) return;
+      try {
+        process.kill(Number(match[1]), 0);
+        return; // Never expire a live survey by age.
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return;
+      }
+      releaseSurveyLock(directory, owners[0]);
+      renameSync(staging, directory); // exactly one stale-lock contender wins
+    }
+    return {
+      handoff(pid) {
+        const childOwner = `${pid}-${token}`;
+        renameSync(join(directory, owner), join(directory, childOwner));
+        owner = childOwner;
+      },
+      release() {
+        releaseSurveyLock(directory, owner);
+      },
+    };
+  } catch {
+    return; // Cannot prove admission: skip, rather than launch duplicate paid work.
+  } finally {
+    if (staging) rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /**
  * Spawn a DETACHED headless agent to survey `repoDir` and ingest structural findings via the
  * `hindsight_ingest_document` tool. Runs the survey under the current harness's own CLI when
  * available, else falls back to any available agent (claude → codex → antigravity → opencode — claude and
- * codex first because their inline-MCP recipes are self-contained). Fire-and-forget; never throws.
+ * codex first because their inline-MCP recipes are self-contained). Resolves after spawn admission,
+ * not survey completion; false means no launch. Never throws.
  */
-export function startCodebaseSurvey(
+export async function startCodebaseSurvey(
   repoDir: string,
   opts: {
     harness?: SurveyHarness;
@@ -294,8 +375,9 @@ export function startCodebaseSurvey(
     claudeBin?: string;
     spawn?: typeof realSpawn;
     exists?: (bin: string) => boolean; // seam for tests
+    lockDir?: string; // isolated scratch directory for tests
   } = {}
-): void {
+): Promise<boolean> {
   try {
     const spawnFn = opts.spawn ?? realSpawn;
     const exists = opts.exists ?? binOnPath;
@@ -324,22 +406,59 @@ export function startCodebaseSurvey(
         budgetUsd: opts.budgetUsd,
         mcpServerPath,
       });
-      const child = spawnFn(plan.bin, plan.args, {
-        cwd: repoDir,
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        env: plan.env,
+      // Use the SAME resolver as the selected agent's MCP/plugin, including fallback harnesses
+      // and bank overrides. Hash credentials too: equal bank ids on one API can belong to
+      // different tenants, but neither tokens nor bank names should appear in scratch paths.
+      const { cfg, bankId } = resolveHostConfig(harness, repoDir);
+      if (cfg.disabled) return false;
+      const key = createHash("sha256")
+        .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
+        .digest("hex");
+      const lock = acquireSurveyLock(
+        key,
+        opts.lockDir ?? join(tmpdir(), "hindsight-coding-agent", "surveys")
+      );
+      if (!lock) return false;
+      return await new Promise<boolean>((resolve) => {
+        try {
+          const child = spawnFn(plan.bin, plan.args, {
+            cwd: repoDir,
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true,
+            env: plan.env,
+          });
+          child.on("error", () => {
+            lock.release();
+            resolve(false);
+          });
+          child.once("exit", () => lock.release());
+          child.once("spawn", () => {
+            try {
+              if (!child.pid) throw new Error("survey child has no PID");
+              // A hook exits immediately; its PID cannot own the detached child's lifetime.
+              lock.handoff(child.pid);
+              child.unref();
+              resolve(true);
+            } catch {
+              try {
+                child.kill();
+              } catch {
+                /* already gone */
+              }
+              lock.release();
+              resolve(false);
+            }
+          });
+        } catch {
+          lock.release();
+          resolve(false);
+        }
       });
-      // spawn() failures (binary not found, EACCES, sandboxed environments) often arrive
-      // ASYNCHRONOUSLY as an 'error' event on the child, not as a synchronous throw — an unhandled
-      // 'error' event would crash the caller. Swallow it: fire-and-forget best-effort.
-      child.on("error", () => {});
-      child.unref();
-      return; // one survey agent is enough
     }
     // No capable agent found — fail open (the git-log seed already ran; the survey is a bonus).
   } catch {
     /* best-effort: a failed spawn must not break the caller */
   }
+  return false;
 }

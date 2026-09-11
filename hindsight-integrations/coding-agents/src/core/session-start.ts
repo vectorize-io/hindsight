@@ -147,10 +147,7 @@ export async function buildSessionStartContext(args: {
   stateDir?: string;
   hasGit?: (dir: string) => boolean;
   startSeed?: (repoDir: string, opts?: { limit?: number; harness?: string }) => void;
-  startSurvey?: (
-    repoDir: string,
-    opts?: { harness?: SurveyHarness; model?: string; budgetUsd?: number }
-  ) => void;
+  startSurvey?: typeof startCodebaseSurvey;
   headSha?: (dir: string) => string | null;
   commitsSince?: (dir: string, sinceSha: string) => number | null;
 }): Promise<SessionStartOutput> {
@@ -232,13 +229,13 @@ export async function buildSessionStartContext(args: {
           if (docIds.size === 0) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
-              startSurvey(cwd, {
+              const started = await startSurvey(cwd, {
                 harness: harness as SurveyHarness,
                 model: cfg.surveyModel,
                 budgetUsd: cfg.surveyBudgetUsd,
               });
               const sha = resolveHeadSha(cwd);
-              if (sha) recordSurveyBaseline(sha); // baseline for the commit-count re-survey below
+              if (started && sha) recordSurveyBaseline(sha);
             }
             diag(harness, "seed_started", { bank: bankId });
           } else if (cfg.codebaseSurvey !== false && cfg.surveyRefreshCommits > 0) {
@@ -268,17 +265,19 @@ export async function buildSessionStartContext(args: {
               const findingsAbsent =
                 counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
               if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
-                startSurvey(cwd, {
+                const started = await startSurvey(cwd, {
                   harness: harness as SurveyHarness,
                   model: cfg.surveyModel,
                   budgetUsd: cfg.surveyBudgetUsd,
                 });
-                recordSurveyBaseline(sha);
-                diag(harness, "survey_refresh", {
-                  bank: bankId,
-                  commits: sinceLast,
-                  retry: findingsAbsent,
-                });
+                if (started) {
+                  recordSurveyBaseline(sha);
+                  diag(harness, "survey_refresh", {
+                    bank: bankId,
+                    commits: sinceLast,
+                    retry: findingsAbsent,
+                  });
+                }
               } else if (sinceLast === null) {
                 recordSurveyBaseline(sha); // first baseline, or reset after a rebase — no survey
               }
