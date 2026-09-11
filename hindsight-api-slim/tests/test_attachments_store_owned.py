@@ -28,18 +28,27 @@ from types import SimpleNamespace
 import pytest
 
 import hindsight_api.engine.memories as memories_module
+from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.memories import set_memories
 from hindsight_api.engine.memories.base import META_ATTACHMENT_IDS, FactRecord, StoredMemory, build_fact_records
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import MemoryFact, RecallResult
+from hindsight_api.engine.retain.attachment_content import (
+    attachment_placeholder,
+    compute_attachment_hash,
+    short_attachment_id,
+)
 from hindsight_api.engine.retain.attachment_store import StoredAttachment, _record_attachments
 from tests.test_memories_extension import InMemoryMemories
 
 UNIT_A = "00000000-0000-0000-0000-00000000000a"
 UNIT_B = "00000000-0000-0000-0000-00000000000b"
 UNIT_PLAIN = "00000000-0000-0000-0000-0000000000cc"
-SHOT = "a1b2c3d4e5f6"
+# A real hash/short-id pair, so a placeholder written into document or chunk text resolves.
+SHOT_HASH = compute_attachment_hash(b"the vpn reset screenshot")
+SHOT = short_attachment_id(SHOT_HASH)
 DIAGRAM = "0f1e2d3c4b5a"
+DOCUMENT_ID = "vpn-article"
 
 
 # -- the write model ---------------------------------------------------------
@@ -250,6 +259,15 @@ class _CarryingStore(InMemoryMemories):
                 result.attachment_ids = list(self.rows[result.id].attachment_ids)
         return out
 
+    async def get_document_record(self, *, bank_id, document_id, include_text=False):
+        # A real store's record carries its write stamps (epoch ms), which the document route
+        # requires; the base stub leaves them out because none of its own tests render one.
+        record = await super().get_document_record(bank_id=bank_id, document_id=document_id, include_text=include_text)
+        if record is not None:
+            stamp = int(datetime.now(timezone.utc).timestamp() * 1000)
+            record.update(created_at=stamp, updated_at=stamp)
+        return record
+
     def _render(self, row: StoredMemory) -> dict:
         return {
             "id": row.unit_id,
@@ -287,7 +305,7 @@ async def _store_owned_bank(memory, request_context, answers_full_recall: bool) 
             bank_id,
             [
                 StoredAttachment(
-                    attachment_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                    attachment_hash=SHOT_HASH,
                     short_id=SHOT,
                     media_type="image/png",
                     byte_size=68,
@@ -361,3 +379,99 @@ async def test_list_and_get_return_the_attachments_the_store_carried(
     assert detail.status_code == 200, detail.text
     _assert_shot(detail.json().get("attachments"), bank_id)
     assert "attachment_ids" not in detail.json()
+
+
+# -- documents and chunks ----------------------------------------------------
+
+
+class _NoChunkTableConn(_AttachmentsOnlyConn):
+    """Also fails on any read of the SQL ``chunks`` table, which a store-owned bank never fills."""
+
+    async def fetch(self, sql, bank_id, ids, document_id=None):
+        assert " chunks" not in sql and '"chunks"' not in sql and ".chunks" not in sql, (
+            "a store-owned bank's chunk attachment lookup read the SQL chunks table"
+        )
+        return await super().fetch(sql, bank_id, ids, document_id)
+
+
+@pytest.mark.asyncio
+async def test_a_store_owned_chunk_with_no_placeholder_touches_no_postgres(monkeypatch):
+    monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=True))
+
+    result = await MemoryEngine.attachments_for_chunks(
+        _NoPostgres(), "bank-1", ["c0"], request_context=None, carried_texts={"c0": ("doc-1", "plain prose")}
+    )
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_a_store_owned_chunk_resolves_from_the_carried_text(monkeypatch):
+    monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=True))
+    conn = _NoChunkTableConn()
+
+    result = await MemoryEngine.attachments_for_chunks(
+        _EngineWithConn(conn),
+        "bank-1",
+        ["c0", "c1"],
+        request_context=None,
+        carried_texts={
+            "c0": ("doc-1", f"click {attachment_placeholder(SHOT_HASH)} then reconnect"),
+            "c1": ("doc-1", "no image here"),
+        },
+    )
+
+    assert {chunk: [r.short_id for r in records] for chunk, records in result.items()} == {"c0": [SHOT]}
+
+
+async def _seed_document(store: _CarryingStore, bank_id: str, *, keep_text: bool) -> str:
+    text = f"To reset the VPN, click the button: {attachment_placeholder(SHOT_HASH)}\nThen reconnect."
+    await store.put_document(
+        bank_id=bank_id,
+        document_id=DOCUMENT_ID,
+        content_hash="h",
+        original_text=text if keep_text else None,
+        chunk_texts=[text, "Then reconnect."],
+    )
+    return text
+
+
+@pytest.mark.asyncio
+async def test_document_and_chunk_reads_return_the_attachments_in_the_stored_text(
+    api_client, memory, request_context, restore_default_store
+):
+    bank_id, store = await _store_owned_bank(memory, request_context, answers_full_recall=True)
+    await _seed_document(store, bank_id, keep_text=True)
+
+    document = await api_client.get(f"/v1/default/banks/{bank_id}/documents/{DOCUMENT_ID}")
+    chunks = await api_client.get(f"/v1/default/banks/{bank_id}/documents/{DOCUMENT_ID}/chunks")
+    chunk = await api_client.get(f"/v1/default/chunks/{build_chunk_id(bank_id, DOCUMENT_ID, 0)}")
+
+    assert document.status_code == 200, document.text
+    _assert_shot(document.json().get("attachments"), bank_id)
+    # The filename lives on the document edge, which a store-owned bank cannot have.
+    assert document.json()["attachments"][0].get("filename") is None
+
+    assert chunks.status_code == 200, chunks.text
+    items = chunks.json()["items"]
+    _assert_shot(items[0].get("attachments"), bank_id)
+    assert items[1].get("attachments") is None
+
+    assert chunk.status_code == 200, chunk.text
+    _assert_shot(chunk.json().get("attachments"), bank_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keep_text", [True, False], ids=["full-text", "chunks-only"])
+async def test_the_retain_revisit_lookup_reads_the_stored_text(
+    memory, request_context, restore_default_store, keep_text
+):
+    """The retain ingress asks which attachments a document already references, with no text in
+    hand, so that an edit re-sending its placeholders keeps them. For a store-owned bank the answer
+    comes from the stored text -- and from the chunk texts when the full text is not kept."""
+    bank_id, store = await _store_owned_bank(memory, request_context, answers_full_recall=True)
+    await _seed_document(store, bank_id, keep_text=keep_text)
+
+    existing = await memory.attachments_for_documents(bank_id, [DOCUMENT_ID, "never-retained"], request_context)
+
+    assert {d: [r.short_id for r in records] for d, records in existing.items()} == {DOCUMENT_ID: [SHOT]}

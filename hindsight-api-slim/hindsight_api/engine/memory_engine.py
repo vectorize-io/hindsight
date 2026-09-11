@@ -6589,17 +6589,33 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         document_ids: "Sequence[str]",
         request_context: "RequestContext",
+        *,
+        carried_texts: "Mapping[str, str | None] | None" = None,
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each document references, keyed by document_id.
 
         Read from ``document_attachments`` rather than by re-parsing the document
         body: that table is derived from the same text on every write, and joining
         it avoids pulling whole documents back just to scan them for placeholders.
+
+        A store-owned bank has no SQL ``documents`` row, so no ``document_attachments``
+        row can exist for it (the edge's FK needs the document row). There the ids are
+        derived from the document's text instead: ``carried_texts`` (document_id -> the
+        text a caller already read from the store) when given, else the store's own
+        record, falling back to its chunk texts when the full text is not kept.
+        Filenames live only on that edge, so they come back ``None`` for such a bank.
         """
         from .retain.attachment_store import StoredAttachment
 
         if not document_ids:
             return {}
+        from .memories import get_memories
+
+        store = get_memories()
+        if store.store_owned_for(bank_id):
+            return await self._attachments_for_store_owned_documents(
+                store, bank_id, list(dict.fromkeys(document_ids)), request_context, carried_texts or {}
+            )
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}
@@ -6633,11 +6649,57 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return grouped
 
+    async def _attachments_for_store_owned_documents(
+        self,
+        store,
+        bank_id: str,
+        document_ids: list[str],
+        request_context: "RequestContext",
+        carried_texts: "Mapping[str, str | None]",
+    ) -> "dict[str, list[StoredAttachment]]":
+        """:meth:`attachments_for_documents` for a store-owned bank: ids derived from the text.
+
+        A carried text costs nothing to scan. A document without one is read from the store —
+        the retain-ingress revisit has no text in hand, and it only asks when the caller wrote
+        something placeholder-shaped. The record's ``original_text`` is null when a deployment
+        does not keep full text; its chunk texts still carry every placeholder, so they stand in.
+        """
+        from .retain.attachment_content import iter_placeholder_ids
+
+        texts = {d: carried_texts.get(d) for d in document_ids}
+        if all(texts[d] is not None for d in document_ids) and not any(
+            any(True for _ in iter_placeholder_ids(texts[d] or "")) for d in document_ids
+        ):
+            return {}
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return {}
+        for document_id in document_ids:
+            if texts[document_id] is not None:
+                continue
+            record = await store.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
+            if record is None:
+                continue
+            text = record.get("original_text")
+            if text is None:
+                text = "\n".join(
+                    t or "" for t in (await store.list_chunk_texts(bank_id=bank_id, document_id=document_id) or [])
+                )
+            texts[document_id] = text
+        refs = {d: (d, ids) for d in document_ids if (ids := list(dict.fromkeys(iter_placeholder_ids(texts[d] or ""))))}
+        if not refs:
+            return {}
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            return await _resolve_memory_attachments(conn, bank_id, refs)
+
     async def attachments_for_chunks(
         self,
         bank_id: str,
         chunk_ids: "Sequence[str]",
         request_context: "RequestContext",
+        *,
+        carried_texts: "Mapping[str, tuple[str | None, str | None]] | None" = None,
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each chunk references, keyed by chunk_id.
 
@@ -6645,12 +6707,34 @@ class MemoryEngine(MemoryEngineInterface):
         and one chunk usually yields several facts of which only some were read
         off the screenshot. Per-fact provenance comes from
         ``attachments_for_memories`` instead.
+
+        ``carried_texts`` is chunk_id -> ``(document_id, chunk_text)`` for chunks whose
+        text the caller already read from the memories store. For a store-owned bank it
+        is the only source: such a bank keeps no SQL ``chunks`` rows, so reading them
+        could only come back empty.
         """
         from .retain.attachment_content import iter_placeholder_ids
         from .retain.attachment_store import load_bank_attachments
 
         if not chunk_ids:
             return {}
+        from .memories import get_memories
+
+        if get_memories().store_owned_for(bank_id):
+            wanted = set(chunk_ids)
+            refs = {
+                chunk_id: (document_id, ids)
+                for chunk_id, (document_id, text) in (carried_texts or {}).items()
+                if chunk_id in wanted and (ids := list(dict.fromkeys(iter_placeholder_ids(text or ""))))
+            }
+            if not refs:
+                return {}
+            profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+            if profile is None:
+                return {}
+            backend = await self._get_backend()
+            async with backend.acquire() as conn:
+                return await _resolve_memory_attachments(conn, bank_id, refs)
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return {}

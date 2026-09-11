@@ -7307,7 +7307,13 @@ def _register_routes(app: FastAPI):
                 raise HTTPException(status_code=404, detail="Document not found")
             items = result.get("items") or []
             by_chunk = await app.state.memory.attachments_for_chunks(
-                bank_id, [c["chunk_id"] for c in items if c.get("chunk_id")], request_context
+                bank_id,
+                [c["chunk_id"] for c in items if c.get("chunk_id")],
+                request_context,
+                # The page already holds each chunk's text; a store-owned bank resolves from it.
+                carried_texts={
+                    c["chunk_id"]: (c.get("document_id"), c.get("chunk_text")) for c in items if c.get("chunk_id")
+                },
             )
             for chunk in items:
                 records = by_chunk.get(chunk.get("chunk_id"))
@@ -7386,7 +7392,14 @@ def _register_routes(app: FastAPI):
             document = await app.state.memory.get_document(document_id, bank_id, request_context=request_context)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
-            by_document = await app.state.memory.attachments_for_documents(bank_id, [document_id], request_context)
+            by_document = await app.state.memory.attachments_for_documents(
+                bank_id,
+                [document_id],
+                request_context,
+                # Used only for a store-owned bank, which has no document edge to read; a null
+                # text (full text not kept) makes the engine fall back to the chunk texts.
+                carried_texts={document_id: document.get("original_text")},
+            )
             if by_document.get(document_id):
                 document["attachments"] = [_attachment_payload(bank_id, record) for record in by_document[document_id]]
             return document
@@ -7487,7 +7500,12 @@ def _register_routes(app: FastAPI):
             # it belongs to, and attachments_for_chunks authorizes against it.
             chunk_bank = chunk.get("bank_id")
             if chunk_bank:
-                by_chunk = await app.state.memory.attachments_for_chunks(chunk_bank, [chunk_id], request_context)
+                by_chunk = await app.state.memory.attachments_for_chunks(
+                    chunk_bank,
+                    [chunk_id],
+                    request_context,
+                    carried_texts={chunk_id: (chunk.get("document_id"), chunk.get("chunk_text"))},
+                )
                 if by_chunk.get(chunk_id):
                     chunk["attachments"] = [_attachment_payload(chunk_bank, record) for record in by_chunk[chunk_id]]
             return chunk
