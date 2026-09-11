@@ -57,7 +57,7 @@ class DocumentTransferApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> object:
+    ) -> bytearray:
         """Download a stored file (async export archive)
 
         Stream a file previously written to file storage — currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.
@@ -98,7 +98,7 @@ class DocumentTransferApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "object",
+            '200': "bytearray",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -129,7 +129,7 @@ class DocumentTransferApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[object]:
+    ) -> ApiResponse[bytearray]:
         """Download a stored file (async export archive)
 
         Stream a file previously written to file storage — currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.
@@ -170,7 +170,7 @@ class DocumentTransferApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "object",
+            '200': "bytearray",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -242,7 +242,7 @@ class DocumentTransferApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "object",
+            '200': "bytearray",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -291,8 +291,8 @@ class DocumentTransferApi:
         if 'Accept' not in _header_params:
             _header_params['Accept'] = self.api_client.select_header_accept(
                 [
-                    'application/json', 
-                    'application/zip'
+                    'application/zip', 
+                    'application/json'
                 ]
             )
 

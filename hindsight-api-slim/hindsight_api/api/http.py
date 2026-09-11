@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from hindsight_api.api import page_markdown
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
@@ -884,6 +884,11 @@ ContentBlock = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock
 def bank_attachment_url(bank_id: str, attachment_id: str) -> str:
     """The API path serving one of a bank's retained attachments, by its short id."""
     return f"/v1/default/banks/{quote(bank_id, safe='')}/attachments/{attachment_id}"
+
+
+# OpenAPI content entry for a raw-bytes response body, so generated clients
+# return bytes instead of trying to decode the payload.
+_BINARY_SCHEMA: dict[str, Any] = {"schema": {"type": "string", "format": "binary"}}
 
 
 def chunk_attachments_of(
@@ -8264,7 +8269,11 @@ def _register_routes(app: FastAPI):
         "cannot be used to probe what a bank holds.",
         operation_id="get_bank_attachment",
         tags=["Memory"],
-        responses={200: {"content": {"application/octet-stream": {}}, "description": "Attachment bytes"}},
+        # An explicit response_class stops FastAPI adding its default
+        # application/json media type next to the binary one, which made the
+        # generated clients decode the bytes as JSON text (#4292).
+        response_class=Response,
+        responses={200: {"content": {"application/octet-stream": _BINARY_SCHEMA}, "description": "Attachment bytes"}},
     )
     async def api_get_bank_attachment(
         bank_id: str,
@@ -8272,7 +8281,6 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Serve one of a bank's retained inline attachments."""
-        from fastapi.responses import Response
 
         try:
             attachment = await app.state.memory.retrieve_bank_attachment(bank_id, attachment_id, request_context)
@@ -8311,14 +8319,14 @@ def _register_routes(app: FastAPI):
         "download_url). Access is authorized against the bank the key belongs to.",
         operation_id="download_file",
         tags=["Document Transfer"],
-        responses={200: {"content": {"application/zip": {}}, "description": "Stored file"}},
+        response_class=Response,
+        responses={200: {"content": {"application/zip": _BINARY_SCHEMA}, "description": "Stored file"}},
     )
     async def api_download_file(
         key: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Download a bank-scoped stored file (export archive) by storage key."""
-        from fastapi.responses import Response
 
         try:
             if not get_config().enable_document_export_api:

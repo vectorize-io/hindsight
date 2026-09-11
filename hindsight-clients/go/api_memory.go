@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"os"
 	"reflect"
 )
 
@@ -428,7 +429,7 @@ func (r ApiGetBankAttachmentRequest) Authorization(authorization string) ApiGetB
 	return r
 }
 
-func (r ApiGetBankAttachmentRequest) Execute() (interface{}, *http.Response, error) {
+func (r ApiGetBankAttachmentRequest) Execute() (*os.File, *http.Response, error) {
 	return r.ApiService.GetBankAttachmentExecute(r)
 }
 
@@ -454,13 +455,13 @@ func (a *MemoryAPIService) GetBankAttachment(ctx context.Context, bankId string,
 }
 
 // Execute executes the request
-//  @return interface{}
-func (a *MemoryAPIService) GetBankAttachmentExecute(r ApiGetBankAttachmentRequest) (interface{}, *http.Response, error) {
+//  @return *os.File
+func (a *MemoryAPIService) GetBankAttachmentExecute(r ApiGetBankAttachmentRequest) (*os.File, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  interface{}
+		localVarReturnValue  *os.File
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetBankAttachment")
@@ -486,7 +487,7 @@ func (a *MemoryAPIService) GetBankAttachmentExecute(r ApiGetBankAttachmentReques
 	}
 
 	// to determine the Accept header
-	localVarHTTPHeaderAccepts := []string{"application/json", "application/octet-stream"}
+	localVarHTTPHeaderAccepts := []string{"application/octet-stream", "application/json"}
 
 	// set Accept header
 	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)

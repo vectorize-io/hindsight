@@ -3634,9 +3634,10 @@ paths:
       responses:
         "200":
           content:
-            application/json:
-              schema: {}
-            application/octet-stream: {}
+            application/octet-stream:
+              schema:
+                format: binary
+                type: string
           description: Attachment bytes
         "422":
           content:
@@ -3674,9 +3675,10 @@ paths:
       responses:
         "200":
           content:
-            application/json:
-              schema: {}
-            application/zip: {}
+            application/zip:
+              schema:
+                format: binary
+                type: string
           description: Stored file
         "422":
           content:

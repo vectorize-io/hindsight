@@ -17,8 +17,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"reflect"
 	"os"
+	"reflect"
 )
 
 
@@ -37,7 +37,7 @@ func (r ApiDownloadFileRequest) Authorization(authorization string) ApiDownloadF
 	return r
 }
 
-func (r ApiDownloadFileRequest) Execute() (interface{}, *http.Response, error) {
+func (r ApiDownloadFileRequest) Execute() (*os.File, *http.Response, error) {
 	return r.ApiService.DownloadFileExecute(r)
 }
 
@@ -59,13 +59,13 @@ func (a *DocumentTransferAPIService) DownloadFile(ctx context.Context, key strin
 }
 
 // Execute executes the request
-//  @return interface{}
-func (a *DocumentTransferAPIService) DownloadFileExecute(r ApiDownloadFileRequest) (interface{}, *http.Response, error) {
+//  @return *os.File
+func (a *DocumentTransferAPIService) DownloadFileExecute(r ApiDownloadFileRequest) (*os.File, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  interface{}
+		localVarReturnValue  *os.File
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DocumentTransferAPIService.DownloadFile")
@@ -90,7 +90,7 @@ func (a *DocumentTransferAPIService) DownloadFileExecute(r ApiDownloadFileReques
 	}
 
 	// to determine the Accept header
-	localVarHTTPHeaderAccepts := []string{"application/json", "application/zip"}
+	localVarHTTPHeaderAccepts := []string{"application/zip", "application/json"}
 
 	// set Accept header
 	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)

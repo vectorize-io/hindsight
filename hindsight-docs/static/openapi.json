@@ -5209,10 +5209,12 @@
           "200": {
             "description": "Attachment bytes",
             "content": {
-              "application/json": {
-                "schema": {}
-              },
-              "application/octet-stream": {}
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
             }
           },
           "422": {
@@ -5267,10 +5269,12 @@
           "200": {
             "description": "Stored file",
             "content": {
-              "application/json": {
-                "schema": {}
-              },
-              "application/zip": {}
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
             }
           },
           "422": {
