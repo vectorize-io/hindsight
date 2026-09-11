@@ -67,6 +67,8 @@ interface HookClient {
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
+  /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
+  readonly bank?: string;
 }
 
 /**
@@ -120,13 +122,14 @@ export async function buildHookOutput(args: {
   } else if (cfg.autoReflect && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     const t0 = Date.now();
+    const timeoutMs = Math.min(cfg.reflectTimeoutMs, HOOK_REFLECT_CAP_MS);
     try {
       reflectAnswer = await client.reflect(buildReflectQuery(prompt), {
         // Automatic reflection runs inside a hard 25s hook window. Hindsight's low budget is the
         // supported default for bounded reflect calls; callers that explicitly invoke the MCP
         // tool still get the deeper high-budget path.
         budget: "low",
-        timeoutMs: Math.min(cfg.reflectTimeoutMs, HOOK_REFLECT_CAP_MS),
+        timeoutMs,
       });
       diag(harness, reflectAnswer ? "reflect_ok" : "reflect_empty", {
         ms: Date.now() - t0,
@@ -144,7 +147,10 @@ export async function buildHookOutput(args: {
       });
       diag(harness, "reflect_failed", {
         ms: Date.now() - t0,
-        error: describeError(e),
+        bank: client.bank,
+        timeoutMs,
+        // Wider than describeError's default: the server's error body is the useful part.
+        error: describeError(e, 1500),
         query: prompt.slice(0, 80),
       });
     }

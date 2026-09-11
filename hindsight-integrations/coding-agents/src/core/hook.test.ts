@@ -16,6 +16,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -153,6 +154,37 @@ describe("buildHookOutput", () => {
     });
     // The failure is cached as "" — reflect is NOT retried on the next turn.
     expect(client.reflect).toHaveBeenCalledTimes(1);
+  });
+
+  it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
+    const diagFile = join(root, "diag.log");
+    vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);
+    const body = `{"detail":"${"x".repeat(400)} upstream LLM rejected the turn"}`;
+    const client = {
+      ...makeClient({
+        reflect: vi.fn(async () => {
+          throw new Error(`reflect 500 ${body}`);
+        }),
+      }),
+      bank: "coding-agent::demo",
+    };
+    await buildHookOutput({
+      harness: "claude-code",
+      prompt: UNRELATED_PROMPT,
+      cfg: resolveConfig({}),
+      client,
+      cacheFile,
+    });
+
+    const failed = readFileSync(diagFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.event === "reflect_failed");
+    expect(failed.bank).toBe("coding-agent::demo");
+    expect(failed.timeoutMs).toBe(25_000);
+    // Past describeError's default 200-char cut, where the root cause usually sits.
+    expect(failed.error).toContain("upstream LLM rejected the turn");
   });
 
   it("the notice fires ONCE — the turn reflect failed, not on later turns", async () => {

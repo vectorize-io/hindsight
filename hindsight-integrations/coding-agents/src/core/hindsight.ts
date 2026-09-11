@@ -525,9 +525,18 @@ export class HindsightClient {
         body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
         signal: ctrl.signal,
       });
-      if (!resp.ok) throw new Error(`reflect ${resp.status}${this.authHint(resp.status)}`);
+      // Keep the server's body: a bare "reflect 500" in the diag trail is undebuggable after the fact.
+      if (!resp.ok)
+        throw new Error(
+          `reflect ${resp.status} ${(await resp.text()).slice(0, 1000)}${this.authHint(resp.status)}`
+        );
       const data = (await resp.json()) as { text?: string };
       return (data.text || "").trim();
+    } catch (e) {
+      // Our own deadline surfaces as a generic "This operation was aborted"; name it.
+      if (ctrl.signal.aborted)
+        throw new Error(`reflect timed out after ${opts.timeoutMs}ms`, { cause: e });
+      throw e;
     } finally {
       clearTimeout(timer);
     }

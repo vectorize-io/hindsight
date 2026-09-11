@@ -518,3 +518,34 @@ describe("every client-building entrypoint forwards observationScopes", () => {
     expect(dropped).toEqual([]);
   });
 });
+
+describe("HindsightClient.reflect failures", () => {
+  it("keeps the server's error body, not just the status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(500, { detail: "tool_call ids must be unique" }))
+    );
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 5_000 })).rejects.toThrow(
+      /^reflect 500 .*tool_call ids must be unique/
+    );
+  });
+
+  it("names its own deadline instead of a bare 'operation was aborted'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          })
+      )
+    );
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 10 })).rejects.toThrow(
+      "reflect timed out after 10ms"
+    );
+  });
+});
