@@ -36,7 +36,7 @@
     "tar": ">=7.5.18 <8.0.0",
     "tmp": "^0.2.6",
     "yeoman-environment": "^6.0.1",
-    "adm-zip": ">=0.6.0",
+    "adm-zip": ">=0.6.1",
     "brace-expansion@^1.0.0": "^1.1.18",
     "brace-expansion@^2.0.0": "^2.1.4",
     "brace-expansion@^5.0.0": "^5.0.9",
