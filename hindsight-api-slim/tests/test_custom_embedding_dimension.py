@@ -349,6 +349,28 @@ class TestEmbeddingDimension:
         # Cleanup
         clear_mental_model_embeddings(db_url, schema)
 
+    def test_skip_memory_units_leaves_memory_units_untouched(self, dimension_test_schema):
+        """A custom memories store owns the memory rows, so memory_units is never resized —
+        not even when it holds rows that would otherwise block the change — while
+        mental_models, which stays in Postgres, still follows the model."""
+        db_url, schema = dimension_test_schema
+
+        clear_embeddings(db_url, schema)
+        clear_mental_model_embeddings(db_url, schema)
+        # An earlier test's blocked mental_models change can leave memory_units resized.
+        _ensure_embedding_dimension_with_retry(db_url, 384, schema=schema)
+        insert_test_embedding(db_url, schema, 384)
+
+        ensure_embedding_dimension(db_url, 768, schema=schema, skip_memory_units=True)
+
+        assert get_column_dimension(db_url, schema) == 384
+        assert get_column_dimension(db_url, schema, table="mental_models") == 768
+
+        # Restore for other tests
+        clear_embeddings(db_url, schema)
+        _ensure_embedding_dimension_with_retry(db_url, 384, schema=schema)
+        assert get_column_dimension(db_url, schema, table="mental_models") == 384
+
     async def test_local_embeddings_dimension_detection(self, embeddings):
         """Test that LocalSTEmbeddings correctly detects dimension."""
         # Initialize embeddings if not already done

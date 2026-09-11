@@ -4765,6 +4765,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # off the event loop so the process pool's blocking joins don't
                     # stall it.
                     from ..migrations import run_migrations_for_schemas
+                    from .memories import get_memories
 
                     schemas = [tenant.schema for tenant in tenants if tenant.schema]
                     await asyncio.to_thread(
@@ -4778,6 +4779,7 @@ class MemoryEngine(MemoryEngineInterface):
                         text_search_extension=config.text_search_extension,
                         pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
                         ensure_extensions=self._backend.supports_bm25,
+                        skip_memory_units=get_memories().store_owned,
                     )
                 else:
                     # Oracle and other backends: Alembic's non-thread-safe globals
