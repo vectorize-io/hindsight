@@ -9357,11 +9357,25 @@ def _register_routes(app: FastAPI):
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(
+            result = await app.state.memory.delete_bank(
                 bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
             )
 
-            return DeleteResponse(success=True)
+            # The engine counted this inside the delete's own transaction, which is strictly
+            # more accurate than the before/after pair of list calls a client would otherwise
+            # have to issue: a memory retained between the two moves the difference, and no
+            # client-side arithmetic can close that gap. Report memory_units_deleted alone --
+            # this endpoint clears the bank's memories and the bank, its profile, its entities
+            # and its documents survive, so summing them the way delete_bank does would answer
+            # a different question. Default 0 rather than None, so an absent deleted_count keeps
+            # meaning "not reported" instead of "nothing to report".
+            deleted = result.get("memory_units_deleted", 0)
+            scope = f" of type '{type}'" if type else ""
+            return DeleteResponse(
+                success=True,
+                message=f"Cleared {deleted} memory unit(s){scope} from bank '{bank_id}'",
+                deleted_count=deleted,
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

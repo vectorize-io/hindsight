@@ -1698,6 +1698,30 @@ async def test_clearing_a_banks_memories_keeps_its_storage(memory, request_conte
     assert store.rows == {}, "and it really did empty the bank"
 
 
+async def test_a_typed_clear_counts_where_the_memories_live(memory, request_context, restore_default_store):
+    """A fact_type-scoped delete counts through the store, not through `memory_units`.
+
+    The unfiltered branch already does. This one did not: it took its count from a SELECT on
+    `memory_units`, which is empty for a store-owned bank, so the `delete_where` below removed
+    the rows and the call reported having removed none of them. The API's clear endpoint
+    returns that number, so the caller was told the erasure had done nothing.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+    await memory._ensure_bank_exists("typed-clear-bank", request_context)
+    await _seed(store, "typed-clear-bank", text="a world fact", fact_type="world")
+    await _seed(store, "typed-clear-bank", text="another world fact", fact_type="world")
+    await _seed(store, "typed-clear-bank", text="an experience", fact_type="experience")
+
+    result = await memory.delete_bank(
+        "typed-clear-bank", fact_type="world", delete_bank_profile=False, request_context=request_context
+    )
+
+    assert result["memory_units_deleted"] == 2, "the count has to come from the store, not memory_units"
+    assert store.predicates[-1].fact_types == ["world"], "and only that type was deleted"
+    assert [row.fact_type for row in store.rows.values()] == ["experience"]
+
+
 async def test_deleting_a_bank_drops_its_storage(memory, request_context, restore_default_store):
     """The other side of the same coin: when the BANK goes, its storage goes with it.
 
