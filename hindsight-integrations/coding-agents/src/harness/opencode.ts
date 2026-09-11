@@ -128,7 +128,7 @@ function createRuntime(core: RuntimeCore) {
       const msgs = output.messages || [];
       const sid = opencodeSessionId(msgs);
       if (!sid) return;
-      await core.onTranscript(sid, readOpencodeMessages(msgs));
+      await core.onTranscript(sid, readOpencodeMessages(msgs), false);
     },
     // The Stop-equivalent these hosts otherwise lack: `session.idle` fires once the assistant has
     // finished, which is the only moment the completed exchange is readable. Without it a session's

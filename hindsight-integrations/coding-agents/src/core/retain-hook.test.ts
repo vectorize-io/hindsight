@@ -9,6 +9,7 @@ import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 import { dcodeAssistantText } from "./transcript-dcode";
+import { memoryUsageCursorStore } from "./usage";
 
 /** The Stop event `runRetainHook` reads from fd 0; every other read stays real. */
 let stdin = "";
@@ -39,6 +40,52 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+describe("buildRetain usage stats", () => {
+  it("records the Hindsight calls and credit of a real Claude Code transcript", async () => {
+    // The raw host format end to end: tool_use blocks through readClaudeTranscript's action turns.
+    const usageFile = join(root, "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    const msg = (type: string, content: unknown) =>
+      JSON.stringify({ type, message: { role: type, content } });
+    writeFileSync(
+      file,
+      [
+        msg("user", "how do we round?"),
+        msg("assistant", [
+          {
+            type: "tool_use",
+            name: "mcp__hindsight__hindsight_search_knowledge_pages",
+            input: { query: "rounding" },
+          },
+          { type: "tool_use", name: "Grep", input: { pattern: "round" } },
+        ]),
+        msg("user", [{ type: "tool_result", content: "page kp-1" }]),
+        msg("assistant", [{ type: "text", text: "> 🧠 **From Hindsight memory** — half up" }]),
+      ].join("\n")
+    );
+    try {
+      await buildRetain({
+        harness: "claude-code",
+        sessionId: "sess-usage",
+        transcriptPath: file,
+        bankId: "bank-1",
+        usageCursors: memoryUsageCursorStore(),
+        client: { retain: vi.fn().mockResolvedValue(undefined) } as unknown as HindsightClient,
+      });
+      expect(JSON.parse(readFileSync(usageFile, "utf8"))).toMatchObject({
+        harness: "claude-code",
+        session: "sess-usage",
+        bank: "bank-1",
+        turn: 1,
+        calls: ["hindsight_search_knowledge_pages"],
+        credited: true,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("buildRetain", () => {

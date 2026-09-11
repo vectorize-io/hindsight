@@ -7,18 +7,18 @@
  * hook (UserPromptSubmit, Stop, and future ones like SessionStart) can depend on it without
  * reaching into another hook's module.
  */
-import { appendFileSync } from "node:fs";
-import { log } from "./log";
+import { join } from "node:path";
+import { appendLogLine, log, logsDir } from "./log";
 
 /** Where the JSONL trail lands. Exported so a failure notice can name the file to open. */
 export function diagFilePath(): string {
-  return process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log";
+  return process.env.HINDSIGHT_DIAG_FILE || join(logsDir(), "diag.jsonl");
 }
 
 export function diag(harness: string, event: string, extra: Record<string, unknown> = {}): void {
   log.debug(harness, `diag:${event}`, extra); // debug level shows the full story in ONE file
   try {
-    appendFileSync(
+    appendLogLine(
       diagFilePath(),
       JSON.stringify({ ts: new Date().toISOString(), harness, event, ...extra }) + "\n"
     );

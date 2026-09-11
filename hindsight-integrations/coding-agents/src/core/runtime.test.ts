@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
@@ -54,7 +57,7 @@ describe("RuntimeCore session-idle write-back", () => {
     const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
 
     // The turn-driven path sees only what existed BEFORE the reply.
-    await runtime.onTranscript("s1", [turn("user", "how do we round?")]);
+    await runtime.onTranscript("s1", [turn("user", "how do we round?")], false);
     await new Promise((r) => setTimeout(r, 0)); // retain is fire-and-forget
     expect(retained).toHaveLength(1);
     expect(String(retained[0].turns)).not.toContain("we round half up");
@@ -80,7 +83,7 @@ describe("RuntimeCore session-idle write-back", () => {
     const { client, retained } = makeClient();
     const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
 
-    await runtime.onTranscript("s2", [turn("user", "only turn")]);
+    await runtime.onTranscript("s2", [turn("user", "only turn")], false);
     await new Promise((r) => setTimeout(r, 0));
     expect(retained).toHaveLength(1);
 
@@ -99,6 +102,42 @@ describe("RuntimeCore session-idle write-back", () => {
     await runtime.onSessionIdle("s3");
     await new Promise((r) => setTimeout(r, 0));
     expect(retained).toHaveLength(1);
+  });
+
+  it("records Hindsight usage for a turn only once its reply is in", async () => {
+    const usageFile = join(mkdtempSync(join(tmpdir(), "hs-rt-usage-")), "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    try {
+      const { client } = makeClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}), "kilo");
+
+      // Built before the reply: recording turn 1 now would log it with no calls, for good.
+      await runtime.onTranscript("s6", [turn("user", "how do we round?")], false);
+      expect(existsSync(usageFile)).toBe(false);
+
+      runtime.setTranscriptSource(async () => [
+        turn("user", "how do we round?"),
+        turn("action", "hindsight_search_knowledge_pages rounding"),
+        turn("assistant", "🧠 From Hindsight memory — half up"),
+      ]);
+      await runtime.onSessionIdle("s6");
+      const recorded = readFileSync(usageFile, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(recorded).toMatchObject([
+        {
+          harness: "kilo",
+          session: "s6",
+          bank: "bank-1",
+          turn: 1,
+          calls: ["hindsight_search_knowledge_pages"],
+          credited: true,
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("no-ops when the host cannot refetch, rather than retaining a stale transcript", async () => {

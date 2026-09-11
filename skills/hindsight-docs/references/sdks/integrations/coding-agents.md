@@ -23,6 +23,7 @@ npx @vectorize-io/hindsight-coding-agents install all          # every detected 
 npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
 npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly what install added
 npx @vectorize-io/hindsight-coding-agents update               # refresh the runtime only, no rewiring
+npx @vectorize-io/hindsight-coding-agents stats                # how often each agent uses Hindsight
 ```
 
 `install` takes an explicit target — `all`, or one or more harness names. A bare
@@ -431,8 +432,8 @@ as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
 
 `HINDSIGHT_CONFIG` moves the file itself — point it at another path for a container or a test
 harness where `$HOME` is not the right anchor. It is still exactly one file; only its location
-changes. (The other variables that are not settings are `HINDSIGHT_LOG_FILE`, `HINDSIGHT_DIAG_FILE`
-and `HINDSIGHT_LOG_LEVEL` — see Diagnostics & logging.)
+changes. (The other variables that are not settings are `HINDSIGHT_LOG_FILE`, `HINDSIGHT_DIAG_FILE`,
+`HINDSIGHT_USAGE_FILE` and `HINDSIGHT_LOG_LEVEL` — see Diagnostics & logging.)
 
 ### When a change takes effect
 
@@ -769,16 +770,18 @@ they stay where they were built, and new work accrues under the new setting.
 
 ## Diagnostics & logging
 
-Two files, two audiences:
+All logs live in `~/.hindsight/coding-agents-logs/` (owner-only). Each file rotates to `<file>.1`
+at 10 MB.
 
-**Leveled plugin log** (humans debugging): `$TMPDIR/hindsight-coding-agent/plugin.log` (override
+**Leveled plugin log** (humans debugging): `~/.hindsight/coding-agents-logs/plugin.log` (override
 `HINDSIGHT_LOG_FILE`) — timestamped `LEVEL [scope] message` lines from every component, including
 the ingestion engine. Level defaults to `info`; set `"logLevel": "debug"` in config or
 `HINDSIGHT_LOG_LEVEL=debug` for ad-hoc debugging (at `debug`, every diag event below is mirrored
 here too, so one file tells the whole story).
 
 **Structured diag events** (machines/harnesses): every reflect and page-fetch outcome is appended
-as a JSON line to `/tmp/hindsight-plugin.log` (override with `HINDSIGHT_DIAG_FILE`):
+as a JSON line to `~/.hindsight/coding-agents-logs/diag.jsonl` (override with
+`HINDSIGHT_DIAG_FILE`):
 
 ```json
 {
@@ -794,6 +797,17 @@ as a JSON line to `/tmp/hindsight-plugin.log` (override with `HINDSIGHT_DIAG_FIL
 `reflect_failed` / `pages_failed` record the error; if you're comparing memory-on vs memory-off,
 check this file — a run whose reflects failed is a no-memory run. Seed starts are logged as
 `seed_started`.
+
+**Tool usage** (is the agent using Hindsight?): one JSON line per finished user turn in
+`~/.hindsight/coding-agents-logs/usage.jsonl` (override `HINDSIGHT_USAGE_FILE`) — the `hindsight_*`
+tools the agent called during that turn, and whether its reply credited Hindsight memory ("From
+Hindsight memory"). The credit rate counts only turns that called a retrieval tool (search, list,
+read, reflect); saving a document is not expected to be credited. Recorded when the session is written back, so a scope with
+`retainSessions: false` records none. It never leaves your machine. Summarize it per agent with:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents stats
+```
 
 ### Is the memory ready yet?
 

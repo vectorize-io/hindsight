@@ -46,6 +46,7 @@ import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
 import { SKILL_DIRS } from "./core/skill-dirs";
+import { formatUsageReport, readUsage } from "./core/usage";
 import { createInstallerUi, type SelectOption } from "./install-ui";
 
 /**
@@ -1942,6 +1943,11 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
   // read as a harness name and rejected.
   const valueArgs = flagValueArgs(rawArgs, ["server", "api-url", "api-token"]);
   const names = rawArgs.filter((a) => !a.startsWith("--") && !valueArgs.has(a));
+  // Read-only: summarizes the local usage log (core/usage.ts) and touches nothing else.
+  if (command === "stats") {
+    ctx.log?.(formatUsageReport(readUsage()));
+    return 0;
+  }
   // Everything we write into a host's config is an ABSOLUTE path into this package. Run straight
   // from an npx cache those paths die on the first eviction and every hook stops SILENTLY, which is
   // why installing from a cache used to be refused outright. Copying the runtime somewhere stable
@@ -1969,6 +1975,7 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     ctx.log?.(
       `usage: hindsight-coding-agents <install|uninstall> <all|harness...>\n` +
         `       hindsight-coding-agents update\n` +
+        `       hindsight-coding-agents stats\n` +
         `       [--server cloud|self-hosted|daemon] [--api-url <url>] [--api-token <token>]\n` +
         `       [--import-conversations]\n` +
         `  all      every agent detected on this machine\n` +

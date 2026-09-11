@@ -24,10 +24,11 @@ import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
-import { fileCursorStore, sessionRootDir } from "./session-cache";
+import { fileCursorStore, fileUsageCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 import { stripInjectedMemory } from "./transcript-util";
+import { recordUsage, type UsageCursorStore } from "./usage";
 
 /** Headroom left before the host's kill: the response still has to come back after the last wait. */
 const HOST_DEADLINE_MARGIN_MS = 2000;
@@ -109,6 +110,10 @@ export async function buildRetain(args: {
   cursors?: RetainCursorStore;
   /** Absolute time the host will kill this process; bounds any rate-limit retry. */
   retryUntil?: number;
+  /** Resolved bank, recorded on the usage line. */
+  bankId?: string;
+  /** Injectable for tests; defaults to the per-session temp file. */
+  usageCursors?: UsageCursorStore;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
@@ -133,6 +138,15 @@ export async function buildRetain(args: {
     });
   }
   if (turns.length === 0) return;
+  // Stop fires once the reply is finished, so every turn in the transcript is complete.
+  recordUsage({
+    harness,
+    sessionId,
+    bankId: args.bankId ?? "",
+    turns,
+    cursors: args.usageCursors ?? fileUsageCursorStore(harness),
+    lastTurnComplete: true,
+  });
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
@@ -239,6 +253,7 @@ export async function runRetainHook(
     lastAssistantMessage,
     readLastMessage: spec.readLastMessage,
     retryUntil: hostDeadline,
+    bankId,
     stamp: buildRetainStamp(cfg, {
       directory: cwd,
       sessionRoot,

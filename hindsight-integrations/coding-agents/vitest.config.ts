@@ -6,9 +6,10 @@ export default defineConfig({
   test: {
     env: {
       // Unit tests exercise code paths that emit diagnostics; keep them out of the REAL
-      // /tmp/hindsight-plugin.log so a developer's diag trail isn't polluted with test noise.
+      // ~/.hindsight/coding-agents-logs so a developer's trail isn't polluted with test noise.
       HINDSIGHT_DIAG_FILE: join(tmpdir(), "hindsight-plugin-test.log"),
       HINDSIGHT_LOG_FILE: join(tmpdir(), "hindsight-plugin-test-leveled.log"),
+      HINDSIGHT_USAGE_FILE: join(tmpdir(), "hindsight-plugin-test-usage.jsonl"),
       // Same reasoning for the CONFIG file: `loadConfig` otherwise resolves the developer's real
       // ~/.hindsight/coding-agent.json, so a machine that has a token (or a bank override, or a
       // different apiUrl) fails assertions that a clean machine passes. It must be set HERE rather

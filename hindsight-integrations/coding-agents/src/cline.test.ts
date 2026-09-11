@@ -130,10 +130,15 @@ describe("Cline native plugin adapter", () => {
 
     await hooks.afterRun({ snapshot });
 
-    expect(core.onTranscript).toHaveBeenCalledWith("conversation-1", [
-      expect.objectContaining({ role: "user", content: "remember the preference" }),
-      expect.objectContaining({ role: "assistant", content: "I will do that." }),
-    ]);
+    // `true`: afterRun sees the finished run — the reply's turn is complete (usage stats).
+    expect(core.onTranscript).toHaveBeenCalledWith(
+      "conversation-1",
+      [
+        expect.objectContaining({ role: "user", content: "remember the preference" }),
+        expect.objectContaining({ role: "assistant", content: "I will do that." }),
+      ],
+      true
+    );
     expect(clineTranscript(snapshot.messages)).toEqual([
       expect.objectContaining({ role: "user", content: "remember the preference" }),
       expect.objectContaining({ role: "assistant", content: "I will do that." }),

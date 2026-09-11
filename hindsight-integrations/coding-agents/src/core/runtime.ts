@@ -8,7 +8,7 @@
  *   - onPrompt(sessionId, prompt)   : each user turn -> recall + build this turn's injection
  *   - getInjection(sessionId)       : the system-prompt text to inject this turn (or undefined)
  *   - toolSpecs()                   : the hindsight_* knowledge/recall tools to register natively
- *   - onTranscript(sessionId, turns): full transcript -> write back every N turns (on by default)
+ *   - onTranscript(sessionId, turns, lastTurnComplete): full transcript -> write back (on by default)
  *   - onSessionIdle(sessionId)      : assistant finished -> refetch + write back the completed
  *                                     exchange (the Stop-equivalent these hosts lack)
  * No opencode/claude specifics live here — only the memory logic.
@@ -23,6 +23,7 @@ import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore } from "./retain-cursor";
+import { memoryUsageCursorStore, recordUsage } from "./usage";
 import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
 import { buildHookOutput } from "./hook";
@@ -36,6 +37,8 @@ export class RuntimeCore {
   private readonly sessionState = new Map<string, { startTs: string; retainedTurns: number }>();
   /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
   private readonly cursors = memoryCursorStore();
+  /** Turns already written to the usage log (core/usage.ts), per session. */
+  private readonly usageCursors = memoryUsageCursorStore();
   /** Pulls a session's CURRENT transcript from the host (set by the adapter); see onSessionIdle. */
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
@@ -208,9 +211,17 @@ export class RuntimeCore {
    * (`engine.retain.fold`), so submitting every turn costs one extraction, not one per turn, and
    * nothing is ever held somewhere it can be lost.
    */
-  async onTranscript(sessionId: string, turns: TransportTurn[]): Promise<void> {
+  async onTranscript(
+    sessionId: string,
+    turns: TransportTurn[],
+    /** Whether the agent has finished answering the last prompt. Required, not defaulted: opencode
+     *  hands this over while BUILDING a request (false), pi and Cline after the run ends (true), and
+     *  a wrong default records every turn one late and never the session's last. */
+    lastTurnComplete: boolean
+  ): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!this.writeBackEnabled || !sessionId || !turns.length) return;
+    this.recordUsage(sessionId, turns, lastTurnComplete);
     const st = this.stateFor(sessionId);
     this.retain(sessionId, turns, st.startTs);
   }
@@ -241,12 +252,24 @@ export class RuntimeCore {
       return;
     }
     if (!turns.length) return;
+    this.recordUsage(sessionId, turns, true); // idle: the reply is in
     const st = this.stateFor(sessionId);
     // idle can fire more than once for one exchange (and again on a session with no new activity);
     // only retain when this transcript actually grew past what we last wrote.
     if (turns.length <= st.retainedTurns) return;
     st.retainedTurns = turns.length;
     this.retain(sessionId, turns, st.startTs, "idle");
+  }
+
+  private recordUsage(sessionId: string, turns: TransportTurn[], lastTurnComplete: boolean): void {
+    recordUsage({
+      harness: this.harness,
+      sessionId,
+      bankId: this.bankId,
+      turns,
+      cursors: this.usageCursors,
+      lastTurnComplete,
+    });
   }
 
   private stateFor(sessionId: string): {

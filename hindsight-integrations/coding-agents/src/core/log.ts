@@ -2,7 +2,7 @@
  * Leveled plugin logging — ONE human-readable log file for debugging, next to (not replacing) the
  * structured diag JSONL contract (core/diag.ts, which benchmarks/harnesses parse).
  *
- *   file : $TMPDIR/hindsight-coding-agent/plugin.log   (override: HINDSIGHT_LOG_FILE)
+ *   file : ~/.hindsight/coding-agents-logs/plugin.log   (override: HINDSIGHT_LOG_FILE)
  *   level: "info" default — config `logLevel`, or HINDSIGHT_LOG_LEVEL for ad-hoc debugging
  *          without touching config ("debug" | "info" | "warn" | "error")
  *
@@ -10,9 +10,44 @@
  * every diag event is mirrored here too, so one file tells the whole story. Never throws: logging
  * must not break the agent.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+/**
+ * Every log this plugin keeps (plugin.log, diag.jsonl, usage.jsonl) lives here.
+ *
+ * They used to be split between `/tmp/hindsight-plugin.log` and `$TMPDIR/hindsight-coding-agent/`:
+ * the first is shared by every user on the machine (and the lines carry queries and code), both are
+ * wiped on reboot, which loses exactly the history usage stats are for, and neither was bounded. A
+ * sibling of the staged runtime (`~/.hindsight/coding-agents`), not a child of it: `update`
+ * replaces that directory wholesale. Scratch state (session cache, cursors, locks) stays in the OS
+ * temp dir on purpose — losing it is harmless.
+ */
+export function logsDir(): string {
+  return join(homedir(), ".hindsight", "coding-agents-logs");
+}
+
+/** Past this size a log is rotated to `<file>.1` (one generation kept), so each is capped at ~2x. */
+export const LOG_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Append to a log file, rotating it first once it has reached LOG_MAX_BYTES. Throws — callers are
+ * the fail-open wrappers. The directory is owner-only: these lines carry prompts, queries and code.
+ *
+ * Rotation is not coordinated across processes (every hook is its own process). Two that rotate at
+ * once can push the just-restarted file over `.1`, losing one old generation — a bounded,
+ * diagnostics-only loss that is cheaper than a lock on every log line.
+ */
+export function appendLogLine(file: string, text: string): void {
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    if (statSync(file).size >= LOG_MAX_BYTES) renameSync(file, `${file}.1`);
+  } catch {
+    /* no file yet, or another process just rotated it */
+  }
+  appendFileSync(file, text, { mode: 0o600 });
+}
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 const WEIGHT: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -28,16 +63,14 @@ export function setLogLevel(level: LogLevel): void {
 }
 
 export function logFilePath(): string {
-  return process.env.HINDSIGHT_LOG_FILE || join(tmpdir(), "hindsight-coding-agent", "plugin.log");
+  return process.env.HINDSIGHT_LOG_FILE || join(logsDir(), "plugin.log");
 }
 
 function write(level: LogLevel, scope: string, msg: string, extra?: Record<string, unknown>): void {
   if (WEIGHT[level] < WEIGHT[current]) return;
   try {
-    const file = logFilePath();
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(
-      file,
+    appendLogLine(
+      logFilePath(),
       `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] ${msg}` +
         (extra && Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : "") +
         "\n"

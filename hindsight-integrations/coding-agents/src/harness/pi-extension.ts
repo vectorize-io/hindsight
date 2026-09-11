@@ -143,7 +143,7 @@ export function createPiHooks(
     },
     async agentEnd(event: { messages: readonly PiMessage[] }, sessionId: string): Promise<void> {
       const turns = readPiMessages(event.messages);
-      if (turns.length) await core.onTranscript(sessionId, turns);
+      if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
     },
   };
 }

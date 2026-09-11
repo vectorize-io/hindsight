@@ -84,11 +84,16 @@ describe("pi extension adapter", () => {
       "session-1"
     );
 
-    expect(onTranscript).toHaveBeenCalledWith("session-1", [
-      { role: "user", content: "remember the preference" },
-      { role: "assistant", content: "I will do that." },
-      { role: "action", content: "read README.md" },
-    ]);
+    // `true`: agent_end sees the finished run — the reply's turn is complete (usage stats).
+    expect(onTranscript).toHaveBeenCalledWith(
+      "session-1",
+      [
+        { role: "user", content: "remember the preference" },
+        { role: "assistant", content: "I will do that." },
+        { role: "action", content: "read README.md" },
+      ],
+      true
+    );
   });
 
   it("does not write back an empty exchange", async () => {

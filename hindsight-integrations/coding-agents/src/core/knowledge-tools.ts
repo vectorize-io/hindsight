@@ -23,6 +23,7 @@ import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
+import { diagFilePath } from "./diag";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
 import type { PageTrigger } from "./missions";
@@ -173,7 +174,7 @@ export function buildKnowledgeTools(
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),
             hooks_disabled: Boolean(process.env.HINDSIGHT_DISABLE_HOOKS),
             log_level: process.env.HINDSIGHT_LOG_LEVEL ?? null,
-            diagnostics_file: process.env.HINDSIGHT_DIAG_FILE ?? "/tmp/hindsight-plugin.log",
+            diagnostics_file: diagFilePath(),
             channel_id_configured: Boolean(process.env.HINDSIGHT_CHANNEL_ID),
             user_id_configured: Boolean(process.env.HINDSIGHT_USER_ID),
           },
