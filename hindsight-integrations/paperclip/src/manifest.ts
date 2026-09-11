@@ -36,9 +36,10 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       hindsightApiKeyRef: {
         type: "string",
+        format: "secret-ref",
         title: "Hindsight API Key (secret ref)",
         description:
-          "Name of the Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
+          "Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
       },
       dynamicBankId: {
         type: "boolean",
