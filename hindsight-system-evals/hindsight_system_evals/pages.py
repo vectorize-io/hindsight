@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from hindsight_client import Hindsight
+from hindsight_client_api.models.create_knowledge_page_response import CreateKnowledgePageResponse
 
 from hindsight_system_evals import corpus as corpus_module
 from hindsight_system_evals.corpus import HardFact, HardQuestion
@@ -122,18 +123,9 @@ async def prepare_bank(client: Hindsight, bank_id: str) -> None:
     )
 
 
-async def build_page(
-    client: Hindsight,
-    bank_id: str,
-    question: HardQuestion,
-    waves: list[list[HardFact]],
-    settle: SettleFn,
-) -> PageOutcome:
-    """Create the page, feed it the corpus wave by wave, and snapshot each time."""
-    outcome = PageOutcome(question_id=question.id, category=question.category, bank_id=bank_id)
-    await prepare_bank(client, bank_id)
-
-    created = await client.knowledge_base.create_knowledge_page(
+async def create_page(client: Hindsight, bank_id: str, question: HardQuestion) -> CreateKnowledgePageResponse:
+    """Create the page for one question, reading raw facts and refreshed explicitly."""
+    return await client.knowledge_base.create_knowledge_page(
         bank_id,
         {
             "name": f"eval {question.id}",
@@ -152,6 +144,20 @@ async def build_page(
             },
         },
     )
+
+
+async def build_page(
+    client: Hindsight,
+    bank_id: str,
+    question: HardQuestion,
+    waves: list[list[HardFact]],
+    settle: SettleFn,
+) -> PageOutcome:
+    """Create the page, feed it the corpus wave by wave, and snapshot each time."""
+    outcome = PageOutcome(question_id=question.id, category=question.category, bank_id=bank_id)
+    await prepare_bank(client, bank_id)
+
+    created = await create_page(client, bank_id, question)
     outcome.page_id = created.page_id
     outcome.mental_model_id = created.mental_model_id
     await settle(bank_id)

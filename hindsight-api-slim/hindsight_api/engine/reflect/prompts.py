@@ -565,33 +565,20 @@ _MIN_SPLIT_CHUNK_TOKENS = 1024
 #: it may not MANUFACTURE a value for something the data does not cover.
 _GROUNDING_BOUNDARY = (
     "## What Counts As Inference\n"
-    "Inference means drawing a conclusion about what the retrieved data COVERS: summarising it, "
-    "combining facts, reading an implication, characterising a trend you can see.\n"
-    "\n"
-    "It does NOT mean producing a value for a period, entity or person the data does not cover. "
-    "Extrapolating a number backwards or forwards from a trend, interpolating a value between two "
-    "dated facts, or carrying a value across from a similar entity is INVENTION, however plausible "
-    "the arithmetic looks.\n"
-    "\n"
-    "So when the question asks for a specific value — a number, date, name, status, amount — and no "
-    "retrieved fact states it FOR THE THING ASKED ABOUT:\n"
-    "- Say plainly that the data does not record it. This is a complete, successful answer.\n"
-    "- You may then give what the data DOES record, clearly labelled with the period or entity it "
-    "actually belongs to.\n"
-    "- Never present a derived value as the answer, and never describe one as `exact`, `reliable`, "
-    "`deduced` or `confirmed`. If you show a derivation at all, label it an estimate and say which "
-    "facts it was computed from.\n"
-    "\n"
-    "Qualitative inference is unaffected: concluding someone likely enjoyed an activity they did "
-    "repeatedly is reading the data, not inventing it."
+    "Infer freely about what the retrieved data covers. Never produce a value (number, date, name, "
+    "status, amount) for a period, entity or person the data does not cover: extrapolating a trend, "
+    "interpolating between dated facts, or borrowing from a similar entity is invention. If no fact "
+    "states the value for the thing asked, say the data does not record it (a complete answer), then "
+    "give what IS recorded, labelled with the period or entity it belongs to. Never call a derived "
+    "value exact, reliable, deduced or confirmed; label any derivation an estimate. Qualitative "
+    "inference is unaffected."
 )
 
 _FINAL_INSTRUCTIONS = (
     "Provide a thoughtful answer by synthesizing and reasoning from the retrieved data above. "
     "You can make reasonable inferences from the memories, but don't completely fabricate information. "
-    "If the exact answer isn't stated, use what IS stated to give the best possible answer.\n\n"
-    + _GROUNDING_BOUNDARY
-    + "\n\n"
+    "If the exact answer isn't stated, use what IS stated to give the best possible answer, "
+    "within the inference rules in the system prompt.\n\n"
     "IMPORTANT: Output ONLY the final answer. Do NOT include meta-commentary like "
     '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
     "Just provide the direct synthesized answer."
@@ -1039,11 +1026,6 @@ RULES
   that you cannot see. Do NOT remove or replace existing sections just because
   the new facts do not reference them. Only remove content when the new facts
   explicitly contradict or supersede it.
-- **Combine, do not swap**: When the document and the new facts both enumerate
-  or count members of the same set, the result contains BOTH. Recompute the
-  total from the combined membership rather than adopting either side's figure.
-  Replacing a list of 3 with a list of 4 disjoint items loses 3 facts and is
-  wrong even when the new figure came from the synthesis.
 - **Merge overlapping topics**: When new facts cover topics that overlap with
   existing sections, merge the new information INTO the existing section
   rather than creating duplicates. When new facts provide more specific or

@@ -18,6 +18,7 @@ import pytest
 from hindsight_api.engine.reflect.prompts import (
     _FINAL_INSTRUCTIONS,
     _GROUNDING_BOUNDARY,
+    build_final_prompt,
     build_final_system_prompt,
     build_system_prompt_for_tools,
 )
@@ -33,14 +34,18 @@ class TestGroundingBoundaryWiring:
     def test_forced_synthesis_system_prompt_carries_it(self):
         assert _GROUNDING_BOUNDARY in build_final_system_prompt("testing", None, None)
 
-    def test_final_instructions_carry_it(self):
-        # Reached on the split/reduce synthesis path, which uses the instructions
-        # rather than the system prompt.
-        assert _GROUNDING_BOUNDARY in _FINAL_INSTRUCTIONS
+    def test_final_call_carries_it_exactly_once(self):
+        """The final and reduce calls send the final system prompt, which carries
+        the rule. An earlier version also embedded it in the user-side
+        instructions, so one call carried the same text twice."""
+        user = build_final_prompt("q", [], {"name": "Bank"})
+        assert _GROUNDING_BOUNDARY not in _FINAL_INSTRUCTIONS
+        assert _GROUNDING_BOUNDARY not in user
+        assert build_final_system_prompt("testing", None, None).count(_GROUNDING_BOUNDARY) == 1
 
     @pytest.mark.parametrize(
         "phrasing",
-        ["Extrapolating", "does not record it", "never describe one as"],
+        ["extrapolating a trend", "does not record it", "Never call a derived"],
     )
     def test_rule_states_the_actual_constraint(self, phrasing: str):
         """Guards the substance, not just that some text is present.

@@ -60,16 +60,7 @@ _LANGUAGE_AND_RULES = """\
 - When the exact answer isn't stated, use what IS stated to give a best-effort answer AND surface any uncertainty — never invent confidence the data doesn't support.
 
 ## What Counts As Inference
-Inference means drawing a conclusion about what the retrieved data COVERS: summarising it, combining facts, reading an implication, characterising a trend you can see.
-
-It does NOT mean producing a value for a period, entity or person the data does not cover. Extrapolating a number backwards or forwards from a trend, interpolating a value between two dated facts, or carrying a value across from a similar entity is INVENTION, however plausible the arithmetic looks.
-
-So when the question asks for a specific value — a number, date, name, status, amount — and no retrieved fact states it FOR THE THING ASKED ABOUT:
-- Say plainly that the data does not record it. This is a complete, successful answer.
-- You may then give what the data DOES record, clearly labelled with the period or entity it actually belongs to.
-- Never present a derived value as the answer, and never describe one as `exact`, `reliable`, `deduced` or `confirmed`. If you show a derivation at all, label it an estimate and say which facts it was computed from.
-
-Qualitative inference is unaffected: concluding someone likely enjoyed an activity they did repeatedly is reading the data, not inventing it.
+Infer freely about what the retrieved data covers. Never produce a value (number, date, name, status, amount) for a period, entity or person the data does not cover: extrapolating a trend, interpolating between dated facts, or borrowing from a similar entity is invention. If no fact states the value for the thing asked, say the data does not record it (a complete answer), then give what IS recorded, labelled with the period or entity it belongs to. Never call a derived value exact, reliable, deduced or confirmed; label any derivation an estimate. Qualitative inference is unaffected.
 
 ## Temporal Reasoning
 Every memory and observation carries temporal fields in the JSON tool result:

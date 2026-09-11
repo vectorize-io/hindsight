@@ -118,6 +118,10 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
             "HINDSIGHT_API_HOST": "127.0.0.1",
             "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",
+            # The debug tools replay a captured delta-ops request verbatim, and the
+            # default 50k-char cap truncates a large one mid-document. A replay of a
+            # truncated prompt is a different prompt.
+            "HINDSIGHT_API_LLM_TRACE_MAX_CHARS": "1000000",
         }
     )
 

@@ -23,7 +23,7 @@ from hindsight_system_evals import (
     wait_until_settled,
 )
 from hindsight_system_evals.pages import SettleFn
-from hindsight_system_evals.report import RECORDED, ModelConfig, ModelRef, RunReport
+from hindsight_system_evals.report import RECORDED, ModelConfig, ModelRef, RunReport, summarise
 
 BANK_PREFIX = "syseval-"
 
@@ -110,7 +110,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
     import datetime
 
-    correct = sum(1 for r in RECORDED if r.correct)
+    overall = summarise(RECORDED)
     env = provider_environment()
     report = RunReport(
         timestamp=datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
@@ -120,10 +120,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             hindsight=ModelRef(provider=env["HINDSIGHT_API_LLM_PROVIDER"], model=env["HINDSIGHT_API_LLM_MODEL"]),
             judge=ModelRef(model=judge_model()),
         ),
-        total=len(RECORDED),
-        correct=correct,
-        correct_rate=(correct / len(RECORDED)) if RECORDED else None,
-        trap_count=sum(1 for r in RECORDED if r.hit_trap),
+        total=overall.total,
+        correct=overall.correct,
+        correct_rate=(overall.correct / overall.total) if overall.total else None,
+        trap_count=overall.trap_count,
+        by_kind={kind: summarise([r for r in RECORDED if r.kind == kind]) for kind in sorted({r.kind for r in RECORDED})},
         items=RECORDED,
     )
     Path(output).write_text(report.to_json(), encoding="utf-8")

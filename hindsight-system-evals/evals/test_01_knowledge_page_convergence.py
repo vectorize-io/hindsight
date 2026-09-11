@@ -29,7 +29,7 @@ from hindsight_client import Hindsight
 
 from hindsight_system_evals import build_page, evaluate, questions, split_into_waves
 from hindsight_system_evals.pages import PageOutcome, SettleFn, facts
-from hindsight_system_evals.report import RECORDED, PageRecord
+from hindsight_system_evals.report import RECORDED, EvalRecord
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,8 @@ async def _run(
     # total and weight that one question twice in the published correct rate.
     if record:
         RECORDED.append(
-            PageRecord(
+            EvalRecord(
+                kind="knowledge_page",
                 question_id=question_id,
                 category=question.category,
                 correct=outcome.correct,
