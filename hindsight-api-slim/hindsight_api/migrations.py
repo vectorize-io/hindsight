@@ -566,6 +566,7 @@ def ensure_embedding_dimension(
     required_dimension: int,
     schema: str | None = None,
     vector_extension: str = "pgvector",
+    skip_memory_units: bool = False,
 ) -> None:
     """
     Ensure the embedding column dimension matches the model's dimension for all tables.
@@ -580,6 +581,8 @@ def ensure_embedding_dimension(
         required_dimension: The embedding dimension required by the model
         schema: Target PostgreSQL schema name (None for public)
         vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
+        skip_memory_units: Leave memory_units untouched because a custom memories store
+            keeps the memory rows (and their vectors) outside Postgres
 
     Raises:
         RuntimeError: If dimension mismatch with existing data
@@ -607,7 +610,8 @@ def ensure_embedding_dimension(
         vector_ext = _detect_vector_extension(conn, vector_extension)
         logger.info(f"Using vector extension: {vector_ext}")
 
-        _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
+        if not skip_memory_units:
+            _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
         _migrate_table_embedding_dimension(conn, schema_name, "mental_models", required_dimension, vector_ext)
         # NOTE: invalidated_memory_units is deliberately omitted. The curation archive has no
         # embedding column at all (dropped in migration d4f6a8c2e1b3) — invalidate stores no
@@ -619,6 +623,7 @@ def ensure_vector_extension(
     database_url: str,
     vector_extension: str = "pgvector",
     schema: str | None = None,
+    skip_memory_units: bool = False,
 ) -> None:
     """
     Ensure the vector indexes match the configured vector extension.
@@ -633,6 +638,8 @@ def ensure_vector_extension(
         database_url: SQLAlchemy database URL
         vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
         schema: Target PostgreSQL schema name (None for public)
+        skip_memory_units: Leave memory_units untouched because a custom memories store
+            keeps the memory rows (and their vectors) outside Postgres
 
     Raises:
         RuntimeError: If extension mismatch with existing data
@@ -651,6 +658,8 @@ def ensure_vector_extension(
             ("learnings", "idx_learnings_embedding"),
             ("pinned_reflections", "idx_pinned_reflections_embedding"),
         ]
+        if skip_memory_units:
+            tables_to_check = [entry for entry in tables_to_check if entry[0] != "memory_units"]
 
         target_index_type = index_type_keyword(target_ext)
 
@@ -874,6 +883,7 @@ def ensure_text_search_extension(
     text_search_extension: str = "native",
     schema: str | None = None,
     pg_search_tokenizer: str | None = None,
+    skip_memory_units: bool = False,
 ) -> None:
     """
     Ensure the text search columns and indexes match the configured extension.
@@ -894,6 +904,8 @@ def ensure_text_search_extension(
         pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
             BM25 text fields when indexes are created. Empty keeps the
             ParadeDB default.
+        skip_memory_units: Leave memory_units untouched because a custom memories store
+            keeps the memory rows (and their text index) outside Postgres
 
     Raises:
         RuntimeError: If extension mismatch with existing data
@@ -904,7 +916,7 @@ def ensure_text_search_extension(
     engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Tables with search_vector columns to check
-        tables_to_check = ["memory_units", "mental_models"]
+        tables_to_check = ["mental_models"] if skip_memory_units else ["memory_units", "mental_models"]
 
         # Determine target column type and index type
         if text_search_extension == "vchord":
@@ -1247,6 +1259,7 @@ def _migrate_one_schema_pg(
     text_search_extension: str,
     pg_search_tokenizer: str | None,
     ensure_extensions: bool,
+    skip_memory_units: bool = False,
 ) -> str:
     """Run migrations + post-migration extension setup for a SINGLE PG schema.
 
@@ -1263,14 +1276,21 @@ def _migrate_one_schema_pg(
             embedding_dimension,
             schema=schema,
             vector_extension=vector_extension,
+            skip_memory_units=skip_memory_units,
         )
     if ensure_extensions:
-        ensure_vector_extension(database_url, vector_extension=vector_extension, schema=schema)
+        ensure_vector_extension(
+            database_url,
+            vector_extension=vector_extension,
+            schema=schema,
+            skip_memory_units=skip_memory_units,
+        )
         ensure_text_search_extension(
             database_url,
             text_search_extension=text_search_extension,
             schema=schema,
             pg_search_tokenizer=pg_search_tokenizer,
+            skip_memory_units=skip_memory_units,
         )
     return schema
 
@@ -1304,6 +1324,7 @@ def run_migrations_for_schemas(
     text_search_extension: str = "native",
     pg_search_tokenizer: str | None = None,
     ensure_extensions: bool = True,
+    skip_memory_units: bool = False,
 ) -> None:
     """Run PostgreSQL migrations for many schemas, up to ``concurrency`` at once.
 
@@ -1321,6 +1342,11 @@ def run_migrations_for_schemas(
 
     Failures are collected per schema and re-raised together so one bad tenant
     does not hide the status of the others.
+
+    ``skip_memory_units`` keeps the post-migration dimension and index reconcile off
+    ``memory_units`` when a custom memories store owns the memory rows: the table stays
+    empty, so resizing or re-indexing it only fails boots for no reason (e.g. pgvector's
+    2000-dimension HNSW limit against a model the store handles fine).
     """
     # Isolated: keep psycopg2 (and every sync engine this reaches --
     # ensure_embedding_dimension, the vector and text-search extension helpers) out of
@@ -1338,6 +1364,7 @@ def run_migrations_for_schemas(
                 "text_search_extension": text_search_extension,
                 "pg_search_tokenizer": pg_search_tokenizer,
                 "ensure_extensions": ensure_extensions,
+                "skip_memory_units": skip_memory_units,
             },
         )
         return
@@ -1352,6 +1379,7 @@ def run_migrations_for_schemas(
         text_search_extension=text_search_extension,
         pg_search_tokenizer=pg_search_tokenizer,
         ensure_extensions=ensure_extensions,
+        skip_memory_units=skip_memory_units,
     )
 
     effective = max(1, min(concurrency, len(schemas)))

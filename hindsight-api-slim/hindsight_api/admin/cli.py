@@ -555,6 +555,7 @@ async def _run_migration(
     ensure_extensions: bool = True,
 ) -> list[str]:
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
+    from ..engine.memories import get_memories
     from ..migrations import run_migrations_for_schemas
 
     _pg0 = parse_pg0_url(db_url)
@@ -590,6 +591,7 @@ async def _run_migration(
         text_search_extension=config.text_search_extension,
         pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
         ensure_extensions=ensure_extensions,
+        skip_memory_units=get_memories().store_owned,
     )
 
     # After core migrations, provision any extension-owned bank-scoped tables
