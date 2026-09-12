@@ -95,6 +95,17 @@ def _available_cpu_count() -> int:
     return max(1, min(candidates))
 
 
+def available_cpu_count() -> int:
+    """Public alias for :func:`_available_cpu_count`.
+
+    Admission-control defaults size themselves from the real CPU budget, and that
+    budget must come from here rather than ``os.cpu_count()``: under ``--cpus`` the
+    latter reports the host's cores, which would size limits for a machine the
+    process cannot use.
+    """
+    return _available_cpu_count()
+
+
 def default_native_thread_count() -> int:
     """Per-pool cap: ``_MAX_NATIVE_THREADS``, or available CPUs if fewer."""
     return min(_MAX_NATIVE_THREADS, _available_cpu_count())

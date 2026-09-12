@@ -407,6 +407,10 @@ def main():
         uvicorn_config["reload"] = True
     if args.workers > 1:
         uvicorn_config["workers"] = args.workers
+    # Export the worker count so each child process can size its share of the CPU
+    # budget (admission limits are per worker). uvicorn spawns children that
+    # re-import the app, so the environment is the only channel that reaches them.
+    os.environ[ENV_WORKERS] = str(args.workers)
     if args.forwarded_allow_ips:
         uvicorn_config["forwarded_allow_ips"] = args.forwarded_allow_ips
     if args.ssl_keyfile:
