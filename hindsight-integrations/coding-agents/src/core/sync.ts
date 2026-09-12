@@ -20,6 +20,7 @@ function gitTry(repo: string, ...args: string[]): string | null {
       encoding: "utf8",
       maxBuffer: 1 << 28,
       windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"], // capture diagnostics before best-effort fallback
     }).trim();
   } catch {
     return null;

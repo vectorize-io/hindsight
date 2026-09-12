@@ -103,6 +103,7 @@ async function gitSyncNote(args: {
       execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], {
         encoding: "utf8",
         windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"], // do not corrupt the host banner on a late git failure
       }).trim()
     );
     if (n > 0) target = Math.min(DEEPEN_DIFF_TARGET, n);
