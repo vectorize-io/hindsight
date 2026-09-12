@@ -10345,6 +10345,13 @@ class MemoryEngine(MemoryEngineInterface):
             async with conn.transaction():
                 try:
                     if fact_type:
+                        # Resolved once: this branch asks the store two separate questions
+                        # below -- which ids to sweep, and how many rows it is about to remove.
+                        from .memories import get_memories as _get_memories_for_scope
+
+                        _scope_store = _get_memories_for_scope()
+                        _scope_store_owned = _scope_store.store_owned_for(bank_id)
+
                         # For source memory types, capture ids so we can invalidate
                         # dependent observations AFTER the delete below. Running the
                         # stale-observation sweep post-delete ensures we also catch
@@ -10355,10 +10362,7 @@ class MemoryEngine(MemoryEngineInterface):
                             # from wherever the memories live: reading memory_units for a store that
                             # keeps them elsewhere yields nothing, and the sweep would silently skip,
                             # leaving observations behind that outlive the sources they summarise.
-                            from .memories import get_memories as _get_memories_for_scope
-
-                            _scope_store = _get_memories_for_scope()
-                            if not _scope_store.store_owned_for(bank_id):
+                            if not _scope_store_owned:
                                 unit_id_rows = await conn.fetch(
                                     f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                                     bank_id,
@@ -10375,12 +10379,26 @@ class MemoryEngine(MemoryEngineInterface):
                                 )
                                 unit_ids = [m.unit_id for m in _scope_page.memories]
 
-                        # Delete only memories of a specific fact type
-                        units_count = await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
-                            bank_id,
-                            fact_type,
-                        )
+                        # Delete only memories of a specific fact type.
+                        #
+                        # Counted where the memories actually live, for the same reason the
+                        # unfiltered branch below counts through the store: a store-owned bank
+                        # keeps nothing in memory_units, so this count read from SQL was always
+                        # 0 while the delete_where after the transaction really did remove rows.
+                        # The API's clear endpoint returns this number, so an external-store
+                        # deployment was told its erasure had removed nothing.
+                        if _scope_store_owned:
+                            _typed_counts = await _scope_store.count_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id
+                            )
+                            units_count = int(_typed_counts.get(fact_type, 0))
+                        else:
+                            units_count = await conn.fetchval(
+                                f"SELECT COUNT(*) FROM {fq_table('memory_units')} "
+                                "WHERE bank_id = $1 AND fact_type = $2",
+                                bank_id,
+                                fact_type,
+                            )
                         await conn.execute(
                             f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                             bank_id,
