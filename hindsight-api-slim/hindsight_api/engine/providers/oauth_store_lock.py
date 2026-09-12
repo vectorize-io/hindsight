@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -41,6 +42,11 @@ logger = logging.getLogger(__name__)
 
 # Interval between non-blocking flock attempts while another holder has the store.
 _POLL_INTERVAL_SECONDS = 0.05
+
+# Errors that mean the store cannot be written, so no lock file can live beside
+# it. The lock degrades to per-loop-only for these; every other OSError from
+# creating the lock file propagates.
+_UNWRITABLE_STORE_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 
 # One map of store path -> lock per event loop; LoopLocal prunes closed loops (a weak
 # map would not: a lock that has been waited on holds a reference to its loop).
@@ -69,8 +75,39 @@ async def oauth_store_lock(store: Path, *, timeout_seconds: float, label: str) -
             return
 
         lock_path = store.with_suffix(".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as lock_file:
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = open(lock_path, "a+")
+        except OSError as e:
+            # Only a store that cannot be written gets here, and that is the
+            # normal shape on Kubernetes: a Secret volume is mounted read-only
+            # whatever `volumeMount.readOnly` says, so a store fed by an
+            # external secret manager (ESO, a sidecar, a ConfigMap projection)
+            # raises EROFS. Nothing can be written back to such a store, so the
+            # lock file does not exist and the caller's read path — which is how
+            # a credential published by another writer arrives — must still run.
+            # Failing here would instead take the whole refresh with it.
+            #
+            # Everything else must keep propagating. The same two calls fail on
+            # a perfectly WRITABLE store — ENOSPC when the volume is full,
+            # EMFILE/ENFILE when descriptors run out — and those arrive exactly
+            # when the box is under pressure. Degrading there would silently
+            # drop the cross-process lock and let two processes into the refresh
+            # body together, which is the race this lock exists to prevent. For
+            # these providers that means two concurrent rotations of a rotating
+            # token, where one of them is necessarily lost.
+            if e.errno not in _UNWRITABLE_STORE_ERRNOS:
+                raise
+            # Degrade to the per-loop lock alone, exactly as the no-`fcntl`
+            # branch above does. Note the file lock never protected against a
+            # store owned by another writer: such a writer does not take it.
+            logger.debug(
+                f"{label} store is not writable ({type(e).__name__}: {e}); refresh proceeds without a cross-process lock."
+            )
+            yield
+            return
+
+        with lock_file:
             deadline = time.monotonic() + max(1.0, timeout_seconds)
             while True:
                 try:
