@@ -9414,11 +9414,21 @@ def _register_routes(app: FastAPI):
     @audited("clear_memories", request_param=None)
     async def api_clear_bank_memories(
         bank_id: str,
+        request: Request,
         type: str | None = Query(None, description="Optional fact type filter (world, experience, observation)"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
+            # A selection body must not silently become a whole-bank delete.
+            # Inspect actual bytes (including chunked bodies) without buffering them.
+            async for chunk in request.stream():
+                if chunk:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This endpoint clears bank memories and does not accept a request body. "
+                        "Use the type query parameter to filter by fact type.",
+                    )
             await app.state.memory.delete_bank(
                 bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
             )
