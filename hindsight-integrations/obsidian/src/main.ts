@@ -291,6 +291,7 @@ export default class HindsightPlugin extends Plugin {
       excludeFolders: this.settings.excludeFolders,
       vaultName: this.app.vault.getName(),
       prefixDocId: this.settings.prefixDocId,
+      observationScopes: this.settings.observationScopes,
     };
   }
 

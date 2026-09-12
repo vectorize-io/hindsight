@@ -106,6 +106,53 @@ describe("SyncEngine", () => {
     expect(opts.metadata.vault).toBe("Personal");
   });
 
+  it("passes observation scope through without changing note provenance", async () => {
+    const created = Date.UTC(2026, 2, 15);
+    const updated = Date.UTC(2026, 5, 20);
+    const files = {
+      "Work/note.md": {
+        content: "---\ntags: [planning]\nsource: meeting\n---\n# Decision\nkeep it simple",
+        mtime: updated,
+        ctime: created,
+      },
+    };
+    const { engine, client } = makeEngine(files, {}, { observationScopes: "shared" });
+
+    await engine.reconcile();
+
+    const [, docId, content, opts] = client.retain.mock.calls[0] as [
+      string,
+      string,
+      string,
+      {
+        tags: string[];
+        metadata: Record<string, string>;
+        timestamp: string;
+        updateMode: string;
+        observationScopes?: string;
+      },
+    ];
+    expect(docId).toBe("Work/note.md");
+    expect(content).toBe("# Decision\nkeep it simple");
+    expect(opts).toMatchObject({
+      observationScopes: "shared",
+      updateMode: "replace",
+      timestamp: new Date(created).toISOString(),
+      metadata: { source: "meeting", vault: "Vault", path: "Work/note.md" },
+    });
+    expect(opts.tags).toEqual(
+      expect.arrayContaining(["planning", "vault:Vault", "folder:Work", "created:2026-03"])
+    );
+  });
+
+  it("omits observation scope from retain options when unset", async () => {
+    const files = { "a.md": { content: "body", mtime: 1, ctime: 0 } };
+    const { engine, client } = makeEngine(files);
+    await engine.reconcile();
+    const opts = client.retain.mock.calls[0][3] as Record<string, unknown>;
+    expect(opts.observationScopes).toBeUndefined();
+  });
+
   it("re-ingests (updated) when content changes", async () => {
     const index: SyncIndex = {};
     const filesV1 = { "a.md": { content: "v1", mtime: 1, ctime: 0 } };
