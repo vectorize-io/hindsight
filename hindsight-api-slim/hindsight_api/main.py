@@ -14,8 +14,11 @@ import argparse
 import asyncio
 import atexit
 import dataclasses
+import errno
+import logging
 import os
 import signal
+import socket
 import sys
 import warnings
 
@@ -231,8 +234,6 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
 
 def main():
     """Main entry point for the CLI."""
-    global _memory
-
     load_dotenv_for_entrypoint()
 
     # Arm profiling here, after .env is loaded and before anything starts serving, so a
@@ -280,6 +281,67 @@ def main():
         # duplicate daemons.
         daemonize()
 
+    # Reserve the actual listeners before lazy imports or engine initialization. Keeping
+    # them through serving avoids the race in a check-then-close port probe.
+    try:
+        sockets = asyncio.run(_bind_sockets(args.host, args.port))
+    except OSError as exc:
+        logging.error("Cannot bind %s:%s: %s", args.host, args.port, exc)
+        raise SystemExit(1) from exc
+    try:
+        args.port = sockets[0].getsockname()[1]
+        config = dataclasses.replace(config, port=args.port)
+        _serve(args, config, is_daemon, sockets)
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+async def _bind_sockets(host: str, port: int) -> list[socket.socket]:
+    """Use asyncio's hostname/IPv4/IPv6 resolution without accepting any connections."""
+    if port == 0:
+        # asyncio allocates a separate ephemeral port per resolved address. Select
+        # one candidate, then reserve it across all addresses before initialization.
+        # Retry a bounded number of times if another listener wins that candidate.
+        for attempt in range(5):
+            probe = await asyncio.get_running_loop().create_server(
+                asyncio.Protocol, host=host, port=0, start_serving=False
+            )
+            try:
+                selected_port = probe.sockets[0].getsockname()[1]
+            finally:
+                probe.close()
+                await probe.wait_closed()
+            try:
+                return await _bind_sockets(host, selected_port)
+            except OSError as exc:
+                if exc.errno != errno.EADDRINUSE or attempt == 4:
+                    raise
+
+    server = await asyncio.get_running_loop().create_server(asyncio.Protocol, host=host, port=port, start_serving=False)
+    sockets = []
+    try:
+        # Transfer ownership out of the temporary loop; its server never starts serving.
+        for sock in server.sockets or ():
+            sockets.append(sock.dup())
+        for sock in sockets:
+            # bind alone permits competing SO_REUSEADDR binders on some systems.
+            # Establish exclusive listeners now, before any expensive initialization.
+            sock.listen(socket.SOMAXCONN)
+            sock.set_inheritable(True)
+        return sockets
+    except BaseException:
+        for sock in sockets:
+            sock.close()
+        raise
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def _serve(args: argparse.Namespace, config: HindsightConfig, is_daemon: bool, sockets: list[socket.socket]):
+    global _memory
+
     # Print banner (not in daemon mode)
     if not is_daemon:
         print()
@@ -314,15 +376,11 @@ def main():
     # Load operation validator extension if configured
     operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
     if operation_validator:
-        import logging
-
         logging.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
 
     # Load tenant extension if configured
     tenant_extension = load_extension("TENANT", TenantExtension)
     if tenant_extension:
-        import logging
-
         logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
 
     # When using workers or reload, we must use import string so each worker can import the app
@@ -432,7 +490,27 @@ def main():
             text_search_extension=config.text_search_extension,
         )
 
-    uvicorn.run(**uvicorn_config)
+    _run_uvicorn(sockets=sockets, **uvicorn_config)
+
+
+def _run_uvicorn(*, sockets: list[socket.socket], **kwargs):
+    """Keep Uvicorn's supervisor and startup-failure behavior with prebound sockets."""
+    from uvicorn.main import STARTUP_FAILURE
+    from uvicorn.supervisors import ChangeReload, Multiprocess
+
+    config = uvicorn.Config(**kwargs)
+    server = uvicorn.Server(config)
+    try:
+        if config.should_reload:
+            ChangeReload(config, target=server.run, sockets=sockets).run()
+        elif config.workers > 1:
+            Multiprocess(config, target=server.run, sockets=sockets).run()
+        else:
+            server.run(sockets=sockets)
+    except KeyboardInterrupt:
+        pass
+    if not server.started and not config.should_reload and config.workers == 1:
+        raise SystemExit(STARTUP_FAILURE)
 
 
 if __name__ == "__main__":
