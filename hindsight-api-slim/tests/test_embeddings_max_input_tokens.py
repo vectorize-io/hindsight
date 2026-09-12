@@ -172,3 +172,73 @@ class TestFinalPayloadFitsTheCap:
             await embedding_utils.generate_embeddings_batch(backend, [f"User working preferences {content}"])
 
         assert count_tokens(backend.received[0]) <= 8192
+
+
+class _RejectsOversizeBackend(_FakeBackend):
+    """A provider that answers a too-large input with a permanent 4xx.
+
+    Its own tokenizer counts more than ours, so a text cut to exactly the cap
+    still arrives over its limit (#4331). It accepts anything at or below
+    ``accepts_tokens``.
+    """
+
+    def __init__(self, accepts_tokens: int, status_code: int = 400) -> None:
+        super().__init__()
+        self.accepts_tokens = accepts_tokens
+        self.status_code = status_code
+        self.calls: list[list[str]] = []
+
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if any(count_tokens(text) > self.accepts_tokens for text in texts):
+            error = Exception("The parameter is invalid. Please check again.")
+            error.status_code = self.status_code
+            raise error
+        return await super().encode_documents(texts)
+
+
+class TestOversizeRejectionRetry:
+    @pytest.mark.asyncio
+    async def test_retries_once_at_half_the_budget(self, caplog):
+        # Accepts half the cap, refuses the cap: the shape of a provider whose
+        # tokenizer runs ahead of ours.
+        backend = _RejectsOversizeBackend(accepts_tokens=25)
+        long_text = "word " * 500
+
+        with _patch_cap(50), caplog.at_level(logging.WARNING):
+            embeddings = await embedding_utils.generate_embeddings_batch(backend, [long_text])
+
+        assert len(embeddings) == 1
+        assert len(backend.calls) == 2, "expected exactly one retry"
+        assert count_tokens(backend.calls[0][0]) > 25
+        assert count_tokens(backend.calls[1][0]) <= 25
+        assert any("retrying once at" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_an_input_the_cap_did_not_touch(self):
+        backend = _RejectsOversizeBackend(accepts_tokens=0)
+
+        with _patch_cap(50), pytest.raises(Exception, match="Failed to generate batch embeddings"):
+            await embedding_utils.generate_embeddings_batch(backend, ["short text"])
+
+        assert len(backend.calls) == 1, "nothing was truncated, so there is nothing to shrink"
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_a_rejection_that_is_not_about_size(self):
+        backend = _RejectsOversizeBackend(accepts_tokens=25, status_code=401)
+        long_text = "word " * 500
+
+        with _patch_cap(50), pytest.raises(Exception, match="Failed to generate batch embeddings"):
+            await embedding_utils.generate_embeddings_batch(backend, [long_text])
+
+        assert len(backend.calls) == 1, "an auth failure is not fixed by a smaller input"
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_provider_error_as_the_cause(self):
+        backend = _RejectsOversizeBackend(accepts_tokens=0, status_code=401)
+
+        with _patch_cap(50), pytest.raises(Exception) as excinfo:
+            await embedding_utils.generate_embeddings_batch(backend, ["short text"])
+
+        assert excinfo.value.__cause__ is not None
+        assert getattr(excinfo.value.__cause__, "status_code", None) == 401
