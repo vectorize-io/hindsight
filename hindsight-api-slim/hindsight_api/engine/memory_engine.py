@@ -9489,6 +9489,15 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # Observation invalidation can update sources in another document.
+                # Serialize bank-scoped deletes before taking any document/unit locks,
+                # so two cascades cannot each hold a source the other's sweep needs.
+                # NO KEY UPDATE stays compatible with FK checks on bank children;
+                # Oracle translates it to its equivalent FOR UPDATE.
+                await conn.fetchrow(
+                    f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                    bank_id,
+                )
                 # Get memory unit IDs before deletion (for observation cleanup). A store that
                 # keeps memories outside SQL answers by document through the store — memory_units
                 # is empty for it, so the SQL below would find nothing to clean up.
@@ -10344,6 +10353,13 @@ class MemoryEngine(MemoryEngineInterface):
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
             async with conn.transaction():
                 try:
+                    # Match delete_document's bank-before-data order. Otherwise a
+                    # bank delete could hold its documents while waiting for the
+                    # bank row held by a concurrent document delete.
+                    await conn.fetchrow(
+                        f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                        bank_id,
+                    )
                     if fact_type:
                         # For source memory types, capture ids so we can invalidate
                         # dependent observations AFTER the delete below. Running the
@@ -10604,6 +10620,12 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # Clearing observations also updates the bank after its memories.
+                # Keep the same bank-before-data order as document/bank deletion.
+                await conn.fetchrow(
+                    f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                    bank_id,
+                )
                 if not store.store_owned_for(bank_id):
                     # Count observations before deletion
                     count = await conn.fetchval(
