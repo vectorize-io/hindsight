@@ -260,6 +260,83 @@ def regex_defense() -> MemoryDefenseRegexExtension:
     return MemoryDefenseRegexExtension({})
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "score: 0.1234567890123456",
+        "timestamp_ms: 1700000000000",
+        "task_id: aaaaaaaa-bbbb-cccc-1234-123456789012",
+        "ports: 8000 8080 8888 9999",
+        "count: 123456",
+        "score: 0.123456",
+        # A checksum alone cannot distinguish a card-shaped decimal or UUID tail.
+        "score: 0.4111111111111111",
+        "task_id: aaaaaaaa-bbbb-cccc-4111-111111111111",
+        "task_id: 41111111-1111-1111-1111-111111111111",
+        "value: 4111111111111111.25",
+        "card typo: 4111 1111 1111 1112",
+        "placeholder: 0000 0000 0000 0000",
+    ],
+)
+def test_credit_card_rejects_technical_values(content: str) -> None:
+    result = apply_redaction(content)
+    assert result.content == content
+    assert result.matched_types == []
+    assert result.hits == []
+
+
+@pytest.mark.parametrize(
+    "card",
+    [
+        "4111111111111111",
+        "4111 1111 1111 1111",
+        "4111-1111-1111-1111",
+        "4222222222222",
+        "378282246310005",
+        "5555555555554444",
+    ],
+)
+@pytest.mark.parametrize("template", ["{}", "卡号{}请删除", "Card: {}.", "card-{}", "-{}", "{}.Next", "{}-expires"])
+def test_credit_card_keeps_valid_test_numbers(card: str, template: str) -> None:
+    result = apply_redaction(template.format(card))
+    assert result.content == template.format("[REDACTED:credit_card]")
+    assert result.matched_types == ["credit_card"]
+    assert result.hits == [{"detector": "credit_card", "preview": _fingerprint_value(card)}]
+
+
+def test_credit_card_filters_each_match_without_losing_other_detectors() -> None:
+    content = "1700000000000; 4111 1111 1111 1111; 8000 8080 8888 9999; 5555555555554444; 123-45-6789"
+    result = apply_redaction(content)
+    assert result.content == (
+        "1700000000000; [REDACTED:credit_card]; 8000 8080 8888 9999; [REDACTED:credit_card]; [REDACTED:ssn_us]"
+    )
+    assert result.matched_types == ["credit_card", "ssn_us"]
+    assert result.hits == [
+        {"detector": "credit_card", "preview": "4111...1111"},
+        {"detector": "credit_card", "preview": "5555...4444"},
+        {"detector": "ssn_us", "preview": "12...89"},
+    ]
+
+
+@pytest.mark.parametrize("action", ["redact", "block"])
+@pytest.mark.parametrize("content", ["score: 0.4111111111111111", "4111 1111 1111 1111"])
+async def test_credit_card_policy_uses_validated_matches(
+    regex_defense: MemoryDefenseRegexExtension, action: str, content: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(policy=policy, bank_id="test", document_id=None, content=content, tags=[])
+    if content.startswith("score:"):
+        assert decision.action is DefenseAction.ALLOW
+        assert decision.matched_types == []
+        assert decision.hits == []
+        assert decision.redacted_content is None
+    else:
+        assert decision.action == DefenseAction(action)
+        assert decision.matched_types == ["credit_card"]
+        assert decision.hits == [{"detector": "credit_card", "preview": "4111...1111"}]
+        assert decision.redacted_content == ("[REDACTED:credit_card]" if action == "redact" else None)
+
+
 @pytest.fixture
 def redact_policy() -> dict:
     return {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}
@@ -900,6 +977,17 @@ def _defense_config(memory_defense: dict | None) -> HindsightConfig:
     from hindsight_api.config import _get_raw_config
 
     return dataclasses.replace(_get_raw_config(), memory_defense=memory_defense)
+
+
+def test_redact_document_body_preserves_technical_values_and_scrubs_cards() -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    technical = "score: 0.4111111111111111; task_id: aaaaaaaa-bbbb-cccc-4111-111111111111; "
+    out = redact_document_body(
+        technical + "card: 4111 1111 1111 1111",
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+    assert out == technical + "card: [REDACTED:credit_card]"
 
 
 def test_redact_document_body_scrubs_when_the_policy_redacts():

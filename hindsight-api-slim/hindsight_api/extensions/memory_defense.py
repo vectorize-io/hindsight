@@ -220,9 +220,13 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
     ("private_key_pem", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY( BLOCK)?-----"),
     ("jwt", _ascii_token_pattern(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
     # --- PII (US-centric defaults; can be tuned per deployment) ---
-    # NOTE: credit_card regex is intentionally narrowed to 13-19 digits with
-    # exact separators to reduce false positives on long product IDs.
-    ("credit_card", _ascii_token_pattern(r"(?:\d{4}[ -]?){3}\d{1,4}")),
+    # Keep the existing 13-16 digit formats, but exclude parts of decimals.
+    # Candidates also need a Luhn check below: digit count alone redacted
+    # timestamps and port lists as if they were cards.
+    (
+        "credit_card",
+        _ascii_token_pattern(r"(?<![0-9]\.)(?:[0-9]{4}[ -]?){3}[0-9]{1,4}(?!\.[0-9])"),
+    ),
     ("ssn_us", _ascii_token_pattern(r"\d{3}-\d{2}-\d{4}")),
 ]
 
@@ -230,6 +234,24 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
 _COMPILED_REDACTIONS: list[tuple[str, re.Pattern]] = [
     (label, re.compile(pattern)) for label, pattern in _REDACTION_PATTERNS
 ]
+_UUID_PATTERN = re.compile(_ascii_token_pattern(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"))
+
+
+def _is_luhn_card(value: str) -> bool:
+    """Validate an ASCII digit candidate already bounded by the card regex."""
+    digits = value.replace(" ", "").replace("-", "")
+    # Repeated-digit placeholders (including all zeroes) can pass Luhn.
+    if len(set(digits)) == 1:
+        return False
+    checksum = 0
+    for index, char in enumerate(reversed(digits)):
+        digit = int(char)
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        checksum += digit
+    return checksum % 10 == 0
 
 
 def apply_redaction(content: str) -> RedactionResult:
@@ -244,13 +266,35 @@ def apply_redaction(content: str) -> RedactionResult:
         where ``preview`` is a length-aware redaction of the original value.
         The raw secret never appears in ``hits``.
 
-    The two-pass shape (find matches first, then substitute) lets us capture
-    raw values for fingerprinting before they're replaced by ``[REDACTED:type]``
-    markers. A single-pass approach would lose the originals.
+    Most detectors capture fingerprints before substitution. Credit-card
+    candidates are validated in the substitution callback so rejected values
+    produce neither a replacement nor an audit hit.
     """
     matched: list[str] = []
     hits: list[dict] = []
     for label, pattern in _COMPILED_REDACTIONS:
+        if label == "credit_card":
+            # Validate each occurrence before both replacement and audit capture;
+            # rejected numeric candidates must not trigger REDACT or BLOCK.
+            def redact_card(match: re.Match[str]) -> str:
+                value = match.group()
+                if not _is_luhn_card(value):
+                    return value
+                # A UUID's numeric segments may pass Luhn. Inspect only the
+                # bounded neighborhood of this candidate (UUIDs are 36 chars),
+                # without excluding cards next to ordinary prose punctuation.
+                for identifier in _UUID_PATTERN.finditer(
+                    match.string, max(0, match.start() - 35), min(len(match.string), match.end() + 36)
+                ):
+                    if identifier.start() < match.end() and identifier.end() > match.start():
+                        return value
+                if "credit_card" not in matched:
+                    matched.append("credit_card")
+                hits.append({"detector": "credit_card", "preview": _fingerprint_value(value)})
+                return "[REDACTED:credit_card]"
+
+            content = pattern.sub(redact_card, content)
+            continue
         raw_hits = pattern.findall(content)
         if not raw_hits:
             continue
