@@ -20,6 +20,9 @@ function git(repo: string, ...args: string[]): string {
     encoding: "utf8",
     maxBuffer: 1 << 28,
     windowsHide: true,
+    // execFileSync otherwise forwards failed git stderr into the host's TUI,
+    // even when callers catch the error. Keep diagnostics on the error instead.
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 

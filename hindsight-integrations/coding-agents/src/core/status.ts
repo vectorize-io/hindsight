@@ -49,6 +49,7 @@ function commitCount(repoDir: string): number | null {
     const out = execFileSync("git", ["-C", repoDir, "rev-list", "--count", "HEAD"], {
       encoding: "utf8",
       windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"], // failed probes must not write into the host TUI
     });
     return Number(out.trim()) || 0;
   } catch {
