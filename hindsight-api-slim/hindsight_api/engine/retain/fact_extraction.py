@@ -1130,6 +1130,10 @@ _CONCISE_EXAMPLES = """
 EXAMPLES (shown in English for illustration; for non-English input, ALL output values MUST be in the input language)
 ══════════════════════════════════════════════════════════════════════════
 
+The examples below demonstrate output format and selectivity only. Never emit
+their facts, entities, or dates unless those details also appear in the actual
+input text being processed.
+
 Example 1 - Selective extraction (Event Date: June 10, 2024):
 Input: "Hey! How's it going? Good morning! So I'm planning my wedding - want a small outdoor ceremony. Just got back from Emily's wedding, she married Sarah at a rooftop garden. It was nice weather. I grabbed a coffee on the way."
 
