@@ -6,6 +6,7 @@ import logging
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
+from ..remote_retry import status_code_of
 from ..token_encoding import count_tokens, truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,16 @@ def _prefix_tokens(backend: EmbeddingsBackend, input_type: EmbeddingInputType) -
     attr = "query_prefix" if input_type == "query" else "passage_prefix"
     prefix = getattr(backend, attr, "")
     return count_tokens(prefix) if isinstance(prefix, str) and prefix else 0
+
+
+# A provider that rejects an input for its size answers with one of these. The body is
+# not a reliable signal: some gateways say only "The parameter is invalid".
+_INPUT_SIZE_REJECTION_STATUSES = frozenset({400, 413, 422})
+
+
+def _is_input_size_rejection(exc: Exception) -> bool:
+    """True for a 4xx that plausibly means the input was too large for the provider."""
+    return status_code_of(exc) in _INPUT_SIZE_REJECTION_STATUSES
 
 
 def _truncate_inputs(
@@ -116,13 +127,35 @@ async def generate_embeddings_batch(
     # out of the individual backends so every provider (and every call path — retain,
     # recall queries, consolidation, import) gets identical, model-agnostic truncation.
     max_input_tokens = get_config().embeddings_max_input_tokens
+    original_texts = texts
     if max_input_tokens is not None and texts:
         texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
+    capped = texts != original_texts
 
     try:
         embeddings = await _encode_with_input_type(embeddings_backend, texts, input_type)
     except Exception as e:
-        raise Exception(f"Failed to generate batch embeddings: {str(e)}")
+        if not (capped and max_input_tokens and _is_input_size_rejection(e)):
+            raise Exception(f"Failed to generate batch embeddings: {str(e)}") from e
+        # The cap counts with HINDSIGHT_API_TOKENIZER_ENCODING and the provider counts
+        # with its own, so a text cut to exactly the cap can still arrive over the
+        # provider's limit and come back as a permanent 4xx (#4331). Halving the budget
+        # once costs one extra call on a request that already failed, and needs no
+        # knowledge of the provider's tokenizer.
+        halved_budget = max(max_input_tokens // 2, 1)
+        logger.warning(
+            "Embeddings: provider %s rejected a capped input with a %s; retrying once at "
+            "%d tokens. Set %s below the model's real limit to avoid the extra call.",
+            getattr(embeddings_backend, "provider_name", "?"),
+            status_code_of(e),
+            halved_budget,
+            ENV_EMBEDDINGS_MAX_INPUT_TOKENS,
+        )
+        texts = _truncate_inputs(texts, halved_budget, embeddings_backend, input_type)
+        try:
+            embeddings = await _encode_with_input_type(embeddings_backend, texts, input_type)
+        except Exception as retry_error:
+            raise Exception(f"Failed to generate batch embeddings: {str(retry_error)}") from retry_error
 
     # Guarantee 1:1 alignment with input texts. A silent length mismatch here
     # propagates downstream as zip() drops items, eventually surfacing as an
