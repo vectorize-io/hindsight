@@ -632,8 +632,17 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
     (the proxy blocks it); the per-bank value is applied per-call downstream.
 
     ``defaults`` are the operation's already-resolved request defaults (timeout +
-    retry policy). Members have no per-member knobs for these, so every member of a
-    chain shares its operation's values.
+    retry policy). A member may override ``timeout`` and ``max_retries``
+    individually; anything it leaves unset inherits the operation's value.
+
+    Overriding them per member matters because a failover chain already *is* a
+    retry: when a non-terminal member fails, the next one is tried. Retrying
+    that member first only delays the handoff, and on a provider that is
+    rejecting because it is saturated the immediate retry is near-certain to
+    fail again. The terminal member is the opposite case -- it has nowhere to
+    fail over to, so its own retry policy is the only thing standing between a
+    transient error and a failed request, and it is where honouring a
+    ``Retry-After`` actually pays. One shared value cannot serve both.
     """
     from ..config import _get_raw_config
 
@@ -657,8 +666,22 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         vertexai_region=member.vertexai_region or config.llm_vertexai_region,
         vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
         litellmrouter_config=member.litellmrouter_config or config.llm_litellmrouter_config,
-        **defaults.as_kwargs(),
+        **_member_call_defaults(member, defaults),
     )
+
+
+def _member_call_defaults(member: "LLMMemberConfig", defaults: "_LLMCallDefaults") -> dict[str, Any]:
+    """The operation's request defaults with this member's overrides applied.
+
+    ``None`` means "inherit", so a member that sets neither field produces the
+    operation's kwargs unchanged.
+    """
+    kwargs = defaults.as_kwargs()
+    if member.timeout is not None:
+        kwargs["timeout"] = member.timeout
+    if member.max_retries is not None:
+        kwargs["max_retries"] = member.max_retries
+    return kwargs
 
 
 def _build_llm(

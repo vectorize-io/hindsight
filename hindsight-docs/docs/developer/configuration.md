@@ -585,6 +585,8 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_VERTEXAI_PROJECT_ID` / `_VERTEXAI_REGION` / `_VERTEXAI_SERVICE_ACCOUNT_KEY` | Per-member Vertex AI project, region, and service-account key path (for a `vertexai` member). Each falls back to the global `HINDSIGHT_API_LLM_VERTEXAI_*` when unset. | Global / `us-central1` / ADC |
 | `HINDSIGHT_API_LLM_<n>_CODEX_HOME` | Per-member Codex credentials directory — the directory holding the `auth.json` this member authenticates with (for an `openai-codex` member). Set it so two Codex members run as two independently authorized ChatGPT profiles; without it every member resolves the same store. Falls back to the global `HINDSIGHT_API_LLM_CODEX_HOME`, then `CODEX_HOME`, then `~/.codex`. | Global / `CODEX_HOME` / `~/.codex` |
 | `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
+| `HINDSIGHT_API_LLM_<n>_TIMEOUT` | Per-member request timeout, in seconds. Falls back to the operation's timeout when unset. | Operation timeout |
+| `HINDSIGHT_API_LLM_<n>_MAX_RETRIES` | Per-member retry budget. Falls back to the operation's `MAX_RETRIES` when unset; `0` is a valid setting and means fail over immediately. | Operation `MAX_RETRIES` |
 | `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
 
 The strategy JSON supports three modes:
@@ -639,6 +641,16 @@ Two further limits:
 **Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
 
 The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
+
+**Retries inside a chain.** A failover chain is itself a retry: when a member
+fails, the next one is tried. Retrying a non-terminal member first only delays
+that handoff, and when it is failing because it is saturated the immediate
+retry is likely to fail the same way. The last member is the opposite case —
+it has nowhere to fail over to, so its retry budget is the only thing between a
+transient error and a failed request, and it is where honouring a `Retry-After`
+pays. A single operation-wide `MAX_RETRIES` cannot express both, so set
+`HINDSIGHT_API_LLM_MAX_RETRIES=0` to fail over promptly and give the final
+member its own budget with `HINDSIGHT_API_LLM_<n>_MAX_RETRIES`.
 
 ### Built-in llama.cpp
 
