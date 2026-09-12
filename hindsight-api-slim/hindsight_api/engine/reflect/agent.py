@@ -14,7 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
-from ...config import get_config
+from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
@@ -513,6 +513,8 @@ async def _run_reflect_agent_inner(
     cancel_check: Callable[[], None] | None = None,
     store_document_text: bool = True,
     answer_as_document: bool = False,
+    recall_max_tokens: int = DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunks_max_tokens: int = DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     *,
     reflect_id: str,
     provider_impl: Any,
@@ -546,6 +548,8 @@ async def _run_reflect_agent_inner(
             answer mid-word (#3365). The transport-level cost cap is a separate,
             uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
+        recall_max_tokens: Resolved fact-token default for recall calls that omit a limit.
+        recall_chunks_max_tokens: Resolved chunk-token default; zero remains zero.
         directives: Optional list of directive mental models to inject as hard rules
 
     Returns:
@@ -578,6 +582,8 @@ async def _run_reflect_agent_inner(
         include_expand=include_expand,
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
+        recall_max_tokens=recall_max_tokens,
+        recall_chunks_max_tokens=recall_chunks_max_tokens,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -1209,6 +1215,8 @@ async def _run_reflect_agent_inner(
                     recall_fn,
                     expand_fn,
                     enabled_tools=enabled_tools,
+                    recall_max_tokens=recall_max_tokens,
+                    recall_chunks_max_tokens=recall_chunks_max_tokens,
                 )
                 for tc in other_tools
             ]
@@ -1292,7 +1300,12 @@ async def _run_reflect_agent_inner(
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
-                input_summary = _summarize_input(tc.name, tc.arguments)
+                input_summary = _summarize_input(
+                    tc.name,
+                    tc.arguments,
+                    recall_max_tokens=recall_max_tokens,
+                    recall_chunks_max_tokens=recall_chunks_max_tokens,
+                )
 
                 # Extract reason from tool arguments (if provided)
                 tool_reason = tc.arguments.get("reason")
@@ -1613,6 +1626,9 @@ async def _execute_tool_with_timing(
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
     enabled_tools: frozenset[str] | None = None,
+    *,
+    recall_max_tokens: int = DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunks_max_tokens: int = DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
 ) -> tuple[dict[str, Any], int]:
     """Execute a tool call and return result with timing."""
     from hindsight_api.tracing import get_tracer
@@ -1647,6 +1663,8 @@ async def _execute_tool_with_timing(
                 recall_fn,
                 expand_fn,
                 enabled_tools=enabled_tools,
+                recall_max_tokens=recall_max_tokens,
+                recall_chunks_max_tokens=recall_chunks_max_tokens,
             )
 
             # Set success attributes
@@ -1687,6 +1705,9 @@ async def _execute_tool(
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
     enabled_tools: frozenset[str] | None = None,
+    *,
+    recall_max_tokens: int = DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunks_max_tokens: int = DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
 ) -> dict[str, Any]:
     """Execute a single tool by name."""
     # Normalize tool name for various LLM output formats
@@ -1720,13 +1741,13 @@ async def _execute_tool(
         query = args.get("query")
         if not query:
             return {"error": "recall requires a query parameter"}
-        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=2048, minimum=1000)
+        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=recall_max_tokens, minimum=1000)
         if error:
             return {"error": error}
         max_chunk_tokens, error = _parse_tool_int_arg_or_error(
             args,
             "max_chunk_tokens",
-            default=1000,
+            default=recall_chunks_max_tokens,
             minimum=1000,
         )
         if error:
@@ -1749,12 +1770,13 @@ _NULLISH_TOOL_INT_STRINGS = {"", "none", "null"}
 
 def _parse_tool_int_arg(args: dict[str, Any], key: str, *, default: int, minimum: int | None = None) -> int:
     raw_value = args.get(key)
+    # The minimum constrains model-chosen values, not operator/trigger defaults.
+    # In particular, a configured zero chunk budget must not become 1000.
     if not raw_value:
-        value = default
-    elif isinstance(raw_value, str) and raw_value.strip().lower() in _NULLISH_TOOL_INT_STRINGS:
-        value = default
-    else:
-        value = int(raw_value)
+        return default
+    if isinstance(raw_value, str) and raw_value.strip().lower() in _NULLISH_TOOL_INT_STRINGS:
+        return default
+    value = int(raw_value)
     if minimum is None:
         return value
     return max(value, minimum)
@@ -1787,7 +1809,13 @@ def _summarize_tool_query(args: dict[str, Any]) -> str:
     return f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
 
 
-def _summarize_input(tool_name: str, args: dict[str, Any]) -> str:
+def _summarize_input(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    recall_max_tokens: int = DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunks_max_tokens: int = DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+) -> str:
     """Create a summary of tool input for logging, showing all params."""
     if tool_name == "search_mental_models":
         query_preview = _summarize_tool_query(args)
@@ -1799,8 +1827,10 @@ def _summarize_input(tool_name: str, args: dict[str, Any]) -> str:
         return f"(query={query_preview}, max_tokens={max_tokens})"
     elif tool_name == "recall":
         query_preview = _summarize_tool_query(args)
-        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=2048, minimum=1000)
-        max_chunk_tokens = _summarize_tool_int_arg(args, "max_chunk_tokens", default=1000, minimum=1000)
+        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=recall_max_tokens, minimum=1000)
+        max_chunk_tokens = _summarize_tool_int_arg(
+            args, "max_chunk_tokens", default=recall_chunks_max_tokens, minimum=1000
+        )
         return f"(query={query_preview}, max_tokens={max_tokens}, max_chunk_tokens={max_chunk_tokens})"
     elif tool_name == "expand":
         memory_ids = args.get("memory_ids", [])

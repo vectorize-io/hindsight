@@ -9,6 +9,9 @@ The reflect agent uses a hierarchical retrieval strategy:
 """
 
 import copy
+from typing import Any
+
+from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS
 
 # Tool definitions in OpenAI format
 
@@ -73,7 +76,7 @@ TOOL_SEARCH_OBSERVATIONS = {
     },
 }
 
-TOOL_RECALL = {
+TOOL_RECALL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "recall",
@@ -343,6 +346,8 @@ def get_reflect_tools(
     include_expand: bool = True,
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
+    recall_max_tokens: int = DEFAULT_RECALL_MAX_TOKENS,
+    recall_chunks_max_tokens: int = DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -367,6 +372,8 @@ def get_reflect_tools(
             markdown that gets persisted.
         llm_output_language: Configured output language. Swaps ``done``'s default
             answer-in-the-question's-language rule for a directive to write in it.
+        recall_max_tokens: Resolved default fact-token budget to advertise for this call.
+        recall_chunks_max_tokens: Resolved default chunk-token budget to advertise.
 
     Returns:
         List of tool definitions in OpenAI format
@@ -378,7 +385,19 @@ def get_reflect_tools(
     if include_observations:
         tools.append(TOOL_SEARCH_OBSERVATIONS)
     if include_recall:
-        tools.append(TOOL_RECALL)
+        # Each reflect has its own bank/trigger defaults. Do not mutate the shared
+        # schema, or concurrent banks can advertise each other's budgets.
+        recall_tool = copy.deepcopy(TOOL_RECALL)
+        properties = recall_tool["function"]["parameters"]["properties"]
+        properties["max_tokens"]["description"] = (
+            f"Optional limit on result size (default {recall_max_tokens}). Use higher values for broader searches."
+        )
+        properties["max_chunk_tokens"]["description"] = (
+            "Maximum tokens for raw source chunk text included alongside each memory fact "
+            f"(default {recall_chunks_max_tokens}, min 1000 for explicit limits). "
+            "Chunks provide the surrounding context the fact was extracted from. Increase for broader context."
+        )
+        tools.append(recall_tool)
 
     if include_expand:
         tools.append(TOOL_EXPAND)

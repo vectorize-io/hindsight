@@ -7,6 +7,7 @@ and as overrides on a mental model's `trigger` JSONB field.
 """
 
 import dataclasses
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +15,126 @@ import pytest
 from hindsight_api.engine.reflect.tools import tool_recall
 from hindsight_api.engine.response_models import RecallResult as RecallResultModel
 from hindsight_api.models import RequestContext
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured,overrides,tool_limits,expected",
+    [
+        ({}, {}, {}, (2048, 1000)),
+        ({"recall_max_tokens": 8192, "recall_chunks_max_tokens": 3072}, {}, {}, (8192, 3072)),
+        ({"recall_max_tokens": 512, "recall_chunks_max_tokens": 0}, {}, {}, (512, 0)),
+        (
+            {"recall_max_tokens": 8192, "recall_chunks_max_tokens": 3072},
+            {"recall_max_tokens_override": 512, "recall_chunks_max_tokens_override": 0},
+            {},
+            (512, 0),
+        ),
+        (
+            {"recall_max_tokens": 512, "recall_chunks_max_tokens": 0},
+            {},
+            {"max_tokens": "None", "max_chunk_tokens": "null"},
+            (512, 0),
+        ),
+        (
+            {"recall_max_tokens": 512, "recall_chunks_max_tokens": 0},
+            {},
+            {"max_tokens": 0, "max_chunk_tokens": 0},
+            (512, 0),
+        ),
+        ({"recall_max_tokens": 512, "recall_chunks_max_tokens": 0}, {}, {"max_tokens": "4096"}, (4096, 0)),
+        ({"recall_max_tokens": 512, "recall_chunks_max_tokens": 0}, {}, {"max_chunk_tokens": 2048}, (512, 2048)),
+        (
+            {"recall_max_tokens": 512, "recall_chunks_max_tokens": 0},
+            {},
+            {"max_tokens": 100, "max_chunk_tokens": 100},
+            (1000, 1000),
+        ),
+    ],
+)
+async def test_reflect_dispatch_uses_resolved_recall_defaults(
+    configured: dict[str, int],
+    overrides: dict[str, int],
+    tool_limits: dict[str, int | str],
+    expected: tuple[int, int],
+) -> None:
+    """Exercise engine -> agent -> real recall tool, not just closure defaults (#4239)."""
+    from hindsight_api.engine.memory_engine import MemoryEngine
+    from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, MemoryFact
+
+    # Stub storage/LLM transport, but keep the complete reflect dispatch path. The
+    # prior trigger tests stopped before the agent replaced these settings.
+    engine = MemoryEngine.__new__(MemoryEngine)
+    engine._authenticate_tenant = AsyncMock()
+    engine._operation_validator = None
+    engine._resolve_fuzzy_tag_groups = AsyncMock(return_value=None)
+    engine._get_backend = AsyncMock()
+    engine.get_bank_profile = AsyncMock(return_value={"name": "Test", "mission": "Testing"})
+    engine.get_bank_freshness = AsyncMock(return_value={})
+    engine.list_directives = AsyncMock(return_value=SimpleNamespace(items=[]))
+    engine._config_resolver = MagicMock()
+    engine._config_resolver.get_bank_config = AsyncMock(return_value=configured)
+    engine._config_resolver.resolve_full_config = AsyncMock(return_value=SimpleNamespace(llm_output_language=None))
+    engine.recall_async = AsyncMock(
+        return_value=RecallResultModel(results=[MemoryFact(id="mem-1", text="The deploy is ready.", fact_type="world")])
+    )
+    llm = MagicMock()
+    llm._provider_impl = None
+    llm.call_with_tools = AsyncMock(
+        side_effect=[
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "deploy", **tool_limits})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "Ready.", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    engine._reflect_llm_config = MagicMock(provider="test")
+    engine._reflect_llm_config.with_config.return_value = llm
+
+    result = await engine.reflect_async(
+        bank_id="bank-1",
+        query="Deploy status?",
+        request_context=RequestContext(internal=True),
+        fact_types=["world"],
+        exclude_mental_models=True,
+        _skip_span=True,
+        **overrides,
+    )
+
+    assert result.text == "Ready."
+    engine.recall_async.assert_awaited_once()
+    actual = engine.recall_async.await_args.kwargs
+    assert (actual["max_tokens"], actual["max_chunk_tokens"]) == expected
+    assert actual["request_context"].internal is True
+    assert result.based_on["world"][0].id == "mem-1"
+
+
+def test_recall_schema_defaults_are_scoped_to_one_reflect() -> None:
+    from hindsight_api.engine.reflect.tools_schema import TOOL_RECALL, get_reflect_tools
+
+    original = TOOL_RECALL["function"]["parameters"]["properties"]["max_tokens"]["description"]
+    custom = get_reflect_tools(recall_max_tokens=512, recall_chunks_max_tokens=0)
+    regular = get_reflect_tools()
+    custom_recall = next(t for t in custom if t["function"]["name"] == "recall")
+    regular_recall = next(t for t in regular if t["function"]["name"] == "recall")
+    custom_properties = custom_recall["function"]["parameters"]["properties"]
+    assert "default 512" in custom_properties["max_tokens"]["description"]
+    assert "default 0" in custom_properties["max_chunk_tokens"]["description"]
+    assert regular_recall["function"]["parameters"]["properties"]["max_tokens"]["description"] == original
+    assert TOOL_RECALL["function"]["parameters"]["properties"]["max_tokens"]["description"] == original
+
+
+def test_recall_trace_summary_uses_the_dispatch_defaults() -> None:
+    from hindsight_api.engine.reflect.agent import _summarize_input
+
+    assert (
+        _summarize_input("recall", {"query": "deploy"}, recall_max_tokens=512, recall_chunks_max_tokens=0)
+        == "(query='deploy', max_tokens=512, max_chunk_tokens=0)"
+    )
 
 
 def _make_mock_engine():

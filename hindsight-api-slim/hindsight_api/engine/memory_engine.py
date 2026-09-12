@@ -14329,9 +14329,9 @@ class MemoryEngine(MemoryEngineInterface):
         recall_fact_types = [ft for ft in (fact_types or ["world", "experience"]) if ft in ("world", "experience")]
         include_recall = bool(recall_fact_types)
 
-        # Defaults are bound at closure-definition time (re-evaluated on each
-        # reflect_async call), so per-bank/per-trigger overrides apply when the
-        # agent invokes recall without explicit token args.
+        # Pass the resolved defaults to the agent as well: its dispatcher always
+        # supplies token arguments, so closure defaults alone cannot honor bank
+        # and mental-model trigger configuration (#4239).
         async def recall_fn(
             q: str,
             max_tokens: int = effective_recall_max_tokens,
@@ -14429,6 +14429,8 @@ class MemoryEngine(MemoryEngineInterface):
                         include_recall=include_recall,
                         budget=effective_budget,
                         max_context_tokens=max_context_tokens,
+                        recall_max_tokens=effective_recall_max_tokens,
+                        recall_chunks_max_tokens=effective_recall_chunks_max_tokens,
                         llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
                         cancel_check=request_context.raise_if_cancelled,
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
