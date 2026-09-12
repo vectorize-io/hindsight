@@ -1,9 +1,10 @@
 """Memory Defense (regex) — the default extension shipping with hindsight-api-slim.
 
 Scrubs known secret/PII patterns from retained content via the
-``sensitive_data`` detector. Matching is pure regex (see ``apply_redaction``):
-no LLM call, no external dependency. A ``sensitive_data`` rule may either
-``redact`` matches in place or ``block`` the item entirely.
+``sensitive_data`` detector. Matching uses regex with a checksum for card
+candidates (see ``apply_redaction``): no LLM call, no external dependency.
+A ``sensitive_data`` rule may either ``redact`` matches in place or ``block``
+the item entirely.
 """
 
 from __future__ import annotations
