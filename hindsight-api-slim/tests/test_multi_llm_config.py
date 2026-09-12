@@ -589,3 +589,118 @@ def test_member_to_llm_passes_litellmrouter_config(clean_llm_env, monkeypatch):
     assert provider.provider == "litellmrouter"
     # The member's own router config flowed to the LiteLLM router build.
     assert captured["config"] == router_cfg
+
+
+# ── per-member request policy (timeout / max_retries) ─────────────────────────
+
+
+def test_parse_members_without_request_policy_defaults_none(clean_llm_env):
+    """Unset means inherit, so both fields must be None rather than a value."""
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_API_KEY", "k")
+    member = _parse_llm_members("")[0]
+    assert member.timeout is None
+    assert member.max_retries is None
+
+
+def test_parse_members_request_policy(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_API_KEY", "k")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_TIMEOUT", "45.5")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MAX_RETRIES", "2")
+    member = _parse_llm_members("")[0]
+    assert member.timeout == 45.5
+    assert member.max_retries == 2
+
+
+def test_parse_members_request_policy_zero_is_not_unset(clean_llm_env):
+    """0 retries is a meaningful setting -- fail fast -- and must survive.
+
+    Conflating it with "unset" would silently restore the operation default,
+    which is the opposite of what the operator asked for.
+    """
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_API_KEY", "k")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MAX_RETRIES", "0")
+    assert _parse_llm_members("")[0].max_retries == 0
+
+
+def test_parse_members_request_policy_per_op_prefix(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_API_KEY", "k")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_MAX_RETRIES", "3")
+    assert _parse_llm_members("REFLECT_")[0].max_retries == 3
+
+
+def test_parse_members_request_policy_invalid_raises(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_API_KEY", "k")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MAX_RETRIES", "soon")
+    with pytest.raises(ValueError, match="MAX_RETRIES"):
+        _parse_llm_members("")
+
+
+def _policy_member(**overrides):
+    base = dict(
+        provider="gemini",
+        api_key="k",
+        model="m",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+    )
+    base.update(overrides)
+    return LLMMemberConfig(**base)
+
+
+def test_member_inherits_operation_policy_when_unset():
+    """The no-override path must be byte-identical to the previous behaviour."""
+    from hindsight_api.engine.memory_engine import _member_call_defaults
+
+    defaults = _LLMCallDefaults(timeout=120.0, max_retries=5, initial_backoff=0.5, max_backoff=8.0)
+    assert _member_call_defaults(_policy_member(), defaults) == defaults.as_kwargs()
+
+
+def test_member_policy_overrides_operation_policy():
+    from hindsight_api.engine.memory_engine import _member_call_defaults
+
+    defaults = _LLMCallDefaults(timeout=120.0, max_retries=5, initial_backoff=0.5, max_backoff=8.0)
+    got = _member_call_defaults(_policy_member(timeout=30.0, max_retries=0), defaults)
+    assert got["timeout"] == 30.0
+    assert got["max_retries"] == 0
+    # untouched fields still come from the operation
+    assert got["initial_backoff"] == 0.5
+    assert got["max_backoff"] == 8.0
+
+
+def test_member_policy_overrides_are_independent():
+    """Setting one must not disturb the other."""
+    from hindsight_api.engine.memory_engine import _member_call_defaults
+
+    defaults = _LLMCallDefaults(timeout=120.0, max_retries=5, initial_backoff=0.5, max_backoff=8.0)
+    only_retries = _member_call_defaults(_policy_member(max_retries=0), defaults)
+    assert only_retries["max_retries"] == 0 and only_retries["timeout"] == 120.0
+    only_timeout = _member_call_defaults(_policy_member(timeout=30.0), defaults)
+    assert only_timeout["timeout"] == 30.0 and only_timeout["max_retries"] == 5
+
+
+def test_chain_can_fail_fast_on_primary_while_fallback_still_retries(clean_llm_env):
+    """The configuration this exists for.
+
+    A failover chain is already a retry: when a non-terminal member fails the
+    next one is tried, so retrying it first only delays the handoff. The
+    terminal member has nowhere to fail over to, so it keeps a retry budget.
+    """
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "gemini")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_API_KEY", "k")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_MAX_RETRIES", "2")
+
+    from hindsight_api.engine.memory_engine import _member_call_defaults
+
+    primary_policy = _LLMCallDefaults(timeout=120.0, max_retries=0, initial_backoff=0.5, max_backoff=8.0)
+    fallback = _parse_llm_members("")[0]
+    assert primary_policy.max_retries == 0
+    assert _member_call_defaults(fallback, primary_policy)["max_retries"] == 2

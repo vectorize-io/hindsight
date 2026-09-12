@@ -2250,6 +2250,10 @@ class LLMMemberConfig:
     Mirrors the subset of LLM settings an indexed member supports
     (``HINDSIGHT_API_<OP>LLM_<n>_*``). The unindexed config remains the primary
     member (index 0); these describe members 1..N.
+
+    ``timeout`` and ``max_retries`` are per-member overrides of the operation's
+    request policy. Left unset (the default) a member inherits the operation
+    value exactly as before, so an existing chain behaves identically.
     """
 
     provider: str
@@ -2267,6 +2271,8 @@ class LLMMemberConfig:
     vertexai_region: str | None = None
     vertexai_service_account_key: str | None = None
     litellmrouter_config: dict | None = None
+    timeout: float | None = None
+    max_retries: int | None = None
 
 
 # Valid multi-LLM strategy modes.
@@ -2394,6 +2400,9 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
     ``HINDSIGHT_API_{prefix}LLM_{n}_PROVIDER`` for n = 1, 2, ... and scanning
     stops at the first index whose ``_PROVIDER`` is unset (so indices must be
     contiguous from 1). ``MODEL`` defaults to the provider's default model.
+
+    ``_TIMEOUT`` and ``_MAX_RETRIES`` are optional per-member overrides of the
+    operation's request policy; unset means inherit it.
     """
     from .engine.provider_auth import requires_api_key
 
@@ -2431,6 +2440,8 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 vertexai_region=os.getenv(base + "VERTEXAI_REGION") or None,
                 vertexai_service_account_key=os.getenv(base + "VERTEXAI_SERVICE_ACCOUNT_KEY") or None,
                 litellmrouter_config=_parse_llm_router_config(base + "LITELLMROUTER_CONFIG"),
+                timeout=_member_opt_float(base, "TIMEOUT", None),
+                max_retries=_member_opt_int(base, "MAX_RETRIES", None),
             )
         )
         index += 1
@@ -2560,6 +2571,16 @@ def _member_opt_int(base: str, suffix: str, default: int | None) -> int | None:
         return int(raw)
     except ValueError as e:
         raise ValueError(f"Invalid {base}{suffix}: expected an integer, got {raw!r}") from e
+
+
+def _member_opt_float(base: str, suffix: str, default: float | None) -> float | None:
+    raw = os.getenv(base + suffix)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ValueError(f"Invalid {base}{suffix}: expected a number, got {raw!r}") from e
 
 
 def _member_float(base: str, suffix: str, default: float) -> float:
