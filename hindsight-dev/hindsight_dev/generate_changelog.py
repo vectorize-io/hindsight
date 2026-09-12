@@ -12,9 +12,11 @@ import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from hindsight_api.engine.token_encoding import count_tokens
 from openai import OpenAI
 from pydantic import BaseModel
 from rich.console import Console
@@ -624,16 +626,60 @@ def render_migrations_section(migrations: list[Migration]) -> list[str]:
     return lines
 
 
-def analyze_commits_with_llm(
-    client: OpenAI,
-    model: str,
+# A release's commits are summarized in token-sized batches rather than in one call.
+# One call over a whole release makes the model compress: 0.10.0's 220 commits came
+# back as 37 entries against 65 for the 145-commit release before it, with whole
+# user-facing fixes unlisted. A batch is small enough that every commit in it can be
+# considered on its own, and batches are independent, so they run concurrently.
+#
+# The budget is deliberately far below the model's input limit. Commit subjects are
+# short: a 245-commit release is ~8500 tokens in total, so any budget near the context
+# window is one batch and changes nothing. What is being bounded here is how much the
+# model is asked to hold at once before it starts summarizing away, not what fits.
+BATCH_TOKEN_BUDGET = 2000
+MAX_PARALLEL_BATCHES = 8
+# gpt-5.6-terra bills reasoning tokens against the response budget, so this has to
+# leave room for the reasoning that precedes the first entry, not just the entries.
+RESPONSE_TOKEN_BUDGET = 100000
+
+
+def _commit_payload(commit: Commit) -> dict[str, str]:
+    return {"commit_id": commit.hash, "message": commit.message}
+
+
+def batch_commits(commits: list[Commit], token_budget: int | None = None) -> list[list[Commit]]:
+    """Split commits into batches of at most ``token_budget`` tokens of commit text.
+
+    Batches follow the input order, so each one holds a contiguous run of the
+    release's history and the merged result stays in commit order. A single commit
+    over budget gets a batch to itself rather than being dropped or truncated.
+    """
+    # Read the module constant at call time rather than binding it as a default:
+    # a default is bound at import, so raising BATCH_TOKEN_BUDGET to compare batched
+    # against unbatched output silently measures two batched runs.
+    token_budget = BATCH_TOKEN_BUDGET if token_budget is None else token_budget
+    batches: list[list[Commit]] = []
+    current: list[Commit] = []
+    current_tokens = 0
+    for commit in commits:
+        tokens = count_tokens(json.dumps(_commit_payload(commit)))
+        if current and current_tokens + tokens > token_budget:
+            batches.append(current)
+            current, current_tokens = [], 0
+        current.append(commit)
+        current_tokens += tokens
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _build_analysis_prompt(
     version: str,
     commits: list[Commit],
     file_diff: str,
-    integration: str | None = None,
-) -> list[ChangelogEntry]:
-    """Use LLM to analyze commits and return structured changelog entries."""
-    commits_json = json.dumps([{"commit_id": c.hash, "message": c.message} for c in commits], indent=2)
+    integration: str | None,
+) -> str:
+    commits_json = json.dumps([_commit_payload(c) for c in commits], indent=2)
 
     subject = f"the {integration} integration for Hindsight" if integration else f"release {version} of Hindsight"
 
@@ -647,7 +693,7 @@ def analyze_commits_with_llm(
         "its own package) — integrations are versioned and changelogged separately"
     )
 
-    prompt = f"""Analyze the following git commits for {subject} (an AI memory system).
+    return f"""Analyze the following git commits for {subject} (an AI memory system).
 
 For each meaningful change, create a changelog entry with:
 - category: one of "feature", "improvement", "bugfix", "breaking", "other"
@@ -655,12 +701,21 @@ For each meaningful change, create a changelog entry with:
 - commit_id: the commit hash from the input
 
 Rules:
-- Group related commits into a single entry if they're part of the same change
+- Group related commits into a single entry ONLY when they are literally parts of one
+  change (a fix and its follow-up, the same feature landed across two commits). Do not
+  merge distinct fixes into one summary because they touch the same area
+- Be complete rather than selective: every commit that changes what a user, operator or
+  API caller can observe gets its own entry. A bug fix in retain, recall, reflect,
+  consolidation, embeddings, the CLI, the control plane, a provider integration, the
+  Docker images or the Helm chart is user-facing even when its title reads as internal
 - Skip trivial changes (typo fixes, formatting, internal refactoring)
 - Skip repository-only changes: README updates, CI/GitHub Actions, release scripts, changelog updates, version bumps{skip_integrations_rule}
 - Focus on user-facing changes that affect the product functionality
 - Use the exact commit_id from the input (pick the most relevant one if grouping)
 - If no meaningful changes remain after filtering, return an empty list
+
+This is one batch of the release's commits, so judge each commit on its own; do not
+assume a change is absent because its other half is not in this batch.
 
 Commits:
 {commits_json}
@@ -668,14 +723,94 @@ Commits:
 Files changed summary:
 {file_diff[:4000]}"""
 
+
+def _parse_entries(client: OpenAI, model: str, prompt: str) -> list[ChangelogEntry]:
     response = client.beta.chat.completions.parse(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         response_format=ChangelogResponse,
-        max_completion_tokens=16000,
+        max_completion_tokens=RESPONSE_TOKEN_BUDGET,
     )
+    parsed = response.choices[0].message.parsed
+    return parsed.entries if parsed else []
 
-    return response.choices[0].message.parsed.entries
+
+def deduplicate_entries(
+    client: OpenAI,
+    model: str,
+    entries: list[ChangelogEntry],
+    commit_order: list[str],
+) -> list[ChangelogEntry]:
+    """Merge entries that describe the same change across batch boundaries.
+
+    Batches are contiguous, but a feature and its follow-up fix can still straddle
+    two of them, and two batches can describe one rollout twice. A deterministic
+    pass drops repeated commit_ids first — that needs no model — and the LLM pass
+    only has to catch the same change described in two different ways.
+
+    The result is re-ordered by the release's own commit order and filtered to
+    commit_ids that were actually in the input, so a dropped or invented commit_id
+    cannot reorder the changelog or point a reader at a commit that isn't there.
+    """
+    seen: set[str] = set()
+    unique: list[ChangelogEntry] = []
+    for entry in entries:
+        if entry.commit_id in seen:
+            continue
+        seen.add(entry.commit_id)
+        unique.append(entry)
+
+    if len(unique) > 1:
+        prompt = f"""These changelog entries were produced independently from separate batches of one
+release's commits, so the same change may appear more than once, worded differently.
+
+Return the entries to keep:
+- Drop an entry only when another entry describes the same underlying change. When two
+  entries describe one change, keep the clearer summary and its commit_id
+- Keep everything else exactly as it is: same summary text, same category, same commit_id
+- Do not merge distinct changes, do not reword what you keep, and do not invent entries
+
+Entries:
+{json.dumps([e.model_dump() for e in unique], indent=2)}"""
+        deduped = _parse_entries(client, model, prompt)
+        by_id = {e.commit_id: e for e in unique}
+        # Keep the model's text but never its idea of which commits exist.
+        unique = [e for e in deduped if e.commit_id in by_id] or unique
+
+    position = {commit_id: i for i, commit_id in enumerate(commit_order)}
+    return sorted(unique, key=lambda e: position.get(e.commit_id, len(position)))
+
+
+def analyze_commits_with_llm(
+    client: OpenAI,
+    model: str,
+    version: str,
+    commits: list[Commit],
+    file_diff: str,
+    integration: str | None = None,
+) -> list[ChangelogEntry]:
+    """Use LLM to analyze commits and return structured changelog entries."""
+    batches = batch_commits(commits)
+
+    if len(batches) == 1:
+        return _parse_entries(client, model, _build_analysis_prompt(version, batches[0], file_diff, integration))
+
+    console.print(f"[blue]Summarizing {len(commits)} commits in {len(batches)} batches...[/blue]")
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_BATCHES) as pool:
+        results = list(
+            pool.map(
+                lambda batch: _parse_entries(
+                    client, model, _build_analysis_prompt(version, batch, file_diff, integration)
+                ),
+                batches,
+            )
+        )
+
+    entries = [entry for batch_entries in results for entry in batch_entries]
+    console.print(f"[blue]{len(entries)} entries before deduplication[/blue]")
+    deduped = deduplicate_entries(client, model, entries, [c.hash for c in commits])
+    console.print(f"[blue]{len(deduped)} entries after deduplication[/blue]")
+    return deduped
 
 
 def build_changelog_markdown(
@@ -773,7 +908,7 @@ def write_changelog(path: Path, header: str, new_entry: str, existing_releases: 
 
 def generate_changelog_entry(
     version: str,
-    llm_model: str = "gpt-5.2",
+    llm_model: str = "gpt-5.6-terra",
 ) -> None:
     """Generate changelog entry for a specific version."""
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -881,7 +1016,7 @@ For full release details, see [GitHub Releases](https://github.com/vectorize-io/
 def generate_integration_changelog_entry(
     integration: str,
     version: str,
-    llm_model: str = "gpt-5.2",
+    llm_model: str = "gpt-5.6-terra",
 ) -> None:
     """Generate changelog entry for a specific integration version."""
     if integration not in VALID_INTEGRATIONS:
@@ -1004,8 +1139,8 @@ def main():
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.2",
-        help="OpenAI model to use (default: gpt-5.2)",
+        default="gpt-5.6-terra",
+        help="OpenAI model to use (default: gpt-5.6-terra)",
     )
     parser.add_argument(
         "--integration",
