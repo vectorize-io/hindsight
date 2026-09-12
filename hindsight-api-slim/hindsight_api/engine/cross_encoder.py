@@ -1453,6 +1453,10 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         # Device::end_encoding() crash with SIGSEGV (NULL deref).
         # Serialize all reranker inference through this lock.
         self._mlx_lock = threading.Lock()
+        # Picked up by release_local_inference_memory() below, which routes "mlx" to
+        # mx.clear_cache(). Without it MLX holds every freed Metal buffer for the life
+        # of the process.
+        self._device_type = "mlx"
         logger.info("Reranker: jina-mlx provider initialized")
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
@@ -1467,13 +1471,18 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         all_scores = [0.0] * len(pairs)
 
         with self._mlx_lock:
-            for query, indexed_docs in query_groups.items():
-                docs = [doc for _, doc in indexed_docs]
-                indices = [idx for idx, _ in indexed_docs]
-                results = self._reranker.rerank(query, docs)
-                for result in results:
-                    original_idx = result["index"]
-                    all_scores[indices[original_idx]] = result["relevance_score"]
+            try:
+                for query, indexed_docs in query_groups.items():
+                    docs = [doc for _, doc in indexed_docs]
+                    indices = [idx for idx, _ in indexed_docs]
+                    results = self._reranker.rerank(query, docs)
+                    for result in results:
+                        original_idx = result["index"]
+                        all_scores[indices[original_idx]] = result["relevance_score"]
+            finally:
+                # Inside the lock: MLX Metal ops are not thread-safe, which is why
+                # #1113 introduced _mlx_lock in the first place.
+                release_local_inference_memory(self._device_type)
 
         return all_scores
 

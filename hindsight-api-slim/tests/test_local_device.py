@@ -43,6 +43,22 @@ def _fake_torch(*, cuda=False, mps=False, xpu=False, has_xpu=None, empty_cache_l
     return torch
 
 
+def _fake_mlx(*, clear_cache_log=None, raises=False):
+    """Build a stand-in ``mlx.core`` module exposing just what local_device touches."""
+
+    def clear_cache():
+        if raises:
+            raise RuntimeError("Metal device unavailable")
+        if clear_cache_log is not None:
+            clear_cache_log.append("mlx")
+
+    core = types.ModuleType("mlx.core")
+    core.clear_cache = clear_cache
+    mlx = types.ModuleType("mlx")
+    mlx.core = core
+    return mlx, core
+
+
 class TestSelectLocalDevice:
     def test_force_cpu_short_circuits(self):
         # force_cpu wins even if a GPU is present — no torch import needed.
@@ -147,6 +163,31 @@ class TestEmptyGpuCache:
         with patch.dict(sys.modules, {"torch": _fake_torch()}):
             _empty_gpu_cache("rocm")  # torch has no .rocm — must not raise
 
+    def test_mlx_clears_its_own_cache(self):
+        log = []
+        mlx, core = _fake_mlx(clear_cache_log=log)
+        with patch.dict(sys.modules, {"mlx": mlx, "mlx.core": core, "torch": _fake_torch()}):
+            _empty_gpu_cache("mlx")
+        assert log == ["mlx"]
+
+    def test_mlx_does_not_reach_torch(self):
+        """The mlx branch must return before the torch lookup: getattr(torch, "mlx") is None,
+        so falling through would free nothing and report no error."""
+        torch_log = []
+        mlx, core = _fake_mlx()
+        with patch.dict(sys.modules, {"mlx": mlx, "mlx.core": core, "torch": _fake_torch(empty_cache_log=torch_log)}):
+            _empty_gpu_cache("mlx")
+        assert torch_log == []
+
+    def test_mlx_absent_is_safe(self):
+        with patch.dict(sys.modules, {"mlx": None, "mlx.core": None, "torch": _fake_torch()}):
+            _empty_gpu_cache("mlx")  # import fails — must not raise
+
+    def test_mlx_clear_cache_raising_is_swallowed(self):
+        mlx, core = _fake_mlx(raises=True)
+        with patch.dict(sys.modules, {"mlx": mlx, "mlx.core": core, "torch": _fake_torch()}):
+            _empty_gpu_cache("mlx")  # must not propagate
+
 
 class TestReleaseLocalInferenceMemory:
     def test_release_runs_all_steps_for_gpu(self):
@@ -172,3 +213,18 @@ class TestReleaseLocalInferenceMemory:
             release_local_inference_memory("cpu")
         assert calls == ["trim"]
         assert log == []
+
+    def test_release_mlx_skips_gc_but_clears_the_mlx_cache(self):
+        """MLX arrays are refcounted, so the CPU exemption from #3858 applies here too:
+        skip the process-wide cycle scan, still trim the heap and clear the MLX cache."""
+        calls = []
+        mlx_log = []
+        mlx, core = _fake_mlx(clear_cache_log=mlx_log)
+        with (
+            patch.dict(sys.modules, {"mlx": mlx, "mlx.core": core, "torch": _fake_torch()}),
+            patch.object(local_device.gc, "collect", lambda: calls.append("gc")),
+            patch.object(local_device, "_heap_trim", lambda: calls.append("trim")),
+        ):
+            release_local_inference_memory("mlx")
+        assert calls == ["trim"]
+        assert mlx_log == ["mlx"]
