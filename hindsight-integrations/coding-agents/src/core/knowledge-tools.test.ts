@@ -376,20 +376,40 @@ describe("buildKnowledgeTools", () => {
     );
   });
 
-  it("hindsight_ingest_document falls back to 'doc' when the title has no safe characters", async () => {
-    const client = stubClient();
-    const tools = buildKnowledgeTools(client, "repo-a");
-    const tool = findTool(tools, "hindsight_ingest_document");
-    await tool.handler({ title: "!!!///???", content: "x" });
-    expect(client.retain).toHaveBeenCalledWith(
-      "x",
-      "ingested document",
-      "doc",
-      ["source:upload"],
-      "document",
-      {} // no harness in these tests: nothing to stamp
-    );
-  });
+  it.each([
+    ["测试问题17记忆文档一", "测试问题17记忆文档二"],
+    ["记忆文档一", "记忆文档二"],
+    ["Résumé", "Rèsumé"],
+    ["!!!///???", "???///!!!"],
+  ])(
+    "hindsight_ingest_document keeps distinct lossy titles: %s / %s",
+    async (title, otherTitle) => {
+      const documents = new Map<string, string>();
+      const client = stubClient({
+        retain: vi.fn(async (content: string, _context: string, documentId: string) => {
+          documents.set(documentId, content);
+        }),
+      });
+      const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_ingest_document");
+      const first = JSON.parse(
+        (await tool.handler({ title, content: "first document" })).content[0].text
+      );
+      const second = JSON.parse(
+        (await tool.handler({ title: otherTitle, content: "second document" })).content[0].text
+      );
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(first.doc_id).not.toBe(second.doc_id);
+      expect(documents.get(first.doc_id)).toBe("first document");
+      expect(documents.get(second.doc_id)).toBe("second document");
+
+      const updated = await tool.handler({ title, content: "updated first document" });
+      expect(JSON.parse(updated.content[0].text)).toEqual(first);
+      expect(documents.size).toBe(2);
+      expect(documents.get(first.doc_id)).toBe("updated first document");
+      expect(documents.get(second.doc_id)).toBe("second document");
+    }
+  );
 
   for (const name of [
     "hindsight_list_knowledge_pages",
