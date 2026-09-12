@@ -304,6 +304,62 @@ def test_credit_card_keeps_valid_test_numbers(card: str, template: str) -> None:
     assert result.hits == [{"detector": "credit_card", "preview": _fingerprint_value(card)}]
 
 
+@pytest.mark.parametrize("action", ["redact", "block"])
+@pytest.mark.parametrize("prefix", ["card: ", "2026 ", "2026 2026 "])
+@pytest.mark.parametrize(
+    "card",
+    ["4111 1111 1111 1111", "４１１１１１１１１１１１１１１１", "٤١١١١١١١١١١١١١١١", "４١11 １１١1 1111 1111"],
+)
+async def test_credit_card_policy_preserves_overlapping_and_unicode_matches(
+    regex_defense: MemoryDefenseRegexExtension, action: str, prefix: str, card: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(
+        policy=policy, bank_id="test", document_id=None, content=prefix + card, tags=[]
+    )
+    assert decision.action == DefenseAction(action)
+    assert decision.matched_types == ["credit_card"]
+    assert decision.hits == [{"detector": "credit_card", "preview": _fingerprint_value(card)}]
+    assert decision.redacted_content == (prefix + "[REDACTED:credit_card]" if action == "redact" else None)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "０.4111111111111111",
+        "4111111111111111.٢",
+        "0.４１１１１１１１１１１１１１１１",
+        "٤١١١١١١١١١١١١١١١.25",
+        "４1111111111111111",
+        "4111111111111111٤",
+        "００٠٠ 0000 ００٠٠ 0000",
+        "٤١١١ ١١١١ ١١١١ ١١١٢",
+    ],
+)
+@pytest.mark.parametrize("action", ["redact", "block"])
+async def test_credit_card_policy_rejects_unicode_non_cards(
+    regex_defense: MemoryDefenseRegexExtension, action: str, content: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(policy=policy, bank_id="test", document_id=None, content=content, tags=[])
+    assert decision.action is DefenseAction.ALLOW
+    assert decision.matched_types == []
+    assert decision.hits == []
+    assert decision.redacted_content is None
+
+
+def test_credit_card_overlapping_search_preserves_multiple_hits() -> None:
+    # Both year-prefixed candidates fail Luhn, unlike "2026 5555 5555 5555".
+    content = "2026 4111 1111 1111 1111; 2025 5555 5555 5555 4444; 2026"
+    result = apply_redaction(content)
+    assert result.content == "2026 [REDACTED:credit_card]; 2025 [REDACTED:credit_card]; 2026"
+    assert result.matched_types == ["credit_card"]
+    assert result.hits == [
+        {"detector": "credit_card", "preview": "4111...1111"},
+        {"detector": "credit_card", "preview": "5555...4444"},
+    ]
+
+
 def test_credit_card_filters_each_match_without_losing_other_detectors() -> None:
     content = "1700000000000; 4111 1111 1111 1111; 8000 8080 8888 9999; 5555555555554444; 123-45-6789"
     result = apply_redaction(content)
@@ -977,6 +1033,17 @@ def _defense_config(memory_defense: dict | None) -> HindsightConfig:
     from hindsight_api.config import _get_raw_config
 
     return dataclasses.replace(_get_raw_config(), memory_defense=memory_defense)
+
+
+@pytest.mark.parametrize("card", ["4111 1111 1111 1111", "４１１１１１１１１１１１１１１１", "٤١١١١١١١١١١١١١١١"])
+def test_redact_document_body_preserves_overlapping_and_unicode_matches(card: str) -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    out = redact_document_body(
+        "2026 " + card,
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+    assert out == "2026 [REDACTED:credit_card]"
 
 
 def test_redact_document_body_preserves_technical_values_and_scrubs_cards() -> None:
