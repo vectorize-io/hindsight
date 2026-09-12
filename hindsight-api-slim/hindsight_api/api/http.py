@@ -4729,7 +4729,7 @@ def create_app(
 
         # Started here rather than at import time because it needs a running loop, and it must run
         # on the loop that actually serves requests — that is the only one whose lag says anything.
-        _install_loop_lag(config.loop_lag_report_seconds)
+        _install_loop_lag(config.loop_lag_report_seconds, metric=config.loop_lag_metric)
 
         poller = None
         poller_task = None
@@ -4744,6 +4744,12 @@ def create_app(
             prometheus_reader = initialize_metrics(service_name="hindsight-api", service_version="1.0.0")
             create_metrics_collector()
             app.state.prometheus_reader = prometheus_reader
+            if config.metrics_worker_label:
+                # With --workers N a scrape of /metrics reaches one random worker; make every
+                # worker's series part of every scrape (see hindsight_api.metrics_multiworker).
+                from hindsight_api.metrics_multiworker import start_worker_metrics
+
+                app.state.worker_metrics = start_worker_metrics(max(1, config.workers))
             logging.info("Metrics initialized - available at /metrics endpoint")
         except Exception as e:
             logging.warning(f"Failed to initialize metrics: {e}. Metrics will be disabled (using no-op collector).")
@@ -5275,7 +5281,8 @@ def _register_routes(app: FastAPI):
         from fastapi.responses import Response
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-        metrics_data = generate_latest()
+        worker_metrics = getattr(app.state, "worker_metrics", None)
+        metrics_data = worker_metrics.render() if worker_metrics is not None else generate_latest()
         return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get(
