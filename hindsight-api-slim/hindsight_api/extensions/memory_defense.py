@@ -174,6 +174,10 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
     ("google_oauth_token", _ascii_token_pattern(r"ya29\.[0-9A-Za-z_-]{20,}")),
     ("xai_key", _ascii_token_pattern(r"xai-[A-Za-z0-9]{40,}")),
     ("groq_key", _ascii_token_pattern(r"gsk_[A-Za-z0-9]{20,}")),
+    # Hindsight's own API keys. hsk_<32 hex> from token_hex(16), optionally
+    # followed by _<hex signature>; hsk_sys_ marks a system key. Anchored on
+    # the 32 hex characters so prose containing "hsk_" is not redacted.
+    ("hindsight_key", _ascii_token_pattern(r"hsk_(?:sys_)?[0-9a-f]{32}(?:_[0-9a-f]{8,})?")),
     ("huggingface_token", _ascii_token_pattern(r"hf_[A-Za-z0-9]{30,}")),
     ("replicate_token", _ascii_token_pattern(r"r8_[A-Za-z0-9]{30,}")),
     ("perplexity_key", _ascii_token_pattern(r"pplx-[A-Za-z0-9]{40,}")),
