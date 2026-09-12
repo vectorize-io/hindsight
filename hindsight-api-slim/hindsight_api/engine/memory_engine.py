@@ -545,7 +545,13 @@ from .mental_model_refresh import (
 )
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
-from .reflect import ReflectNoAnswerError, ReflectToolExecutionError, run_reflect_agent
+from .reflect import (
+    DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+    ReflectNoAnswerError,
+    ReflectToolExecutionError,
+    ReflectToolTokenLimits,
+    run_reflect_agent,
+)
 from .reflect.models import StructuredOutputResult
 from .reflect.retractions import (
     RetractedGrounding,
@@ -14307,7 +14313,17 @@ class MemoryEngine(MemoryEngineInterface):
             else config_dict.get("recall_chunks_max_tokens", DEFAULT_RECALL_CHUNKS_MAX_TOKENS)
         )
 
-        async def search_observations_fn(q: str, max_tokens: int = 5000) -> dict[str, Any]:
+        # What the agent's retrieval tools default to when the model names no budget.
+        # Resolved here so the documented env vars, the per-bank config and the
+        # per-mental-model trigger overrides all reach the agent path -- until #4239
+        # the agent hardcoded its own defaults and none of these applied.
+        tool_token_limits = ReflectToolTokenLimits(
+            recall_max_tokens=effective_recall_max_tokens,
+            recall_chunk_max_tokens=effective_recall_chunks_max_tokens,
+            observations_max_tokens=DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+        )
+
+        async def search_observations_fn(q: str, max_tokens: int) -> dict[str, Any]:
             return await tool_search_observations(
                 self,
                 bank_id,
@@ -14329,14 +14345,11 @@ class MemoryEngine(MemoryEngineInterface):
         recall_fact_types = [ft for ft in (fact_types or ["world", "experience"]) if ft in ("world", "experience")]
         include_recall = bool(recall_fact_types)
 
-        # Defaults are bound at closure-definition time (re-evaluated on each
-        # reflect_async call), so per-bank/per-trigger overrides apply when the
-        # agent invokes recall without explicit token args.
-        async def recall_fn(
-            q: str,
-            max_tokens: int = effective_recall_max_tokens,
-            max_chunk_tokens: int = effective_recall_chunks_max_tokens,
-        ) -> dict[str, Any]:
+        # No defaults on the token arguments: the agent resolves them from
+        # `tool_token_limits` and always passes all three. Binding the configured values
+        # here as defaults instead is what made #4239 invisible -- they read as live
+        # while `_execute_tool` passed positionally past them.
+        async def recall_fn(q: str, max_tokens: int, max_chunk_tokens: int) -> dict[str, Any]:
             return await tool_recall(
                 self,
                 bank_id,
@@ -14433,6 +14446,7 @@ class MemoryEngine(MemoryEngineInterface):
                         cancel_check=request_context.raise_if_cancelled,
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                         answer_as_document=answer_as_document,
+                        tool_token_limits=tool_token_limits,
                     ),
                     timeout=wall_timeout,
                 )

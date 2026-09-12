@@ -11,7 +11,12 @@ import pytest
 # handed that connection and builds no such query, so the assertion has no subject.
 pytestmark = pytest.mark.memory_backend_incompatible
 
-from hindsight_api.engine.reflect.agent import _execute_tool, _summarize_input
+from hindsight_api.engine.reflect.agent import (
+    ReflectToolTokenLimits,
+    _execute_tool,
+    _summarize_input,
+    _resolve_tool_arg_ceiling,
+)
 from hindsight_api.engine.reflect.tools import (
     _document_metadata_from_retain_params,
     tool_expand,
@@ -254,6 +259,19 @@ async def _unexpected_tool_call(*_args):
     raise AssertionError("unexpected tool callback")
 
 
+#: The limits a default deployment resolves to. They used to be constants inlined in
+#: ``_execute_tool``; they now travel from bank/env config (#4239), so the tests state
+#: them explicitly rather than relying on the call site to know them.
+_LIMITS = ReflectToolTokenLimits(
+    recall_max_tokens=2048,
+    recall_chunk_max_tokens=1000,
+    observations_max_tokens=5000,
+)
+
+#: The ceiling a call gets with the context budget wide open — the fixed cap.
+_CEILING = _resolve_tool_arg_ceiling(None, 1)
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_treats_string_none_max_tokens_as_default() -> None:
     """Some providers emit JSON null as the string "None" in tool calls."""
@@ -271,6 +289,8 @@ async def test_execute_tool_treats_string_none_max_tokens_as_default() -> None:
         search_observations,
         _unexpected_tool_call,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
 
     assert result == {"observations": []}
@@ -288,6 +308,8 @@ async def test_execute_tool_returns_error_for_invalid_integer_limit(bad_limit) -
         _unexpected_tool_call,
         _unexpected_tool_call,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
 
     assert result == {"error": "max_tokens must be an integer or null-like value"}
@@ -310,6 +332,8 @@ async def test_execute_tool_preserves_search_mental_models_max_results_values() 
         _unexpected_tool_call,
         _unexpected_tool_call,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
 
     assert result == {"mental_models": []}
@@ -341,6 +365,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
     await _execute_tool(
         "search_observations",
@@ -349,6 +375,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
     await _execute_tool(
         "recall",
@@ -357,6 +385,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
     await _execute_tool(
         "search_observations",
@@ -365,6 +395,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
     await _execute_tool(
         "search_observations",
@@ -373,6 +405,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
     await _execute_tool(
         "search_observations",
@@ -381,6 +415,8 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         search_observations,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
 
     assert captured == {
@@ -409,6 +445,8 @@ async def test_execute_tool_treats_null_like_recall_limits_as_defaults() -> None
         _unexpected_tool_call,
         recall,
         _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
     )
 
     assert result == {"memories": []}
@@ -421,6 +459,8 @@ def test_summarize_input_never_raises_for_invalid_tool_limit_strings() -> None:
         _summarize_input(
             "search_observations",
             {"query": "deployment failures", "max_tokens": "None"},
+            _LIMITS,
+            _CEILING,
         )
         == "(query='deployment failures', max_tokens=5000)"
     )
@@ -429,6 +469,8 @@ def test_summarize_input_never_raises_for_invalid_tool_limit_strings() -> None:
         _summarize_input(
             "recall",
             {"query": "deployment failures", "max_tokens": "bogus", "max_chunk_tokens": "null"},
+            _LIMITS,
+            _CEILING,
         )
         == "(query='deployment failures', max_tokens=invalid:'bogus', max_chunk_tokens=1000)"
     )
@@ -437,6 +479,8 @@ def test_summarize_input_never_raises_for_invalid_tool_limit_strings() -> None:
         _summarize_input(
             "search_observations",
             {"query": "deployment failures", "max_tokens": float("inf")},
+            _LIMITS,
+            _CEILING,
         )
         == "(query='deployment failures', max_tokens=invalid:inf)"
     )
@@ -445,6 +489,168 @@ def test_summarize_input_never_raises_for_invalid_tool_limit_strings() -> None:
         _summarize_input(
             "search_observations",
             {"query": None, "max_tokens": "None"},
+            _LIMITS,
+            _CEILING,
         )
         == "(query='', max_tokens=5000)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Token-limit resolution on the agent path (#4239)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_defaults_come_from_configured_limits() -> None:
+    """A bank/env-configured recall budget must reach the agent's recall tool.
+
+    The regression: ``_execute_tool`` parsed the token arguments with constants
+    (2048 / 1000 / 5000) and passed them positionally, so the closure defaults bound
+    from ``recall_max_tokens`` / ``recall_chunks_max_tokens`` -- and the per-mental-model
+    ``trigger.recall_max_tokens`` override -- were never reached. Configuring them
+    changed nothing on any reflect.
+    """
+    limits = ReflectToolTokenLimits(
+        recall_max_tokens=6000,
+        recall_chunk_max_tokens=2500,
+        observations_max_tokens=7000,
+    )
+    captured: dict[str, object] = {}
+
+    async def recall(query: str, max_tokens: int, max_chunk_tokens: int) -> dict[str, object]:
+        captured["recall_max_tokens"] = max_tokens
+        captured["recall_max_chunk_tokens"] = max_chunk_tokens
+        return {"memories": []}
+
+    async def search_observations(query: str, max_tokens: int) -> dict[str, object]:
+        captured["observation_max_tokens"] = max_tokens
+        return {"observations": []}
+
+    await _execute_tool(
+        "recall",
+        {"query": "incident notes"},
+        _unexpected_tool_call,
+        search_observations,
+        recall,
+        _unexpected_tool_call,
+        limits,
+        _CEILING,
+    )
+    await _execute_tool(
+        "search_observations",
+        {"query": "incident notes"},
+        _unexpected_tool_call,
+        search_observations,
+        recall,
+        _unexpected_tool_call,
+        limits,
+        _CEILING,
+    )
+
+    assert captured == {
+        "recall_max_tokens": 6000,
+        "recall_max_chunk_tokens": 2500,
+        "observation_max_tokens": 7000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_caps_model_requested_token_arguments() -> None:
+    """The ceiling bounds what the model asks for, mirroring the existing floor.
+
+    The tool schemas tell the model to "use higher values for broader searches" and
+    nothing bounded the ask, so one call could pull in more than the whole reflect
+    context budget.
+    """
+    limits = ReflectToolTokenLimits(
+        recall_max_tokens=2048,
+        recall_chunk_max_tokens=1000,
+        observations_max_tokens=5000,
+    )
+    captured: dict[str, object] = {}
+
+    async def recall(query: str, max_tokens: int, max_chunk_tokens: int) -> dict[str, object]:
+        captured["max_tokens"] = max_tokens
+        captured["max_chunk_tokens"] = max_chunk_tokens
+        return {"memories": []}
+
+    await _execute_tool(
+        "recall",
+        {"query": "everything", "max_tokens": 200000, "max_chunk_tokens": 50000},
+        _unexpected_tool_call,
+        _unexpected_tool_call,
+        recall,
+        _unexpected_tool_call,
+        limits,
+        _CEILING,
+    )
+
+    assert captured == {"max_tokens": _CEILING, "max_chunk_tokens": _CEILING}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_ceiling_never_overrides_the_floor() -> None:
+    """A ceiling squeezed below the floor still yields a usable request."""
+    limits = ReflectToolTokenLimits(
+        recall_max_tokens=2048,
+        recall_chunk_max_tokens=1000,
+        observations_max_tokens=5000,
+    )
+    captured: dict[str, object] = {}
+
+    async def search_observations(query: str, max_tokens: int) -> dict[str, object]:
+        captured["max_tokens"] = max_tokens
+        return {"observations": []}
+
+    await _execute_tool(
+        "search_observations",
+        {"query": "everything", "max_tokens": 50000},
+        _unexpected_tool_call,
+        search_observations,
+        _unexpected_tool_call,
+        _unexpected_tool_call,
+        limits,
+        200,  # remaining context budget nearly exhausted
+    )
+
+    assert captured == {"max_tokens": 1000}
+
+
+def test_configured_default_above_the_ceiling_is_honoured() -> None:
+    """The ceiling caps the model, not the operator.
+
+    A deployment that deliberately sets ``recall_max_tokens`` above the fixed cap gets
+    it; the cap exists to stop the *model* reaching for a broader search than the
+    context budget can hold.
+    """
+    limits = ReflectToolTokenLimits(
+        recall_max_tokens=40000,
+        recall_chunk_max_tokens=1000,
+        observations_max_tokens=5000,
+    )
+    assert (
+        _summarize_input("recall", {"query": "q"}, limits, _CEILING)
+        == "(query='q', max_tokens=40000, max_chunk_tokens=1000)"
+    )
+
+
+@pytest.mark.parametrize(
+    "remaining,calls,expected",
+    [
+        (None, 3, 16000),  # no budget known -> the fixed cap only
+        (90000, 1, 16000),  # plenty left -> the fixed cap still binds
+        (30000, 3, 10000),  # shared across the batch in flight
+        (12000, 5, 2400),  # tight budget tightens every call
+        (900, 2, 1000),  # never below the floor
+        (-5000, 2, 1000),  # already over budget -> floor, not a negative ask
+    ],
+)
+def test_ceiling_shares_the_remaining_context_budget(remaining, calls, expected) -> None:
+    """A single iteration's parallel calls must not be able to ask for more than fits.
+
+    The loop checks the accumulated context only between iterations, so before this
+    an iteration could overshoot by its whole combined payload and force the slow
+    split-synthesis path.
+    """
+    assert _resolve_tool_arg_ceiling(remaining, calls) == expected

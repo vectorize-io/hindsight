@@ -2198,9 +2198,9 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |
 | `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` | Token budget for source facts in `search_observations` during reflect. `-1` disables source facts (default), `0` enables with no limit, `>0` enables with a token budget. Hierarchical — can be overridden per bank via config API. | `-1` |
 
-#### Internal recall (used by mental model refresh)
+#### Internal recall (used by reflect and mental model refresh)
 
-These knobs control the recall tool that runs inside `reflect_async` (e.g. when refreshing a mental model). They are hierarchical — overridable per bank via the config API, and individually overridable per mental model via the `trigger.include_chunks`, `trigger.recall_max_tokens`, and `trigger.recall_chunks_max_tokens` fields.
+These knobs control the recall tool the reflect agent runs (including when refreshing a mental model). They set what a `recall` tool call gets when the model does not ask for a specific budget; an explicit ask from the model wins, within the bounds reflect applies to any model-supplied token argument. They are hierarchical — overridable per bank via the config API, and individually overridable per mental model via the `trigger.include_chunks`, `trigger.recall_max_tokens`, and `trigger.recall_chunks_max_tokens` fields.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
