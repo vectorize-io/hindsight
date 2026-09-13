@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import errno
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -96,7 +97,20 @@ async def oauth_store_lock(store: Path, *, timeout_seconds: float, label: str) -
             # body together, which is the race this lock exists to prevent. For
             # these providers that means two concurrent rotations of a rotating
             # token, where one of them is necessarily lost.
-            if e.errno not in _UNWRITABLE_STORE_ERRNOS:
+            #
+            # The errno alone cannot separate those two worlds: EINVAL-style
+            # discrimination is impossible because EACCES covers both. It is
+            # raised when the directory cannot be written, and it is ALSO raised
+            # by `open(lock_path, "a+")` when the directory is perfectly
+            # writable and only a pre-existing lock file denies this uid — the
+            # shared-credential-directory shape (a container that ran as root
+            # and now runs non-root over the same volume). There the store is
+            # writable (`_persist_auth_atomic` writes a tempfile into the parent
+            # and `os.replace`s it, so directory permission is what decides) and
+            # another process is actively holding the lock, so degrading would
+            # hand it a concurrent refresh. Ask about the store instead: only
+            # degrade when the directory genuinely cannot be written.
+            if e.errno not in _UNWRITABLE_STORE_ERRNOS or os.access(lock_path.parent, os.W_OK):
                 raise
             # Degrade to the per-loop lock alone, exactly as the no-`fcntl`
             # branch above does. Note the file lock never protected against a
