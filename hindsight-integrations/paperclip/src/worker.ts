@@ -325,7 +325,11 @@ const plugin = definePlugin({
         // Live recall fallback
         try {
           const apiKey = await resolveApiKey(ctx, config);
-          const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
+          const client = new HindsightClient(
+            config.hindsightApiUrl,
+            apiKey,
+            config.requestTimeoutMs
+          );
           const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
           const memories = formatMemories(response.results);
           return { content: memories || "No relevant memories found." };
@@ -377,7 +381,11 @@ const plugin = definePlugin({
 
         try {
           const apiKey = await resolveApiKey(ctx, config);
-          const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
+          const client = new HindsightClient(
+            config.hindsightApiUrl,
+            apiKey,
+            config.requestTimeoutMs
+          );
           await client.retain(bankId, content, undefined, {
             agentId: runCtx.agentId,
             companyId: runCtx.companyId,
