@@ -4,7 +4,7 @@ import { readOpencode2Messages, type Oc2Message } from "./transcript-opencode2";
 describe("readOpencode2Messages", () => {
   it("keeps user/assistant prose + compact action turns; drops other types, parts and tool outputs", () => {
     // Shapes taken from a live `ctx.session.context({sessionID})` response (opencode2
-    // 0.0.0-beta-18743): a user message carries `text`, an assistant message a `content` array.
+    // 2.0.3): a user message carries `text`, an assistant message a `content` array.
     const messages: Oc2Message[] = [
       // non-conversational message type: dropped
       { type: "agent-selected", text: "build" },

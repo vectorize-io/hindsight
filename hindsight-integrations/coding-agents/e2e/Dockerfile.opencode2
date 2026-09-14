@@ -1,5 +1,5 @@
 FROM hindsight-coding-agents-e2e-base
-ARG VERSION=beta
-# opencode v2 is a separate package and binary (`opencode2`) that installs ALONGSIDE v1; it is
-# beta-tagged, so `latest` would silently install v1's CLI.
-RUN npm install --global "@opencode-ai/cli@${VERSION}"
+ARG VERSION=2.0.3
+# The stable package publishes both `opencode` and `opencode2` binary aliases. Keep using the
+# latter here so the shared E2E can install and exercise v1 and v2 side by side.
+RUN npm install --global "@opencode/cli@${VERSION}"

@@ -411,7 +411,7 @@ const opencode: HarnessInstaller = {
 };
 
 /**
- * opencode v2 — the `opencode2` binary (npm `@opencode-ai/cli@beta`), which installs ALONGSIDE v1
+ * opencode v2 — the `opencode2` binary (npm `@opencode/cli`), which installs ALONGSIDE v1
  * rather than replacing it.
  *
  * Detection is the binary only, deliberately NOT `~/.config/opencode`: that directory is v1's too,

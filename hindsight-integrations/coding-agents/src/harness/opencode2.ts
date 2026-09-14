@@ -1,7 +1,7 @@
 /**
  * opencode2 (opencode v2) harness adapter — full parity with the v1 opencode plugin.
  *
- * opencode v2 (`npm @opencode-ai/cli@beta`, binary `opencode2`) is a ground-up rewrite of the
+ * opencode v2 (`npm @opencode/cli`, binary `opencode2`) is a ground-up rewrite of the
  * plugin API, so NOTHING from harness/opencode.ts carries over. A v1 plugin is a function returning
  * a bag of named hooks; a v2 plugin is `{id, setup(ctx)}` where `ctx` hands out per-domain
  * registration calls. The mapping this file implements:
@@ -42,7 +42,7 @@
  * This is the only opencode2-specific file besides the entrypoint; everything it uses is in ../core.
  */
 import { z } from "zod";
-import type { Plugin } from "@opencode-ai/plugin-v2";
+import type { Plugin } from "@opencode/plugin";
 
 import { resolveHostMemory } from "../core/host-client";
 import { describeError } from "../core/log";
