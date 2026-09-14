@@ -15767,9 +15767,12 @@ class MemoryEngine(MemoryEngineInterface):
         saves is the ANN insert everywhere, plus the vchord lexical write where that backend is in
         use.
 
-        Leaving the INDEXES in place is deliberate -- one schema holds banks on both backends, so
-        they still serve the Postgres ones, and dropping them is a deployment-level decision this
-        cannot make per bank.
+        This per-bank switch leaves the INDEXES in place -- one schema holds banks on both
+        backends, so they still serve the Postgres ones. Dropping them is a deployment-level
+        decision, made at startup: when the configured store is store-owned for every bank
+        (``MemoriesExtension.store_owned``), the migration reconcile drops the mental_models
+        vector and BM25 indexes (``store_owned_memories`` in ``migrations.py``) and rebuilds them
+        if the deployment later moves back to Postgres.
 
         The columns go NULL for pages written from here on. Nothing reads them for a store-owned
         bank, and the store's own index is rebuilt by ``reconcile_knowledge_index``, which

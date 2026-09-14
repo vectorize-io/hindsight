@@ -392,7 +392,7 @@ class TestEmbeddingDimension:
         """The store answers every mental-model vector query, so mental_models.embedding carries
         no vector index: the one the base migrations built is dropped even when the dimension
         already matches, and a resize past pgvector's 2000-dim HNSW limit succeeds. Switching
-        back to the Postgres store rebuilds it on the next resize."""
+        back to the Postgres store rebuilds it."""
         db_url, schema = dimension_test_schema
 
         clear_embeddings(db_url, schema)
@@ -402,6 +402,13 @@ class TestEmbeddingDimension:
 
         ensure_embedding_dimension(db_url, 384, schema=schema, store_owned_memories=True)
         assert get_vector_index_names(db_url, schema, "mental_models") == []
+
+        # Back on the Postgres store at the same dimension — no resize to piggyback on, and the
+        # table is populated — the missing index is still rebuilt.
+        insert_test_mental_model_embedding(db_url, schema, 384)
+        _ensure_embedding_dimension_with_retry(db_url, 384, schema=schema)
+        assert get_vector_index_names(db_url, schema, "mental_models")
+        clear_mental_model_embeddings(db_url, schema)
 
         ensure_embedding_dimension(db_url, 3072, schema=schema, store_owned_memories=True)
         assert get_column_dimension(db_url, schema, table="mental_models") == 3072

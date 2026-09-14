@@ -545,10 +545,39 @@ def _migrate_table_embedding_dimension(
         logger.info(f"Changed {table_name}.embedding dimension to {required_dimension} (no vector index)")
         return
 
-    # Recreate index with appropriate type based on detected extension
-    if vector_ext == "pgvector" and required_dimension > 2000:
+    _create_embedding_vector_index(conn, schema_name, table_name, required_dimension, vector_ext, row_count)
+    logger.info(f"Successfully changed {table_name}.embedding dimension to {required_dimension}")
+
+
+def _has_embedding_vector_index(conn: Connection, schema_name: str, table_name: str) -> bool:
+    return bool(
+        conn.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE schemaname = :schema AND tablename = :table
+                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%'
+                           OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
+                      AND indexdef LIKE '%embedding%'
+                )
+            """),
+            {"schema": schema_name, "table": table_name},
+        ).scalar()
+    )
+
+
+def _create_embedding_vector_index(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    dimension: int,
+    vector_ext: str,
+    row_count: int,
+) -> None:
+    """Build the vector index on ``table_name.embedding`` for the detected extension."""
+    if vector_ext == "pgvector" and dimension > 2000:
         raise RuntimeError(
-            f"Embedding dimension {required_dimension} exceeds pgvector HNSW index limit of 2000. "
+            f"Embedding dimension {dimension} exceeds pgvector HNSW index limit of 2000. "
             f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
             f"that supports higher dimensions (e.g., pgvectorscale/DiskANN or AlloyDB ScaNN)."
         )
@@ -573,10 +602,8 @@ def _migrate_table_embedding_dimension(
             {index_using_clause(vector_ext)}
         """)
     )
-    logger.info(f"Created {index_type} index on {table_name} for {required_dimension}-dimensional embeddings")
+    logger.info(f"Created {index_type} index on {table_name} for {dimension}-dimensional embeddings")
     conn.commit()
-
-    logger.info(f"Successfully changed {table_name}.embedding dimension to {required_dimension}")
 
 
 def ensure_embedding_dimension(
@@ -635,6 +662,17 @@ def ensure_embedding_dimension(
         _migrate_table_embedding_dimension(
             conn, schema_name, "mental_models", required_dimension, vector_ext, indexed=not store_owned_memories
         )
+        if not store_owned_memories and not _has_embedding_vector_index(conn, schema_name, "mental_models"):
+            # A deployment that ran with a custom store and moved back to Postgres has the column at
+            # the right dimension but no index (the store-owned branch above dropped it). Without
+            # this the resize path is the only thing that ever builds it, and a matching dimension
+            # never resizes — every page search would seq-scan until the model changed.
+            row_count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {schema_name}.mental_models WHERE embedding IS NOT NULL")
+            ).scalar()
+            _create_embedding_vector_index(
+                conn, schema_name, "mental_models", required_dimension, vector_ext, row_count
+            )
         # NOTE: invalidated_memory_units is deliberately omitted. The curation archive has no
         # embedding column at all (dropped in migration d4f6a8c2e1b3) — invalidate stores no
         # embedding and revert recomputes one — so there is no archive vector to re-dimension
@@ -901,6 +939,101 @@ def _reconcile_needs_no_backfill(
     )
 
 
+def _ensure_pgroonga_extension(conn: Connection) -> None:
+    try:
+        create_extension(conn, "pgroonga", cascade=True)
+    except Exception:
+        # Extension might already exist or user lacks permissions — verify
+        has_ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pgroonga'")).fetchone()
+        if not has_ext:
+            raise
+
+
+def _create_text_search_index(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    text_search_extension: str,
+    pg_search_tokenizer: str | None,
+) -> None:
+    """Build ``idx_<table>_text_search`` for the configured backend over an existing column.
+
+    Re-executable (``IF NOT EXISTS``): replicas boot concurrently and each runs the reconcile.
+    """
+    index_name = f"idx_{table_name.replace('.', '_')}_text_search"
+    if text_search_extension == "vchord":
+        logger.info(f"Creating BM25 index on {table_name}")
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING bm25 (search_vector bm25_catalog.bm25_ops)
+            """)
+        )
+    elif text_search_extension == "pg_textsearch":
+        logger.info(f"Creating BM25 index on {table_name}")
+        # Different expression for each table
+        if table_name == "memory_units":
+            index_expr = "(COALESCE(text, '') || ' ' || COALESCE(context, ''))"
+        else:  # mental_models
+            index_expr = mental_models_text_document()
+
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING bm25({index_expr})
+                WITH (text_config='english')
+            """)
+        )
+    elif text_search_extension == "pgroonga":
+        # pgroonga index expression mirrors pg_textsearch
+        if table_name == "memory_units":
+            index_expr = "(COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''))"
+        else:  # mental_models — knowledge_bm25_arm repeats this verbatim
+            index_expr = mental_models_text_document()
+
+        logger.info(f"Creating pgroonga index on {table_name}")
+        # TokenBigram is the polyglot default — falls back to whitespace
+        # tokenization for space-separated languages and bigram for CJK.
+        # NormalizerNFKC150 handles Unicode normalization (full/half-width,
+        # case folding, etc.) which materially improves Japanese recall.
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING pgroonga ({index_expr})
+                WITH (tokenizer='TokenBigram', normalizer='NormalizerNFKC150')
+            """)
+        )
+    elif text_search_extension == "pg_search":
+        # ParadeDB BM25 index over the table's primary key and text columns.
+        # Column list mirrors what the initial / text_signals migrations create.
+        if table_name == "memory_units":
+            bm25_cols = pg_search_bm25_columns("id", ("text", "context", "text_signals"), pg_search_tokenizer)
+        else:  # mental_models
+            bm25_cols = pg_search_bm25_columns("id", ("name", "content"), pg_search_tokenizer)
+
+        logger.info(f"Creating ParadeDB BM25 index on {table_name}")
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING bm25 ({bm25_cols})
+                WITH (key_field='id')
+            """)
+        )
+    else:  # native
+        logger.info(f"Creating GIN index on {table_name}")
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING gin(search_vector)
+            """)
+        )
+
+
 def ensure_text_search_extension(
     database_url: str,
     text_search_extension: str = "native",
@@ -927,8 +1060,10 @@ def ensure_text_search_extension(
         pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
             BM25 text fields when indexes are created. Empty keeps the
             ParadeDB default.
-        store_owned_memories: Leave memory_units untouched because a custom memories store
-            keeps the memory rows (and their text index) outside Postgres
+        store_owned_memories: A custom memories store owns the memory rows and the knowledge-page
+            search, so neither table is reconciled and the mental_models BM25 index is dropped:
+            nothing reads it, yet on the native backend Postgres maintains it on every page write
+            (``search_vector`` is a generated column there)
 
     Raises:
         RuntimeError: If extension mismatch with existing data
@@ -938,8 +1073,13 @@ def ensure_text_search_extension(
 
     engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
+        if store_owned_memories:
+            conn.execute(text(f"DROP INDEX IF EXISTS {schema_name}.idx_mental_models_text_search"))
+            conn.commit()
+            return
+
         # Tables with search_vector columns to check
-        tables_to_check = ["mental_models"] if store_owned_memories else ["memory_units", "mental_models"]
+        tables_to_check = ["memory_units", "mental_models"]
 
         # Determine target column type and index type
         if text_search_extension == "vchord":
@@ -965,6 +1105,11 @@ def ensure_text_search_extension(
 
         mismatched_tables = []
         tables_with_data = []
+        # Column already in the target shape, index gone. Rebuilding the index needs no backfill
+        # (it is derived from data already in the row), so unlike a real mismatch this is safe on
+        # a populated table. The state is what a deployment that ran with a custom memories store
+        # (which drops the mental_models index) leaves behind when it moves back to Postgres.
+        missing_index_tables = []
 
         for table_name in tables_to_check:
             # Check if table exists
@@ -1041,6 +1186,11 @@ def ensure_text_search_extension(
                 if current_is_pg_search != want_pg_search:
                     index_matches = False
 
+            if column_matches and current_index_type is None:
+                logger.info(f"Text search index missing on {table_name}; rebuilding it")
+                missing_index_tables.append(table_name)
+                continue
+
             if not (column_matches and index_matches):
                 logger.info(
                     f"Text search mismatch on {table_name}: "
@@ -1061,6 +1211,13 @@ def ensure_text_search_extension(
                     tables_with_data.append((table_name, row_count))
             else:
                 logger.debug(f"Text search OK for {table_name}: {current_column_type}/{current_index_type}")
+
+        if missing_index_tables and text_search_extension == "pgroonga":
+            _ensure_pgroonga_extension(conn)
+        for table_name in missing_index_tables:
+            _create_text_search_index(conn, schema_name, table_name, text_search_extension, pg_search_tokenizer)
+        if missing_index_tables:
+            conn.commit()
 
         # If no mismatches, we're done
         if not mismatched_tables:
@@ -1129,49 +1286,14 @@ def ensure_text_search_extension(
                         f"ADD COLUMN IF NOT EXISTS search_vector bm25_catalog.bm25vector"
                     )
                 )
-
-                # Create BM25 index
-                logger.info(f"Creating BM25 index on {table_name}")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{table_name.replace(".", "_")}_text_search
-                        ON {schema_name}.{table_name}
-                        USING bm25 (search_vector bm25_catalog.bm25_ops)
-                    """)
-                )
             elif text_search_extension == "pg_textsearch":
                 logger.info(f"Creating TEXT column on {table_name}")
                 # Dummy TEXT column for consistency (indexes operate on base columns)
                 conn.execute(
                     text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS search_vector TEXT")
                 )
-
-                # Create BM25 index on expression
-                logger.info(f"Creating BM25 index on {table_name}")
-                # Different expression for each table
-                if table_name == "memory_units":
-                    index_expr = "(COALESCE(text, '') || ' ' || COALESCE(context, ''))"
-                else:  # mental_models
-                    index_expr = mental_models_text_document()
-
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{table_name.replace(".", "_")}_text_search
-                        ON {schema_name}.{table_name}
-                        USING bm25({index_expr})
-                        WITH (text_config='english')
-                    """)
-                )
             elif text_search_extension == "pgroonga":
-                # Ensure pgroonga extension is available
-                try:
-                    create_extension(conn, "pgroonga", cascade=True)
-                except Exception:
-                    # Extension might already exist or user lacks permissions — verify
-                    has_ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pgroonga'")).fetchone()
-                    if not has_ext:
-                        raise
-
+                _ensure_pgroonga_extension(conn)
                 logger.info(f"Creating dummy TEXT search_vector on {table_name} for pgroonga")
                 # pgroonga indexes the base text columns directly, but we keep a
                 # dummy search_vector column for symmetry with pg_textsearch and
@@ -1179,58 +1301,11 @@ def ensure_text_search_extension(
                 conn.execute(
                     text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS search_vector TEXT")
                 )
-
-                # pgroonga index expression mirrors pg_textsearch
-                if table_name == "memory_units":
-                    index_expr = (
-                        "(COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''))"
-                    )
-                else:  # mental_models — knowledge_bm25_arm repeats this verbatim
-                    index_expr = mental_models_text_document()
-
-                logger.info(f"Creating pgroonga index on {table_name}")
-                # TokenBigram is the polyglot default — falls back to whitespace
-                # tokenization for space-separated languages and bigram for CJK.
-                # NormalizerNFKC150 handles Unicode normalization (full/half-width,
-                # case folding, etc.) which materially improves Japanese recall.
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{table_name.replace(".", "_")}_text_search
-                        ON {schema_name}.{table_name}
-                        USING pgroonga ({index_expr})
-                        WITH (tokenizer='TokenBigram', normalizer='NormalizerNFKC150')
-                    """)
-                )
             elif text_search_extension == "pg_search":
                 logger.info(f"Creating TEXT column on {table_name}")
                 # Dummy TEXT column for schema symmetry; pg_search indexes operate on base columns.
                 conn.execute(
                     text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS search_vector TEXT")
-                )
-
-                # ParadeDB BM25 index over the table's primary key and text columns.
-                # Column list mirrors what the initial / text_signals migrations create.
-                if table_name == "memory_units":
-                    bm25_cols = pg_search_bm25_columns(
-                        "id",
-                        ("text", "context", "text_signals"),
-                        pg_search_tokenizer,
-                    )
-                else:  # mental_models
-                    bm25_cols = pg_search_bm25_columns(
-                        "id",
-                        ("name", "content"),
-                        pg_search_tokenizer,
-                    )
-
-                logger.info(f"Creating ParadeDB BM25 index on {table_name}")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{table_name.replace(".", "_")}_text_search
-                        ON {schema_name}.{table_name}
-                        USING bm25 ({bm25_cols})
-                        WITH (key_field='id')
-                    """)
                 )
             else:  # native
                 logger.info(f"Creating tsvector column on {table_name}")
@@ -1258,15 +1333,7 @@ def ensure_text_search_extension(
                         text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS search_vector tsvector")
                     )
 
-                # Create GIN index
-                logger.info(f"Creating GIN index on {table_name}")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{table_name.replace(".", "_")}_text_search
-                        ON {schema_name}.{table_name}
-                        USING gin(search_vector)
-                    """)
-                )
+            _create_text_search_index(conn, schema_name, table_name, text_search_extension, pg_search_tokenizer)
 
         conn.commit()
         logger.info(f"Successfully migrated text search to {text_search_extension}")

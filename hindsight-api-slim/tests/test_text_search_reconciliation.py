@@ -91,9 +91,11 @@ def _connect(monkeypatch, tables: dict[str, _TableState]) -> _Connection:
     return conn
 
 
-def _run(monkeypatch, tables: dict[str, _TableState], extension="pgroonga") -> _Connection:
+def _run(monkeypatch, tables: dict[str, _TableState], extension="pgroonga", store_owned_memories=False) -> _Connection:
     conn = _connect(monkeypatch, tables)
-    migrations.ensure_text_search_extension("postgresql://unused", text_search_extension=extension)
+    migrations.ensure_text_search_extension(
+        "postgresql://unused", text_search_extension=extension, store_owned_memories=store_owned_memories
+    )
     return conn
 
 
@@ -244,3 +246,57 @@ def test_reconcile_ddl_is_re_executable(monkeypatch, extension):
             r"|ALTER TABLE \S+ (ADD|DROP) COLUMN IF (NOT )?EXISTS)",
             statement,
         ), f"non re-executable DDL: {statement}"
+
+
+@pytest.mark.parametrize("extension", ["native", "vchord", "pg_textsearch", "pgroonga", "pg_search"])
+def test_store_owned_memories_drops_mental_models_bm25_index_and_reconciles_nothing(monkeypatch, extension):
+    """A custom store answers knowledge-page search, so the mental_models BM25 index has no reader —
+    yet on native Postgres maintains it on every page write. memory_units holds no rows at all."""
+    conn = _run(
+        monkeypatch,
+        {
+            "memory_units": _TableState(column="text", index="pgroonga", rows=0),
+            "mental_models": _TableState(column="tsvector", index="gin", rows=5),
+        },
+        extension=extension,
+        store_owned_memories=True,
+    )
+
+    assert conn.table_checks == []
+    assert conn.ddl == ["DROP INDEX IF EXISTS public.idx_mental_models_text_search"]
+
+
+def test_populated_mental_models_missing_index_is_rebuilt_in_place(monkeypatch):
+    """What a deployment leaves behind when it moves from a custom store back to Postgres: the
+    column is in shape and populated, only the index is gone. Rebuilding it needs no backfill, so
+    it must neither refuse (as a backend switch would) nor drop the column."""
+    conn = _run(
+        monkeypatch,
+        {
+            "memory_units": _TableState(column="tsvector", index="gin", rows=20),
+            "mental_models": _TableState(column="tsvector", index=None, rows=5),
+        },
+        extension="native",
+    )
+
+    assert conn.ddl == [
+        "CREATE INDEX IF NOT EXISTS idx_mental_models_text_search ON public.mental_models USING gin(search_vector)"
+    ]
+    assert conn.commits == 1
+
+
+def test_populated_missing_pgroonga_index_ensures_the_extension_first(monkeypatch):
+    conn = _run(
+        monkeypatch,
+        {
+            "memory_units": _TableState(column="text", index="pgroonga", rows=20),
+            "mental_models": _TableState(column="text", index=None, rows=5),
+        },
+    )
+
+    assert conn.ddl == [
+        "CREATE EXTENSION IF NOT EXISTS pgroonga CASCADE",
+        "CREATE INDEX IF NOT EXISTS idx_mental_models_text_search ON public.mental_models "
+        f"USING pgroonga ({mental_models_text_document()}) "
+        "WITH (tokenizer='TokenBigram', normalizer='NormalizerNFKC150')",
+    ]
