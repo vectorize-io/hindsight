@@ -30,10 +30,13 @@ truly exercised (real permissions, skipped for root because root bypasses them).
 
 from __future__ import annotations
 
+import asyncio
 import builtins
+import contextlib
 import errno
 import os
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -55,7 +58,8 @@ def store(tmp_path: Path) -> Path:
     return path
 
 
-def _fail_lock_creation(store: Path, error_number: int, *, parent_writable: bool):
+@contextlib.contextmanager
+def _fail_lock_creation(store: Path, error_number: int, *, parent_writable: bool) -> Iterator[None]:
     """Make creating ``<store>.lock`` fail with ``error_number``.
 
     ``parent_writable`` states whether the store directory can be written, which
@@ -85,11 +89,12 @@ def _fail_lock_creation(store: Path, error_number: int, *, parent_writable: bool
             return parent_writable
         return real_access(path, mode, **kwargs)
 
-    return (
+    with (
         patch("builtins.open", fake_open),
         patch.object(Path, "mkdir", fake_mkdir),
         patch("os.access", fake_access),
-    )
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +136,14 @@ async def test_propagates_when_only_the_lock_file_is_unwritable(store: Path):
     tmp.write_text("x")
     os.replace(tmp, store)
 
-    with pytest.raises(OSError) as excinfo:
-        async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
-            pass
+    try:
+        with pytest.raises(OSError) as excinfo:
+            async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
+                pass
+    finally:
+        lock_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     assert excinfo.value.errno == errno.EACCES
-    lock_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +155,8 @@ async def test_propagates_when_only_the_lock_file_is_unwritable(store: Path):
 @pytest.mark.parametrize("error_number", [errno.EROFS, errno.EACCES, errno.EPERM])
 async def test_degrades_when_the_store_directory_cannot_be_written(store: Path, error_number: int):
     """Errno in the set + directory not writable => degrade to per-loop only."""
-    p_open, p_mkdir, p_access = _fail_lock_creation(store, error_number, parent_writable=False)
     entered = False
-    with p_open, p_mkdir, p_access:
+    with _fail_lock_creation(store, error_number, parent_writable=False):
         async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
             entered = True
 
@@ -161,8 +167,7 @@ async def test_degrades_when_the_store_directory_cannot_be_written(store: Path, 
 @pytest.mark.asyncio
 async def test_propagates_when_the_directory_is_writable(store: Path):
     """Same errno, writable directory => the failure is not about the store."""
-    p_open, p_mkdir, p_access = _fail_lock_creation(store, errno.EACCES, parent_writable=True)
-    with p_open, p_mkdir, p_access, pytest.raises(OSError) as excinfo:
+    with _fail_lock_creation(store, errno.EACCES, parent_writable=True), pytest.raises(OSError) as excinfo:
         async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
             pass
 
@@ -178,8 +183,7 @@ async def test_propagates_on_a_writable_store(store: Path, error_number: int):
     pressure. Swallowing them would drop the cross-process lock and admit two
     concurrent refreshes of a rotating token, one of which is necessarily lost.
     """
-    p_open, p_mkdir, p_access = _fail_lock_creation(store, error_number, parent_writable=True)
-    with p_open, p_mkdir, p_access, pytest.raises(OSError) as excinfo:
+    with _fail_lock_creation(store, error_number, parent_writable=True), pytest.raises(OSError) as excinfo:
         async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
             pass
 
@@ -194,7 +198,6 @@ async def test_propagates_on_a_writable_store(store: Path, error_number: int):
 @pytest.mark.asyncio
 async def test_per_loop_lock_still_serialises_when_degraded(store: Path):
     """Degrading drops the FILE lock only — one loop's callers still queue."""
-    p_open, p_mkdir, p_access = _fail_lock_creation(store, errno.EROFS, parent_writable=False)
     concurrent = 0
     max_concurrent = 0
 
@@ -204,15 +207,20 @@ async def test_per_loop_lock_still_serialises_when_degraded(store: Path):
             concurrent += 1
             max_concurrent = max(max_concurrent, concurrent)
             for _ in range(3):
-                import asyncio
-
                 await asyncio.sleep(0)
-
             concurrent -= 1
 
-    import asyncio
-
-    with p_open, p_mkdir, p_access:
+    with _fail_lock_creation(store, errno.EROFS, parent_writable=False):
         await asyncio.gather(*(hold() for _ in range(4)))
 
     assert max_concurrent == 1, f"{max_concurrent} callers entered the guarded section at once"
+
+
+@pytest.mark.asyncio
+async def test_body_errors_are_not_chained_to_the_degrade_oserror(store: Path):
+    """An error from the refresh body must not read as raised while handling EROFS."""
+    with _fail_lock_creation(store, errno.EROFS, parent_writable=False), pytest.raises(RuntimeError) as excinfo:
+        async with oauth_store_lock(store, timeout_seconds=1.0, label="codex auth"):
+            raise RuntimeError("refresh failed")
+
+    assert excinfo.value.__context__ is None

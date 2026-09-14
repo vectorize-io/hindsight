@@ -80,44 +80,27 @@ async def oauth_store_lock(store: Path, *, timeout_seconds: float, label: str) -
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             lock_file = open(lock_path, "a+")
         except OSError as e:
-            # Only a store that cannot be written gets here, and that is the
-            # normal shape on Kubernetes: a Secret volume is mounted read-only
-            # whatever `volumeMount.readOnly` says, so a store fed by an
-            # external secret manager (ESO, a sidecar, a ConfigMap projection)
-            # raises EROFS. Nothing can be written back to such a store, so the
-            # lock file does not exist and the caller's read path — which is how
-            # a credential published by another writer arrives — must still run.
-            # Failing here would instead take the whole refresh with it.
+            # A read-only store (e.g. a Kubernetes Secret volume fed by an external
+            # secret manager) cannot hold a lock file. Degrade to the per-loop lock,
+            # as the no-`fcntl` branch does, so the refresh body — which also reads
+            # credentials another writer published — still runs. Such a writer never
+            # took this lock anyway.
             #
-            # Everything else must keep propagating. The same two calls fail on
-            # a perfectly WRITABLE store — ENOSPC when the volume is full,
-            # EMFILE/ENFILE when descriptors run out — and those arrive exactly
-            # when the box is under pressure. Degrading there would silently
-            # drop the cross-process lock and let two processes into the refresh
-            # body together, which is the race this lock exists to prevent. For
-            # these providers that means two concurrent rotations of a rotating
-            # token, where one of them is necessarily lost.
-            #
-            # The errno alone cannot separate those two worlds: EINVAL-style
-            # discrimination is impossible because EACCES covers both. It is
-            # raised when the directory cannot be written, and it is ALSO raised
-            # by `open(lock_path, "a+")` when the directory is perfectly
-            # writable and only a pre-existing lock file denies this uid — the
-            # shared-credential-directory shape (a container that ran as root
-            # and now runs non-root over the same volume). There the store is
-            # writable (`_persist_auth_atomic` writes a tempfile into the parent
-            # and `os.replace`s it, so directory permission is what decides) and
-            # another process is actively holding the lock, so degrading would
-            # hand it a concurrent refresh. Ask about the store instead: only
-            # degrade when the directory genuinely cannot be written.
+            # Anything else propagates: ENOSPC/EMFILE hit a writable store, and
+            # dropping the lock there admits two concurrent rotations of a rotating
+            # token. EACCES is ambiguous — a foreign-owned lock file in a writable
+            # directory raises it too, with a peer holding the lock — so the
+            # directory itself must be unwritable.
             if e.errno not in _UNWRITABLE_STORE_ERRNOS or os.access(lock_path.parent, os.W_OK):
                 raise
-            # Degrade to the per-loop lock alone, exactly as the no-`fcntl`
-            # branch above does. Note the file lock never protected against a
-            # store owned by another writer: such a writer does not take it.
             logger.debug(
                 f"{label} store is not writable ({type(e).__name__}: {e}); refresh proceeds without a cross-process lock."
             )
+            lock_file = None
+
+        if lock_file is None:
+            # Outside the `except`, so errors raised by the refresh body are not
+            # chained to the OSError above.
             yield
             return
 
