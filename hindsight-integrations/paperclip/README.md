@@ -40,6 +40,7 @@ hindsight-api
 | `bankId`             | —                                    | Static bank ID used when `dynamicBankId` is `false`. All agents sharing this value read/write the same memory bank                                                     |
 | `bankGranularity`    | `["company", "agent"]`               | Memory isolation when `dynamicBankId` is `true`: per company+agent, per company, or per agent. Add `"user"` for per-user memory isolation (useful for GDPR compliance) |
 | `recallBudget`       | `mid`                                | `low` = fastest, `mid` = balanced, `high` = most thorough                                                                                                              |
+| `requestTimeoutMs`   | `15000`                              | Timeout for each request to Hindsight. Raise it for self-hosted instances where recall on long issue descriptions is slower                                            |
 | `autoRetain`         | `true`                               | Automatically retain run output after every run                                                                                                                        |
 | `enabledAgentIds`    | —                                    | Restrict recall/retain to these agent IDs only. Leave empty to enable for all agents (default)                                                                         |
 
@@ -57,7 +58,7 @@ paperclip::{companyId}::{agentId}::user::{userId}  ← user granularity (per-use
 
 Agents can call these tools directly during a run:
 
-**`hindsight_recall(query)`** — search memory for relevant context. Called automatically at run start; agents can also call it mid-run for targeted queries.
+**`hindsight_recall(query)`** — search memory for relevant context. Called automatically at run start; agents can also call it mid-run for targeted queries. The run-start result is reused only when the agent asks the same query; any other query triggers a live recall.
 
 **`hindsight_retain(content)`** — store a fact or decision immediately, without waiting for run end.
 
@@ -69,7 +70,7 @@ agent.run.started
        └─ recall(issueTitle + description) → cached in plugin state for the run
 
 agent running…
-  ├─ hindsight_recall(query) → returns cached context or live recall
+  ├─ hindsight_recall(query) → cached context if query matches run start, otherwise live recall
   └─ hindsight_retain(content) → stores immediately
 
 issue.comment.created
