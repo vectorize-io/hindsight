@@ -88,7 +88,7 @@ def extract_temporal_constraint(
 
     Args:
         query: Search query
-        reference_date: Reference date for relative terms (defaults to now)
+        reference_date: Reference date for relative terms (defaults to the current UTC time)
         analyzer: Custom query analyzer (defaults to DateparserQueryAnalyzer)
 
     Returns:

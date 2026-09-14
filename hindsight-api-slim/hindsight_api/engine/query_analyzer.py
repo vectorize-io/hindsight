@@ -9,7 +9,7 @@ import logging
 import re
 import threading
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from dateparser.conf import Settings, apply_settings
 from pydantic import BaseModel, Field
@@ -21,6 +21,18 @@ from hindsight_api.engine.temporal_periods import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def default_reference_date() -> datetime:
+    """The anchor relative expressions resolve against when no caller supplies one.
+
+    UTC, not the server's local wall clock. ``event_date`` is stored in UTC and
+    ``retrieve_temporal_combined_sql`` stamps a naive window as UTC, so a window
+    built from local midnight names a different day for part of every day on a
+    server outside UTC. Naive, to keep the returned window's shape unchanged.
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
+
 
 # dateparser.search_dates over-matches: short common words that happen to be
 # weekday/month abbreviations in *some* language ("we"/"me"/"did" -> a weekday,
@@ -253,7 +265,7 @@ class QueryAnalyzer(ABC):
 
         Args:
             query: Natural language query to analyze
-            reference_date: Reference date for relative terms (defaults to now)
+            reference_date: Reference date for relative terms (defaults to the current UTC time)
 
         Returns:
             QueryAnalysis containing extracted information
@@ -375,13 +387,13 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
         Args:
             query: Natural language query (any language)
-            reference_date: Reference date for relative terms (defaults to now)
+            reference_date: Reference date for relative terms (defaults to the current UTC time)
 
         Returns:
             QueryAnalysis with temporal_constraint if found
         """
         if reference_date is None:
-            reference_date = datetime.now()
+            reference_date = default_reference_date()
 
         # Check for period expressions first (these need special handling)
         query_lower = query.lower()
@@ -603,13 +615,13 @@ class TransformerQueryAnalyzer(QueryAnalyzer):
 
         Args:
             query: Natural language query
-            reference_date: Reference date for relative terms (defaults to now)
+            reference_date: Reference date for relative terms (defaults to the current UTC time)
 
         Returns:
             QueryAnalysis with temporal_constraint if found
         """
         if reference_date is None:
-            reference_date = datetime.now()
+            reference_date = default_reference_date()
 
         # Try rule-based extraction first (handles 90%+ of cases)
         result = self._extract_with_rules(query, reference_date)
