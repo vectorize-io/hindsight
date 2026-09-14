@@ -141,7 +141,7 @@ class DefaultExtensionContext(ExtensionContext):
             vector_extension=config.vector_extension,
             text_search_extension=config.text_search_extension,
             pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-            skip_memory_units=get_memories().store_owned,
+            store_owned_memories=get_memories().store_owned,
         )
 
         # Provision any extension-owned bank-scoped tables for this schema,

@@ -591,7 +591,7 @@ async def _run_migration(
         text_search_extension=config.text_search_extension,
         pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
         ensure_extensions=ensure_extensions,
-        skip_memory_units=get_memories().store_owned,
+        store_owned_memories=get_memories().store_owned,
     )
 
     # After core migrations, provision any extension-owned bank-scoped tables

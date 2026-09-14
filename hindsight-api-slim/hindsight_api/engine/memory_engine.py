@@ -4779,7 +4779,7 @@ class MemoryEngine(MemoryEngineInterface):
                         text_search_extension=config.text_search_extension,
                         pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
                         ensure_extensions=self._backend.supports_bm25,
-                        skip_memory_units=get_memories().store_owned,
+                        store_owned_memories=get_memories().store_owned,
                     )
                 else:
                     # Oracle and other backends: Alembic's non-thread-safe globals

@@ -77,16 +77,16 @@ def test_skips_embedding_dim_when_none_and_extensions_when_disabled(record_steps
     assert record_steps == [("run_migrations", "a")]
 
 
-@pytest.mark.parametrize("skip_memory_units", [False, True])
-def test_skip_memory_units_reaches_every_reconcile_step(monkeypatch, skip_memory_units):
-    """A custom memories store must keep all three post-migration steps off memory_units."""
+@pytest.mark.parametrize("store_owned_memories", [False, True])
+def test_store_owned_memories_reaches_every_reconcile_step(monkeypatch, store_owned_memories):
+    """A custom memories store must reach all three post-migration reconcile steps."""
     monkeypatch.setattr(migrations, "_should_isolate_migrations", lambda: False)
     monkeypatch.setattr(migrations, "run_migrations", lambda *a, **k: None)
     seen: dict[str, bool] = {}
 
     def make(step):
-        def _step(database_url, *args, skip_memory_units=False, **kwargs):
-            seen[step] = skip_memory_units
+        def _step(database_url, *args, store_owned_memories=False, **kwargs):
+            seen[step] = store_owned_memories
 
         return _step
 
@@ -95,13 +95,13 @@ def test_skip_memory_units_reaches_every_reconcile_step(monkeypatch, skip_memory
     monkeypatch.setattr(migrations, "ensure_text_search_extension", make("text_search_extension"))
 
     migrations.run_migrations_for_schemas(
-        "postgresql://x/db", ["a"], embedding_dimension=3072, skip_memory_units=skip_memory_units
+        "postgresql://x/db", ["a"], embedding_dimension=3072, store_owned_memories=store_owned_memories
     )
 
     assert seen == {
-        "embedding_dimension": skip_memory_units,
-        "vector_extension": skip_memory_units,
-        "text_search_extension": skip_memory_units,
+        "embedding_dimension": store_owned_memories,
+        "vector_extension": store_owned_memories,
+        "text_search_extension": store_owned_memories,
     }
 
 

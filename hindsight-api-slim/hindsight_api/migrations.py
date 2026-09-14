@@ -443,61 +443,8 @@ def run_migrations(
         raise RuntimeError("Database migration failed") from e
 
 
-def _migrate_table_embedding_dimension(
-    conn: Connection,
-    schema_name: str,
-    table_name: str,
-    required_dimension: int,
-    vector_ext: str,
-) -> None:
-    """
-    Migrate the embedding column of a single table to the required dimension.
-
-    - If dimensions match: no action needed
-    - If dimensions differ and table is empty: ALTER COLUMN to new dimension
-    - If dimensions differ and table has data: raise error with migration guidance
-    """
-    current_dim = conn.execute(
-        text("""
-            SELECT atttypmod
-            FROM pg_attribute a
-            JOIN pg_class c ON a.attrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = :schema
-              AND c.relname = :table
-              AND a.attname = 'embedding'
-        """),
-        {"schema": schema_name, "table": table_name},
-    ).scalar()
-
-    if current_dim is None:
-        logger.debug(f"No embedding column found on {table_name}, skipping")
-        return
-
-    if current_dim == required_dimension:
-        logger.debug(f"Embedding dimension OK for {table_name}: {current_dim}")
-        return
-
-    logger.info(
-        f"Embedding dimension mismatch on {table_name}: database has {current_dim}, model requires {required_dimension}"
-    )
-
-    row_count = conn.execute(
-        text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
-    ).scalar()
-
-    if row_count > 0:
-        raise RuntimeError(
-            f"Cannot change embedding dimension from {current_dim} to {required_dimension}: "
-            f"{table_name} table contains {row_count} rows with embeddings. "
-            f"To change dimensions, you must either:\n"
-            f"  1. Re-embed all data: DELETE FROM {schema_name}.{table_name}; then restart\n"
-            f"  2. Use a model with {current_dim}-dimensional embeddings"
-        )
-
-    logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
-
-    # Drop existing vector index (works for HNSW, DiskANN, vchordrq, and ScaNN)
+def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_name: str) -> None:
+    """Drop every vector index on ``table_name.embedding`` (HNSW, DiskANN, vchordrq, ScaNN)."""
     # The EXCEPTION block handles 'could not open relation with OID' errors that
     # occur when concurrent sessions drop schemas (e.g. pytest-xdist workers),
     # invalidating pg_indexes OID references mid-cursor-iteration.
@@ -522,10 +469,81 @@ def _migrate_table_embedding_dimension(
         """)
     )
 
+
+def _migrate_table_embedding_dimension(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    required_dimension: int,
+    vector_ext: str,
+    *,
+    indexed: bool = True,
+) -> None:
+    """
+    Migrate the embedding column of a single table to the required dimension.
+
+    - If dimensions match: no action needed
+    - If dimensions differ and table is empty: ALTER COLUMN to new dimension
+    - If dimensions differ and table has data: raise error with migration guidance
+
+    ``indexed=False`` keeps the column but with no vector index at all: any existing one is
+    dropped and none is created, so the pgvector 2000-dimension index limit does not apply.
+    """
+    current_dim = conn.execute(
+        text("""
+            SELECT atttypmod
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = :schema
+              AND c.relname = :table
+              AND a.attname = 'embedding'
+        """),
+        {"schema": schema_name, "table": table_name},
+    ).scalar()
+
+    if current_dim is None:
+        logger.debug(f"No embedding column found on {table_name}, skipping")
+        return
+
+    if not indexed:
+        # Also on the dimension-match path: the base migrations create this index, so a
+        # deployment that switches to a custom store still carries one until it is dropped here.
+        _drop_embedding_vector_indexes(conn, schema_name, table_name)
+        conn.commit()
+
+    if current_dim == required_dimension:
+        logger.debug(f"Embedding dimension OK for {table_name}: {current_dim}")
+        return
+
+    logger.info(
+        f"Embedding dimension mismatch on {table_name}: database has {current_dim}, model requires {required_dimension}"
+    )
+
+    row_count = conn.execute(
+        text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
+    ).scalar()
+
+    if row_count > 0:
+        raise RuntimeError(
+            f"Cannot change embedding dimension from {current_dim} to {required_dimension}: "
+            f"{table_name} table contains {row_count} rows with embeddings. "
+            f"To change dimensions, you must either:\n"
+            f"  1. Re-embed all data: DELETE FROM {schema_name}.{table_name}; then restart\n"
+            f"  2. Use a model with {current_dim}-dimensional embeddings"
+        )
+
+    logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
+
+    _drop_embedding_vector_indexes(conn, schema_name, table_name)
     conn.execute(
         text(f"ALTER TABLE {schema_name}.{table_name} ALTER COLUMN embedding TYPE vector({required_dimension})")
     )
     conn.commit()
+
+    if not indexed:
+        logger.info(f"Changed {table_name}.embedding dimension to {required_dimension} (no vector index)")
+        return
 
     # Recreate index with appropriate type based on detected extension
     if vector_ext == "pgvector" and required_dimension > 2000:
@@ -566,7 +584,7 @@ def ensure_embedding_dimension(
     required_dimension: int,
     schema: str | None = None,
     vector_extension: str = "pgvector",
-    skip_memory_units: bool = False,
+    store_owned_memories: bool = False,
 ) -> None:
     """
     Ensure the embedding column dimension matches the model's dimension for all tables.
@@ -581,8 +599,10 @@ def ensure_embedding_dimension(
         required_dimension: The embedding dimension required by the model
         schema: Target PostgreSQL schema name (None for public)
         vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
-        skip_memory_units: Leave memory_units untouched because a custom memories store
-            keeps the memory rows (and their vectors) outside Postgres
+        store_owned_memories: A custom memories store owns the memory rows and the mental-model
+            search. memory_units is left untouched (its rows live in the store), and
+            mental_models.embedding still follows the model — Postgres keeps writing it — but
+            carries no vector index, because the store answers every mental-model vector query
 
     Raises:
         RuntimeError: If dimension mismatch with existing data
@@ -610,9 +630,11 @@ def ensure_embedding_dimension(
         vector_ext = _detect_vector_extension(conn, vector_extension)
         logger.info(f"Using vector extension: {vector_ext}")
 
-        if not skip_memory_units:
+        if not store_owned_memories:
             _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
-        _migrate_table_embedding_dimension(conn, schema_name, "mental_models", required_dimension, vector_ext)
+        _migrate_table_embedding_dimension(
+            conn, schema_name, "mental_models", required_dimension, vector_ext, indexed=not store_owned_memories
+        )
         # NOTE: invalidated_memory_units is deliberately omitted. The curation archive has no
         # embedding column at all (dropped in migration d4f6a8c2e1b3) — invalidate stores no
         # embedding and revert recomputes one — so there is no archive vector to re-dimension
@@ -623,7 +645,7 @@ def ensure_vector_extension(
     database_url: str,
     vector_extension: str = "pgvector",
     schema: str | None = None,
-    skip_memory_units: bool = False,
+    store_owned_memories: bool = False,
 ) -> None:
     """
     Ensure the vector indexes match the configured vector extension.
@@ -638,8 +660,9 @@ def ensure_vector_extension(
         database_url: SQLAlchemy database URL
         vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
         schema: Target PostgreSQL schema name (None for public)
-        skip_memory_units: Leave memory_units untouched because a custom memories store
-            keeps the memory rows (and their vectors) outside Postgres
+        store_owned_memories: Leave memory_units untouched because a custom memories store
+            keeps the memory rows (and their vectors) outside Postgres. mental_models is not
+            in this reconcile at all; its index is handled by ensure_embedding_dimension
 
     Raises:
         RuntimeError: If extension mismatch with existing data
@@ -658,7 +681,7 @@ def ensure_vector_extension(
             ("learnings", "idx_learnings_embedding"),
             ("pinned_reflections", "idx_pinned_reflections_embedding"),
         ]
-        if skip_memory_units:
+        if store_owned_memories:
             tables_to_check = [entry for entry in tables_to_check if entry[0] != "memory_units"]
 
         target_index_type = index_type_keyword(target_ext)
@@ -883,7 +906,7 @@ def ensure_text_search_extension(
     text_search_extension: str = "native",
     schema: str | None = None,
     pg_search_tokenizer: str | None = None,
-    skip_memory_units: bool = False,
+    store_owned_memories: bool = False,
 ) -> None:
     """
     Ensure the text search columns and indexes match the configured extension.
@@ -904,7 +927,7 @@ def ensure_text_search_extension(
         pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
             BM25 text fields when indexes are created. Empty keeps the
             ParadeDB default.
-        skip_memory_units: Leave memory_units untouched because a custom memories store
+        store_owned_memories: Leave memory_units untouched because a custom memories store
             keeps the memory rows (and their text index) outside Postgres
 
     Raises:
@@ -916,7 +939,7 @@ def ensure_text_search_extension(
     engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Tables with search_vector columns to check
-        tables_to_check = ["mental_models"] if skip_memory_units else ["memory_units", "mental_models"]
+        tables_to_check = ["mental_models"] if store_owned_memories else ["memory_units", "mental_models"]
 
         # Determine target column type and index type
         if text_search_extension == "vchord":
@@ -1259,7 +1282,7 @@ def _migrate_one_schema_pg(
     text_search_extension: str,
     pg_search_tokenizer: str | None,
     ensure_extensions: bool,
-    skip_memory_units: bool = False,
+    store_owned_memories: bool = False,
 ) -> str:
     """Run migrations + post-migration extension setup for a SINGLE PG schema.
 
@@ -1276,21 +1299,21 @@ def _migrate_one_schema_pg(
             embedding_dimension,
             schema=schema,
             vector_extension=vector_extension,
-            skip_memory_units=skip_memory_units,
+            store_owned_memories=store_owned_memories,
         )
     if ensure_extensions:
         ensure_vector_extension(
             database_url,
             vector_extension=vector_extension,
             schema=schema,
-            skip_memory_units=skip_memory_units,
+            store_owned_memories=store_owned_memories,
         )
         ensure_text_search_extension(
             database_url,
             text_search_extension=text_search_extension,
             schema=schema,
             pg_search_tokenizer=pg_search_tokenizer,
-            skip_memory_units=skip_memory_units,
+            store_owned_memories=store_owned_memories,
         )
     return schema
 
@@ -1324,7 +1347,7 @@ def run_migrations_for_schemas(
     text_search_extension: str = "native",
     pg_search_tokenizer: str | None = None,
     ensure_extensions: bool = True,
-    skip_memory_units: bool = False,
+    store_owned_memories: bool = False,
 ) -> None:
     """Run PostgreSQL migrations for many schemas, up to ``concurrency`` at once.
 
@@ -1343,10 +1366,11 @@ def run_migrations_for_schemas(
     Failures are collected per schema and re-raised together so one bad tenant
     does not hide the status of the others.
 
-    ``skip_memory_units`` keeps the post-migration dimension and index reconcile off
-    ``memory_units`` when a custom memories store owns the memory rows: the table stays
-    empty, so resizing or re-indexing it only fails boots for no reason (e.g. pgvector's
-    2000-dimension HNSW limit against a model the store handles fine).
+    ``store_owned_memories`` is set when a custom memories store owns the memory rows and
+    answers the mental-model vector search. The post-migration reconcile then stays off
+    ``memory_units`` (always empty) and keeps ``mental_models.embedding`` without a vector
+    index (never queried by vector). Maintaining either only fails boots for no reason,
+    e.g. on pgvector's 2000-dimension HNSW limit with a model the store handles fine.
     """
     # Isolated: keep psycopg2 (and every sync engine this reaches --
     # ensure_embedding_dimension, the vector and text-search extension helpers) out of
@@ -1364,7 +1388,7 @@ def run_migrations_for_schemas(
                 "text_search_extension": text_search_extension,
                 "pg_search_tokenizer": pg_search_tokenizer,
                 "ensure_extensions": ensure_extensions,
-                "skip_memory_units": skip_memory_units,
+                "store_owned_memories": store_owned_memories,
             },
         )
         return
@@ -1379,7 +1403,7 @@ def run_migrations_for_schemas(
         text_search_extension=text_search_extension,
         pg_search_tokenizer=pg_search_tokenizer,
         ensure_extensions=ensure_extensions,
-        skip_memory_units=skip_memory_units,
+        store_owned_memories=store_owned_memories,
     )
 
     effective = max(1, min(concurrency, len(schemas)))
