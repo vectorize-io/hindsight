@@ -107,6 +107,46 @@ async def test_re_ingesting_without_an_attachment_drops_its_edge(api_client, mem
 
 
 @pytest.mark.asyncio
+async def test_re_ingesting_without_an_attachment_reclaims_its_blob(api_client, memory):
+    """Losing the last edge on re-ingest is the same leak as losing it on delete."""
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "before"}, _image_block()], "doc")
+    assert await _blob_exists(memory, bank_id, png)
+
+    await _retain(api_client, bank_id, "plain text now, no attachment", "doc")
+
+    assert await _attachment_hashes(memory, bank_id) == set()
+    assert not await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_without_a_shared_attachment_keeps_its_blob(api_client, memory):
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "one"}, _image_block()], "doc-a")
+    await _retain(api_client, bank_id, [{"type": "text", "text": "two"}, _image_block()], "doc-b")
+
+    await _retain(api_client, bank_id, "plain text now, no attachment", "doc-a")
+
+    assert await _attachment_hashes(memory, bank_id) == {png}
+    assert await _blob_exists(memory, bank_id, png)
+    assert await _edges(api_client, bank_id) == {("doc-b", short_attachment_id(png))}
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_with_the_same_attachment_keeps_its_blob(api_client, memory):
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "before"}, _image_block()], "doc")
+
+    await _retain(api_client, bank_id, [{"type": "text", "text": "after"}, _image_block()], "doc")
+
+    assert await _attachment_hashes(memory, bank_id) == {png}
+    assert await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
 async def test_deleting_the_last_referencing_document_reclaims_the_blob(api_client, memory):
     bank_id = f"life-{uuid.uuid4().hex[:8]}"
     png = compute_attachment_hash(PNG_BYTES)

@@ -5423,8 +5423,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # async path cannot carry megabytes of base64 through its
                 # operation row — so the only way a content policy can actually
                 # keep them out of the bank is to take them back out here.
-                # Nothing else would: reclaim is otherwise driven by document
-                # deletion, and a rejected retain never creates a document.
+                # Nothing else would: reclaim is otherwise driven by a document
+                # losing its edges, and a rejected retain never creates a document.
                 await self._discard_unreferenced_attachments(
                     bank_id, [info.short_id for info in attachment_info], request_context
                 )
@@ -5511,6 +5511,11 @@ class MemoryEngine(MemoryEngineInterface):
         explicit_doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
         has_shared_document = len(explicit_doc_ids) != len(set(explicit_doc_ids))
 
+        # What the documents being rewritten referenced before this retain: the
+        # edge rewrite drops any attachment the new text no longer shows, and
+        # only these hashes can have lost their last reference here.
+        previously_referenced = await self._document_attachment_hashes(bank_id, explicit_doc_ids)
+
         if not has_shared_document:
             # No document is shared, so distinct-document items may be packed and
             # token-split across sub-batches as before (the orchestrator keeps
@@ -5595,6 +5600,13 @@ class MemoryEngine(MemoryEngineInterface):
                 total_processed_content_tokens = merge_processed_content_tokens(
                     total_processed_content_tokens, group_outcome.processed_content_tokens
                 )
+
+        # Runs even for a cancelled run: the documents written before the
+        # cancellation have already rewritten their edges.
+        if previously_referenced:
+            backend = await self._get_backend()
+            async with backend.acquire() as conn:
+                await self._reclaim_orphaned_attachments(conn, bank_id, previously_referenced)
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
         # effects, mirroring the pre-grouping early return from the sub-batch loop.
@@ -6969,11 +6981,26 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
+    async def _document_attachment_hashes(self, bank_id: str, document_ids: "Sequence[str]") -> list[str]:
+        """The attachment hashes the given documents currently reference."""
+        if not document_ids:
+            return []
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT attachment_hash FROM {fq_table('document_attachments')} "
+                f"WHERE bank_id = $1 AND document_id = ANY($2::text[])",
+                bank_id,
+                list(dict.fromkeys(document_ids)),
+            )
+        return [row["attachment_hash"] for row in rows]
+
     async def _reclaim_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> None:
         """Drop attachment rows and blobs no document in the bank references any more.
 
-        Runs after a document's ``document_attachments`` rows have cascaded away,
-        so "is anything still referencing this?" is simply whether a row survives.
+        Runs after a document's ``document_attachments`` rows have cascaded away
+        (delete) or been rewritten (re-retain), so "is anything still referencing
+        this?" is simply whether a row survives.
         Content-addressing is what makes the check necessary: one blob can back
         ten documents, so a delete may reclaim nothing at all.
 
