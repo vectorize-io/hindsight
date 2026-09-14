@@ -214,9 +214,49 @@ class TestAbandonedWhileQueued:
             assert controller.stats()["recall"].in_flight == 1
         assert controller.stats()["recall"].admitted == 1
 
+    async def test_abandoned_waiter_leaves_queue_count_at_zero(self):
+        """The abandon path must decrement `queued` exactly once."""
+        from hindsight_api.api.admission import AdmissionAbandoned
+        from hindsight_api.cancellation import CancellationToken
+
+        controller = _controller(recall=LaneConfig(max_in_flight=1, max_wait_seconds=5.0))
+        token = CancellationToken()
+        token.cancel("gone")
+
+        with pytest.raises(AdmissionAbandoned):
+            async with controller.admit("recall", abandoned=token):
+                pass
+
+        stats = controller.stats()["recall"]
+        assert stats.queued == 0
+        assert stats.abandoned == 1
+
     def test_negative_disables_the_lane(self, monkeypatch):
         """0 means "derive", so the kill switch has to be a negative value."""
         from hindsight_api import config as config_mod
 
         monkeypatch.setattr("hindsight_api._thread_limits.available_cpu_count", lambda: 8)
         assert config_mod.admission_in_flight_for(-1, per_core=16, workers=1) == 0
+
+
+async def test_http_recall_refused_with_503_and_retry_after_when_lane_full(memory):
+    """End to end through the route dependency: a full lane answers 503 + Retry-After."""
+    import httpx
+
+    from hindsight_api.api import create_app
+
+    app = create_app(memory, initialize_memory=False)
+    controller = _controller(recall=LaneConfig(max_in_flight=1, max_wait_seconds=0.0))
+    app.state.admission = controller
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with controller.admit("recall"):
+            response = await client.post(
+                "/v1/default/banks/admission-test/memories/recall",
+                json={"query": "anything"},
+            )
+
+    assert response.status_code == 503
+    assert int(response.headers["retry-after"]) >= 1
+    assert controller.stats()["recall"].rejected == 1

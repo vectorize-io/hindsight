@@ -660,7 +660,8 @@ ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
 
 # Admission control. The engine's *_MAX_CONCURRENT caps limit how much runs at once
 # and let an unbounded queue form behind them; these bound how long a request may
-# WAIT before being refused with 503. Set a lane's MAX_IN_FLIGHT to 0 to disable it.
+# WAIT before being refused with 503. A lane's MAX_IN_FLIGHT of 0 derives the limit
+# from the CPU budget; a negative value disables the lane.
 ENV_ADMISSION_RECALL_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_RECALL_MAX_IN_FLIGHT"
 ENV_ADMISSION_RECALL_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_RECALL_MAX_WAIT_MS"
 ENV_ADMISSION_REFLECT_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_IN_FLIGHT"
@@ -1520,7 +1521,9 @@ DEFAULT_ADMISSION_RECALL_MAX_IN_FLIGHT = 0  # 0 = derive from cores; set to over
 # is persistently over capacity rather than spiky.
 DEFAULT_ADMISSION_RECALL_MAX_WAIT_MS = 30000
 # Reflect is LLM-bound: seconds of wall time, little CPU, and already capped
-# downstream by the per-operation LLM semaphore. Fewer slots, longer patience.
+# downstream by the per-operation LLM semaphore, so the admission lane only needs to
+# stop an unbounded queue forming in front of it. A shorter wait than recall: a
+# reflect already takes seconds, so queueing another 30s on top rarely helps anyone.
 DEFAULT_ADMISSION_REFLECT_IN_FLIGHT_PER_CORE = 16
 DEFAULT_ADMISSION_REFLECT_MAX_IN_FLIGHT = 0
 DEFAULT_ADMISSION_REFLECT_MAX_WAIT_MS = 5000

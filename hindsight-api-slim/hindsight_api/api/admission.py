@@ -90,7 +90,6 @@ class AdmissionRejected(Exception):
         return max(1, round(self.waited_seconds)) if self.waited_seconds else 1
 
 
-@dataclass
 class AdmissionAbandoned(Exception):
     """The client disconnected while its request was queued for a permit.
 
@@ -218,7 +217,7 @@ class AdmissionController:
             await _acquire_unless_abandoned(semaphore, timeout, abandoned)
         except _ClientGone:
             waited = time.monotonic() - started
-            stats.queued -= 1
+            # `queued` is decremented once, in the `finally` below.
             stats.abandoned += 1
             # Worth logging on its own: callers giving up while queued is the signal
             # that the deadline is longer than they are willing to wait.

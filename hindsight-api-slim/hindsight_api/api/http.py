@@ -5475,7 +5475,6 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
         _enabled: None = Depends(_require_dry_run_enabled),
         _precheck: None = Depends(precheck_for(PrecheckOperation.DRY_RUN_EXTRACT)),
-        _admit: None = Depends(admit_for(PrecheckOperation.DRY_RUN_EXTRACT)),
     ):
         try:
             override_fields = (
@@ -6542,7 +6541,6 @@ def _register_routes(app: FastAPI):
         body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_CREATE)),
-        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_CREATE)),
     ):
         """Create a mental model (async - returns operation_id)."""
         try:
@@ -6588,7 +6586,6 @@ def _register_routes(app: FastAPI):
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
-        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
         """Refresh a mental model by re-running its source query (async)."""
         try:
@@ -6635,7 +6632,6 @@ def _register_routes(app: FastAPI):
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
-        _admit: None = Depends(admit_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
         """Preview a mental model refresh without persisting anything."""
         try:
@@ -9329,7 +9325,6 @@ def _register_routes(app: FastAPI):
         request: str = Form(..., description="JSON string with FileRetainRequest model"),
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.FILES_RETAIN)),
-        _admit: None = Depends(admit_for(PrecheckOperation.FILES_RETAIN)),
     ):
         """Upload and convert files to memories."""
         from hindsight_api.config import get_config
