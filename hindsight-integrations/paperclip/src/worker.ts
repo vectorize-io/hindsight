@@ -29,6 +29,7 @@ interface PluginConfig {
   dynamicBankId?: boolean;
   bankGranularity?: Array<"company" | "agent" | "user">;
   recallBudget?: "low" | "mid" | "high";
+  requestTimeoutMs?: number;
   autoRetain?: boolean;
   enabledAgentIds?: string[];
 }
@@ -121,7 +122,7 @@ const plugin = definePlugin({
 
       try {
         const apiKey = await resolveApiKey(ctx, config);
-        const client = new HindsightClient(config.hindsightApiUrl, apiKey);
+        const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
         const bankId = deriveBankId({ companyId, agentId, userId }, config);
 
         const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
@@ -131,6 +132,12 @@ const plugin = definePlugin({
           await ctx.state.set(
             { scopeKind: "run", scopeId: runId, stateKey: "recalled-memories" },
             memories
+          );
+          // Remember which query produced the cache, so the recall tool only
+          // reuses it for that same query.
+          await ctx.state.set(
+            { scopeKind: "run", scopeId: runId, stateKey: "recalled-query" },
+            query
           );
           ctx.logger.info("Recalled memories for run", {
             runId,
@@ -221,7 +228,7 @@ const plugin = definePlugin({
 
       try {
         const apiKey = await resolveApiKey(ctx, config);
-        const client = new HindsightClient(config.hindsightApiUrl, apiKey);
+        const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
         const bankId = deriveBankId({ companyId, agentId: bankAgentId, userId }, config);
         await client.retain(bankId, body, commentId, {
           agentId: bankAgentId,
@@ -293,20 +300,32 @@ const plugin = definePlugin({
           config
         );
 
-        // Return cached memories from run start if available
+        // Reuse the run-start recall only when the agent asks the same query;
+        // any other query must hit Hindsight, otherwise mid-run lookups would
+        // always get the issue-level memories back.
         const cached = await ctx.state.get({
           scopeKind: "run",
           scopeId: runCtx.runId,
           stateKey: "recalled-memories",
         });
-        if (cached && typeof cached === "string") {
+        const cachedQuery = await ctx.state.get({
+          scopeKind: "run",
+          scopeId: runCtx.runId,
+          stateKey: "recalled-query",
+        });
+        if (
+          cached &&
+          typeof cached === "string" &&
+          typeof cachedQuery === "string" &&
+          cachedQuery.trim() === query.trim()
+        ) {
           return { content: cached };
         }
 
         // Live recall fallback
         try {
           const apiKey = await resolveApiKey(ctx, config);
-          const client = new HindsightClient(config.hindsightApiUrl, apiKey);
+          const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
           const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
           const memories = formatMemories(response.results);
           return { content: memories || "No relevant memories found." };
@@ -358,7 +377,7 @@ const plugin = definePlugin({
 
         try {
           const apiKey = await resolveApiKey(ctx, config);
-          const client = new HindsightClient(config.hindsightApiUrl, apiKey);
+          const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
           await client.retain(bankId, content, undefined, {
             agentId: runCtx.agentId,
             companyId: runCtx.companyId,

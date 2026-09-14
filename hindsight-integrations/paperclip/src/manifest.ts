@@ -68,6 +68,14 @@ const manifest: PaperclipPluginManifestV1 = {
         enum: ["low", "mid", "high"],
         default: "mid",
       },
+      requestTimeoutMs: {
+        type: "number",
+        title: "Request Timeout (ms)",
+        description:
+          "Timeout for each request to Hindsight. Raise it for self-hosted instances where recall on long issue descriptions takes longer than the default.",
+        minimum: 1000,
+        default: 15000,
+      },
       autoRetain: {
         type: "boolean",
         title: "Auto-retain on Run Finished",
