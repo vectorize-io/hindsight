@@ -216,6 +216,57 @@ class TestServerModuleExtensionLoading:
         assert captured_tenant_ext[0] is not None, "Tenant extension should be captured"
         assert captured_tenant_ext[0]._context_set, "set_context was not called on tenant extension"
 
+    def test_server_sets_extension_context_on_operation_validator(self, monkeypatch):
+        """
+        Verify that server.py sets the extension context on the operation validator.
+
+        A validator whose hooks need the engine (reading from the database during validation, for
+        example) has no other way to reach it, and ``Extension.context`` raises RuntimeError rather
+        than returning None, so a validator that was never given one cannot recover at runtime.
+        """
+        monkeypatch.setenv(
+            "HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION",
+            "tests.test_server_module:MockOperationValidator",
+        )
+
+        _clean_server_module()
+
+        context_set_calls = []
+        captured_validator = [None]
+
+        def capture_memory_engine(*args, **kwargs):
+            captured_validator[0] = kwargs.get("operation_validator")
+            return MagicMock()
+
+        def capture_context(*args, **kwargs):
+            ctx = MagicMock()
+            context_set_calls.append(ctx)
+            return ctx
+
+        with (
+            patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+            patch("hindsight_api.extensions.DefaultExtensionContext", side_effect=capture_context),
+        ):
+            mock_config = MagicMock()
+            mock_config.mcp_enabled = False
+            mock_config.run_migrations_on_startup = False
+            mock_config.database_url = "postgresql://test:***@localhost/test"
+            # `hindsight_api.profiling.install()` runs at server.py import and reads
+            # `config.profile`; a MagicMock there is truthy and reaches json.loads. Pinned so
+            # this test does not depend on whether profiling was imported before the patch.
+            mock_config.profile = None
+            mock_get_config.return_value = mock_config
+            mock_create_app.return_value = MagicMock()
+
+            import hindsight_api.server
+
+        # Verify context was created and set on the validator too
+        assert len(context_set_calls) == 1, "DefaultExtensionContext should be created"
+        assert captured_validator[0] is not None, "Operation validator should be captured"
+        assert captured_validator[0]._context_set, "set_context was not called on operation validator extension"
+
     def test_server_works_without_extensions(self, monkeypatch):
         """
         Verify that server.py works correctly when no extensions are configured.
@@ -292,6 +343,10 @@ class MockOperationValidator(OperationValidatorExtension):
 
     def __init__(self, config: dict):
         super().__init__(config)
+        self._context_set = False
+
+    def set_context(self, context) -> None:
+        self._context_set = True
 
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         return ValidationResult.accept()

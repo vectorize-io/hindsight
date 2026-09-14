@@ -351,14 +351,24 @@ def main():
             run_migrations=config.run_migrations_on_startup,
         )
 
-        # Set extension context on tenant extension (needed for schema provisioning)
-        if tenant_extension:
+        # Set the extension context on every extension that needs system access: tenant
+        # extensions for schema provisioning, operation validators for anything their hooks
+        # read from the engine. The context is built once and shared, and only when an
+        # extension actually needs it — `Extension.context` raises RuntimeError rather than
+        # returning None, so an extension that was never given one cannot recover at runtime.
+        if tenant_extension or operation_validator:
+            import logging
+
             extension_context = DefaultExtensionContext(
                 database_url=config.database_url,
                 memory_engine=_memory,
             )
-            tenant_extension.set_context(extension_context)
-            logging.info("Extension context set on tenant extension")
+            if tenant_extension:
+                tenant_extension.set_context(extension_context)
+                logging.info("Extension context set on tenant extension")
+            if operation_validator:
+                operation_validator.set_context(extension_context)
+                logging.info("Extension context set on operation validator extension")
 
         # Create FastAPI app
         app = create_app(
