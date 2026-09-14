@@ -411,8 +411,9 @@ const opencode: HarnessInstaller = {
 };
 
 /**
- * opencode v2 — the `opencode2` binary (npm `@opencode/cli`), which installs ALONGSIDE v1
- * rather than replacing it.
+ * opencode v2: the `opencode2` alias published by npm `@opencode/cli`. The stable package also
+ * publishes `opencode`, so a normal global install conflicts with v1's bin; the distinct alias lets
+ * installations that expose both commands target the v2 harness explicitly.
  *
  * Detection is the binary only, deliberately NOT `~/.config/opencode`: that directory is v1's too,
  * so keying on it would make `install` (which wires every detected agent) claim opencode2 on every
