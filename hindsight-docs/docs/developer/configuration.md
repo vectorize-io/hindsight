@@ -2019,7 +2019,7 @@ Files uploaded via the file retain API are stored in an object storage backend b
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_FILE_STORAGE_TYPE` | Storage backend: `native`, `s3`, `gcs`, or `azure` | `native` |
-| `HINDSIGHT_API_FILE_STORAGE_EXTENSION` | `module.path:ClassName` naming your own `FileStorage` implementation, used instead of the built-in backends. Every other `HINDSIGHT_API_FILE_STORAGE_*` variable is passed to it as a lowercased config dict. | unset |
+| `HINDSIGHT_API_FILE_STORAGE_EXTENSION` | `module.path:ClassName` naming your own `FileStorage` implementation, used instead of the built-in backends. Every other `HINDSIGHT_API_FILE_STORAGE_*` variable is passed to it as a lowercased config dict. Implement `delete_prefix` too, or deleting a bank leaves that bank's stored files in your backend. | unset |
 
 #### Native (PostgreSQL)
 

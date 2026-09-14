@@ -31,11 +31,13 @@ logger = logging.getLogger(__name__)
 def attachment_storage_key(bank_id: str, attachment_hash: str) -> str:
     """Where an attachment's bytes live, derived entirely from its content hash.
 
-    Mirrors the ``banks/{bank_id}/...`` layout the file-retain and export paths
-    already use. Bank-scoped rather than global so a bank's blobs can be swept as
-    a unit and one bank can never read another's bytes by guessing a key.
+    Under :func:`~hindsight_api.engine.storage.bank_storage_prefix`, like every
+    other file a bank stores, so deleting the bank sweeps it and two tenants
+    retaining the same bytes into same-named banks never share one blob.
     """
-    return f"banks/{bank_id}/attachments/sha256-{attachment_hash}"
+    from ..storage import bank_storage_prefix
+
+    return f"{bank_storage_prefix(bank_id)}attachments/sha256-{attachment_hash}"
 
 
 @dataclass(frozen=True)

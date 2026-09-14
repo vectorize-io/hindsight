@@ -19,7 +19,7 @@ from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -8447,15 +8447,21 @@ def _register_routes(app: FastAPI):
                     "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
                 )
             # Only bank-scoped keys are downloadable. Parse the bank id out of the
-            # "banks/{bank_id}/..." key (request validation, so it belongs here); the
-            # engine method then authorizes the caller against that bank and retrieves
-            # the file, so a caller can't fetch another tenant's or bank's archive
-            # (IDOR guard). The unguessable uuid in the key is defence in depth, not
-            # the access control.
+            # "tenants/{schema}/banks/{bank_id}/..." key — or the "banks/{bank_id}/..."
+            # layout written before keys carried the tenant (request validation, so it
+            # belongs here); the engine method then authorizes the caller against that
+            # bank, in their own tenant, and retrieves the file, so a caller can't fetch
+            # another tenant's or bank's archive (IDOR guard). The unguessable uuid in
+            # the key is defence in depth, not the access control.
             parts = key.split("/")
-            if ".." in parts or len(parts) < 2 or parts[0] != "banks" or not parts[1]:
+            if ".." in parts:
                 raise HTTPException(status_code=404, detail="File not found")
-            bank_id = parts[1]
+            if len(parts) > 4 and parts[0] == "tenants" and parts[2] == "banks" and parts[3]:
+                bank_id = unquote(parts[3])
+            elif len(parts) > 2 and parts[0] == "banks" and parts[1]:
+                bank_id = parts[1]
+            else:
+                raise HTTPException(status_code=404, detail="File not found")
 
             data = await app.state.memory.retrieve_bank_file(bank_id, key, request_context)
             if data is None:

@@ -1480,6 +1480,7 @@ logger = logging.getLogger(__name__)
 _MISSING_FROM_INDEX = object()
 
 from .db_utils import acquire_with_retry, retry_with_backoff, use_or_acquire
+from .storage import bank_storage_prefix
 
 
 def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
@@ -2883,7 +2884,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # A fresh uuid per export keeps concurrent/repeat exports of the same bank
         # from clobbering each other's archive.
-        storage_key = f"banks/{bank_id}/exports/{uuid.uuid4()}/transfer.zip"
+        storage_key = f"{bank_storage_prefix(bank_id)}exports/{uuid.uuid4()}/transfer.zip"
         await self._file_storage.store(
             file_data=archive_bytes,
             key=storage_key,
@@ -5511,6 +5512,11 @@ class MemoryEngine(MemoryEngineInterface):
         explicit_doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
         has_shared_document = len(explicit_doc_ids) != len(set(explicit_doc_ids))
 
+        # The attachments these documents referenced before this retain rewrites them.
+        # One the new text drops loses its edge on the rewrite, and unless it is
+        # reclaimed afterwards its row and bytes outlive every reference to them.
+        previous_attachments = await self._document_attachment_hashes(bank_id, explicit_doc_ids)
+
         if not has_shared_document:
             # No document is shared, so distinct-document items may be packed and
             # token-split across sub-batches as before (the orchestrator keeps
@@ -5604,6 +5610,10 @@ class MemoryEngine(MemoryEngineInterface):
             return result
 
         await self._write_retain_outcome_metadata(operation_id, result)
+
+        if previous_attachments:
+            async with (await self._get_backend()).acquire() as conn:
+                await self._reclaim_orphaned_attachments(conn, bank_id, previous_attachments)
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
@@ -6554,6 +6564,12 @@ class MemoryEngine(MemoryEngineInterface):
         profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         if profile is None:
             return None
+        # The key must sit under this bank in the caller's own tenant: object
+        # stores share one bucket across tenants, so authorizing the bank id alone
+        # would let a same-named bank in another tenant read this one's files.
+        # The tenant-less layout written before keys carried one stays readable.
+        if not storage_key.startswith((bank_storage_prefix(bank_id), f"banks/{bank_id}/")):
+            return None
         await self._get_backend()
         try:
             return await self._file_storage.retrieve(storage_key)
@@ -6972,15 +6988,52 @@ class MemoryEngine(MemoryEngineInterface):
     async def _reclaim_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> None:
         """Drop attachment rows and blobs no document in the bank references any more.
 
-        Runs after a document's ``document_attachments`` rows have cascaded away,
-        so "is anything still referencing this?" is simply whether a row survives.
+        For a caller outside a transaction. Inside one, drop the rows with
+        :meth:`_drop_orphaned_attachments` and delete the blobs after the commit,
+        or a rollback restores rows whose bytes are already gone.
+        """
+        await self._delete_files_quietly(await self._drop_orphaned_attachments(conn, bank_id, attachment_hashes))
+
+    async def _delete_files_quietly(self, keys: "Sequence[str]" = (), prefixes: "Sequence[str]" = ()) -> None:
+        """Best-effort delete of stored files whose rows are already gone.
+
+        The row is the authority — once it is gone the file is unreachable — and a
+        file left behind by a failed delete is wasted bytes, not a correctness
+        problem, so a storage error must not fail an otherwise good deletion.
+        """
+        for prefix in prefixes:
+            try:
+                await self._file_storage.delete_prefix(prefix)
+            except Exception:
+                logger.warning("Could not delete stored files under %s; rows are gone", prefix, exc_info=True)
+        for key in keys:
+            try:
+                await self._file_storage.delete(key)
+            except Exception:
+                logger.warning("Could not delete stored file %s; row is gone", key, exc_info=True)
+
+    async def _document_attachment_hashes(self, bank_id: str, document_ids: "Sequence[str]") -> list[str]:
+        """The attachments these documents currently reference, as candidates for a later reclaim."""
+        from .memories import get_memories
+
+        if not document_ids or get_memories().store_owned_for(bank_id):
+            return []
+        async with (await self._get_backend()).acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT attachment_hash FROM {fq_table('document_attachments')} "
+                f"WHERE bank_id = $1 AND document_id = ANY($2::text[])",
+                bank_id,
+                list(dict.fromkeys(document_ids)),
+            )
+        return [row["attachment_hash"] for row in rows]
+
+    async def _drop_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> list[str]:
+        """Drop the attachment rows no document in the bank references; return their storage keys.
+
+        Runs after a document's ``document_attachments`` rows have gone, so "is
+        anything still referencing this?" is simply whether a row survives.
         Content-addressing is what makes the check necessary: one blob can back
         ten documents, so a delete may reclaim nothing at all.
-
-        Best-effort on the storage side. The row is the authority — once it is
-        gone the attachment is unreachable — and a blob left behind by a failed
-        delete is wasted bytes, not a correctness problem, so a storage error must
-        not fail an otherwise good document deletion.
 
         Never for a store-owned bank. The check above is only sound when every
         document that references an attachment has a ``document_attachments``
@@ -6993,11 +7046,11 @@ class MemoryEngine(MemoryEngineInterface):
         reference source the store owns.
         """
         if not attachment_hashes:
-            return
+            return []
         from .memories import get_memories
 
         if get_memories().store_owned_for(bank_id):
-            return
+            return []
         orphans = await conn.fetch(
             f"""
             SELECT ba.attachment_hash, ba.storage_key
@@ -7013,17 +7066,13 @@ class MemoryEngine(MemoryEngineInterface):
             list(dict.fromkeys(attachment_hashes)),
         )
         if not orphans:
-            return
+            return []
         await conn.execute(
             f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
             bank_id,
             [row["attachment_hash"] for row in orphans],
         )
-        for row in orphans:
-            try:
-                await self._file_storage.delete(row["storage_key"])
-            except Exception:
-                logger.warning("Could not delete attachment blob %s; row is gone", row["storage_key"], exc_info=True)
+        return [row["storage_key"] for row in orphans]
 
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured vision LLM cannot read.
@@ -7192,7 +7241,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Stash the archive in file storage and reference it by key in the task
         # payload, rather than base64-ing megabytes into the operation JSON.
-        storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
+        storage_key = f"{bank_storage_prefix(bank_id)}imports/{uuid.uuid4()}/transfer.zip"
         await self._file_storage.store(
             file_data=archive_bytes,
             key=storage_key,
@@ -9657,6 +9706,13 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     document_id,
                 )
+                # The uploaded original a file retain kept, if any. Only this row
+                # knows its key, so it must be read before the row goes.
+                file_storage_key = await conn.fetchval(
+                    f"SELECT file_storage_key FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    document_id,
+                    bank_id,
+                )
 
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
@@ -9708,15 +9764,21 @@ class MemoryEngine(MemoryEngineInterface):
                 if unit_ids:
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
 
+                # Rows here, files after the commit below.
+                orphaned_files: list[str] = []
                 if deleted and referenced_attachments:
-                    await self._reclaim_orphaned_attachments(
+                    orphaned_files = await self._drop_orphaned_attachments(
                         conn, bank_id, [row["attachment_hash"] for row in referenced_attachments]
                     )
+                if deleted and file_storage_key:
+                    orphaned_files.append(file_storage_key)
 
                 result = {
                     "document_deleted": 1 if deleted else 0,
                     "memory_units_deleted": units_count if deleted else 0,
                 }
+
+        await self._delete_files_quietly(orphaned_files)
 
         # Drop any cached stats for this bank — deleting the document changed
         # the document count and (via cascade) the memory-unit/link counts
@@ -10455,6 +10517,7 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         result: dict[str, int] = {}
         bank_internal_id: str | None = None
+        legacy_files: list[str] = []
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
@@ -10559,8 +10622,27 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             entities_count = int(_ents.get("total") or 0)
 
+                        # Files written before keys carried the tenant sit outside the bank's
+                        # prefix, so the sweep after the commit cannot find them: only these
+                        # rows know their keys. Read before the rows go.
+                        # ponytail: one unbatched list; only pre-prefix banks have any.
+                        legacy_files = [
+                            row["storage_key"]
+                            for row in await conn.fetch(
+                                f"SELECT storage_key FROM {fq_table('attachments')} "
+                                f"WHERE bank_id = $1 AND storage_key NOT LIKE 'tenants/%' "
+                                f"UNION ALL SELECT file_storage_key FROM {fq_table('documents')} "
+                                f"WHERE bank_id = $1 AND file_storage_key IS NOT NULL "
+                                f"AND file_storage_key NOT LIKE 'tenants/%'",
+                                bank_id,
+                            )
+                        ]
+
                         # Delete documents (cascades to chunks)
                         await conn.execute(f"DELETE FROM {fq_table('documents')} WHERE bank_id = $1", bank_id)
+                        # Attachments hang off the bank, not a document, so clearing a bank
+                        # that stays would otherwise keep every one of them.
+                        await conn.execute(f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1", bank_id)
 
                         # Delete memory units (cascades to unit_entities, memory_links)
                         await conn.execute(f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id)
@@ -10637,6 +10719,16 @@ class MemoryEngine(MemoryEngineInterface):
                     max_retries=7,
                     max_delay=10.0,
                 )
+
+        # The bank's stored files, now that the rows naming them are committed away. A
+        # deleted bank takes its whole prefix (exports and imports included); a cleared
+        # one keeps those, since its operations still reference them.
+        if not fact_type:
+            prefix = bank_storage_prefix(bank_id)
+            await self._delete_files_quietly(
+                legacy_files,
+                prefixes=[prefix] if delete_bank_profile else [f"{prefix}attachments/", f"{prefix}files/"],
+            )
 
         # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
         # above was a no-op on its data — it must be told to drop the bank's memories too, or
@@ -21272,7 +21364,7 @@ class MemoryEngine(MemoryEngineInterface):
             # first task left the sibling task retrieving a missing key ("File
             # not found") and failing deterministically on every retry (#3226).
             # The unguessable uuid segment mirrors the export path convention.
-            storage_key = f"banks/{bank_id}/files/{uuid.uuid4()}/{file.filename}"
+            storage_key = f"{bank_storage_prefix(bank_id)}files/{uuid.uuid4()}/{file.filename}"
 
             # Store file in object storage
             await self._file_storage.store(

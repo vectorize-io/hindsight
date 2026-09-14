@@ -107,6 +107,90 @@ async def test_re_ingesting_without_an_attachment_drops_its_edge(api_client, mem
 
 
 @pytest.mark.asyncio
+async def test_re_ingesting_without_an_attachment_reclaims_it(api_client, memory):
+    """#4364: the edge goes on the rewrite, so the row and bytes must go with it."""
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "before"}, _image_block()], "doc")
+
+    await _retain(api_client, bank_id, "plain text now, no attachment", "doc")
+
+    assert await _attachment_hashes(memory, bank_id) == set()
+    assert not await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_keeps_an_attachment_another_document_still_references(api_client, memory):
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "one"}, _image_block()], "doc-a")
+    await _retain(api_client, bank_id, [{"type": "text", "text": "two"}, _image_block()], "doc-b")
+
+    await _retain(api_client, bank_id, "doc-a dropped its image", "doc-a")
+
+    assert await _attachment_hashes(memory, bank_id) == {png}
+    assert await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_bank_deletes_its_attachment_blobs(api_client, memory):
+    """#4365: the rows cascade with the bank, and the bytes must not outlive them."""
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "only"}, _image_block()], "doc")
+    assert await _blob_exists(memory, bank_id, png)
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_id}")
+    assert response.status_code == 200, response.text
+
+    assert not await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_bank_reclaims_its_attachments(api_client, memory):
+    """A cleared bank stays, and `attachments` hangs off the bank, so nothing cascades."""
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "only"}, _image_block()], "doc")
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_id}/memories")
+    assert response.status_code == 200, response.text
+
+    assert await _attachment_hashes(memory, bank_id) == set()
+    assert not await _blob_exists(memory, bank_id, png)
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_bank_deletes_blobs_stored_under_the_tenantless_layout(api_client, memory):
+    """Rows written before keys carried the tenant sit outside the swept prefix."""
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "only"}, _image_block()], "doc")
+    legacy_key = f"banks/{bank_id}/attachments/sha256-{png}"
+    await memory._file_storage.store(file_data=PNG_BYTES, key=legacy_key)
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:
+        await conn.execute("UPDATE attachments SET storage_key = $2 WHERE bank_id = $1", bank_id, legacy_key)
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_id}")
+    assert response.status_code == 200, response.text
+
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(legacy_key)
+
+
+@pytest.mark.asyncio
+async def test_attachment_keys_are_scoped_to_the_tenant(memory):
+    """Object stores share one bucket across tenant schemas; the key must say whose it is."""
+    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.engine.retain.attachment_store import attachment_storage_key
+
+    assert attachment_storage_key("b", "abc") == f"tenants/{get_current_schema()}/banks/b/attachments/sha256-abc"
+    # A bank id holding "/" must not nest under another bank's prefix.
+    assert attachment_storage_key("a/b", "abc").startswith(f"tenants/{get_current_schema()}/banks/a%2Fb/")
+
+
+@pytest.mark.asyncio
 async def test_deleting_the_last_referencing_document_reclaims_the_blob(api_client, memory):
     bank_id = f"life-{uuid.uuid4().hex[:8]}"
     png = compute_attachment_hash(PNG_BYTES)

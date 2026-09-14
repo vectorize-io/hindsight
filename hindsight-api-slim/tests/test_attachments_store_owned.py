@@ -278,7 +278,7 @@ async def test_reclaim_never_runs_for_a_store_owned_bank(monkeypatch):
     reclaiming would delete a shared image. It must leave every attachment in place."""
     monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=True))
 
-    await MemoryEngine._reclaim_orphaned_attachments(_NoFileDeletes(), _NoSqlConn(), "bank-1", [SHOT_HASH])
+    assert await MemoryEngine._drop_orphaned_attachments(_NoFileDeletes(), _NoSqlConn(), "bank-1", [SHOT_HASH]) == []
 
 
 @pytest.mark.asyncio
@@ -293,7 +293,7 @@ async def test_reclaim_still_checks_references_for_a_sql_bank(monkeypatch):
             asked.append(list(hashes))
             return []  # still referenced: nothing to reclaim
 
-    await MemoryEngine._reclaim_orphaned_attachments(_NoFileDeletes(), _Conn(), "bank-1", [SHOT_HASH])
+    assert await MemoryEngine._drop_orphaned_attachments(_NoFileDeletes(), _Conn(), "bank-1", [SHOT_HASH]) == []
 
     assert asked == [[SHOT_HASH]]
 

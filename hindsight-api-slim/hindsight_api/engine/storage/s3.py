@@ -6,7 +6,7 @@ from datetime import timedelta
 import obstore as obs
 from obstore.store import S3Store
 
-from .base import FileStorage
+from .base import FileStorage, delete_object_store_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,9 @@ class S3FileStorage(FileStorage):
 
     async def delete(self, key: str) -> None:
         await obs.delete_async(self._store, key)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        return await delete_object_store_prefix(self._store, prefix)
 
     async def exists(self, key: str) -> bool:
         try:

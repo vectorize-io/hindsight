@@ -1,11 +1,26 @@
 """File storage backends for uploaded files."""
 
 from collections.abc import Callable
+from urllib.parse import quote
 
 from .base import FileStorage
 from .postgresql import PostgreSQLFileStorage
 
-__all__ = ["FileStorage", "PostgreSQLFileStorage", "create_file_storage"]
+__all__ = ["FileStorage", "PostgreSQLFileStorage", "bank_storage_prefix", "create_file_storage"]
+
+
+def bank_storage_prefix(bank_id: str) -> str:
+    """The key prefix every file a bank stores lives under, in the current tenant.
+
+    The tenant comes first because object-store backends share one bucket
+    across every tenant schema: without it two tenants' banks with the same id
+    wrote the same keys, and a content-addressed attachment one of them deleted
+    was the other's too. Both segments are percent-encoded so a bank id holding
+    a ``/`` cannot nest under another bank's prefix and be swept with it.
+    """
+    from ..memory_engine import get_current_schema
+
+    return f"tenants/{quote(get_current_schema(), safe='')}/banks/{quote(bank_id, safe='')}/"
 
 
 def create_file_storage(

@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import quote
 
 from ..db_utils import acquire_with_retry
 from ..schema import fq_table_explicit as fq_table
@@ -117,6 +118,18 @@ class PostgreSQLFileStorage(FileStorage):
             if result == "DELETE 0":
                 logger.warning(f"Attempted to delete non-existent file: {key}")
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every file under ``prefix`` in PostgreSQL."""
+        pool = self._pool_getter()
+        # Escape LIKE's wildcards: keys carry percent-encoded segments.
+        pattern = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        async with acquire_with_retry(pool) as conn:
+            result = await conn.execute(
+                f"DELETE FROM {fq_table('file_storage', self._schema)} WHERE storage_key LIKE $1 ESCAPE '!'",
+                pattern,
+            )
+        return int(result.split()[-1]) if isinstance(result, str) else 0
+
     async def exists(self, key: str) -> bool:
         """Check if file exists in PostgreSQL."""
         pool = self._pool_getter()
@@ -142,4 +155,6 @@ class PostgreSQLFileStorage(FileStorage):
         """
         # Return API path for download endpoint
         # (expires_in ignored for database storage - auth handled at API level)
-        return f"/v1/default/files/download/{key}"
+        # Quoted so a key's own percent-encoded segments survive the server's
+        # path decoding and arrive back as the stored key.
+        return f"/v1/default/files/download/{quote(key)}"

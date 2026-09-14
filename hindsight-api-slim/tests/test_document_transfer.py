@@ -1587,7 +1587,7 @@ async def test_http_export_import_endpoints(api_client, memory, request_context)
         export_meta = export_status.json()["result_metadata"]
         assert export_meta["byte_size"] > 0
         download_url = export_meta["download_url"]
-        assert download_url.startswith("/v1/default/files/download/banks/")
+        assert download_url.startswith("/v1/default/files/download/tenants/")
 
         # Download the finished archive through the download route.
         download = await api_client.get(download_url)
@@ -1837,7 +1837,7 @@ async def test_async_export_roundtrip(memory, request_context):
         await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
 
         meta, archive = await _export_async(memory, src, request_context)
-        assert meta["storage_key"].startswith(f"banks/{src}/exports/")
+        assert meta["storage_key"].startswith(f"tenants/public/banks/{src}/exports/")
         assert meta["download_url"] == f"/v1/default/files/download/{meta['storage_key']}"
         assert meta["byte_size"] == len(archive)
         assert meta["filename"] == f"{src}-documents.zip"
