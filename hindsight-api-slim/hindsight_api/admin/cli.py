@@ -1,7 +1,7 @@
 """PostgreSQL-only admin utilities (backup, restore, migration, worker management).
 
 Not supported on Oracle backends. Uses asyncpg.connect() directly, binary COPY,
-TRUNCATE CASCADE, and REFRESH MATERIALIZED VIEW — all inherently PG-specific.
+and TRUNCATE CASCADE — all inherently PG-specific.
 """
 
 import asyncio
@@ -456,10 +456,6 @@ async def _restore(
                         source=buffer,
                         format="binary",
                     )
-
-                # Refresh materialized view
-                typer.echo("  Refreshing materialized views...")
-                await conn.execute(f"REFRESH MATERIALIZED VIEW {_fq_table('memory_units_bm25', schema)}")
 
                 typer.echo("  Synchronizing identity sequences...")
                 await _sync_owned_sequences(conn, schema, backup_tables)
