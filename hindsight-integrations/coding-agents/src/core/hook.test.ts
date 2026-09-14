@@ -290,8 +290,8 @@ describe("buildHookOutput", () => {
       expect(t1.context).toContain("<hindsight_memory>");
       expect(t1.context).toContain("- Upload retries (kp-1): 200ms jitter window");
       expect(t1.context).toContain("hindsight_read_knowledge_page");
-      expect(t1.notice).toContain("reflect unavailable — fell back to 1 knowledge page ");
-      expect(t1.notice).not.toContain("no memory this turn");
+      // The turn got memory, so it stays silent — the details live in the diag trail.
+      expect(t1.notice).toBeUndefined();
 
       const t2 = await buildHookOutput(args);
       expect(client.reflect).toHaveBeenCalledTimes(1);
@@ -326,7 +326,7 @@ describe("buildHookOutput", () => {
       });
       expect(out.context).toContain("consolidated observations");
       expect(out.context).toContain("- Retries back off exponentially.\n- Tokens rotate daily.");
-      expect(out.notice).toContain("fell back to 2 observations");
+      expect(out.notice).toBeUndefined();
     });
 
     it("a failing page search still falls through to observations", async () => {

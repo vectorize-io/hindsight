@@ -99,23 +99,17 @@ const HOOK_FALLBACK_BUDGET_MS = 7_000;
 const FALLBACK_PAGE_LIMIT = 3;
 const FALLBACK_RECALL_MAX_TOKENS = 2_000;
 
-/** What the reflect fallback produced: the memory body to inject and where it came from. */
-interface FallbackResult {
-  memory: string;
-  source: "knowledge_pages" | "observations";
-  count: number;
-}
-
 /**
  * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
  * curated knowledge pages first (search), and only when none match fall back to a raw recall
- * over consolidated observations. Undefined when both came back empty or failed. Never throws.
+ * over consolidated observations. Returns the memory body to inject, or undefined when both came
+ * back empty or failed. Never throws.
  */
 async function reflectFallback(
   harness: string,
   prompt: string,
   client: HookClient
-): Promise<FallbackResult | undefined> {
+): Promise<string | undefined> {
   const deadline = Date.now() + HOOK_FALLBACK_BUDGET_MS;
   const remaining = () => Math.max(deadline - Date.now(), 1);
   // The search query rides in a GET query string; the goal's opening carries its keywords.
@@ -125,9 +119,7 @@ async function reflectFallback(
   try {
     const hits = await client.searchKnowledgePages(query, FALLBACK_PAGE_LIMIT, remaining());
     diag(harness, "reflect_fallback_pages", { ms: Date.now() - t0, count: hits.length });
-    if (hits.length) {
-      return { memory: formatPageFallback(hits), source: "knowledge_pages", count: hits.length };
-    }
+    if (hits.length) return formatPageFallback(hits);
   } catch (e) {
     diag(harness, "reflect_fallback_pages_failed", {
       ms: Date.now() - t0,
@@ -145,13 +137,7 @@ async function reflectFallback(
       ms: Date.now() - t0,
       count: observations.length,
     });
-    if (observations.length) {
-      return {
-        memory: formatObservationFallback(observations),
-        source: "observations",
-        count: observations.length,
-      };
-    }
+    if (observations.length) return formatObservationFallback(observations);
   } catch (e) {
     diag(harness, "reflect_fallback_observations_failed", {
       ms: Date.now() - t0,
@@ -196,7 +182,7 @@ export async function buildHookOutput(args: {
   // failure would tell the user the plugin broke on exactly the sessions where it did not.
   let reflectFailed = false;
   // Set when reflect timed out / 5xx'd and a retrieval-only fallback supplied the memory instead.
-  let fallback: FallbackResult | undefined;
+  let fallback: string | undefined;
   const deferInitialReflect = cached.deferInitialReflect === true;
   if (deferInitialReflect) {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
@@ -239,7 +225,7 @@ export async function buildHookOutput(args: {
       if (e instanceof ReflectError && e.fallbackEligible) {
         fallback = await reflectFallback(harness, prompt, client);
         // The fallback body is cached exactly like a reflect answer: injected once, not retried.
-        if (fallback) reflectAnswer = fallback.memory;
+        if (fallback) reflectAnswer = fallback;
       }
     }
   }
@@ -292,12 +278,9 @@ export async function buildHookOutput(args: {
   // the hindsight_search_knowledge_pages tool, which is visible as a real tool call.
   let notice: string | undefined;
   if (fallback) {
-    // Say which degraded source answered: a page list or raw observations is not a synthesis,
-    // and the user deserves to know the session got less than the usual memory.
-    const what = fallback.source === "knowledge_pages" ? "knowledge page" : "observation";
-    notice =
-      `${brandWord()} · reflect unavailable — fell back to ${fallback.count} ` +
-      `${what}${fallback.count === 1 ? "" : "s"} (see ${diagFilePath()})`;
+    // Silent: the session still got memory, just not a synthesis. The notice used to say which
+    // source answered and point at the diag file, but that read as an error on a turn that
+    // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
   } else if (reflectRanThisTurn && reflectAnswer) {
     const q = prompt.replace(/\s+/g, " ").trim();
     const excerpt = q.length > 48 ? `${q.slice(0, 48)}…` : q;
