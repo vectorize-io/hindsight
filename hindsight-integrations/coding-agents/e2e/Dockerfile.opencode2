@@ -1,5 +1,7 @@
 FROM hindsight-coding-agents-e2e-base
-ARG VERSION=2.0.3
-# The stable package publishes both `opencode` and `opencode2` binary aliases. Keep using the
-# latter here so the shared E2E can install and exercise v1 and v2 side by side.
+ARG VERSION=latest
+# The v2 line moved to its own package name (`@opencode/cli`, whose `latest` is 2.x), so the beta
+# pin is no longer needed to avoid installing v1's CLI. The stable package publishes both `opencode`
+# and `opencode2` binary aliases. Keep using the latter here so the shared E2E can install and
+# exercise v1 and v2 side by side.
 RUN npm install --global "@opencode/cli@${VERSION}"

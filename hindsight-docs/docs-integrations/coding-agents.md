@@ -101,7 +101,7 @@ A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP ne
 npx @vectorize-io/hindsight-coding-agents install opencode2
 ```
 
-opencode v2 (`npm @opencode-ai/cli@beta`) installs its `opencode2` binary **alongside** v1 and
+opencode v2 (`npm @opencode/cli`) exposes an `opencode2` binary alias **alongside** `opencode` and
 rewrote the plugin API, so it is a harness of its own. It writes the same plugin entry to the same
 `~/.config/opencode/opencode.json` — the two CLIs share that file, and v1 rejects the whole config
 if it sees v2's `plugins` key — and each CLI then loads its own entry point from the one registered

@@ -12,7 +12,9 @@
  * v1 follows `package.json` `main` (→ dist/index.js, the v1 plugin), v2 looks for `<dir>/index.js`
  * and ignores `main`. The package therefore ships a root `index.js` re-exporting this file, and the
  * package root already registered in the user's `plugin` array — which v2 migrates to `plugins` for
- * itself — drives the right plugin under each host. Verified against opencode 1.18.9 and 2.0.3.
+ * itself — drives the right plugin under each host. Written against opencode 1.18.9 and the v2
+ * beta, then re-checked on stable 2.0.3, whose loader still resolves `<dir>/index.js` and whose
+ * live session registers the native tools and answers from injected memory.
  *
  * The harness reports as "opencode2" rather than "opencode": that selects the `harnesses.opencode2`
  * config section and keeps v2 sessions attributable in diagnostics separately from v1's. The bank

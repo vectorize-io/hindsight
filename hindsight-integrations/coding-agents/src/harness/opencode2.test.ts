@@ -1,7 +1,7 @@
 /**
  * The opencode2 adapter's hook wiring, driven against a fake plugin context.
  *
- * The shapes here are the ones a live opencode2 2.0.3 actually hands a plugin, so
+ * The shapes here are the ones a live opencode2 (0.0.0-beta-18743) actually hands a plugin, so
  * these tests fail if the v2 contract we mapped onto RuntimeCore drifts under us: v2 offers no
  * "your hook never fired" signal, so a silently mis-wired hook is otherwise indistinguishable from
  * an agent with no memory.
