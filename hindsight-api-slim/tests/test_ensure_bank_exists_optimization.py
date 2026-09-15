@@ -164,8 +164,10 @@ async def test_validator_rejection_creates_no_row(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_id",
-    ["", "é" * 97, "tab\tin-id", "nul\x00in-id"],  # "é" is 2 bytes: 194 > 192
-    ids=["empty", "too-many-bytes", "tab", "nul"],
+    # "é" is 2 bytes: 194 > 192. No NUL case: PG cannot encode 0x00 in text, so such an id fails
+    # at the existence probe on every endpoint, before creation is ever reached.
+    ["", "é" * 97, "tab\tin-id", "line\nbreak"],
+    ids=["empty", "too-many-bytes", "tab", "newline"],
 )
 async def test_invalid_new_bank_id_is_rejected_before_insert(
     memory: MemoryEngine, request_context: RequestContext, bad_id: str
