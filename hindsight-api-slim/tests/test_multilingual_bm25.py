@@ -107,10 +107,10 @@ def test_retain_directive_replaces_source_language_rule(mode):
     """An explicit output language wins outright: the source-language default is
     dropped rather than left to contradict "translate everything into X".
 
-    Retain's default rule is phrased far more forcefully than the appended
-    directive ("STRICTLY FORBIDDEN from translating" vs "Respond exclusively
-    in X") and comes first, so leaving both in place makes the model keep
-    emitting source-language facts and silently no-ops the setting. Mirrors
+    Retain's default rule ("Never translate") contradicts the appended directive
+    ("Respond exclusively in X") and comes first; when #3776 was found it was
+    worded far more forcefully still, and leaving both in place made the model keep
+    emitting source-language facts and silently no-op the setting. Mirrors
     ``test_consolidation_directive_replaces_source_language_rule``.
     """
     config = _baseline_config()

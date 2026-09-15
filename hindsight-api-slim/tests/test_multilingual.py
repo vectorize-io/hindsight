@@ -9,7 +9,10 @@ import pytest
 import logging
 from datetime import datetime, timezone
 from hindsight_api.engine.memory_engine import Budget
-from hindsight_api import RequestContext
+from hindsight_api import LLMConfig, RequestContext
+from hindsight_api.config import _get_raw_config
+from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+from tests.llm_judge import assert_meets_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -505,3 +508,41 @@ async def test_mixed_language_entities(memory_real_llm, request_context):
 
     finally:
         await memory_real_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_english_coding_transcript_stays_english():
+    """An English coding-agent transcript is extracted as English facts (#4283).
+
+    The shape that regressed: a transcript dense with numbers, tool names and paths.
+    Under the old "detect the language, then STRICTLY never switch" rule gpt-5.6-luna
+    wrote French or Russian facts from it in ~18% of runs. The rate itself is tracked by
+    hindsight-system-evals ``test_03_retain_language``; this pins the behaviour on the
+    CI model. Judged, because the language call is the model's and a word list would
+    misread English tool names inside prose.
+    """
+    transcript = (
+        "user: run the full validation on the selected work and tell me what passed\n"
+        "assistant: Fresh validation complete. Server: 230 passed, 52 skipped. Portal production build "
+        "succeeded and 55 portal tests passed (I reran with the newer installed Node runtime because the "
+        "initial build picked up Node 17 from the shell). 17 shared native security checks passed and the "
+        "Admin iOS simulator build succeeded. Fixed five whitespace-only issues.\n"
+    )
+    facts, _, _ = await extract_facts_from_text(
+        text=transcript,
+        event_date=datetime(2026, 9, 9, tzinfo=timezone.utc),
+        llm_config=LLMConfig.from_env(),
+        config=_get_raw_config(),
+        context="coding agent session",
+        agent_name="assistant",
+    )
+    assert facts, "Should extract at least one fact"
+    await assert_meets_criteria(
+        response="\n".join(f"- {f.fact}" for f in facts),
+        criteria=(
+            "Every fact's main sentence (the text before the first ' | ') is written in English. "
+            "Ignore the ' | When: …' / ' | Involving: …' fields, proper nouns, identifiers and numbers."
+        ),
+        context="The input was an English conversation between a user and a coding assistant.",
+        msg=f"English transcript must yield English facts: {[f.fact for f in facts]}",
+    )

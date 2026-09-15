@@ -58,8 +58,8 @@ _CHINESE_SOURCE = """
 async def test_retain_configured_output_language_overrides_source_language():
     """Chinese input + ``llm_output_language="English"`` → English facts.
 
-    The bug: the extraction prompt's own rule ("STRICTLY FORBIDDEN from translating")
-    outranked the appended directive, so the facts came back in Chinese and the setting
+    The bug: the extraction prompt's own rule (then worded "STRICTLY FORBIDDEN from
+    translating") outranked the appended directive, so the facts came back in Chinese and the setting
     did nothing. Dropping the rule when a language is configured is what makes this pass.
     """
     config = dataclasses.replace(_get_raw_config(), llm_output_language="English")

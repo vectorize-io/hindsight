@@ -48,11 +48,11 @@ on:
         type: string
         default: "1.0"
       system_evals_skip:
-        description: "Skip the system-evals quality job (knowledge-page convergence)"
+        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language)"
         type: boolean
         default: false
       system_evals_mode:
-        description: "system-evals mode: full (every category) or minimum (the two cases that have regressed)."
+        description: "system-evals mode: full (every category) or minimum (only the cases that have regressed)."
         type: choice
         options:
           - full
@@ -308,7 +308,8 @@ jobs:
       run: ./scripts/benchmarks/publish-obs-results.sh hindsight-dev/obs-results.json
 
   system-evals:
-    # Knowledge-page convergence, graded by an independent judge. Blackbox: a real
+    # Knowledge-page convergence, reflect answers and retain language, graded by an
+    # independent judge. Blackbox: a real
     # hindsight-api process driven only through the published Python client, the
     # same shape as hindsight-system-tests — except the model is REAL, because a
     # quality eval against a stub would score the stub. That also means it needs

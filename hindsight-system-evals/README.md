@@ -26,7 +26,7 @@ signal to re-run, not proof of a regression.
 
 ## What it evaluates
 
-Both suites share one corpus and grade twice per question: **correct** (meets
+The knowledge-page and reflect suites share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
 specific baited falsehood — the one that matters). The trap is asserted first.
 
