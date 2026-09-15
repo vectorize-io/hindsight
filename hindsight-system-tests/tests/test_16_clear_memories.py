@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from hindsight_system_tests.payloads import extracted, fact
+from hindsight_system_tests.payloads import consolidation, extracted, fact
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,6 +28,7 @@ async def test_a_clear_reports_what_it_erased_per_type(client, llm, bank_id, set
             fact("I recommended a cello teacher to Alice", fact_type="assistant", entities=["Alice"]),
         )
     )
+    llm.on_step("consolidate").returns(consolidation())
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin and plays cello; I found her a teacher.")
     await settled(bank_id)
     assert await _fact_types(client, bank_id) == ["experience", "world", "world"]
