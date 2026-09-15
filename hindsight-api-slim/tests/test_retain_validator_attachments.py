@@ -37,9 +37,11 @@ class _Validator:
     def __init__(self, allow: bool = True) -> None:
         self._allow = allow
         self.seen: list = []
+        self.document_id: str | None = None
 
     async def validate_retain(self, ctx) -> ValidationResult:
         self.seen = list(ctx.attachments)
+        self.document_id = ctx.document_id
         if self._allow:
             return ValidationResult(allowed=True)
         return ValidationResult(allowed=False, reason="policy: no attachments", status_code=403)
@@ -73,20 +75,27 @@ def _item() -> dict:
     }
 
 
-async def _retain(client, bank_id: str):
-    return await client.post(f"/v1/default/banks/{bank_id}/memories", json={"items": [_item()], "async": False})
+async def _retain(client, bank_id: str, is_async: bool = False):
+    return await client.post(f"/v1/default/banks/{bank_id}/memories", json={"items": [_item()], "async": is_async})
+
+
+# Both paths build their own RetainContext; #4373 was the async one leaving
+# fields (document_id, attachments) empty that the sync one filled.
+both_paths = pytest.mark.parametrize("is_async", [False, True], ids=["sync", "async"])
 
 
 @pytest.mark.asyncio
-async def test_the_hook_sees_each_attachment_described(api_client, memory):
+@both_paths
+async def test_the_hook_sees_each_attachment_described(api_client, memory, is_async):
     """Enough to write a size quota or a media-type rule against."""
     validator = _Validator(allow=True)
     memory._operation_validator = validator
     try:
-        response = await _retain(api_client, f"val-{uuid.uuid4().hex[:8]}")
+        response = await _retain(api_client, f"val-{uuid.uuid4().hex[:8]}", is_async)
     finally:
         memory._operation_validator = None
     assert response.status_code == 200, response.text
+    assert validator.document_id == "d1", "the hook must name the document under retain"
 
     by_id = {a.short_id: a for a in validator.seen}
     assert set(by_id) == {PNG_ID, PDF_ID}, "the hook did not see every attachment"
@@ -120,7 +129,8 @@ async def test_a_text_only_retain_reports_no_attachments(api_client, memory):
 
 
 @pytest.mark.asyncio
-async def test_refusing_the_retain_discards_the_bytes(api_client, memory):
+@both_paths
+async def test_refusing_the_retain_discards_the_bytes(api_client, memory, is_async):
     """The point of a content policy: refused bytes must not remain fetchable.
 
     They are written before the hook runs, and nothing else would ever remove
@@ -130,7 +140,7 @@ async def test_refusing_the_retain_discards_the_bytes(api_client, memory):
     bank_id = f"val-{uuid.uuid4().hex[:8]}"
     memory._operation_validator = _Validator(allow=False)
     try:
-        response = await _retain(api_client, bank_id)
+        response = await _retain(api_client, bank_id, is_async)
     finally:
         memory._operation_validator = None
     assert response.status_code == 403, response.text

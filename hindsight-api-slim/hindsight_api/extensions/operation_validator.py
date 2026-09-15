@@ -159,6 +159,8 @@ class RetainContext:
     bank_id: str
     contents: list[dict]  # List of {content, context, event_date, document_id, tags, strategy}
     request_context: "RequestContext"
+    #: The document every item belongs to; None when items name different
+    #: documents (or none) — read ``contents[i]["document_id"]`` then.
     document_id: str | None = None
     fact_type_override: str | None = None
     #: Inline attachments this retain carries, in first-appearance order. Empty

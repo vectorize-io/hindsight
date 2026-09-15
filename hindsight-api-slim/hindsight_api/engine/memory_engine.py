@@ -226,6 +226,16 @@ def count_tokens(text: str) -> int:
     return _token_encoding_count(text)
 
 
+def _shared_document_id(contents: "Iterable[Mapping[str, Any]]") -> str | None:
+    """The one document id every item names, or None when they differ or omit it.
+
+    Callers put the id on each content item, so the extension contexts' single
+    ``document_id`` is derived here; the deprecated batch-level argument wins.
+    """
+    ids = {item.get("document_id") for item in contents}
+    return ids.pop() if len(ids) == 1 else None
+
+
 def _epoch_ms_to_datetime(value: Any) -> datetime | None:
     """Epoch milliseconds -> aware datetime, for records read from a store rather than from SQL.
 
@@ -5435,7 +5445,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 contents=contents_copy,
                 request_context=request_context,
-                document_id=document_id,
+                document_id=document_id or _shared_document_id(contents_copy),
                 fact_type_override=fact_type_override,
                 attachments=attachment_info,
             )
@@ -5635,7 +5645,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 contents_copy=contents_copy,
                 request_context=request_context,
-                document_id=document_id,
+                document_id=document_id or _shared_document_id(contents_copy),
                 fact_type_override=fact_type_override,
                 unit_ids=result,
                 total_usage=total_usage,
@@ -21000,12 +21010,24 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
+            contents_copy = [dict(c) for c in contents]
+            attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
             ctx = RetainContext(
                 bank_id=bank_id,
-                contents=[dict(c) for c in contents],
+                contents=contents_copy,
                 request_context=request_context,
+                document_id=_shared_document_id(contents_copy),
+                attachments=attachment_info,
             )
-            result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+            try:
+                result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+            except Exception:
+                # Same reclaim as the synchronous path: the bytes were stored at
+                # ingress, so a refusal here is the only chance to take them back.
+                await self._discard_unreferenced_attachments(
+                    bank_id, [info.short_id for info in attachment_info], request_context
+                )
+                raise
             if result and result.contents is not None:
                 contents = result.contents
 
