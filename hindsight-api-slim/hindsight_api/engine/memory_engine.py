@@ -9699,7 +9699,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # The attachments this document referenced, read BEFORE the delete
                 # cascades their document_attachments rows away. Whether each blob
                 # is still needed can only be answered afterwards, once those rows
-                # are gone — see _reclaim_orphaned_attachments below.
+                # are gone — see _drop_orphaned_attachments below.
                 referenced_attachments = await conn.fetch(
                     f"SELECT attachment_hash FROM {fq_table('document_attachments')} "
                     f"WHERE bank_id = $1 AND document_id = $2",
