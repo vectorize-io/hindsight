@@ -1055,8 +1055,12 @@ RULES
   statement about the batch, never about the topic.
 - **Refutation threshold for removal or overwrite**: you may only remove or
   overwrite existing text when a SUPPORTING FACT explicitly refutes or corrects
-  that exact detail, OR is a later statement about the same facet (a status,
-  count, owner or location that has since changed). Failing both tests, keep the
+  that exact detail, OR is a later-DATED statement about the same facet (a
+  status, count, owner or location that has since changed). "Later" is about
+  the dates the texts give, never about arrival: facts reach you out of date
+  order, and a fact dated before the state the document records is backfilled
+  history — it belongs in the history, not in place of the current state, even
+  when the synthesis calls it current. Failing both tests, keep the
   existing text: use ``append_block`` / ``insert_block``, or re-emit the block
   with the new detail merged into a cohesive statement that still carries the old
   one. Combining two disjoint sets is a merge, never a replacement.
@@ -1192,6 +1196,47 @@ def _fit_structured_delta_prompt_parts(
     return FittedDeltaPrompt(doc_json, candidate, facts_body, truncated)
 
 
+def build_mental_model_refresh_context(name: str, *, delta: bool) -> str:
+    """The reflect ``context`` for a mental-model refresh.
+
+    Facts reach a page out of date order: a later refresh can bring events OLDER than
+    the state the page already records. Two things keep that resolvable, and they
+    pull in opposite directions, so full and delta refreshes get different advice:
+
+    - a full refresh writes the page, so it must say since when each current state
+      holds — otherwise a backfilled event has nothing to be compared against;
+    - a delta refresh's synthesis is written from the new batch alone, so it must not
+      call anything current. "X owns it as of April 2024" reads to the delta step as
+      superseding a November-2024 owner the batch never saw; dated events merge.
+    """
+    context = (
+        f'You are writing a document called "{name}". '
+        "ONLY include content that directly answers the topic query. "
+        "Discard observations that are tangential or off-topic — retrieval may return "
+        "loosely related content that does not belong in this document.\n\n"
+        "Quality guidelines:\n"
+        "- Preserve concrete examples, before/after pairs, and sample sentences "
+        "from the observations. These teach more than abstract rules.\n"
+        "- If observations contain illustrative examples (e.g. ✅/❌ pairs, "
+        "rewrites, sample phrases), include them in your answer.\n"
+        "- Structure the document around the topic, not around the sources.\n"
+    )
+    if delta:
+        return context + (
+            "- You are only seeing information added since this document was last "
+            "updated, not its full history, and it may be older than what the "
+            "document already records. Report it as dated events (e.g. 'In April "
+            "2024, X passed to Y'). Do NOT say what is current, latest, still true "
+            "or remains the case, and do not conclude something did not happen."
+        )
+    return context + (
+        "- When you state something that changes over time (an owner, version, "
+        "status or count), say since when it has been true (e.g. 'since November "
+        "2024') and keep the dated history, so a later update that brings older "
+        "events can tell which one is current."
+    )
+
+
 def build_structured_delta_prompt(
     *,
     current_document_json: str,
@@ -1264,7 +1309,12 @@ def build_structured_delta_prompt(
         "## Task\n"
         "Output a JSON object matching the operations schema. Integrate the new "
         "supporting facts into CURRENT DOCUMENT. Add, update, or remove content "
-        "as needed. Preserve unchanged sections and blocks by not mentioning them."
+        "as needed. Preserve unchanged sections and blocks by not mentioning them.\n"
+        "Facts arrive out of date order. Before changing what the document says is "
+        "current (an owner, version, status or count), put the dated events from the "
+        "document and the new facts on one timeline: the latest-dated event is the "
+        "current state, wherever it came from. A new fact dated earlier than the "
+        "document's current state only adds history."
     )
     input_cap = max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
     fitted = _fit_structured_delta_prompt_parts(

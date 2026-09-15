@@ -16616,26 +16616,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Run reflect with the source query, excluding the mental model being refreshed
         # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
-        # Build context to guide the reflect agent: tell it what this mental
-        # model is about so it stays on-topic and produces high-quality content.
         mm_name = mental_model.get("name") or mental_model_id
-        refresh_context = (
-            f'You are writing a document called "{mm_name}". '
-            f"ONLY include content that directly answers the topic query. "
-            f"Discard observations that are tangential or off-topic — retrieval may return "
-            f"loosely related content that does not belong in this document.\n\n"
-            f"Quality guidelines:\n"
-            f"- Preserve concrete examples, before/after pairs, and sample sentences "
-            f"from the observations. These teach more than abstract rules.\n"
-            f"- If observations contain illustrative examples (e.g. ✅/❌ pairs, "
-            f"rewrites, sample phrases), include them in your answer.\n"
-            f"- Structure the document around the topic, not around the sources."
-        )
 
         reflect_kwargs: dict[str, Any] = dict(
             bank_id=bank_id,
             query=source_query,
-            context=refresh_context,
             request_context=request_context,
             tags=tag_filtering.tags,
             tags_match=tag_filtering.tags_match,
@@ -16677,6 +16662,11 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     created_after = seen_at_raw
                 reflect_kwargs["created_after"] = created_after
+        # Tell the reflect agent what this page is about, and — full vs delta — how to
+        # treat time: see build_mental_model_refresh_context.
+        from .reflect.prompts import build_mental_model_refresh_context
+
+        reflect_kwargs["context"] = build_mental_model_refresh_context(mm_name, delta=created_after is not None)
 
         window = MentalModelRefreshWindow(
             created_after=created_after,
