@@ -1592,6 +1592,27 @@ const dcode: HarnessInstaller = {
 const DSH_MARKER_START = "# HINDSIGHT_CODING_AGENTS_DSH_START";
 const DSH_MARKER_END = "# HINDSIGHT_CODING_AGENTS_DSH_END";
 const DSH_BLOCK_RE = new RegExp(`\\n?${DSH_MARKER_START}[\\s\\S]*?${DSH_MARKER_END}\\n?`);
+/**
+ * What `uninstall` leaves behind when our block was the only thing in the file. dsh reads this file
+ * as a top-level YAML array and fails BOOT on anything else, so an emptied file still has to parse;
+ * a missing file would be fine too (`loadOptionalPatches` reads ENOENT as "no patches").
+ */
+const DSH_EMPTY_LIST = "[]";
+
+/**
+ * The user's own patches: our marker block removed, and the empty-list placeholder normalized away.
+ *
+ * Both halves matter. `DSH_BLOCK_RE` strips our row so a re-install repairs a stale path instead of
+ * stacking a second block. And `DSH_EMPTY_LIST` is NOT user content — `"[]"` is a non-empty string,
+ * so treating it as content made the install that follows an uninstall write `[]` *followed by* our
+ * block: two top-level YAML documents, which dsh refuses to parse, so it then failed BOOT for EVERY
+ * profile on the machine, not merely for this plugin. Normalizing here also repairs a home layer
+ * that an earlier version already corrupted.
+ */
+function dshUserPatches(existing: string): string {
+  const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+  return others === DSH_EMPTY_LIST ? "" : others;
+}
 
 /** DeepSeek Harness home — `$DSH_HOME`, else `~/.dsh` (its own `home-paths` resolution order). */
 function dshHome(c: InstallCtx): string {
@@ -1620,7 +1641,7 @@ const dsh: HarnessInstaller = {
     const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
     // REPLACE any previous block rather than skipping: a re-install after the package moved must
     // repair the now-dead path, which is exactly what `install` is for.
-    const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+    const others = dshUserPatches(existing);
     const entry = pathToFileURL(join(c.dist, "dsh.js")).href;
     const block =
       `${DSH_MARKER_START}\n` +
@@ -1641,9 +1662,11 @@ const dsh: HarnessInstaller = {
     if (existsSync(path)) {
       const existing = readFileSync(path, "utf8");
       const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
-      // `[]`, not an empty file: dsh requires this file to parse to a top-level ARRAY and fails
-      // BOOT on anything else, so removing the last block must leave an empty list behind.
-      if (others !== existing.trim()) writeFileSync(path, others ? `${others}\n` : "[]\n");
+      // `DSH_EMPTY_LIST`, not an empty file: dsh requires this file to parse to a top-level ARRAY
+      // and fails BOOT on anything else, so removing the last block must leave an empty list
+      // behind. `install` knows that placeholder is not user content — see `dshUserPatches`.
+      if (others !== existing.trim())
+        writeFileSync(path, others ? `${others}\n` : `${DSH_EMPTY_LIST}\n`);
     }
     uninstallSkill(c, "dsh");
     c.log?.("dsh: plugin entry + skill removed");
