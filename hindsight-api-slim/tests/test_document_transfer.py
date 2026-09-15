@@ -9,6 +9,7 @@ import io
 import json
 import uuid
 import zipfile
+from urllib.parse import quote
 from datetime import datetime, timezone
 
 import httpx
@@ -16,6 +17,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.consolidation.consolidator import (
     _apply_create_observation,
@@ -1837,8 +1839,10 @@ async def test_async_export_roundtrip(memory, request_context):
         await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
 
         meta, archive = await _export_async(memory, src, request_context)
-        assert meta["storage_key"].startswith(f"tenants/public/banks/{src}/exports/")
-        assert meta["download_url"] == f"/v1/default/files/download/{meta['storage_key']}"
+        # The bank id carries a dot, which the key encodes, so derive the prefix.
+        assert meta["storage_key"].startswith(f"{bank_storage_prefix(src)}exports/")
+        # URL-quoted, so the key's own %-escapes survive the server's path decoding.
+        assert meta["download_url"] == f"/v1/default/files/download/{quote(meta['storage_key'])}"
         assert meta["byte_size"] == len(archive)
         assert meta["filename"] == f"{src}-documents.zip"
 

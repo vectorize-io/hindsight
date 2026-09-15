@@ -278,7 +278,9 @@ async def test_file_retain_batch_generates_unique_storage_keys(memory_no_llm_ver
     # The core regression: keys are unique, so no file clobbers another's bytes.
     assert len(set(storage_keys)) == 3, f"storage keys collided: {storage_keys}"
     for key in storage_keys:
-        assert key.startswith(f"tenants/public/banks/{bank_id}/files/")
+        from hindsight_api.engine.storage import bank_storage_prefix
+
+        assert key.startswith(f"{bank_storage_prefix(bank_id)}files/")
     # No file was left stranded: every conversion retrieved its own bytes.
     for row in rows:
         assert row["status"] == "completed", f"operation not completed: {row['status']}"
