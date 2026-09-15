@@ -2682,6 +2682,15 @@ class MemoryEngine(MemoryEngineInterface):
             webhook_manager=None,
         )
 
+        # Give the operation validator its context. Unlike the tenant, HTTP, and
+        # memory-defense extensions, an operation validator is passed into __init__
+        # (constructed before the engine exists) and is never routed through
+        # load_extension(), so it otherwise never receives an ExtensionContext. Any
+        # validator hook that reaches an engine API through it — e.g.
+        # context.get_memory_engine() — would raise "Extension context not set".
+        if self._operation_validator is not None and hasattr(self._operation_validator, "set_context"):
+            self._operation_validator.set_context(self._ext_ctx)
+
         loaded = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension, context=self._ext_ctx)
         if loaded is not None:
             self._memory_defense: MemoryDefenseExtension = loaded
