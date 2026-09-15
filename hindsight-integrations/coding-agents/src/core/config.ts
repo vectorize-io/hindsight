@@ -88,10 +88,13 @@ export interface RawConfig {
    *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
    *  lower this rather than raising it. */
   maxParallelRetains?: number;
-  reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
+  /** Automatic session-reflect timeout (default 20000). The default, with the fallback chain after
+   *  it, fits the 30s prompt-hook timeout the installer registers on hook harnesses; going higher
+   *  there needs that host timeout raised too, or the host kills the hook mid-reflect. */
+  reflectTimeoutMs?: number;
   /** Timeout for the agent-invoked `hindsight_reflect` tool (default 330000). Deliberately its own
    *  knob and much larger than `reflectTimeoutMs`: that one bounds an automatic hook that must fit
-   *  the host's 20s reflect slot, whereas this one bounds a call the agent made on purpose and waits on,
+   *  the host's hook window, whereas this one bounds a call the agent made on purpose and waits on,
    *  whose `budget: "high"` synthesis on a populated bank can run for minutes. The default sits
    *  ABOVE the server's own reflect wall timeout (HINDSIGHT_API_REFLECT_WALL_TIMEOUT, 300s) so the
    *  server decides when to give up, not an arbitrary client deadline (#3590). Unset, it inherits
@@ -269,6 +272,7 @@ function resolvePageTrigger(raw: RawConfig): {
 }
 
 /** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
+export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
@@ -362,7 +366,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     retainSessions: raw.retainSessions ?? true, // write sessions back by default, every harness
     manageBankConfig: raw.manageBankConfig ?? true,
     maxParallelRetains: raw.maxParallelRetains || 10,
-    reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
+    reflectTimeoutMs: raw.reflectTimeoutMs || DEFAULT_REFLECT_TIMEOUT_MS,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
     // reflect already set), but never let it LOWER the tool below the default — a short window is
     // set to bound the automatic hook, not to cut off a call the agent is waiting on.

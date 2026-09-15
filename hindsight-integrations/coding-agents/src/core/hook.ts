@@ -85,14 +85,6 @@ interface HookClient {
   readonly bank?: string;
 }
 
-/**
- * Cap on the once-per-session reflect. INVARIANT: this plus HOOK_FALLBACK_BUDGET_MS MUST stay
- * below every harness's UserPromptSubmit/PreInvocation hook timeout (currently 30s in the
- * supported hook harnesses) — otherwise the host kills the hook before the result is cached, so
- * the injection is discarded AND the reflect re-fires (uncached) every turn.
- * Raise the harness timeout in lockstep if you raise either.
- */
-const HOOK_REFLECT_CAP_MS = 20_000;
 /** Shared deadline for the whole fallback chain (page search, then observation recall) that runs
  *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
 const HOOK_FALLBACK_BUDGET_MS = 7_000;
@@ -191,10 +183,12 @@ export async function buildHookOutput(args: {
   } else if (cfg.autoReflect && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     const t0 = Date.now();
-    const timeoutMs = Math.min(cfg.reflectTimeoutMs, HOOK_REFLECT_CAP_MS);
+    // Not clamped: a user who raises reflectTimeoutMs past the host's prompt-hook timeout (30s on
+    // the hook harnesses) must raise that too — see the README's reflectTimeoutMs row (#4398).
+    const timeoutMs = cfg.reflectTimeoutMs;
     try {
       reflectAnswer = await client.reflect(buildReflectQuery(prompt), {
-        // Automatic reflection runs inside a hard 20s slot of the hook window. Hindsight's low budget is the
+        // Automatic reflection runs inside the host's hook window. Hindsight's low budget is the
         // supported default for bounded reflect calls; callers that explicitly invoke the MCP
         // tool still get the deeper high-budget path.
         budget: "low",

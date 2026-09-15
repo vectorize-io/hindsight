@@ -227,8 +227,8 @@ describe("buildHookOutput", () => {
     expect(result.context).toBeUndefined();
   });
 
-  it("uses a bounded low-budget reflect and caps its timeout at 20000ms", async () => {
-    const cfg = resolveConfig({}); // reflectTimeoutMs default 120000
+  it("uses a bounded low-budget reflect with the 20000ms default timeout", async () => {
+    const cfg = resolveConfig({});
     const client = makeClient();
     await buildHookOutput({
       harness: "claude-code",
@@ -243,8 +243,9 @@ describe("buildHookOutput", () => {
     });
   });
 
-  it("uses the configured reflect timeout when it is below the 20s cap", async () => {
-    const cfg = resolveConfig({ reflectTimeoutMs: 5000 });
+  // #4398: a raised reflectTimeoutMs used to be silently clamped to a hardcoded 20s.
+  it.each([5000, 30000])("uses the configured reflect timeout as-is (%ims)", async (ms) => {
+    const cfg = resolveConfig({ reflectTimeoutMs: ms });
     const client = makeClient();
     await buildHookOutput({
       harness: "claude-code",
@@ -255,7 +256,7 @@ describe("buildHookOutput", () => {
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
       budget: "low",
-      timeoutMs: 5000,
+      timeoutMs: ms,
     });
   });
 

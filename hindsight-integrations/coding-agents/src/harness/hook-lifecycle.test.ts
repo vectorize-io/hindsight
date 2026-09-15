@@ -222,8 +222,8 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
   // SECONDS, so a bare `>= 25_000` would pass vacuously for the seven seconds-based harnesses and
   // a bare `>= 25` would pass vacuously for qwen. Normalising through the declared unit is what
   // makes this catch a mutation in EITHER direction.
-  it("gives every prompt hook a budget above the once-per-session reflect cap", () => {
-    const HOOK_REFLECT_CAP_MS = 25_000;
+  it("gives every prompt hook a budget above the default once-per-session reflect", () => {
+    const HOOK_REFLECT_CAP_MS = 25_000; // DEFAULT_REFLECT_TIMEOUT_MS + fallback budget
     for (const harness of HOOK_HARNESS_NAMES) {
       const spec = HOOK_HARNESSES[harness];
       const raw = spec.install.prompt.timeout;
