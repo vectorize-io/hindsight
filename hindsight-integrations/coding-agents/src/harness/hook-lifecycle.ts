@@ -456,7 +456,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     // `detached` and terminates the whole process TREE on timeout, so the retain is genuinely lost
     // rather than merely orphaned. `retain.hostTimeoutSec` below stays SECONDS, as its name says;
     // these two numbers are the same budget in different units for this harness alone.
-    // The prompt timeout must also stay above the default reflectTimeoutMs plus fallback (25s).
+    // The prompt timeout must also stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
     install: {
       sessionStart: { event: "SessionStart", entry: "qwen-sessionstart-hook.js", timeout: 30_000 },
       prompt: { event: "UserPromptSubmit", entry: "qwen-hook.js", timeout: 30_000 },
@@ -520,7 +520,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
   zcode: {
     configStyle: "process",
     // ZCode's `timeoutMs`, so MILLISECONDS — see the qwen-code note above for the same trap. The
-    // prompt budget must stay above the default reflectTimeoutMs plus fallback (25s).
+    // prompt budget must stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
     timeoutUnit: "milliseconds",
     install: {
       sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },

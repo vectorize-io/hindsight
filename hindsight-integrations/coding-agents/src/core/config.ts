@@ -271,8 +271,9 @@ function resolvePageTrigger(raw: RawConfig): {
   return { type: "cron", cron: DEFAULT_PAGE_TRIGGER_CRON };
 }
 
-/** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
+/** Default timeout for the automatic hook reflect — see RawConfig.reflectTimeoutMs. */
 export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
+/** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;

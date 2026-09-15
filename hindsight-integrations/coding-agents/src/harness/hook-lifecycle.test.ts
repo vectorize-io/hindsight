@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HOOK_HARNESSES, type HookHarnessName } from "./hook-lifecycle";
+import { DEFAULT_REFLECT_TIMEOUT_MS } from "../core/config";
 
 // Derived, not hand-listed: a hand-written roster silently stops covering the newest harness, which
 // is exactly the sibling it most needs to cover. (It had already fallen behind — devin-cli was
@@ -219,11 +220,10 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
   // The prompt hook must outlive the once-per-session reflect, or the FIRST prompt of every
   // session is killed mid-flight and recall silently degrades to nothing. Nothing coupled these
   // two numbers before: qwen-code's timeouts are MILLISECONDS while every other harness's are
-  // SECONDS, so a bare `>= 25_000` would pass vacuously for the seven seconds-based harnesses and
-  // a bare `>= 25` would pass vacuously for qwen. Normalising through the declared unit is what
+  // SECONDS, so a bare `>= 20_000` would pass vacuously for the seven seconds-based harnesses and
+  // a bare `>= 20` would pass vacuously for qwen. Normalising through the declared unit is what
   // makes this catch a mutation in EITHER direction.
   it("gives every prompt hook a budget above the default once-per-session reflect", () => {
-    const HOOK_REFLECT_CAP_MS = 25_000; // DEFAULT_REFLECT_TIMEOUT_MS + fallback budget
     for (const harness of HOOK_HARNESS_NAMES) {
       const spec = HOOK_HARNESSES[harness];
       const raw = spec.install.prompt.timeout;
@@ -232,7 +232,7 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       expect(
         ms,
         `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`
-      ).toBeGreaterThan(HOOK_REFLECT_CAP_MS);
+      ).toBeGreaterThan(DEFAULT_REFLECT_TIMEOUT_MS);
     }
   });
 

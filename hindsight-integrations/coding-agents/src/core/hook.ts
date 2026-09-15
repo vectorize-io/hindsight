@@ -183,8 +183,9 @@ export async function buildHookOutput(args: {
   } else if (cfg.autoReflect && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     const t0 = Date.now();
-    // Not clamped: a user who raises reflectTimeoutMs past the host's prompt-hook timeout (30s on
-    // the hook harnesses) must raise that too — see the README's reflectTimeoutMs row (#4398).
+    // Previously clamped to a hardcoded 20s, which made a raised reflectTimeoutMs dead config on
+    // this path (#4398); the 20s now lives in the default instead. Not clamped: a user who raises reflectTimeoutMs past the host's prompt-hook timeout (30s on
+    // the hook harnesses) must raise that too — see the README's reflectTimeoutMs row.
     const timeoutMs = cfg.reflectTimeoutMs;
     try {
       reflectAnswer = await client.reflect(buildReflectQuery(prompt), {
