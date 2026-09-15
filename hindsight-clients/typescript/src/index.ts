@@ -116,16 +116,35 @@ export function retryAfterMs(response: Response | undefined): number | null {
 export async function retryOnCapacity<T extends { response?: Response }>(
   send: () => Promise<T>,
   maxAttempts: number,
-  random: () => number = Math.random
+  random: () => number = Math.random,
+  signal?: AbortSignal
 ): Promise<T> {
+  signal?.throwIfAborted();
   let result = await send();
+  signal?.throwIfAborted();
   for (let attempt = 1; attempt < maxAttempts; attempt++) {
     const status = result.response?.status;
     if (status !== 429 && status !== 503) return result;
     const wait = retryAfterMs(result.response) ?? FALLBACK_BACKOFF_MS * 2 ** (attempt - 1);
     // Full jitter: sleep somewhere in [0, wait] so a synchronised burst spreads out.
-    await new Promise((resolve) => setTimeout(resolve, random() * wait));
+    // A cancelled caller must not wait out Retry-After or start another request.
+    // Clean up on either outcome: successful reads should not accumulate listeners.
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, random() * wait);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
+    signal?.throwIfAborted();
     result = await send();
+    signal?.throwIfAborted();
   }
   return result;
 }
@@ -566,7 +585,9 @@ export class HindsightClient {
           },
           signal: options?.signal,
         }),
-      this.maxAttempts
+      this.maxAttempts,
+      Math.random,
+      options?.signal
     );
 
     return this.validateResponse(response, "recall");
@@ -636,7 +657,9 @@ export class HindsightClient {
           },
           signal: options?.signal,
         }),
-      this.maxAttempts
+      this.maxAttempts,
+      Math.random,
+      options?.signal
     );
 
     return this.validateResponse(response, "reflect");
