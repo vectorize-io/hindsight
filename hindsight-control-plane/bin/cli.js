@@ -4,6 +4,26 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Next.js standalone uses HOSTNAME both to bind and as the origin its locale
+// rewrite is checked against; a literal loopback address makes every page 307 to
+// itself (#1926). Bind as `localhost` instead, pinning Node's DNS order so the
+// address family stays the one requested. Mirrors docker/standalone/start-all.sh.
+function resolveBindHost(hostname, nodeOptions) {
+  const family = { '127.0.0.1': 'ipv4first', '::1': 'ipv6first', '[::1]': 'ipv6first' }[hostname];
+  if (!family) return { hostname, nodeOptions };
+  return {
+    hostname: 'localhost',
+    nodeOptions: [nodeOptions, `--dns-result-order=${family}`].filter(Boolean).join(' '),
+  };
+}
+
+module.exports = { resolveBindHost };
+
+if (require.main === module) {
+  main();
+}
+
+function main() {
 const args = process.argv.slice(2);
 
 // Parse command line arguments
@@ -50,11 +70,15 @@ if (!fs.existsSync(serverPath)) {
 }
 
 // Set up environment
+const bind = resolveBindHost(hostname, process.env.NODE_OPTIONS);
 const env = {
   ...process.env,
   PORT: String(port),
-  HOSTNAME: hostname,
+  HOSTNAME: bind.hostname,
 };
+if (bind.nodeOptions) {
+  env.NODE_OPTIONS = bind.nodeOptions;
+}
 
 if (apiUrl) {
   env.HINDSIGHT_CP_DATAPLANE_API_URL = apiUrl;
@@ -84,3 +108,4 @@ server.on('close', (code) => {
 // Handle signals
 process.on('SIGTERM', () => server.kill('SIGTERM'));
 process.on('SIGINT', () => server.kill('SIGINT'));
+}
