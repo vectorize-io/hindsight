@@ -51,6 +51,14 @@ bank covering only 2025-26, reflect extrapolated a number and called it
 (from the tool trace), because a retrieval miss and a reasoning miss need
 opposite fixes.
 
+**`test_03` — retain language.** Real fact extraction (observations and
+consolidation off), each input retained `HINDSIGHT_EVAL_RETAIN_REPEATS` times
+(default 6) as separate documents, every document judged. A fact in a language
+other than the input's is the trap. The regression behind it (#4283): English
+coding-agent sessions stored as Spanish, French or Russian facts — about one run
+in six on gpt-5.6-luna. Italian and Japanese inputs guard the other direction, a
+fix that just forces English. It does not use the corpus.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels
