@@ -10461,8 +10461,6 @@ class MemoryEngine(MemoryEngineInterface):
             async with conn.transaction():
                 try:
                     if fact_type:
-                        # Resolved once: this branch asks the store two separate questions
-                        # below -- which ids to sweep, and how many rows it is about to remove.
                         from .memories import get_memories as _get_memories_for_scope
 
                         _scope_store = _get_memories_for_scope()
@@ -10495,14 +10493,9 @@ class MemoryEngine(MemoryEngineInterface):
                                 )
                                 unit_ids = [m.unit_id for m in _scope_page.memories]
 
-                        # Delete only memories of a specific fact type.
-                        #
-                        # Counted where the memories actually live, for the same reason the
-                        # unfiltered branch below counts through the store: a store-owned bank
-                        # keeps nothing in memory_units, so this count read from SQL was always
-                        # 0 while the delete_where after the transaction really did remove rows.
-                        # The API's clear endpoint returns this number, so an external-store
-                        # deployment was told its erasure had removed nothing.
+                        # Delete only memories of a specific fact type. Counted where the memories
+                        # live, like the unfiltered branch: a store-owned bank's memory_units is
+                        # empty, so the SQL count always reported 0 (#4307).
                         if _scope_store_owned:
                             _typed_counts = await _scope_store.count_memories(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id

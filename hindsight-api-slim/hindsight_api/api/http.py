@@ -9496,14 +9496,9 @@ def _register_routes(app: FastAPI):
                 bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
             )
 
-            # The engine counted this inside the delete's own transaction, which is strictly
-            # more accurate than the before/after pair of list calls a client would otherwise
-            # have to issue: a memory retained between the two moves the difference, and no
-            # client-side arithmetic can close that gap. Report memory_units_deleted alone --
-            # this endpoint clears the bank's memories and the bank, its profile, its entities
-            # and its documents survive, so summing them the way delete_bank does would answer
-            # a different question. Default 0 rather than None, so an absent deleted_count keeps
-            # meaning "not reported" instead of "nothing to report".
+            # Counted inside the delete's transaction — a client's before/after list diff races
+            # concurrent retains (#4307). Memory units only: unlike api_delete_bank, the bank's
+            # entities and documents survive a clear.
             deleted = result.get("memory_units_deleted", 0)
             scope = f" of type '{type}'" if type else ""
             return DeleteResponse(
