@@ -1921,6 +1921,7 @@ describe("recallMinScores (#4143)", () => {
       types: undefined,
       preferObservations: undefined,
       minScores: { reranker: 0.3 },
+      signal: expect.any(AbortSignal),
     });
   });
 });
