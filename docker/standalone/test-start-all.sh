@@ -230,3 +230,67 @@ if [ "$(id -u)" != "0" ]; then
 else
     echo "⚠️  Running as root; skipping pg0 writability checks (permissions are bypassed)."
 fi
+
+# =============================================================================
+# Control Plane loopback hostname resolution (#1926)
+#
+# A literal loopback HOSTNAME makes Next 307 every control-plane page to itself
+# while every other health signal stays green, so the substitution below is the
+# difference between a working UI and an unreachable one. The address family
+# matters as much as the fix: `localhost` resolves to ::1 in Docker's generated
+# /etc/hosts, so a bare substitution would silently move a requested IPv4 bind
+# onto IPv6. These assert that the spelling changes and the family does not.
+#
+# resolve_cp_hostname sets globals, so its output is captured through a file --
+# command substitution would run it in a subshell and drop CP_HOSTNAME.
+# =============================================================================
+assert_equals() {
+    local actual="$1"
+    local expected="$2"
+    local what="$3"
+
+    if [ "$actual" != "$expected" ]; then
+        echo "Expected $what to be '$expected', got '$actual'"
+        exit 1
+    fi
+}
+
+CP_OUT="$TMP_DIR/cp-hostname-out"
+
+# IPv4 loopback: rebound as localhost, pinned back to IPv4.
+NODE_OPTIONS=""
+CP_HOSTNAME=""
+resolve_cp_hostname "127.0.0.1" > "$CP_OUT" 2>&1
+assert_equals "$CP_HOSTNAME" "localhost" "CP_HOSTNAME for 127.0.0.1"
+assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv4first"
+assert_contains "$(cat "$CP_OUT")" "redirect every page to itself"
+assert_contains "$(cat "$CP_OUT")" "issues/1926"
+
+# IPv6 loopback, both spellings: same treatment, pinned back to IPv6.
+for v6 in "::1" "[::1]"; do
+    NODE_OPTIONS=""
+    CP_HOSTNAME=""
+    resolve_cp_hostname "$v6" > "$CP_OUT" 2>&1
+    assert_equals "$CP_HOSTNAME" "localhost" "CP_HOSTNAME for $v6"
+    assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv6first"
+done
+
+# The default and ordinary hostnames are left alone, silently.
+for untouched in "0.0.0.0" "localhost" "cp.internal"; do
+    NODE_OPTIONS=""
+    CP_HOSTNAME=""
+    resolve_cp_hostname "$untouched" > "$CP_OUT" 2>&1
+    assert_equals "$CP_HOSTNAME" "$untouched" "CP_HOSTNAME for $untouched"
+    assert_empty "$NODE_OPTIONS"
+    assert_empty "$(cat "$CP_OUT")"
+done
+
+# An operator's own NODE_OPTIONS must survive; this appends, never replaces.
+NODE_OPTIONS="--max-old-space-size=2048"
+CP_HOSTNAME=""
+resolve_cp_hostname "127.0.0.1" > "$CP_OUT" 2>&1
+assert_contains "$NODE_OPTIONS" "--max-old-space-size=2048"
+assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv4first"
+
+NODE_OPTIONS=""
+echo "start-all control-plane hostname checks passed"
