@@ -11,7 +11,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from hindsight_api.admin.cli import RenameBankError, _rename_bank, _run_rename_bank
+from hindsight_api.admin.cli import _RIGID_BANK_ID_FKS_SQL, RenameBankError, _rename_bank, _run_rename_bank
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _vector_index_clause
 from hindsight_api.engine.vector_index_health import plan_bank_vector_indexes, reconcile_bank_vector_indexes
 from hindsight_api.migrations import run_migrations
@@ -83,18 +83,18 @@ async def _counts(conn: asyncpg.Connection, schema: str, bank_id: str) -> dict[s
 
 
 @pytest.mark.asyncio
-async def test_every_bank_id_foreign_key_is_deferrable(rename_schema):
-    """rename-bank defers these to move composite-keyed rows; a new NOT DEFERRABLE one blocks it."""
+async def test_rename_restores_fk_deferrability(rename_schema):
+    """The FKs are made DEFERRABLE only for the rename; the schema ends as the migrations declared it."""
     _, schema, conn = rename_schema
-    rigid = await conn.fetch(
-        """SELECT c.conrelid::regclass::text AS tbl, c.conname FROM pg_constraint c
-           JOIN pg_namespace n ON n.oid = c.connamespace
-           WHERE c.contype = 'f' AND n.nspname = $1 AND NOT c.condeferrable
-             AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid
-                         AND a.attnum = ANY (c.conkey) AND a.attname = 'bank_id')""",
-        schema,
-    )
-    assert not rigid, f"declare these FKs DEFERRABLE INITIALLY IMMEDIATE: {[tuple(r) for r in rigid]}"
+    await _seed_bank(conn, schema, "old")
+    rigid_before = sorted(tuple(r) for r in await conn.fetch(_RIGID_BANK_ID_FKS_SQL, schema))
+    assert rigid_before, "expected NOT DEFERRABLE bank_id FKs in a freshly migrated schema"
+
+    await _rename_bank(conn, schema, "old", "new", dry_run=False)
+    with pytest.raises(RenameBankError):
+        await _rename_bank(conn, schema, "old", "newer", dry_run=False)
+
+    assert sorted(tuple(r) for r in await conn.fetch(_RIGID_BANK_ID_FKS_SQL, schema)) == rigid_before
 
 
 @pytest.mark.asyncio

@@ -848,25 +848,75 @@ class RenameBankError(Exception):
     """A rename-bank precondition failed; nothing was changed."""
 
 
+# FKs whose own columns include bank_id and that cannot be deferred as declared.
+_RIGID_BANK_ID_FKS_SQL = """
+    SELECT c.conrelid::regclass::text AS tbl, c.conname
+    FROM pg_constraint c
+    JOIN pg_namespace n ON n.oid = c.connamespace
+    WHERE c.contype = 'f' AND n.nspname = $1 AND NOT c.condeferrable
+      AND EXISTS (
+          SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) AND a.attname = 'bank_id'
+      )
+"""
+
+
+async def _set_fks_deferrable(conn: asyncpg.Connection, fks: list[asyncpg.Record], clause: str) -> None:
+    """Flip the given FKs' deferrability in one short transaction.
+
+    ``ALTER CONSTRAINT`` only touches the catalog, but it still takes a table lock
+    and queues behind any open transaction on the table — and everything else
+    queues behind it. ``lock_timeout`` turns a long wait into a loud failure
+    instead of a tenant-wide stall.
+    """
+    async with conn.transaction():
+        await conn.execute("SET LOCAL lock_timeout = '5s'")
+        for fk in fks:
+            await conn.execute(f"ALTER TABLE {fk['tbl']} ALTER CONSTRAINT {_quote_identifier(fk['conname'])} {clause}")
+
+
 async def _rename_bank(
     conn: asyncpg.Connection, schema: str, old_bank_id: str, new_bank_id: str, *, dry_run: bool
 ) -> dict[str, int]:
     """Move every row of ``old_bank_id`` to ``new_bank_id`` in one transaction.
 
     ``bank_id`` is the key every bank-scoped table carries, several composite FKs
-    included, so a rename rewrites it everywhere. Those FKs are DEFERRABLE
-    (migration b8d2f4a6c1e3): deferring them lets the tables move in any order,
-    and forcing them back to IMMEDIATE before the commit — or before the dry
-    run's rollback — makes a missed table fail the whole rename instead of
-    stranding rows. Tables are read from the catalog, so extension tables and
-    tables added later are covered without a list to maintain.
+    included (``documents(id, bank_id)``, ``mental_models(id, bank_id)``), so no
+    update order satisfies an immediate FK check. The FKs are made DEFERRABLE
+    just for the rename and put back afterwards, each flip in its own short
+    transaction — doing it inside the rename would hold those table locks, and
+    block every bank in the schema, for its whole duration. This is runtime DDL
+    rather than a migration on purpose: rename is a rare admin operation, and the
+    schema stays exactly as the migrations declare it. If the process dies
+    between the flips the FKs are left DEFERRABLE INITIALLY IMMEDIATE, which
+    checks every normal write exactly as before; the next rename restores them.
+    Only FKs this call flipped are put back.
+
+    Returns the rows moved per table (tables the bank had no rows in are omitted).
+    """
+    rigid = await conn.fetch(_RIGID_BANK_ID_FKS_SQL, schema)
+    await _set_fks_deferrable(conn, rigid, "DEFERRABLE INITIALLY IMMEDIATE")
+    try:
+        return await _move_bank_rows(conn, schema, old_bank_id, new_bank_id, dry_run=dry_run)
+    finally:
+        await _set_fks_deferrable(conn, rigid, "NOT DEFERRABLE")
+
+
+async def _move_bank_rows(
+    conn: asyncpg.Connection, schema: str, old_bank_id: str, new_bank_id: str, *, dry_run: bool
+) -> dict[str, int]:
+    """The rename transaction proper; the bank_id FKs must already be DEFERRABLE.
+
+    Deferring them lets the tables move in any order, and forcing them back to
+    IMMEDIATE before the commit — or before the dry run's rollback — makes a
+    missed table fail the whole rename instead of stranding rows. Tables are read
+    from the catalog, so extension tables and tables added later are covered
+    without a list to maintain.
 
     The ``FOR UPDATE`` on the bank row serialises the rename against writers:
     anything inserting a FK child of the bank takes a key-share lock on that row,
     so it either commits before the rename reads, or waits and then fails its FK
     check rather than writing under an id that no longer exists.
-
-    Returns the rows moved per table (tables the bank had no rows in are omitted).
     """
     banks = _fq_table("banks", schema)
     tx = conn.transaction()
@@ -887,25 +937,6 @@ async def _rename_bank(
             raise RenameBankError(
                 f"bank '{old_bank_id}' has {active} pending or processing operation(s); "
                 "wait for them to finish or cancel them, then retry"
-            )
-        rigid = await conn.fetch(
-            """
-            SELECT c.conrelid::regclass::text AS tbl, c.conname
-            FROM pg_constraint c
-            JOIN pg_namespace n ON n.oid = c.connamespace
-            WHERE c.contype = 'f' AND n.nspname = $1 AND NOT c.condeferrable
-              AND EXISTS (
-                  SELECT 1 FROM pg_attribute a
-                  WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) AND a.attname = 'bank_id'
-              )
-            """,
-            schema,
-        )
-        if rigid:
-            names = ", ".join(f"{r['tbl']}.{r['conname']}" for r in rigid)
-            raise RenameBankError(
-                f"foreign keys over bank_id are not DEFERRABLE: {names}. "
-                "Run `hindsight-admin run-db-migration`; an extension's FK must be declared DEFERRABLE."
             )
         tables = await conn.fetch(
             """
@@ -999,8 +1030,9 @@ def rename_bank(
         typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
         raise typer.Exit(1)
 
-    # The FKs are only made DEFERRABLE on PostgreSQL (migration b8d2f4a6c1e3), so on
-    # Oracle the rename cannot move composite-keyed rows. Refuse before connecting.
+    # The rename flips FK deferrability with PostgreSQL's ALTER CONSTRAINT and runs
+    # over asyncpg; Oracle can only change deferrability by recreating the
+    # constraint. Refuse before connecting rather than fail halfway.
     if is_oracle_url(config.database_url):
         typer.echo("Error: rename-bank is PostgreSQL-only; Oracle backends are not supported.", err=True)
         raise typer.Exit(1)
