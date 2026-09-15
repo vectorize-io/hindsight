@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "module";
 import {
+  knowledgeToolDetails,
   stripMemoryTags,
   extractRecallQuery,
   formatCurrentTimeForRecall,
@@ -2348,5 +2349,26 @@ describe("inbound metadata blocks (marker and legacy forms)", () => {
   it("recovers the user query from a marker-wrapped prompt", () => {
     const text = `${markerBlock("Conversation info:", '{"sender_id":"ou_xyz"}')}\n\nwhat did I say about postgres?`;
     expect(extractRecallQuery(undefined, text)).toBe("what did I say about postgres?");
+  });
+});
+
+describe("knowledgeToolDetails — Code Mode structured result (#4308)", () => {
+  it("parses the SDK's JSON text payload into details", () => {
+    const result = {
+      content: [{ type: "text", text: JSON.stringify({ results: [{ id: "m1", text: "fact" }] }, null, 2) }],
+    };
+    expect(knowledgeToolDetails(result)).toEqual({ results: [{ id: "m1", text: "fact" }] });
+  });
+
+  it("wraps a non-object payload so the guest still receives it", () => {
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: "[1,2]" }] })).toEqual({ result: [1, 2] });
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: "\"ok\"" }] })).toEqual({ result: "ok" });
+  });
+
+  it("falls back to an empty object for missing or unparseable text", () => {
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: "not json" }] })).toEqual({});
+    expect(knowledgeToolDetails({ content: [] })).toEqual({});
+    expect(knowledgeToolDetails({})).toEqual({});
+    expect(knowledgeToolDetails(undefined)).toEqual({});
   });
 });

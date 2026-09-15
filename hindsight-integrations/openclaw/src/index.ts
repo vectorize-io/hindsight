@@ -22,6 +22,31 @@ import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import { homedir } from "os";
 import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+
+/**
+ * Structured payload for a knowledge tool result.
+ *
+ * The SDK returns the payload only as JSON text in `content[0].text`. OpenClaw's
+ * Code Mode hands a tool result's `details` (and nothing else) to the guest as the
+ * structured value, so `details: {}` made every knowledge tool look empty there
+ * (#4308). Parse the text back into an object; a non-object payload is wrapped and
+ * unparseable text yields `{}` as before.
+ */
+export function knowledgeToolDetails(result: unknown): Record<string, unknown> {
+  const content = (result as { content?: unknown })?.content;
+  const first = Array.isArray(content) ? (content[0] as { text?: unknown } | undefined) : undefined;
+  const text = first?.text;
+  if (typeof text !== "string") return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { result: parsed };
+  } catch {
+    return {};
+  }
+}
 import {
   applyConfiguredBankDefaults,
   hasConfiguredBankDefaults,
@@ -3141,12 +3166,13 @@ ${memoriesFormatted}
               if (resolution.identityError) {
                 return {
                   content: [{ type: "text", text: resolution.identityError }],
-                  details: {},
+                  details: { error: resolution.identityError },
                 };
               }
               const config = currentPluginConfig || pluginConfig;
               await ensureBankDefaultsApplied(resolution.bankId, config);
-              return { ...(await t.execute(params)), details: {} };
+              const result = await t.execute(params);
+              return { ...result, details: knowledgeToolDetails(result) };
             },
           }));
         };
