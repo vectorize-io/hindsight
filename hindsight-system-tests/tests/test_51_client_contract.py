@@ -23,8 +23,10 @@ pytestmark = pytest.mark.asyncio
 
 # `close`/`aclose` manage the client's own connection pool rather than calling
 # the API. Both halves are excluded, not just `close` — excluding one orphans the
-# other, which then reads as a method missing *its* async twin.
-_NOT_API_CALLS = {"close", "aclose"}
+# other, which then reads as a method missing *its* async twin. `suspend_retains` is a
+# sync context manager over a task-local flag: it never runs the event loop, so it
+# already works inside async code and needs no async variant.
+_NOT_API_CALLS = {"close", "aclose", "suspend_retains"}
 
 
 def _convenience_methods() -> list[str]:

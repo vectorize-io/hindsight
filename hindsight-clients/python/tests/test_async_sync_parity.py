@@ -15,6 +15,10 @@ import pytest
 
 from hindsight_client import Hindsight
 
+# `suspend_retains` is a sync context manager over a task-local flag: it never runs the
+# event loop, so it already works inside async code and an async twin would be redundant.
+_NO_ASYNC_TWIN_NEEDED = {"suspend_retains"}
+
 
 def _public_methods() -> dict[str, object]:
     return {
@@ -30,7 +34,11 @@ def _pairs() -> list[tuple[str, str]]:
 def test_every_sync_convenience_method_has_an_async_twin():
     methods = _public_methods()
     async_twins = {"a" + name for name in methods if "a" + name in methods}
-    missing = sorted(name for name in methods if name not in async_twins and "a" + name not in methods)
+    missing = sorted(
+        name
+        for name in methods
+        if name not in async_twins and "a" + name not in methods and name not in _NO_ASYNC_TWIN_NEEDED
+    )
     assert missing == [], (
         f"public convenience methods without an a-prefixed async twin: {missing}. "
         "Add `async def a<name>` next to each (the sync method should forward to it via _run_async)."
