@@ -7,6 +7,8 @@ import { resolveTemporalWindow } from "@/lib/temporal-window";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { DisclosureButton, Hint, Row, Section, Segmented } from "@/components/form-layout";
 import { toast } from "sonner";
 import {
   Select,
@@ -15,23 +17,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { FactType, FactTypeFilter } from "@/components/fact-type-filter";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Search,
   Clock,
-  Zap,
   ChevronRight,
   ChevronDown,
   Database,
-  FileText,
-  Users,
   ArrowDown,
-  Tag,
   Calendar,
-  CalendarRange,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import JsonView from "react18-json-view";
@@ -130,6 +126,7 @@ export function SearchDebugView() {
   const [windowEnd, setWindowEnd] = useState("");
   const [tags, setTags] = useState("");
   const [tagsMatch, setTagsMatch] = useState<TagsMatch>("any");
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   // Results state
   const [results, setResults] = useState<any[] | null>(null);
@@ -180,6 +177,16 @@ export function SearchDebugView() {
   };
 
   const temporalWindow = resolveTemporalWindow(windowStart, windowEnd);
+  // How many collapsed options differ from their defaults, so a hidden setting
+  // still shows on the Options toggle.
+  const activeOptions = [
+    maxTokens !== 4096,
+    Boolean(queryDate),
+    includeChunks,
+    !includeEntities,
+    Boolean(tags.trim()),
+    Boolean(windowStart || windowEnd),
+  ].filter(Boolean).length;
 
   // Only the edge the extractor recorded for this fact. There is no falling back
   // to the chunk's attachments: a chunk lists everything its text references, so
@@ -290,137 +297,148 @@ export function SearchDebugView() {
             </Button>
           </div>
 
-          {/* Filters */}
-          <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t">
+          {/* Everyday filters inline; everything else behind Options. */}
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
             <FactTypeFilter value={factTypes} onChange={setFactTypes} label={t("typesLabel")} />
-
-            <div className="h-6 w-px bg-border" />
-
-            {/* Budget */}
             <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-muted-foreground" />
-              <Select value={budget} onValueChange={(v) => setBudget(v as Budget)}>
-                <SelectTrigger className="w-24 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">{t("budgetLow")}</SelectItem>
-                  <SelectItem value="mid">{t("budgetMid")}</SelectItem>
-                  <SelectItem value="high">{t("budgetHigh")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Max Tokens */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">{t("tokensLabel")}</span>
-              <Input
-                type="number"
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-                className="w-24 h-8"
+              <span className="text-sm text-muted-foreground">{t("budgetLabel")}</span>
+              <Segmented
+                value={budget}
+                onChange={setBudget}
+                ariaLabel={t("budgetLabel")}
+                options={[
+                  { value: "low", label: t("budgetLow") },
+                  { value: "mid", label: t("budgetMid") },
+                  { value: "high", label: t("budgetHigh") },
+                ]}
               />
             </div>
-
-            {/* Query Date */}
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <Input
-                type="datetime-local"
-                value={queryDate}
-                onChange={(e) => setQueryDate(e.target.value)}
-                className="h-8"
-                placeholder={t("queryDatePlaceholder")}
+            <div className="ml-auto">
+              <DisclosureButton
+                open={optionsOpen}
+                onToggle={() => setOptionsOpen((open) => !open)}
+                label={t("optionsLabel")}
+                badge={activeOptions}
               />
-            </div>
-
-            <div className="h-6 w-px bg-border" />
-
-            {/* Include options */}
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={includeChunks}
-                  onCheckedChange={(c) => setIncludeChunks(c as boolean)}
-                />
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">{t("chunks")}</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer" title={t("entitiesHint")}>
-                <Checkbox
-                  checked={includeEntities}
-                  onCheckedChange={(c) => setIncludeEntities(c as boolean)}
-                />
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">{t("entities")}</span>
-              </label>
             </div>
           </div>
 
-          {/* Tags Filter */}
-          <div className="flex items-center gap-4 mt-4 pt-4 border-t">
-            <Tag className="h-4 w-4 text-muted-foreground" />
-            <div className="flex-1 max-w-md">
-              <Input
-                type="text"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder={t("tagsPlaceholder")}
-                className="h-8"
-              />
-            </div>
-            <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
-              <SelectTrigger className="w-40 h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="any">{t("tagsMatchAny")}</SelectItem>
-                <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
-                <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
-                <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
-                <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {optionsOpen && (
+            <div className="mt-5 grid gap-8 md:grid-cols-2">
+              <Section title={t("sectionRetrieval")}>
+                <Row label={t("maxTokensLabel")} htmlFor="recall-max-tokens">
+                  <Input
+                    id="recall-max-tokens"
+                    type="number"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                    className="h-8"
+                  />
+                </Row>
+                <Row label={t("queryDatePlaceholder")} htmlFor="recall-query-date">
+                  <Input
+                    id="recall-query-date"
+                    type="datetime-local"
+                    value={queryDate}
+                    onChange={(e) => setQueryDate(e.target.value)}
+                    className="h-8"
+                  />
+                </Row>
+                <Row label={t("chunks")} htmlFor="recall-chunks">
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="recall-chunks"
+                      checked={includeChunks}
+                      onCheckedChange={setIncludeChunks}
+                    />
+                  </div>
+                </Row>
+                <Row
+                  label={t("entities")}
+                  description={t("entitiesHint")}
+                  htmlFor="recall-entities"
+                >
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="recall-entities"
+                      checked={includeEntities}
+                      onCheckedChange={setIncludeEntities}
+                    />
+                  </div>
+                </Row>
+              </Section>
 
-          {/* Temporal window */}
-          <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t">
-            <CalendarRange className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">{t("temporalWindowLabel")}</span>
-            <Input
-              type="datetime-local"
-              value={windowStart}
-              onChange={(e) => setWindowStart(e.target.value)}
-              aria-label={t("temporalWindowStart")}
-              className="h-8 w-56"
-            />
-            <span className="text-sm text-muted-foreground">{t("temporalWindowTo")}</span>
-            <Input
-              type="datetime-local"
-              value={windowEnd}
-              onChange={(e) => setWindowEnd(e.target.value)}
-              aria-label={t("temporalWindowEnd")}
-              className="h-8 w-56"
-            />
-            {(windowStart || windowEnd) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8"
-                onClick={() => {
-                  setWindowStart("");
-                  setWindowEnd("");
-                }}
-              >
-                {t("temporalWindowClear")}
-              </Button>
-            )}
-            <p
-              className={`w-full text-xs ${temporalWindow.reversed ? "text-destructive" : "text-muted-foreground"}`}
-            >
-              {temporalWindow.reversed ? t("temporalWindowReversed") : t("temporalWindowHint")}
-            </p>
-          </div>
+              <Section title={t("sectionFilters")}>
+                <Row label={t("tagsLabel")} htmlFor="recall-tags">
+                  <Input
+                    id="recall-tags"
+                    type="text"
+                    value={tags}
+                    onChange={(e) => setTags(e.target.value)}
+                    placeholder={t("tagsPlaceholder")}
+                    className="h-8"
+                  />
+                </Row>
+                <Row label={t("tagsMatchLabel")}>
+                  <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">{t("tagsMatchAny")}</SelectItem>
+                      <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
+                      <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
+                      <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
+                      <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Row>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium text-foreground">
+                      {t("temporalWindowLabel")}
+                    </span>
+                    <Hint text={t("temporalWindowHint")} />
+                    {(windowStart || windowEnd) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto h-7"
+                        onClick={() => {
+                          setWindowStart("");
+                          setWindowEnd("");
+                        }}
+                      >
+                        {t("temporalWindowClear")}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="datetime-local"
+                      value={windowStart}
+                      onChange={(e) => setWindowStart(e.target.value)}
+                      aria-label={t("temporalWindowStart")}
+                      className="h-8 flex-1"
+                    />
+                    <span className="text-xs text-muted-foreground">{t("temporalWindowTo")}</span>
+                    <Input
+                      type="datetime-local"
+                      value={windowEnd}
+                      onChange={(e) => setWindowEnd(e.target.value)}
+                      aria-label={t("temporalWindowEnd")}
+                      className="h-8 flex-1"
+                    />
+                  </div>
+                </div>
+              </Section>
+            </div>
+          )}
+
+          {/* Outside the panel: it is why Recall is disabled, so it must show even collapsed. */}
+          {temporalWindow.reversed && (
+            <p className="mt-3 text-xs text-destructive">{t("temporalWindowReversed")}</p>
+          )}
         </CardContent>
       </Card>
 

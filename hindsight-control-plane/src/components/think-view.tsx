@@ -6,6 +6,8 @@ import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { DisclosureButton, Row, Section, Segmented } from "@/components/form-layout";
 import {
   Select,
   SelectContent,
@@ -13,7 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { FactType, FactTypeFilter } from "@/components/fact-type-filter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -59,6 +60,7 @@ export function ThinkView() {
   const [excludeMentalModels, setExcludeMentalModels] = useState(false);
   const [excludeMentalModelIds, setExcludeMentalModelIds] = useState("");
   const [responseSchema, setResponseSchema] = useState("");
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
@@ -70,6 +72,18 @@ export function ThinkView() {
   const [activeBasedOnTab, setActiveBasedOnTab] = useState<BasedOnTab>("world");
 
   const FEEDBACK_DIRECTIVE_NAME = "General Feedback";
+
+  // How many collapsed options differ from their defaults, so a hidden setting
+  // still shows on the Options toggle.
+  const activeOptions = [
+    maxTokens !== 4096,
+    !includeFacts,
+    !includeToolCalls,
+    Boolean(tags.trim()),
+    excludeMentalModels,
+    Boolean(excludeMentalModelIds.trim()),
+    Boolean(responseSchema.trim()),
+  ].filter(Boolean).length;
 
   // Load full observation data when one is selected
   const handleSelectObservation = async (observation: any) => {
@@ -202,110 +216,112 @@ export function ThinkView() {
             </Button>
           </div>
 
-          {/* Filters */}
-          <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t">
-            {/* Budget */}
+          {/* Everyday options inline; everything else behind Options. */}
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground">{t("budgetLabel")}</span>
-              <Select value={budget} onValueChange={(value: any) => setBudget(value)}>
-                <SelectTrigger className="w-24 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">{t("budgetLow")}</SelectItem>
-                  <SelectItem value="mid">{t("budgetMid")}</SelectItem>
-                  <SelectItem value="high">{t("budgetHigh")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Max Tokens */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">{t("tokensLabel")}</span>
-              <Input
-                type="number"
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(parseInt(e.target.value) || 4096)}
-                className="w-24 h-8"
+              <span className="text-sm text-muted-foreground">{t("budget")}</span>
+              <Segmented
+                value={budget}
+                onChange={setBudget}
+                ariaLabel={t("budget")}
+                options={[
+                  { value: "low", label: t("budgetLow") },
+                  { value: "mid", label: t("budgetMid") },
+                  { value: "high", label: t("budgetHigh") },
+                ]}
               />
             </div>
-
-            <div className="h-6 w-px bg-border" />
-
-            {/* Include options */}
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={includeFacts}
-                  onCheckedChange={(c) => setIncludeFacts(c as boolean)}
-                />
-                <span className="text-sm">{t("includeSource")}</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={includeToolCalls}
-                  onCheckedChange={(c) => setIncludeToolCalls(c as boolean)}
-                />
-                <span className="text-sm">{t("includeTools")}</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Tags Filter */}
-          <div className="flex items-center gap-4 mt-4 pt-4 border-t">
-            <Tag className="h-4 w-4 text-muted-foreground" />
-            <div className="flex-1 max-w-md">
-              <Input
-                type="text"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder={t("tagsPlaceholder")}
-                className="h-8"
-              />
-            </div>
-            <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
-              <SelectTrigger className="w-40 h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="any">{t("tagsMatchAny")}</SelectItem>
-                <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
-                <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
-                <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
-                <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Fact Types & Mental Model Filters */}
-          <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t">
             <FactTypeFilter value={factTypes} onChange={setFactTypes} />
-            <div className="h-6 w-px bg-border" />
-            <label className="flex items-center gap-2 cursor-pointer">
-              <Checkbox
-                checked={excludeMentalModels}
-                onCheckedChange={(c) => setExcludeMentalModels(c as boolean)}
-              />
-              <span className="text-sm">{t("excludeMentalModels")}</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">{t("excludeIdsLabel")}</span>
-              <Input
-                type="text"
-                value={excludeMentalModelIds}
-                onChange={(e) => setExcludeMentalModelIds(e.target.value)}
-                placeholder={t("excludeIdsPlaceholder")}
-                className="h-8 w-48"
+            <div className="ml-auto">
+              <DisclosureButton
+                open={optionsOpen}
+                onToggle={() => setOptionsOpen((open) => !open)}
+                label={t("optionsLabel")}
+                badge={activeOptions}
               />
             </div>
           </div>
 
-          {/* Structured Output Schema */}
-          <ResponseSchemaField
-            className="mt-4 pt-4 border-t"
-            value={responseSchema}
-            onChange={setResponseSchema}
-          />
+          {optionsOpen && (
+            <div className="mt-5 grid gap-8 md:grid-cols-2">
+              <Section title={t("sectionAnswer")}>
+                <Row label={t("maxTokensLabel")} htmlFor="reflect-max-tokens">
+                  <Input
+                    id="reflect-max-tokens"
+                    type="number"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value) || 4096)}
+                    className="h-8"
+                  />
+                </Row>
+                <Row label={t("includeSource")} htmlFor="reflect-include-source">
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="reflect-include-source"
+                      checked={includeFacts}
+                      onCheckedChange={setIncludeFacts}
+                    />
+                  </div>
+                </Row>
+                <Row label={t("includeTools")} htmlFor="reflect-include-tools">
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="reflect-include-tools"
+                      checked={includeToolCalls}
+                      onCheckedChange={setIncludeToolCalls}
+                    />
+                  </div>
+                </Row>
+                <ResponseSchemaField value={responseSchema} onChange={setResponseSchema} />
+              </Section>
+
+              <Section title={t("sectionScope")}>
+                <Row label={t("tagsLabel")} htmlFor="reflect-tags">
+                  <Input
+                    id="reflect-tags"
+                    type="text"
+                    value={tags}
+                    onChange={(e) => setTags(e.target.value)}
+                    placeholder={t("tagsPlaceholder")}
+                    className="h-8"
+                  />
+                </Row>
+                <Row label={t("tagsMatchLabel")}>
+                  <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">{t("tagsMatchAny")}</SelectItem>
+                      <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
+                      <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
+                      <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
+                      <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Row>
+                <Row label={t("excludeMentalModels")} htmlFor="reflect-exclude-models">
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="reflect-exclude-models"
+                      checked={excludeMentalModels}
+                      onCheckedChange={setExcludeMentalModels}
+                    />
+                  </div>
+                </Row>
+                <Row label={t("excludeIdsRowLabel")} htmlFor="reflect-exclude-ids">
+                  <Input
+                    id="reflect-exclude-ids"
+                    type="text"
+                    value={excludeMentalModelIds}
+                    onChange={(e) => setExcludeMentalModelIds(e.target.value)}
+                    placeholder={t("excludeIdsPlaceholder")}
+                    className="h-8"
+                  />
+                </Row>
+              </Section>
+            </div>
+          )}
         </CardContent>
       </Card>
 
