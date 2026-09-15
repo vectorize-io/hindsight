@@ -35,6 +35,12 @@
     "hindsight-zcode-hook": "dist/zcode-hook.js",
     "hindsight-zcode-sessionstart-hook": "dist/zcode-sessionstart-hook.js",
     "hindsight-zcode-stop-hook": "dist/zcode-stop-hook.js",
+    "hindsight-workbuddy-hook": "dist/workbuddy-hook.js",
+    "hindsight-workbuddy-sessionstart-hook": "dist/workbuddy-sessionstart-hook.js",
+    "hindsight-workbuddy-stop-hook": "dist/workbuddy-stop-hook.js",
+    "hindsight-codebuddy-hook": "dist/codebuddy-hook.js",
+    "hindsight-codebuddy-sessionstart-hook": "dist/codebuddy-sessionstart-hook.js",
+    "hindsight-codebuddy-stop-hook": "dist/codebuddy-stop-hook.js",
     "hindsight-droid-hook": "dist/droid-hook.js",
     "hindsight-droid-sessionstart-hook": "dist/droid-sessionstart-hook.js",
     "hindsight-droid-stop-hook": "dist/droid-stop-hook.js"

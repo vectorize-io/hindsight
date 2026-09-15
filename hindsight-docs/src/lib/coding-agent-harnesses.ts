@@ -48,6 +48,8 @@ export const CODING_AGENT_HARNESSES: CodingAgentHarness[] = [
   {id: 'pi', label: 'pi', file: 'pi.svg'},
   {id: 'prime-agent', label: 'Prime Agent', file: 'prime-agent.svg'},
   {id: 'dsh', label: 'DeepSeek Harness', file: 'dsh.svg'},
+  {id: 'workbuddy', label: 'WorkBuddy', file: 'workbuddy.png'},
+  {id: 'codebuddy', label: 'CodeBuddy', file: 'codebuddy.png'},
 ];
 
 /** Public path of a harness icon, for surfaces that want the URL rather than the file name. */
