@@ -13520,6 +13520,8 @@ class MemoryEngine(MemoryEngineInterface):
             await self._ensure_bank_storage(bank_id)
             return False
 
+        bank_utils.validate_new_bank_id(bank_id)
+
         if self._operation_validator:
             from hindsight_api.extensions import CreateBankContext
 

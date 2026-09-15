@@ -99,3 +99,37 @@ async def test_a_bank_that_does_not_exist_is_a_404_not_an_empty_answer(client):
 
     with pytest.raises(NotFoundException):
         await client.banks.get_bank_config("systest-no-such-bank")
+
+
+async def test_a_bank_id_over_the_byte_limit_is_refused_before_the_bank_exists(client):
+    """Bank ids are capped at 192 bytes of UTF-8 (#4391). Without the cap a long id
+    was accepted and then broke every file write, because storage keys percent-encode
+    it past S3's 1,024-byte limit. The refusal has to come at creation, from both
+    the explicit create and the implicit one a first retain performs, and leave no
+    bank behind.
+    """
+    from aiohttp import ClientResponseError
+    from hindsight_client_api.exceptions import ApiException
+
+    too_long = "systest-" + "中" * 62  # 8 + 186 = 194 bytes
+    # acreate_bank surfaces aiohttp's error, aretain the generated SDK's; both carry .status.
+    with pytest.raises((ApiException, ClientResponseError)) as created:
+        await client.acreate_bank(bank_id=too_long, name="too long")
+    assert created.value.status == 400
+    with pytest.raises((ApiException, ClientResponseError)) as retained:
+        await client.aretain(bank_id=too_long, content="Alice moved to Berlin.")
+    assert retained.value.status == 400
+
+    listing = await client.banks.list_banks(q="systest-中")
+    assert [b.bank_id for b in listing.banks] == []
+
+
+async def test_a_bank_id_at_the_byte_limit_is_accepted(client):
+    """64 CJK characters is exactly 192 bytes — the budget the limit was sized for."""
+    at_limit = "中" * 64
+    try:
+        await client.acreate_bank(bank_id=at_limit, name="at limit")
+        listing = await client.banks.list_banks(q=at_limit)
+        assert [b.bank_id for b in listing.banks] == [at_limit]
+    finally:
+        await client.banks.delete_bank(at_limit)

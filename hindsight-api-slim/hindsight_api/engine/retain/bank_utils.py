@@ -5,6 +5,7 @@ bank profile utilities for disposition and mission management.
 import asyncio
 import json
 import logging
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -250,6 +251,26 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
         disposition=DispositionTraits(**row["disposition"]),
         mission=row["mission"] or "",
     )
+
+
+# Bytes, not characters: storage keys percent-encode the bank id (up to 3x per UTF-8 byte), so
+# 192 bytes is at most 576 encoded bytes, under S3's 1,024-byte key limit with room for the
+# tenant, the prefix and the file name, while still fitting 64 CJK characters (#4391).
+BANK_ID_MAX_BYTES = 192
+
+
+def validate_new_bank_id(bank_id: str) -> None:
+    """Reject a bank id that must not be created. Existing banks are never re-checked."""
+    from hindsight_api.extensions import OperationValidationError
+
+    if not bank_id:
+        raise OperationValidationError("Bank id must not be empty", status_code=400)
+    if len(bank_id.encode("utf-8")) > BANK_ID_MAX_BYTES:
+        raise OperationValidationError(
+            f"Bank id is too long: at most {BANK_ID_MAX_BYTES} bytes of UTF-8 are allowed", status_code=400
+        )
+    if any(unicodedata.category(ch) == "Cc" for ch in bank_id):
+        raise OperationValidationError("Bank id must not contain control characters", status_code=400)
 
 
 async def create_bank_row_on_conn(conn: "DatabaseConnection", bank_id: str, *, ops: "DataAccessOps") -> bool:

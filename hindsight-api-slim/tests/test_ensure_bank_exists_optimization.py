@@ -162,6 +162,41 @@ async def test_validator_rejection_creates_no_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_id",
+    ["", "é" * 97, "tab\tin-id", "nul\x00in-id"],  # "é" is 2 bytes: 194 > 192
+    ids=["empty", "too-many-bytes", "tab", "nul"],
+)
+async def test_invalid_new_bank_id_is_rejected_before_insert(
+    memory: MemoryEngine, request_context: RequestContext, bad_id: str
+) -> None:
+    """A new bank id over the byte limit or with control characters is refused with a 400 (#4391)."""
+    backend = await memory._get_backend()
+    with pytest.raises(OperationValidationError) as exc_info:
+        await memory._ensure_bank_exists(bad_id, request_context)
+    assert exc_info.value.status_code == 400
+    assert await bank_utils.bank_exists(backend, bad_id) is False
+
+
+@pytest.mark.asyncio
+async def test_bank_id_limit_counts_bytes_and_spares_existing_banks(
+    memory: MemoryEngine, request_context: RequestContext, bank_name: Callable[[str], str]
+) -> None:
+    """Exactly the byte limit is accepted; a longer id that already exists stays usable."""
+    at_limit = bank_name("x")
+    at_limit += "é" * ((bank_utils.BANK_ID_MAX_BYTES - len(at_limit.encode())) // 2)
+    at_limit += "a" * (bank_utils.BANK_ID_MAX_BYTES - len(at_limit.encode()))
+    assert len(at_limit.encode()) == bank_utils.BANK_ID_MAX_BYTES
+    assert await memory._ensure_bank_exists(at_limit, request_context) is True
+
+    # A bank created before the limit existed: inserted directly, bypassing the check.
+    legacy = bank_name("legacy") + "a" * 200
+    backend = await memory._get_backend()
+    await bank_utils.create_bank_if_missing(backend, legacy)
+    assert await memory._ensure_bank_exists(legacy, request_context) is False
+
+
+@pytest.mark.asyncio
 async def test_concurrent_creation_applies_the_template_once(
     memory: MemoryEngine,
     request_context: RequestContext,
