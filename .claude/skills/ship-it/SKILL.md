@@ -48,8 +48,7 @@ commits and rebase yours onto their head — never force-push over work you have
 ## 3. Review
 
 Read and follow the repo's code-review skill at its absolute path,
-`$(git rev-parse --show-toplevel)/.claude/skills/code-review/SKILL.md` (resolve `<repo>` first, e.g.
-`/Users/.../hindsight/.claude/skills/code-review/SKILL.md`), against the PR's changes
+`<repo>/.claude/skills/code-review/SKILL.md` (`<repo>` = `git rev-parse --show-toplevel`), against the PR's changes
 (base = `origin/<baseRefName>`). Collect every finding: must fix, should fix, and nits.
 
 Classify each against step 0. Any blocker → stop and ask.
@@ -78,9 +77,10 @@ gh run list --branch <headRefName> --workflow CI --json databaseId,status,conclu
 ```
 
 No run yet → keep waiting (give up and report after ~15 min with no run). Once `completed`, judge
-**per job** (`gh run view <id> --json jobs`): zero `failure`, and `test-api (1..3/3)`,
-`Core LLM tests`, and the LLM acceptance matrix must be `success`, not `skipped`. The oracle-client
-jobs are known-flaky and may be `cancelled` — ignore those.
+**per job** (`gh run view <id> --json jobs`): zero `failure`. If the PR touches the API/engine, `test-api (1..3/3)`,
+`Core LLM tests`, and the LLM acceptance matrix must be `success`, not `skipped`; for changes outside
+those paths the change filter skips them legitimately. The oracle-client jobs are known-flaky and may
+be `cancelled` — ignore those.
 
 **Fork PRs skip `test-api` and the LLM jobs** (no secrets). Run the full suite on an upstream branch
 before merging — merging to main runs no CI at all:
@@ -94,16 +94,17 @@ A failure caused by the PR/fixes → fix, push, back to step 5. A known flake (c
 touching the PR's code) → `gh run rerun <id> --failed` once the run has completed.
 If CI still fails for reasons you can't attribute, stop and report — don't merge red.
 
-## 6. Merge
+## 6. Restore the worktree, then merge
+
+First restore the worktree to how you found it: switch back to the original branch/commit and
+re-apply any work you set aside (undo the WIP commit / apply-then-drop your tagged stash). Do the
+same if you stop early on a blocker or failure. Restoring first also keeps `--delete-branch` from
+trying to check out `main`, which another worktree may hold.
 
 ```bash
 gh pr merge <N> --squash --delete-branch
 git push origin --delete ci/pr-<N>-verify   # if you created it
 ```
-
-Restore the worktree to how you found it: switch back to the original branch/commit and re-apply
-any work you set aside (undo the WIP commit / apply-then-drop your tagged stash). Do the same if you
-stop early on a blocker or failure.
 
 Report: PR link, the findings fixed (one line each), anything deliberately left, and the CI run
 that gated the merge.
