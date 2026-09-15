@@ -23,34 +23,39 @@ def _local_utc_offset() -> timedelta:
     return datetime.now().replace(microsecond=0) - datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
-def test_relative_window_anchors_on_utc_not_server_local(monkeypatch):
-    analyzer = DateparserQueryAnalyzer()
-    for zone in ZONES:
+@pytest.fixture
+def set_tz(monkeypatch):
+    """Switch the process zone; restore the runner's own ``TZ`` (not just unset it) afterwards."""
+
+    def _set(zone: str) -> None:
         monkeypatch.setenv("TZ", zone)
         time.tzset()
-        try:
-            if _local_utc_offset() == timedelta(0):
-                pytest.skip(f"tzdata for {zone} is not installed; TZ fell back to UTC")
-            expected = datetime.now(UTC).date() - timedelta(days=1)
-            constraint = analyzer.analyze("what happened yesterday").temporal_constraint
-            assert constraint is not None
-            assert constraint.start_date.date() == expected, f"{zone}: anchored on local time"
-            assert constraint.end_date.date() == expected, f"{zone}: anchored on local time"
-        finally:
-            monkeypatch.delenv("TZ", raising=False)
-            time.tzset()
+
+    yield _set
+    # monkeypatch restores the env var only after this teardown, so undo it here first:
+    # tzset() must see the original TZ, or the rest of the worker keeps the test's zone.
+    monkeypatch.undo()
+    time.tzset()
 
 
-def test_explicit_reference_date_is_untouched(monkeypatch):
+def test_relative_window_anchors_on_utc_not_server_local(set_tz):
+    analyzer = DateparserQueryAnalyzer()
+    for zone in ZONES:
+        set_tz(zone)
+        if _local_utc_offset() == timedelta(0):
+            pytest.skip(f"tzdata for {zone} is not installed; TZ fell back to UTC")
+        expected = datetime.now(UTC).date() - timedelta(days=1)
+        constraint = analyzer.analyze("what happened yesterday").temporal_constraint
+        assert constraint is not None
+        assert constraint.start_date.date() == expected, f"{zone}: anchored on local time"
+        assert constraint.end_date.date() == expected, f"{zone}: anchored on local time"
+
+
+def test_explicit_reference_date_is_untouched(set_tz):
     """A caller-supplied anchor still wins, whatever the server's zone is."""
     analyzer = DateparserQueryAnalyzer()
     reference = datetime(2025, 1, 15, 12, 0, 0)
-    monkeypatch.setenv("TZ", "Pacific/Kiritimati")
-    time.tzset()
-    try:
-        constraint = analyzer.analyze("what happened yesterday", reference).temporal_constraint
-        assert constraint is not None
-        assert constraint.start_date.date() == reference.date() - timedelta(days=1)
-    finally:
-        monkeypatch.delenv("TZ", raising=False)
-        time.tzset()
+    set_tz("Pacific/Kiritimati")
+    constraint = analyzer.analyze("what happened yesterday", reference).temporal_constraint
+    assert constraint is not None
+    assert constraint.start_date.date() == reference.date() - timedelta(days=1)
