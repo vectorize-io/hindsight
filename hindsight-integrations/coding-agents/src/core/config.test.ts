@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, applyBankConfig, readEnvConfig, resolveConfig } from "./config";
+import { log } from "./log";
 
 let root: string;
 let globalCfg: string;
@@ -278,6 +279,31 @@ describe("environment fallback", () => {
     expect(cfg.apiToken).toBe("tok-from-file");
   });
 
+  it("autoInject: explicit mode wins, legacy autoReflect=false maps to none, junk falls back", () => {
+    expect(resolveConfig({}).autoInject).toBe("reflect");
+    expect(resolveConfig({ autoInject: "pages" }).autoInject).toBe("pages");
+    expect(resolveConfig({ autoInject: "recall", autoReflect: false }).autoInject).toBe("recall");
+    expect(resolveConfig({ autoReflect: false }).autoInject).toBe("none");
+    expect(resolveConfig({ autoInject: "bogus" as never }).autoInject).toBe("reflect");
+    const base = resolveConfig({ autoInject: "pages", banks: { b: { autoReflect: false } } });
+    expect(applyBankConfig(base, "b").cfg.autoInject).toBe("none");
+    expect(applyBankConfig(base, "other").cfg.autoInject).toBe("pages");
+  });
+
+  it("autoReflect is deprecated: still honoured, but warns only when set", () => {
+    // log.warn writes to the plugin log file, not the console — spy on it directly.
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    expect(resolveConfig({ autoInject: "pages" }).autoInject).toBe("pages");
+    expect(warn).not.toHaveBeenCalled();
+    expect(resolveConfig({ autoReflect: true }).autoInject).toBe("reflect");
+    expect(resolveConfig({ autoReflect: false }).autoInject).toBe("none");
+    expect(warn).toHaveBeenLastCalledWith(
+      "config",
+      'autoReflect is deprecated — use autoInject: "none" instead'
+    );
+    warn.mockRestore();
+  });
+
   it("parses booleans and numbers rather than passing strings through", () => {
     writeJson(globalCfg, {});
     process.env.HINDSIGHT_AUTO_REFLECT = "false";
@@ -285,7 +311,7 @@ describe("environment fallback", () => {
     process.env.HINDSIGHT_DISABLED = "1";
     process.env.HINDSIGHT_SEED_LIMIT = "5";
     const cfg = loadConfig({ path: globalCfg });
-    expect(cfg.autoReflect).toBe(false);
+    expect(cfg.autoInject).toBe("none");
     expect(cfg.manageBankConfig).toBe(false);
     expect(cfg.disabled).toBe(true);
     expect(cfg.seedLimit).toBe(5);

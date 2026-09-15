@@ -17,8 +17,9 @@ explains what happens automatically, which tools you have, and how to configure 
   read-only codebase survey; every session start, a background engine tops it up (new commits, new
   conversations) and keeps 5 knowledge pages current. There is NO ingest command to run.
 - **Session synthesis**: by default, the first prompt of a session triggers one deep memory
-  synthesis (`reflect`) injected into context. With `autoReflect=false`, the agent searches the
-  knowledge pages first and reflects only when they are too shallow.
+  synthesis (`reflect`) injected into context. `autoInject` switches the source: `pages` (knowledge
+  page search hits), `recall` (recalled observations), or `none` (nothing injected; the agent
+  searches the knowledge pages first and reflects only when they are too shallow).
 - **Write-back**: the session transcript is retained into the bank automatically at session end
   (per-turn on opencode). The user never needs to "save" a conversation.
 

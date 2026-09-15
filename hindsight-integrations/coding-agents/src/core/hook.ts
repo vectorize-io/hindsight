@@ -32,6 +32,8 @@ import {
   buildSystemInjection,
   formatObservationFallback,
   formatPageFallback,
+  OBSERVATION_INJECT_LEAD,
+  PAGE_INJECT_LEAD,
 } from "./inject";
 import type { PageRef } from "./knowledge-injection";
 import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
@@ -91,6 +93,56 @@ const HOOK_FALLBACK_BUDGET_MS = 7_000;
 const FALLBACK_PAGE_LIMIT = 3;
 const FALLBACK_RECALL_MAX_TOKENS = 2_000;
 
+/** Knowledge-page search for the prompt, formatted for injection; undefined when nothing matched
+ *  or the search failed (recorded as `event` / `${event}_failed`). Never throws. */
+async function injectPages(
+  harness: string,
+  prompt: string,
+  client: HookClient,
+  timeoutMs: number,
+  event: string,
+  lead?: string
+): Promise<string | undefined> {
+  const t0 = Date.now();
+  try {
+    // The search query rides in a GET query string; the goal's opening carries its keywords.
+    const hits = await client.searchKnowledgePages(
+      prompt.slice(0, 500),
+      FALLBACK_PAGE_LIMIT,
+      timeoutMs
+    );
+    diag(harness, event, { ms: Date.now() - t0, count: hits.length });
+    if (hits.length) return formatPageFallback(hits, lead);
+  } catch (e) {
+    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+  }
+  return undefined;
+}
+
+/** Raw recall over the bank's consolidated observations, formatted for injection; same contract
+ *  as `injectPages`. */
+async function injectObservations(
+  harness: string,
+  prompt: string,
+  client: HookClient,
+  timeoutMs: number,
+  event: string,
+  lead?: string
+): Promise<string | undefined> {
+  const t0 = Date.now();
+  try {
+    const observations = await client.recallObservations(prompt.slice(0, 2000), {
+      maxTokens: FALLBACK_RECALL_MAX_TOKENS,
+      timeoutMs,
+    });
+    diag(harness, event, { ms: Date.now() - t0, count: observations.length });
+    if (observations.length) return formatObservationFallback(observations, lead);
+  } catch (e) {
+    diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+  }
+  return undefined;
+}
+
 /**
  * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
  * curated knowledge pages first (search), and only when none match fall back to a raw recall
@@ -104,39 +156,16 @@ async function reflectFallback(
 ): Promise<string | undefined> {
   const deadline = Date.now() + HOOK_FALLBACK_BUDGET_MS;
   const remaining = () => Math.max(deadline - Date.now(), 1);
-  // The search query rides in a GET query string; the goal's opening carries its keywords.
-  const query = prompt.slice(0, 500);
-
-  let t0 = Date.now();
-  try {
-    const hits = await client.searchKnowledgePages(query, FALLBACK_PAGE_LIMIT, remaining());
-    diag(harness, "reflect_fallback_pages", { ms: Date.now() - t0, count: hits.length });
-    if (hits.length) return formatPageFallback(hits);
-  } catch (e) {
-    diag(harness, "reflect_fallback_pages_failed", {
-      ms: Date.now() - t0,
-      error: describeError(e),
-    });
-  }
-
-  t0 = Date.now();
-  try {
-    const observations = await client.recallObservations(prompt.slice(0, 2000), {
-      maxTokens: FALLBACK_RECALL_MAX_TOKENS,
-      timeoutMs: remaining(),
-    });
-    diag(harness, "reflect_fallback_observations", {
-      ms: Date.now() - t0,
-      count: observations.length,
-    });
-    if (observations.length) return formatObservationFallback(observations);
-  } catch (e) {
-    diag(harness, "reflect_fallback_observations_failed", {
-      ms: Date.now() - t0,
-      error: describeError(e),
-    });
-  }
-  return undefined;
+  return (
+    (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
+    (await injectObservations(
+      harness,
+      prompt,
+      client,
+      remaining(),
+      "reflect_fallback_observations"
+    ))
+  );
 }
 
 export interface HookOutput {
@@ -164,9 +193,11 @@ export async function buildHookOutput(args: {
   const cached = readSessionCache(cacheFile);
   const turns = (cached.turns ?? 0) + 1;
 
-  // ── reflect: once per session, on the first prompt ────────────────────────────
-  // autoReflect false = tool-only mode: no injected synthesis; the roster's tool guide instead
-  // sends new goals through knowledge pages first and reserves reflection for gaps.
+  // ── auto-inject: once per session, on the first prompt ────────────────────────
+  // cfg.autoInject picks the source: a reflect synthesis, a knowledge-page search, or a recall of
+  // observations. "none" = tool-only mode: the roster's tool guide instead sends new goals through
+  // knowledge pages first and reserves reflection for gaps. Whatever the source, its body is
+  // cached as `reflectAnswer` (the field name predates the other sources).
   let reflectAnswer = cached.reflectAnswer;
   let reflectRanThisTurn = false;
   // Set ONLY by the catch below. An empty answer is not a failure: reflect can legitimately have
@@ -180,7 +211,29 @@ export async function buildHookOutput(args: {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
     // one; this marker is deliberately consumed below so prompt two remains eligible to reflect.
     diag(harness, "reflect_deferred_new_bank", { query: prompt.slice(0, 80) });
-  } else if (cfg.autoReflect && reflectAnswer === undefined) {
+  } else if (cfg.autoInject === "pages" && reflectAnswer === undefined) {
+    reflectRanThisTurn = true;
+    reflectAnswer =
+      (await injectPages(
+        harness,
+        prompt,
+        client,
+        HOOK_FALLBACK_BUDGET_MS,
+        "inject_pages",
+        PAGE_INJECT_LEAD
+      )) ?? "";
+  } else if (cfg.autoInject === "recall" && reflectAnswer === undefined) {
+    reflectRanThisTurn = true;
+    reflectAnswer =
+      (await injectObservations(
+        harness,
+        prompt,
+        client,
+        HOOK_FALLBACK_BUDGET_MS,
+        "inject_observations",
+        OBSERVATION_INJECT_LEAD
+      )) ?? "";
+  } else if (cfg.autoInject === "reflect" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     const t0 = Date.now();
     // Previously clamped to a hardcoded 20s, which made a raised reflectTimeoutMs dead config on
@@ -264,7 +317,7 @@ export async function buildHookOutput(args: {
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
-    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: !cfg.autoReflect }));
+    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect" }));
   }
   const kept = blocks.filter(Boolean);
 
@@ -279,7 +332,10 @@ export async function buildHookOutput(args: {
   } else if (reflectRanThisTurn && reflectAnswer) {
     const q = prompt.replace(/\s+/g, " ").trim();
     const excerpt = q.length > 48 ? `${q.slice(0, 48)}…` : q;
-    const preview = reflectAnswer.replace(/\s+/g, " ").trim();
+    // Page/recall bodies open with a fixed lead line; preview what came back, not that.
+    const body =
+      cfg.autoInject === "reflect" ? reflectAnswer : reflectAnswer.split("\n").slice(1).join("\n");
+    const preview = body.replace(/\s+/g, " ").trim();
     notice =
       `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;

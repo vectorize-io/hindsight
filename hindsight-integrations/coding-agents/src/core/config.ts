@@ -105,8 +105,14 @@ export interface RawConfig {
    *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
    *  its hook window. */
   reflectBudget?: "low" | "mid" | "high";
-  /** Inject one reflect synthesis on the session's first prompt (default true). False suppresses
-   *  automatic synthesis; the tool guide routes new goals through pages before optional reflection. */
+  /** What to inject on the session's first prompt (default "reflect"):
+   *    "reflect" — one low-budget reflect synthesis (falls back to pages, then recall, on timeout/5xx)
+   *    "pages"   — the knowledge pages matching the prompt by search (retrieval only, no LLM)
+   *    "recall"  — the bank's consolidated observations recalled for the prompt (no LLM)
+   *    "none"    — nothing; the tool guide routes new goals through pages before optional reflection */
+  autoInject?: AutoInject;
+  /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";
+   *  ignored when `autoInject` is set. Setting it logs a deprecation warning. */
   autoReflect?: boolean;
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
@@ -213,7 +219,7 @@ export interface Config {
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
   reflectBudget: "low" | "mid" | "high";
-  autoReflect: boolean;
+  autoInject: AutoInject;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -331,6 +337,19 @@ function resolveObservationScopes(raw: RawConfig["observationScopes"]): Observat
 }
 
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
+export type AutoInject = "reflect" | "pages" | "recall" | "none";
+const AUTO_INJECT_MODES: readonly AutoInject[] = ["reflect", "pages", "recall", "none"];
+
+/** `autoInject` wins; otherwise the deprecated `autoReflect: false` means "none". */
+function resolveAutoInject(raw: RawConfig): AutoInject {
+  if (raw.autoReflect !== undefined) {
+    const replacement = raw.autoReflect === false ? "none" : "reflect";
+    log.warn("config", `autoReflect is deprecated — use autoInject: "${replacement}" instead`);
+  }
+  if (AUTO_INJECT_MODES.includes(raw.autoInject as AutoInject)) return raw.autoInject as AutoInject;
+  return raw.autoReflect === false ? "none" : "reflect";
+}
+
 export function resolveConfig(raw: RawConfig = {}): Config {
   const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
     ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
@@ -375,7 +394,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       raw.reflectToolTimeoutMs ||
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
     reflectBudget: resolveReflectBudget(raw),
-    autoReflect: raw.autoReflect ?? true,
+    autoInject: resolveAutoInject(raw),
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
@@ -483,6 +502,7 @@ const ENV_KEYS = {
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
+  autoInject: "HINDSIGHT_AUTO_INJECT",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -627,5 +647,7 @@ function resolvePartial(cfg: Config, patch: RawConfig): Partial<Config> {
     if (key in full)
       (out as Record<string, unknown>)[key] = (full as unknown as Record<string, unknown>)[key];
   }
+  // The legacy key resolves into a differently-named field, so the loop above can't carry it.
+  if ("autoReflect" in patch && !("autoInject" in patch)) out.autoInject = full.autoInject;
   return out;
 }

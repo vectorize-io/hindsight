@@ -48,7 +48,7 @@ const TOOL_GUIDE =
   "remembered (not the current conversation — that is captured automatically at session end).";
 
 /**
- * autoReflect=false suppresses the injected first-prompt synthesis. Keep the pull trigger explicit,
+ * Any autoInject other than "reflect" means no first-prompt synthesis. Keep the pull trigger explicit,
  * but start with the curated pages: they are the fast path, while reflection is the slower fallback
  * when those pages do not contain enough depth for the new goal.
  */
@@ -58,7 +58,7 @@ const PAGES_FIRST_ON_GOALS =
   "call hindsight_reflect only when those pages are too shallow and deeper reasoning is needed.\n";
 
 export interface ToolGuideOpts {
-  /** Add the new-goal pull trigger (tool-only reflect mode, cfg.autoReflect=false). It used to send
+  /** Add the new-goal pull trigger (no automatic synthesis: cfg.autoInject !== "reflect"). It used to send
    *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
    *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
   reflectOnNewGoals?: boolean;

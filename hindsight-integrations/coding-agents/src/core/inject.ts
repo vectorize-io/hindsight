@@ -32,11 +32,21 @@ export function buildReflectQuery(prompt: string): string {
   );
 }
 
-/** The memory body injected when reflect failed and knowledge-page search answered instead. */
-export function formatPageFallback(hits: { id: string; name: string; snippet: string }[]): string {
+const PAGE_FALLBACK_LEAD =
+  "(Hindsight's synthesis was unavailable this turn; these knowledge pages matched the goal by " +
+  "search. Read one with hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+export const PAGE_INJECT_LEAD =
+  "(These knowledge pages matched the goal by search. Read one with " +
+  "hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+
+/** The memory body injected from knowledge-page search: after a failed reflect (default lead), or
+ *  as the configured `autoInject: "pages"` source. */
+export function formatPageFallback(
+  hits: { id: string; name: string; snippet: string }[],
+  lead = PAGE_FALLBACK_LEAD
+): string {
   return (
-    "(Hindsight's synthesis was unavailable this turn; these knowledge pages matched the goal by " +
-    "search. Read one with hindsight_read_knowledge_page(<id>) if it looks relevant.)\n" +
+    `${lead}\n` +
     hits
       .map((h) => {
         const snippet = h.snippet.replace(/\s+/g, " ").trim();
@@ -46,14 +56,19 @@ export function formatPageFallback(hits: { id: string; name: string; snippet: st
   );
 }
 
-/** The memory body injected when reflect failed and no knowledge page matched, so raw recall
- *  over the bank's consolidated observations answered instead. */
-export function formatObservationFallback(observations: string[]): string {
-  return (
-    "(Hindsight's synthesis was unavailable this turn; these consolidated observations were " +
-    "recalled from the bank for the goal, unsynthesized.)\n" +
-    observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n")
-  );
+const OBSERVATION_FALLBACK_LEAD =
+  "(Hindsight's synthesis was unavailable this turn; these consolidated observations were " +
+  "recalled from the bank for the goal, unsynthesized.)";
+export const OBSERVATION_INJECT_LEAD =
+  "(These consolidated observations were recalled from the bank for the goal, unsynthesized.)";
+
+/** The memory body injected from a raw recall over the bank's consolidated observations: after a
+ *  failed reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
+export function formatObservationFallback(
+  observations: string[],
+  lead = OBSERVATION_FALLBACK_LEAD
+): string {
+  return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 
 export function buildSystemInjection(memory: string): string {

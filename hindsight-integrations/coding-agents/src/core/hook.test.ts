@@ -421,6 +421,71 @@ describe("buildHookOutput", () => {
     });
   });
 
+  it("autoInject pages: injects page-search hits once, never reflects or recalls", async () => {
+    const client = makeClient({
+      searchKnowledgePages: vi.fn(async () => [
+        { id: "p1", name: "Uploader guide", snippet: "retry backoff 200ms jitter" },
+      ]),
+    });
+    const cfg = resolveConfig({ autoInject: "pages" });
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(client.reflect).not.toHaveBeenCalled();
+    expect(client.recallObservations).not.toHaveBeenCalled();
+    expect(out.context).toContain("<hindsight_memory>");
+    expect(out.context).toContain("Uploader guide (p1): retry backoff 200ms jitter");
+    expect(out.context).not.toContain("synthesis was unavailable");
+    expect(out.notice).toContain("Uploader guide");
+    const next = await buildHookOutput({
+      harness: "claude-code",
+      prompt: "next",
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+    expect(next.context ?? "").not.toContain("<hindsight_memory>");
+  });
+
+  it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {
+    const client = makeClient({
+      recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
+    });
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg: resolveConfig({ autoInject: "recall" }),
+      client,
+      cacheFile,
+    });
+    expect(client.reflect).not.toHaveBeenCalled();
+    expect(client.searchKnowledgePages).not.toHaveBeenCalled();
+    expect(out.context).toContain("- Uploads retry 3 times.");
+    expect(out.context).not.toContain("synthesis was unavailable");
+  });
+
+  it("autoInject pages/recall: an empty or failed retrieval injects nothing and no notice", async () => {
+    const client = makeClient({
+      recallObservations: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg: resolveConfig({ autoInject: "recall" }),
+      client,
+      cacheFile,
+    });
+    expect(out.context ?? "").not.toContain("<hindsight_memory>");
+    expect(out.notice).toBeUndefined();
+  });
+
   it("autoReflect false: never calls reflect, injects no memory block", async () => {
     const cfg = resolveConfig({ autoReflect: false });
     const client = makeClient();
