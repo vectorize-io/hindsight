@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "module";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   stripMemoryTags,
   extractRecallQuery,
@@ -12,6 +15,7 @@ import {
   buildRetainRequest,
   getDocumentIdBootToken,
   meetsMinimumVersion,
+  sessionEndMessagesFromTranscript,
   parseHindsightApiCapabilities,
   supportsAppendFromCapabilities,
   supportsAsyncRetainOperationIdFromCapabilities,
@@ -2348,5 +2352,83 @@ describe("inbound metadata blocks (marker and legacy forms)", () => {
   it("recovers the user query from a marker-wrapped prompt", () => {
     const text = `${markerBlock("Conversation info:", '{"sender_id":"ou_xyz"}')}\n\nwhat did I say about postgres?`;
     expect(extractRecallQuery(undefined, text)).toBe("what did I say about postgres?");
+  });
+});
+
+// ── #4341: session_end carries no transcript ────────────────────────────────
+// OpenClaw's buildSessionEndHookPayload() sends sessionId/messageCount/reason/
+// sessionFile and nothing else, so the forced flush added for #1726 ended at its own
+// "no messages" guard on every session close and the turns after the last cadence
+// boundary were never retained.
+describe("sessionEndMessagesFromTranscript", () => {
+  const madeDirs: string[] = [];
+  const writeTranscript = (lines: unknown[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-session-end-"));
+    madeDirs.push(dir);
+    const file = join(dir, "sess-1.jsonl");
+    writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    return file;
+  };
+  afterEach(() => {
+    for (const dir of madeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const sessionEndEvent = (sessionFile?: string) => ({
+    // The real payload shape: ids and counts, no messages array.
+    sessionId: "sess-1",
+    sessionKey: "agent:main:telegram:group:1",
+    messageCount: 4,
+    durationMs: 12_000,
+    reason: "reset",
+    ...(sessionFile === undefined ? {} : { sessionFile }),
+    context: { sessionId: "sess-1", sessionKey: "agent:main:telegram:group:1", agentId: "main" },
+  });
+
+  it("reads the transcript the event points at", () => {
+    const file = writeTranscript([
+      { type: "session", id: "sess-1", timestamp: "2026-09-12T20:00:00Z" },
+      { type: "message", message: { role: "user", content: "where were we" } },
+      { type: "message", message: { role: "assistant", content: "the tail of the session" } },
+    ]);
+
+    const messages = sessionEndMessagesFromTranscript(sessionEndEvent(file)) as Array<{
+      role: string;
+      content: unknown;
+    }>;
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].content).toBe("the tail of the session");
+  });
+
+  it("returns undefined when the event points at no transcript", () => {
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent())).toBeUndefined();
+  });
+
+  it("returns undefined for an unreadable transcript instead of throwing", () => {
+    const file = writeTranscript([{ type: "session", id: "sess-1" }]);
+    rmSync(file);
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent(file))).toBeUndefined();
+  });
+
+  it("returns undefined when the transcript holds no messages", () => {
+    // The caller's own guard then skips the flush, exactly as before.
+    const file = writeTranscript([
+      { type: "session", id: "sess-1" },
+      { type: "message", message: { role: "user", content: "   " } },
+    ]);
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent(file))).toBeUndefined();
+  });
+
+  it("passes the agent id from the event context to the reader", () => {
+    const seen: string[] = [];
+    const read = ((filePath: string, agentId: string) => {
+      seen.push(agentId);
+      return { filePath, agentId, sessionId: "s", messages: [{ role: "user", content: "hi" }] };
+    }) as never;
+
+    sessionEndMessagesFromTranscript(sessionEndEvent("/tmp/whatever.jsonl"), read);
+
+    expect(seen).toEqual(["main"]);
   });
 });
