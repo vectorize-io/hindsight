@@ -814,7 +814,9 @@ def test_extraction_schema_includes_labels_model():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    prompt, schema = _build_extraction_prompt_and_schema(config)
+    extraction_prompt = _build_extraction_prompt_and_schema(config)
+    prompt = extraction_prompt.system_prompt
+    schema = extraction_prompt.response_schema
 
     # Schema should be a dynamic response model
     json_schema = schema.model_json_schema()
@@ -862,7 +864,7 @@ def test_extraction_schema_labels_in_required():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    _, schema = _build_extraction_prompt_and_schema(config)
+    schema = _build_extraction_prompt_and_schema(config).response_schema
     fact_schema = schema.model_json_schema()["$defs"]["LabelsFact"]
     assert "labels" in fact_schema["required"]
 
@@ -883,7 +885,7 @@ def test_extraction_schema_no_labels_when_unconfigured():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    _, schema = _build_extraction_prompt_and_schema(config)
+    schema = _build_extraction_prompt_and_schema(config).response_schema
     # No labels field in schema — it's a plain base response model
     json_schema = schema.model_json_schema()
     # Verify 'labels' is NOT a required or present field in any fact definition

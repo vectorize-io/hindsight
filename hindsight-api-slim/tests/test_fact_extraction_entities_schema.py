@@ -59,7 +59,7 @@ def test_entities_defaults_to_empty_list_and_accepts_legacy_objects(model):
 
 
 def test_concise_prompt_demands_plain_string_entities():
-    prompt, _ = _build_extraction_prompt_and_schema(_baseline_config())
+    prompt = _build_extraction_prompt_and_schema(_baseline_config()).system_prompt
 
     assert 'ALWAYS return "entities" as an array of plain strings' in prompt
     assert 'entities=["Alice", "Kubernetes", "CKA"]' in prompt
@@ -70,7 +70,7 @@ def test_labels_only_mode_keeps_entities_as_strings():
     config.entities_allow_free_form = False
     config.entity_labels = [{"key": "topic", "type": "text"}]
 
-    _, schema = _build_extraction_prompt_and_schema(config)
+    schema = _build_extraction_prompt_and_schema(config).response_schema
 
     entities_schema = schema.model_fields["facts"].annotation.__args__[0].model_json_schema()["properties"]["entities"]
     assert entities_schema["items"] == {"type": "string"}

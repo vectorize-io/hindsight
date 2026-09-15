@@ -2837,7 +2837,7 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
     config.retain_extract_causal_links = False
 
     # The mission is absent from the (cacheable, bank-agnostic) system prompt...
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
     assert spec not in prompt
     assert "FOCUS" not in prompt
     # ...and present in the per-request user-message preamble instead.
@@ -2847,7 +2847,7 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
 
     # Mode-independent: verbose mode → same mission-free prompt, same preamble.
     config.retain_extraction_mode = "verbose"
-    prompt_verbose, _ = _build_extraction_prompt_and_schema(config)
+    prompt_verbose = _build_extraction_prompt_and_schema(config).system_prompt
     assert spec not in prompt_verbose
     assert spec in _retain_mission_preamble(config)
 
@@ -2856,9 +2856,9 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
     # instead of one cache per mission.
     config.retain_extraction_mode = "concise"
     config.retain_mission = "Track project A architecture decisions."
-    prompt_a, _ = _build_extraction_prompt_and_schema(config)
+    prompt_a = _build_extraction_prompt_and_schema(config).system_prompt
     config.retain_mission = "Track customer B support incidents."
-    prompt_b, _ = _build_extraction_prompt_and_schema(config)
+    prompt_b = _build_extraction_prompt_and_schema(config).system_prompt
     assert prompt_a == prompt_b
 
 
@@ -2895,15 +2895,15 @@ def test_retain_cacheable_prefix_invariant_to_per_bank_freetext(mode):
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
 
-    baseline, _ = _build_extraction_prompt_and_schema(make())
+    baseline = _build_extraction_prompt_and_schema(make()).system_prompt
 
     # The mission must not change the cacheable prefix, whatever its value.
     for mission in ["Track A decisions.", '{"focus": "compliance"}', "Ünïcödé brief", "x" * 600]:
-        prompt, _ = _build_extraction_prompt_and_schema(make(retain_mission=mission))
+        prompt = _build_extraction_prompt_and_schema(make(retain_mission=mission)).system_prompt
         assert prompt == baseline, f"retain_mission leaked into the cacheable {mode} prefix"
 
     # Custom instructions are a custom-mode field; they must not touch concise/verbose.
-    prompt, _ = _build_extraction_prompt_and_schema(make(retain_custom_instructions="Do X with {braces}"))
+    prompt = _build_extraction_prompt_and_schema(make(retain_custom_instructions="Do X with {braces}")).system_prompt
     assert prompt == baseline, f"retain_custom_instructions leaked into the cacheable {mode} prefix"
 
 
@@ -2919,7 +2919,7 @@ def test_retain_mission_absent_when_not_set():
     config.retain_custom_instructions = None
     config.retain_extract_causal_links = False
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
     assert "FOCUS" not in prompt
     assert "retain_mission_section" not in prompt
 

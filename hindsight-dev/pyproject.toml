@@ -45,6 +45,7 @@ token-count-bench = "benchmarks.micro.token_counting:main"
 vector-serialization-bench = "benchmarks.micro.vector_serialization:main"
 semantic-within-batch-bench = "benchmarks.micro.semantic_within_batch:main"
 entity-resolver-bench = "benchmarks.micro.entity_resolver_bench:main"
+fact-extraction-bench = "benchmarks.micro.fact_extraction_bench:main"
 find-duplicate-observations = "hindsight_dev.obs_dedup.cli:main"
 
 [dependency-groups]

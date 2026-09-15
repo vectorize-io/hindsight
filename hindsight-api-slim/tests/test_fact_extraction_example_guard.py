@@ -16,7 +16,7 @@ def _config(mode: str) -> MagicMock:
 
 
 def test_concise_examples_are_explicitly_excluded_from_extracted_content():
-    prompt, _ = _build_extraction_prompt_and_schema(_config("concise"))
+    prompt = _build_extraction_prompt_and_schema(_config("concise")).system_prompt
 
     guard = (
         "The examples below demonstrate output format and selectivity only. Never emit\n"
@@ -28,7 +28,7 @@ def test_concise_examples_are_explicitly_excluded_from_extracted_content():
 
 
 def test_custom_mode_does_not_include_examples_or_their_guard():
-    prompt, _ = _build_extraction_prompt_and_schema(_config("custom"))
+    prompt = _build_extraction_prompt_and_schema(_config("custom")).system_prompt
 
     assert "Example 1 - Selective extraction" not in prompt
     assert "The examples below demonstrate output format" not in prompt
