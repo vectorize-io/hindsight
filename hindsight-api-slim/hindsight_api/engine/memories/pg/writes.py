@@ -289,8 +289,9 @@ async def delete_stale_observations(
     # Lock every row this sweep touches — the outgoing facts, the observations and their
     # surviving co-sources, which belong to OTHER documents — in one id order before writing
     # any of them. Two sweeps over a shared observation otherwise each hold rows the other
-    # writes next and deadlock (#4251). Callers that delete or rewrite their facts first
-    # therefore also sweep before that write, so their locks are taken in this order too.
+    # writes next and deadlock (#4251). The engine's delete paths, which delete their facts
+    # first, therefore also sweep before that delete, so their locks are taken in this order
+    # too. The memory edit/invalidate paths lock the memory row before sweeping and do not.
     await conn.fetch(
         f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE",
         bank_id,
