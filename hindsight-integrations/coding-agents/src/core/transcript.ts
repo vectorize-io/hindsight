@@ -15,7 +15,7 @@
  * non-object JSON value (`null`, a number, a boxed primitive, …).
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
@@ -79,7 +79,7 @@ function renderLine(content: string | ContentBlock[] | undefined, type: string):
  *  Never throws on bad lines. */
 export function readClaudeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "claude-code" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
 

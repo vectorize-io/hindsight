@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 const CHAT_HISTORY = "chat_history.jsonl";
@@ -38,7 +38,7 @@ export function grokTranscriptPath(
  * Synthetic user records carry `synthetic_reason`; only prompt-indexed records are actual user work. */
 export function readGrokTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "grok-build" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     try {
       const event = JSON.parse(rawLine) as {
         type?: string;

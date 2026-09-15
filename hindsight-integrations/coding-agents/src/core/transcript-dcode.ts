@@ -6,7 +6,7 @@
  * fields, but an unknown schema version must not be mistaken for a known transcript.
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface TranscriptRecord {
@@ -165,7 +165,7 @@ export function dcodeAssistantText(raw: string): string {
  */
 export function readDcodeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "dcode" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     if (!rawLine.trim()) continue;
     let parsed: unknown;
     try {

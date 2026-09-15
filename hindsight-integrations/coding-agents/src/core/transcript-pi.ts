@@ -9,7 +9,7 @@
  * bank.
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 /** Structural subset of a pi message content block (TextContent | ToolCall | dropped). */
@@ -95,7 +95,7 @@ export function readPiMessages(messages: readonly PiMessage[]): TransportTurn[] 
  */
 export function readPiTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "pi" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
     let parsed: unknown;

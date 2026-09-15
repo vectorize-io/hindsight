@@ -20,7 +20,7 @@
  * retain-to-recall feedback loop for platforms that append injected context to ordinary turns.
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
@@ -70,7 +70,7 @@ function renderContent(content: unknown, role: string): TransportTurn[] {
 /** Read a Factory Droid transcript JSONL into normalized turns. Never throws. */
 export function readDroidTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "factory-droid" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     if (!rawLine.trim()) continue;
     let parsed: unknown;
     try {

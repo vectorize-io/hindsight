@@ -34,7 +34,7 @@
  * non-object JSON value (`null`, a number, an array, …).
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 import { log } from "./log";
 
@@ -177,10 +177,10 @@ export function readQwenTranscript(path: string): TransportTurn[] {
   try {
     collectQwenTurns(path, turns);
   } catch (err) {
-    // The fail-open contract is only honoured if it covers LAZY I/O. readJsonlTail guards
-    // statSync/openSync, but the generator it returns reads on each iteration, and those reads
+    // The fail-open contract is only honoured if it covers LAZY I/O. readJsonl guards
+    // openSync, but the generator it returns reads on each iteration, and those reads
     // throw here rather than at the call. A DIRECTORY passed as transcript_path is the real case:
-    // on Linux it passes both statSync and openSync, then throws EISDIR on the first readSync —
+    // on Linux it passes openSync, then throws EISDIR on the first readSync —
     // after this function has already returned its generator. runRetainHook calls the reader
     // OUTSIDE buildRetain's catch, so an uncaught throw rejects the whole Stop hook and the turn
     // is never retained. Yield what we parsed before the fault instead.
@@ -195,7 +195,7 @@ export function readQwenTranscript(path: string): TransportTurn[] {
 
 /** The parse loop. Separated so a lazy read fault leaves the caller holding the partial result. */
 function collectQwenTurns(path: string, turns: TransportTurn[]): void {
-  for (const rawLine of readJsonlTail(path, { scope: "qwen-code" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
 

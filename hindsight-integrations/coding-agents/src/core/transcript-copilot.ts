@@ -1,11 +1,11 @@
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { stripInjectedMemory } from "./transcript-util";
 
 /** Normalize Copilot CLI's session-state `events.jsonl` user/assistant message records. */
 export function readCopilotTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "copilot-cli" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     try {
       const event = JSON.parse(rawLine) as {
         type?: string;

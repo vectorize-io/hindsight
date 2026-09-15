@@ -1,5 +1,5 @@
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { stripInjectedMemory } from "./transcript-util";
 
 /** Read Antigravity's transcript JSONL defensively. The documented hook contract guarantees only
@@ -7,7 +7,7 @@ import { stripInjectedMemory } from "./transcript-util";
 export function readAntigravityTranscript(path: string | undefined): TransportTurn[] {
   if (!path) return [];
   const turns: TransportTurn[] = [];
-  for (const line of readJsonlTail(path, { scope: "antigravity-cli" }).lines) {
+  for (const line of readJsonl(path)) {
     try {
       const event = JSON.parse(line) as {
         role?: string;

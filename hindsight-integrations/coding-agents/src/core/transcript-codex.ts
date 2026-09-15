@@ -28,7 +28,7 @@
  * text we do keep). Fail-open: never throws on a missing file or a malformed line.
  */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentItem {
@@ -77,7 +77,7 @@ function isUserMessageEvent(line: RolloutLine): boolean {
  *  Never throws on bad lines. */
 export function readCodexTranscript(path: string): TransportTurn[] {
   const lines: RolloutLine[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "codex" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
     try {

@@ -1,6 +1,6 @@
 /** Cursor CLI transcript reader for its `stop` write-back hook. */
 import type { TransportTurn } from "./chat";
-import { readJsonlTail } from "./jsonl";
+import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
@@ -36,7 +36,7 @@ function textFrom(content: string | ContentBlock[] | undefined): string {
 /** Parse Cursor's JSONL message and tool-call events into durable text and compact action turns. */
 export function readCursorTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
-  for (const rawLine of readJsonlTail(path, { scope: "cursor-cli" }).lines) {
+  for (const rawLine of readJsonl(path)) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawLine);
