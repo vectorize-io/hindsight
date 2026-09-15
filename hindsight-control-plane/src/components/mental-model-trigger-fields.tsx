@@ -363,7 +363,11 @@ export function MentalModelTriggerFields({
         />
         {advancedOpen && (
           <div className="space-y-4">
-            <Row label={t("optionsExcludeIdsLabel")} htmlFor={`${id}-exclude-ids`}>
+            <Row
+              label={t("optionsExcludeIdsLabel")}
+              description={t("triggerHelpExcludeIds")}
+              htmlFor={`${id}-exclude-ids`}
+            >
               <Input
                 id={`${id}-exclude-ids`}
                 value={form.excludeMentalModelIds}
@@ -372,7 +376,7 @@ export function MentalModelTriggerFields({
                 className="h-8"
               />
             </Row>
-            <Row label={t("optionsIncludeChunksLabel")}>
+            <Row label={t("optionsIncludeChunksLabel")} description={t("triggerHelpIncludeChunks")}>
               <Select
                 value={form.includeChunks || "default"}
                 onValueChange={(v) =>

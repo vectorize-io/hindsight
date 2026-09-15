@@ -7,7 +7,7 @@ import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { DisclosureButton, Row, Section, Segmented } from "@/components/form-layout";
+import { DisclosureButton, Hint, Row, Section, Segmented } from "@/components/form-layout";
 import {
   Select,
   SelectContent,
@@ -220,6 +220,7 @@ export function ThinkView() {
           <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{t("budget")}</span>
+              <Hint text={t("helpBudget")} />
               <Segmented
                 value={budget}
                 onChange={setBudget}
@@ -231,7 +232,10 @@ export function ThinkView() {
                 ]}
               />
             </div>
-            <FactTypeFilter value={factTypes} onChange={setFactTypes} />
+            <div className="flex items-center gap-1.5">
+              <FactTypeFilter value={factTypes} onChange={setFactTypes} />
+              <Hint text={t("helpFactTypes")} />
+            </div>
             <div className="ml-auto">
               <DisclosureButton
                 open={optionsOpen}
@@ -245,7 +249,11 @@ export function ThinkView() {
           {optionsOpen && (
             <div className="mt-5 grid gap-8 md:grid-cols-2">
               <Section title={t("sectionAnswer")}>
-                <Row label={t("maxTokensLabel")} htmlFor="reflect-max-tokens">
+                <Row
+                  label={t("maxTokensLabel")}
+                  description={t("helpMaxTokens")}
+                  htmlFor="reflect-max-tokens"
+                >
                   <Input
                     id="reflect-max-tokens"
                     type="number"
@@ -254,7 +262,11 @@ export function ThinkView() {
                     className="h-8"
                   />
                 </Row>
-                <Row label={t("includeSource")} htmlFor="reflect-include-source">
+                <Row
+                  label={t("includeSource")}
+                  description={t("helpIncludeSource")}
+                  htmlFor="reflect-include-source"
+                >
                   <div className="flex sm:justify-end">
                     <Switch
                       id="reflect-include-source"
@@ -263,7 +275,11 @@ export function ThinkView() {
                     />
                   </div>
                 </Row>
-                <Row label={t("includeTools")} htmlFor="reflect-include-tools">
+                <Row
+                  label={t("includeTools")}
+                  description={t("helpIncludeTools")}
+                  htmlFor="reflect-include-tools"
+                >
                   <div className="flex sm:justify-end">
                     <Switch
                       id="reflect-include-tools"
@@ -276,7 +292,7 @@ export function ThinkView() {
               </Section>
 
               <Section title={t("sectionScope")}>
-                <Row label={t("tagsLabel")} htmlFor="reflect-tags">
+                <Row label={t("tagsLabel")} description={t("helpTags")} htmlFor="reflect-tags">
                   <Input
                     id="reflect-tags"
                     type="text"
@@ -286,7 +302,7 @@ export function ThinkView() {
                     className="h-8"
                   />
                 </Row>
-                <Row label={t("tagsMatchLabel")}>
+                <Row label={t("tagsMatchLabel")} description={t("helpTagsMatch")}>
                   <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
                     <SelectTrigger className="h-8">
                       <SelectValue />
@@ -300,7 +316,11 @@ export function ThinkView() {
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label={t("excludeMentalModels")} htmlFor="reflect-exclude-models">
+                <Row
+                  label={t("excludeMentalModels")}
+                  description={t("helpExcludeMentalModels")}
+                  htmlFor="reflect-exclude-models"
+                >
                   <div className="flex sm:justify-end">
                     <Switch
                       id="reflect-exclude-models"
@@ -309,7 +329,11 @@ export function ThinkView() {
                     />
                   </div>
                 </Row>
-                <Row label={t("excludeIdsRowLabel")} htmlFor="reflect-exclude-ids">
+                <Row
+                  label={t("excludeIdsRowLabel")}
+                  description={t("helpExcludeIds")}
+                  htmlFor="reflect-exclude-ids"
+                >
                   <Input
                     id="reflect-exclude-ids"
                     type="text"

@@ -299,9 +299,13 @@ export function SearchDebugView() {
 
           {/* Everyday filters inline; everything else behind Options. */}
           <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <FactTypeFilter value={factTypes} onChange={setFactTypes} label={t("typesLabel")} />
+            <div className="flex items-center gap-1.5">
+              <FactTypeFilter value={factTypes} onChange={setFactTypes} label={t("typesLabel")} />
+              <Hint text={t("helpTypes")} />
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{t("budgetLabel")}</span>
+              <Hint text={t("helpBudget")} />
               <Segmented
                 value={budget}
                 onChange={setBudget}
@@ -326,7 +330,11 @@ export function SearchDebugView() {
           {optionsOpen && (
             <div className="mt-5 grid gap-8 md:grid-cols-2">
               <Section title={t("sectionRetrieval")}>
-                <Row label={t("maxTokensLabel")} htmlFor="recall-max-tokens">
+                <Row
+                  label={t("maxTokensLabel")}
+                  description={t("helpMaxTokens")}
+                  htmlFor="recall-max-tokens"
+                >
                   <Input
                     id="recall-max-tokens"
                     type="number"
@@ -335,7 +343,11 @@ export function SearchDebugView() {
                     className="h-8"
                   />
                 </Row>
-                <Row label={t("queryDatePlaceholder")} htmlFor="recall-query-date">
+                <Row
+                  label={t("queryDatePlaceholder")}
+                  description={t("helpQueryDate")}
+                  htmlFor="recall-query-date"
+                >
                   <Input
                     id="recall-query-date"
                     type="datetime-local"
@@ -344,7 +356,7 @@ export function SearchDebugView() {
                     className="h-8"
                   />
                 </Row>
-                <Row label={t("chunks")} htmlFor="recall-chunks">
+                <Row label={t("chunks")} description={t("helpChunks")} htmlFor="recall-chunks">
                   <div className="flex sm:justify-end">
                     <Switch
                       id="recall-chunks"
@@ -369,7 +381,7 @@ export function SearchDebugView() {
               </Section>
 
               <Section title={t("sectionFilters")}>
-                <Row label={t("tagsLabel")} htmlFor="recall-tags">
+                <Row label={t("tagsLabel")} description={t("helpTags")} htmlFor="recall-tags">
                   <Input
                     id="recall-tags"
                     type="text"
@@ -379,7 +391,7 @@ export function SearchDebugView() {
                     className="h-8"
                   />
                 </Row>
-                <Row label={t("tagsMatchLabel")}>
+                <Row label={t("tagsMatchLabel")} description={t("helpTagsMatch")}>
                   <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
                     <SelectTrigger className="h-8">
                       <SelectValue />

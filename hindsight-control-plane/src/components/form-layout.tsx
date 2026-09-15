@@ -3,12 +3,13 @@
 import { type ReactNode } from "react";
 import { ChevronRight, Info, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /**
  * Building blocks for the control plane's option forms (mental-model triggers,
  * recall, reflect): uppercase section titles, label + compact-control rows, help
- * behind an info icon, and no divider lines. Keep forms reading as labels and
- * controls; explanations are one hover away.
+ * behind an info icon that opens a small popover on click, and no divider lines.
+ * Keep forms reading as labels and controls; explanations are one click away.
  */
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -22,12 +23,29 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
+// Click (not hover) opens a small popover, so the help works on touch and can
+// hold a sentence or two without a native tooltip's delay and truncation.
 export function Hint({ text }: { text?: string }) {
   if (!text) return null;
   return (
-    <span title={text} aria-label={text} className="inline-flex cursor-help align-middle">
-      <Info className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-foreground" />
-    </span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={text}
+          className="inline-flex rounded-full text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-72 p-3 text-xs leading-relaxed text-foreground"
+      >
+        {text}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -63,7 +81,8 @@ export function OptionCards<T extends string>({
 }: {
   value: T;
   onChange: (value: T) => void;
-  // description is the one-liner on the card; hint the full explanation on hover.
+  // description is the one-liner on the card; hint the full explanation on hover
+  // (a native title: a popover button cannot nest inside the card button).
   options: { value: T; icon: LucideIcon; label: string; description: string; hint: string }[];
 }) {
   return (
