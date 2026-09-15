@@ -17,6 +17,7 @@ import pytest_asyncio
 
 from hindsight_api.engine.db.postgresql import PostgresConnection, PostgreSQLBackend
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.retain.fact_storage import handle_document_tracking
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.memory_backend_incompatible]
 
@@ -135,6 +136,47 @@ async def test_shared_observation_deletes_complete_after_commit_or_rollback(dele
         "document_deleted": 0,
         "memory_units_deleted": 0,
     }
+
+
+async def test_reingest_and_delete_of_observation_sources_both_complete(delete_race, request_context):
+    # Re-ingest does not take the bank lock (it would serialise retains), so the
+    # sweep itself must not deadlock against a document delete's cascade.
+    race = delete_race
+    first, second = race.engines
+    paused, release = asyncio.Event(), asyncio.Event()
+    original = first._delete_stale_observations_for_memories
+    sweeps = 0
+
+    async def pause_after_cascade(conn, bank_id, fact_ids):
+        # delete_document sweeps before and after its cascade; pause at the second,
+        # while it holds document a's rows, the shared observation and b's source.
+        nonlocal sweeps
+        sweeps += 1
+        if sweeps == 2:
+            paused.set()
+            await release.wait()
+        return await original(conn, bank_id, fact_ids)
+
+    async def reingest_b() -> None:
+        backend = second._backend
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                await handle_document_tracking(
+                    conn, race.banks[0], "b", "replacement", is_first_batch=True, ops=backend.ops
+                )
+
+    first._delete_stale_observations_for_memories = pause_after_cascade
+    tasks = [asyncio.create_task(first.delete_document("a", race.banks[0], request_context=request_context))]
+    try:
+        await asyncio.wait_for(paused.wait(), 10)
+        tasks.append(asyncio.create_task(reingest_b()))
+        await wait_for_lock(race)
+    finally:
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
+    assert results == [{"document_deleted": 1, "memory_units_deleted": 1}, None]
+    assert await first.get_document("a", race.banks[0], request_context=request_context) is None
+    assert await first.get_document("b", race.banks[0], request_context=request_context) is not None
 
 
 async def test_other_bank_can_delete_while_first_bank_is_paused(delete_race, request_context):

@@ -286,6 +286,17 @@ async def delete_stale_observations(
                 remaining_source_ids.append(uuid.UUID(src_str))
                 seen_remaining.add(src_str)
 
+    # Lock every row this sweep touches — the outgoing facts, the observations and their
+    # surviving co-sources, which belong to OTHER documents — in one id order before writing
+    # any of them. Two sweeps over a shared observation otherwise each hold rows the other
+    # writes next and deadlock (#4251). Callers that delete or rewrite their facts first
+    # therefore also sweep before that write, so their locks are taken in this order too.
+    await conn.fetch(
+        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE",
+        bank_id,
+        sorted({*fact_uuids, *obs_ids, *remaining_source_ids}),
+    )
+
     await conn.execute(
         f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
         obs_ids,

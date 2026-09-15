@@ -9730,6 +9730,13 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                     units_count = _doc_counts.get(document_id, 0)
 
+                # Sweep BEFORE the cascade too, so the shared observations and co-sources are
+                # locked in the sweep's id order ahead of this document's own rows — as a
+                # re-ingest, which sweeps first, takes them (#4251). The sweep after the cascade
+                # stays for observations consolidation commits in between.
+                if unit_ids:
+                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
+
                 # Capture relink victims and entity prune candidates BEFORE the
                 # cascade — once the source rows are gone, the joins finding
                 # them return nothing.
@@ -9805,7 +9812,7 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
+                    invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
 
                 # Rows here, files after the commit below.
                 orphaned_files: list[str] = []
@@ -10232,6 +10239,10 @@ class MemoryEngine(MemoryEngineInterface):
                     if not _found:
                         bank_id = None
 
+                # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                if bank_id and fact_type in ("experience", "world"):
+                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+
                 # Capture relink victims and entity prune candidates BEFORE the
                 # cascade — once the row is gone, the joins finding them return
                 # nothing.
@@ -10265,7 +10276,7 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Invalidate observations referencing this (now-deleted) source memory
                 if bank_id and fact_type in ("experience", "world"):
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+                    invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
                     if invalidated_obs > 0:
                         bank_id_for_consolidation = bank_id
 
@@ -10438,6 +10449,11 @@ class MemoryEngine(MemoryEngineInterface):
                 for bank_id, ids_for_bank in by_bank.items():
                     source_ids = source_ids_by_bank.get(bank_id, [])
 
+                    # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                    invalidated = 0
+                    if source_ids:
+                        invalidated = await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
+
                     # 3a. Capture relink victims and entity prune candidates
                     # BEFORE the cascade. Victims come from the fact rows (only
                     # those carry temporal/semantic adjacency); prune candidates
@@ -10469,9 +10485,8 @@ class MemoryEngine(MemoryEngineInterface):
                     # 3c. Racing-observation sweep — only fires for banks
                     # whose source facts were touched (observations reference
                     # source_memory_ids).
-                    invalidated = 0
                     if source_ids:
-                        invalidated = await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
+                        invalidated += await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
                         if invalidated > 0:
                             banks_with_invalidated_obs.add(bank_id)
 
@@ -10621,6 +10636,11 @@ class MemoryEngine(MemoryEngineInterface):
                                 bank_id,
                                 fact_type,
                             )
+                        # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                        if unit_ids:
+                            invalidated_obs = await self._delete_stale_observations_for_memories(
+                                conn, bank_id, unit_ids
+                            )
                         await conn.execute(
                             f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                             bank_id,
@@ -10644,7 +10664,7 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
                         if unit_ids:
-                            invalidated_obs = await self._delete_stale_observations_for_memories(
+                            invalidated_obs += await self._delete_stale_observations_for_memories(
                                 conn, bank_id, unit_ids
                             )
 
