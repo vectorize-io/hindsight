@@ -234,6 +234,48 @@ class PostgreSQLOps(DataAccessOps):
         )
         return [str(row["id"]) for row in results]
 
+    async def delete_unit_links(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+        keep_link_types: list[str] | None = None,
+    ) -> None:
+        if not unit_ids:
+            return
+        # Two single-column arms rather than one `from = ANY OR to = ANY`, which no
+        # endpoint index can drive (#3387). The ORDER BY ... FOR UPDATE matches
+        # delete_chunks_by_ids so every writer locks shared links the same way.
+        keep = "WHERE NOT (ml.link_type = ANY($3::text[]))" if keep_link_types else ""
+        await conn.execute(
+            f"""
+            WITH matched_links AS MATERIALIZED (
+                SELECT ctid AS link_ctid FROM {table} WHERE from_unit_id = ANY($1::uuid[]) AND bank_id = $2
+                UNION
+                SELECT ctid AS link_ctid FROM {table} WHERE to_unit_id = ANY($1::uuid[]) AND bank_id = $2
+            ),
+            ordered_links AS MATERIALIZED (
+                SELECT ml.ctid
+                FROM {table} ml
+                JOIN matched_links ON ml.ctid = matched_links.link_ctid
+                {keep}
+                ORDER BY
+                    LEAST(ml.from_unit_id, ml.to_unit_id),
+                    GREATEST(ml.from_unit_id, ml.to_unit_id),
+                    ml.link_type,
+                    COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                FOR UPDATE OF ml
+            )
+            DELETE FROM {table} ml
+            USING ordered_links ol
+            WHERE ml.ctid = ol.ctid
+            """,
+            unit_ids,
+            bank_id,
+            *([keep_link_types] if keep_link_types else []),
+        )
+
     async def bulk_insert_links(
         self,
         conn: DatabaseConnection,

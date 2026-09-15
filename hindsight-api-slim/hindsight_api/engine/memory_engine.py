@@ -9760,6 +9760,9 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                 )
 
+                # Drop the facts' links in lock order before the cascade reaches them (#4251).
+                await self._backend.ops.delete_unit_links(conn, fq_table("memory_links"), bank_id, unit_ids)
+
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
                 # catch observations inserted concurrently by consolidation — otherwise
@@ -10258,6 +10261,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # racing insert committed between the sweep and the delete would
                 # leave an orphan referencing this just-deleted source memory).
                 if not _store.store_owned_for(bank_id):
+                    # Links in lock order before the cascade reaches them (see delete_unit_links).
+                    if bank_id:
+                        await self._backend.ops.delete_unit_links(conn, fq_table("memory_links"), bank_id, [unit_id])
                     deleted = await conn.fetchval(
                         f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
                     )
@@ -10461,6 +10467,9 @@ class MemoryEngine(MemoryEngineInterface):
                         await enqueue_relink_victims(conn, bank_id, source_ids)
                     await enqueue_entity_prune_candidates(conn, bank_id, ids_for_bank)
 
+                    # Links in lock order before the cascade reaches them (see delete_unit_links).
+                    await self._backend.ops.delete_unit_links(conn, fq_table("memory_links"), bank_id, ids_for_bank)
+
                     # 3b. Chunked delete. Cascade handles unit_entities /
                     # memory_links / observation history via FK.
                     deleted_this_bank = 0
@@ -10637,6 +10646,9 @@ class MemoryEngine(MemoryEngineInterface):
                             invalidated_obs = await self._delete_stale_observations_for_memories(
                                 conn, bank_id, unit_ids
                             )
+                        # Links in lock order before the cascade reaches them (see delete_unit_links).
+                        if not _scope_store_owned:
+                            await self._backend.ops.delete_unit_links(conn, fq_table("memory_links"), bank_id, unit_ids)
                         await conn.execute(
                             f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                             bank_id,
@@ -11564,6 +11576,9 @@ class MemoryEngine(MemoryEngineInterface):
                                 )
                             else:
                                 edit_embedding = edit_plan.embedding
+                        # Sweep before this memory's row is written, in the sweep's lock order (see
+                        # delete_document); the sweep after the edit stays for racing inserts.
+                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                         # Capture relink victims before this memory's links change, then apply the
                         # field edit through the store: it resets consolidation, stamps the edit, and
                         # drops the derived links (rebuilt with victims — the edit leaves the unit
@@ -11599,6 +11614,8 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # --- Invalidate: move live → archive ---
                     if do_invalidate and live2:
+                        # Sweep before the row moves, in the sweep's lock order (see delete_document).
+                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                         # Capture relink victims and entity prune candidates before the row
                         # (and its links and postings) go.
                         await enqueue_relink_victims(conn, bank_id, [memory_id])

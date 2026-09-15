@@ -179,6 +179,79 @@ async def test_reingest_and_delete_of_observation_sources_both_complete(delete_r
     assert await first.get_document("b", race.banks[0], request_context=request_context) is not None
 
 
+async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race, request_context, monkeypatch):
+    # Every a×b pair is linked both ways (temporal links are written as pairs), so the
+    # delete's cascade and the re-ingest's cascade reach the same link rows from
+    # opposite endpoints. The executor-chosen cascade order cannot be paused mid
+    # statement, so hold each transaction at its first link-touching statement — the
+    # cascade itself, or the ordered link delete that now precedes it — until the other
+    # arrives, and start them together.
+    race = delete_race
+    first, second = race.engines
+    bank = race.banks[0]
+    cascades = (
+        "DELETE FROM public.documents WHERE id = $1 AND bank_id = $2 RETURNING id",
+        "DELETE FROM public.memory_units WHERE document_id = $1 AND bank_id = $2",
+    )
+    barrier = asyncio.Barrier(2)
+    arrived: set[int] = set()
+    execute, fetchval = PostgresConnection.execute, PostgresConnection.fetchval
+
+    async def rendezvous(conn, query: str) -> None:
+        if (query.strip() in cascades or "WITH matched_links" in query) and id(conn) not in arrived:
+            arrived.add(id(conn))
+            await asyncio.wait_for(barrier.wait(), 10)
+
+    async def rendezvous_execute(conn, query, *args, **kwargs):
+        await rendezvous(conn, query)
+        return await execute(conn, query, *args, **kwargs)
+
+    async def rendezvous_fetchval(conn, query, *args, **kwargs):
+        await rendezvous(conn, query)
+        return await fetchval(conn, query, *args, **kwargs)
+
+    monkeypatch.setattr(PostgresConnection, "execute", rendezvous_execute)
+    monkeypatch.setattr(PostgresConnection, "fetchval", rendezvous_fetchval)
+
+    async def reingest_b() -> None:
+        backend = second._backend
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                await handle_document_tracking(conn, bank, "b", "replacement", is_first_batch=True, ops=backend.ops)
+
+    for _ in range(3):
+        await race.setup.execute("DELETE FROM memory_units WHERE bank_id=$1", bank)
+        await race.setup.execute("DELETE FROM documents WHERE bank_id=$1", bank)
+        units = {}
+        for document_id in ("a", "b"):
+            await race.setup.execute("INSERT INTO documents(id, bank_id) VALUES($1, $2)", document_id, bank)
+            units[document_id] = [uuid.uuid4() for _ in range(100)]
+            await race.setup.execute(
+                "INSERT INTO memory_units(id, bank_id, document_id, text, fact_type) "
+                "SELECT u, $2, $3, 'fact', 'world' FROM unnest($1::uuid[]) u",
+                units[document_id],
+                bank,
+                document_id,
+            )
+        pairs = [(x, y) for x in units["a"] for y in units["b"]]
+        await race.setup.execute(
+            "INSERT INTO memory_links(from_unit_id, to_unit_id, link_type, weight, bank_id) "
+            "SELECT f, t, 'temporal', 1.0, $3 FROM unnest($1::uuid[], $2::uuid[]) AS u(f, t)",
+            [f for f, _ in pairs] + [t for _, t in pairs],
+            [t for _, t in pairs] + [f for f, _ in pairs],
+            bank,
+        )
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                first.delete_document("a", bank, request_context=request_context),
+                reingest_b(),
+                return_exceptions=True,
+            ),
+            30,
+        )
+        assert results == [{"document_deleted": 1, "memory_units_deleted": 100}, None]
+
+
 async def test_other_bank_can_delete_while_first_bank_is_paused(delete_race, request_context):
     race = delete_race
     first, second = race.engines

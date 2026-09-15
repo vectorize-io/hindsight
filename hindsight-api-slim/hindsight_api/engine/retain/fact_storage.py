@@ -290,6 +290,12 @@ async def handle_document_tracking(
                 # cascade lands.
                 await enqueue_entity_prune_candidates(conn, bank_id, doomed_ids)
 
+        # Drop the outgoing facts' links in lock order before the cascade reaches them: a
+        # concurrent delete of a document linked to this one would otherwise lock the
+        # same bidirectional pairs from the other end (#4251).
+        if ops is not None:
+            await ops.delete_unit_links(conn, fq_table("memory_links"), bank_id, existing_unit_ids)
+
         # Explicitly delete memory_units by document_id BEFORE deleting the
         # document row. The CASCADE from documents→chunks→memory_units only
         # catches units that have a non-NULL chunk_id FK. Units with chunk_id=NULL

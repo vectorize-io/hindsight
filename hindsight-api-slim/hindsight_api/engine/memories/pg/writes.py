@@ -289,9 +289,9 @@ async def delete_stale_observations(
     # Lock every row this sweep touches — the outgoing facts, the observations and their
     # surviving co-sources, which belong to OTHER documents — in one id order before writing
     # any of them. Two sweeps over a shared observation otherwise each hold rows the other
-    # writes next and deadlock (#4251). The engine's delete paths, which delete their facts
-    # first, therefore also sweep before that delete, so their locks are taken in this order
-    # too. The memory edit/invalidate paths lock the memory row before sweeping and do not.
+    # writes next and deadlock (#4251). The engine's delete, edit and invalidate paths, which
+    # write their facts first, therefore also sweep before that write, so their locks are
+    # taken in this order too.
     await conn.fetch(
         f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE",
         bank_id,
@@ -435,7 +435,11 @@ async def invalidate_memory(*, conn, fq_table, bank_id: str, unit_id: str, reaso
     )
     if inserted is None:
         return False
-    # The cascade prunes `unit_entities` and `memory_links` with the row.
+    # Links in lock order (see delete_unit_links) — after the causal snapshot above reads them.
+    from .graph import _ops_for
+
+    await _ops_for(conn).delete_unit_links(conn, fq_table("memory_links"), bank_id, [str(unit_id)])
+    # The cascade prunes `unit_entities` with the row.
     await conn.execute(f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id)
     return True
 
@@ -590,11 +594,10 @@ async def apply_edit(
     )
     # Drop only the DERIVED links — graph maintenance recomputes temporal/semantic. Causal edges
     # are retain-time extraction output that nothing recreates, so an edit preserves them (#2864).
-    await conn.execute(
-        f"DELETE FROM {ml} WHERE (from_unit_id = $1 OR to_unit_id = $1) AND NOT (link_type = ANY($2::text[]))",
-        str(unit_id),
-        list(CAUSAL_LINK_TYPES),
-    )
+    # In lock order, like every other link delete (see delete_unit_links).
+    from .graph import _ops_for
+
+    await _ops_for(conn).delete_unit_links(conn, ml, bank_id, [str(unit_id)], keep_link_types=list(CAUSAL_LINK_TYPES))
 
 
 __all__ = [

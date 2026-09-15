@@ -8,7 +8,8 @@ from hindsight_system_tests.payloads import Consolidation, ObservationUpdate, ex
 pytestmark = pytest.mark.asyncio
 
 
-async def test_concurrent_deletes_of_observation_sources(client, llm, bank_id, settled):
+async def _shared_observation(client, llm, bank_id, settled) -> None:
+    """Retain `morning` and `evening`, both sources of one observation."""
     llm.on_step("extract_facts").returns(extracted(fact("The morning weather was mild")))
     llm.on_step("consolidate").answers_with(observes("The weather was mild"))
     await client.aretain(bank_id=bank_id, content="Morning weather record", document_id="morning")
@@ -40,6 +41,10 @@ async def test_concurrent_deletes_of_observation_sources(client, llm, bank_id, s
     assert len(observations) == 1
     assert set(observations[0].source_memory_ids) == {m.id for m in sources}
 
+
+async def test_concurrent_deletes_of_observation_sources(client, llm, bank_id, settled):
+    await _shared_observation(client, llm, bank_id, settled)
+
     results = await asyncio.gather(
         client.documents.delete_document(bank_id, "morning"),
         client.documents.delete_document(bank_id, "evening"),
@@ -48,3 +53,24 @@ async def test_concurrent_deletes_of_observation_sources(client, llm, bank_id, s
     assert not [r for r in results if isinstance(r, Exception)], results
     await settled(bank_id)
     assert not (await client.memory.list_memories(bank_id, limit=100)).items
+
+
+async def test_reingest_races_delete_of_another_observation_source(client, llm, bank_id, settled):
+    await _shared_observation(client, llm, bank_id, settled)
+
+    llm.reset()
+    llm.on_step("extract_facts").returns(extracted(fact("The evening weather turned cold")))
+    llm.on_step("consolidate").answers_with(observes("The evening turned cold"))
+    results = await asyncio.gather(
+        client.documents.delete_document(bank_id, "morning"),
+        client.aretain(bank_id=bank_id, content="Evening weather, corrected", document_id="evening"),
+        return_exceptions=True,
+    )
+    assert not [r for r in results if isinstance(r, Exception)], results
+    await settled(bank_id)
+    memories = (await client.memory.list_memories(bank_id, limit=100)).items
+    assert sorted((m.fact_type, m.document_id, m.text) for m in memories if m.fact_type == "world") == [
+        ("world", "evening", "The evening weather turned cold")
+    ]
+    observations = [m for m in memories if m.fact_type == "observation"]
+    assert [m.text for m in observations] == ["The evening turned cold"]

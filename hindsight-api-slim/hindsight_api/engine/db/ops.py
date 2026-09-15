@@ -420,6 +420,26 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def delete_unit_links(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+        keep_link_types: list[str] | None = None,
+    ) -> None:
+        """Delete the memory_links incident to ``unit_ids`` (except ``keep_link_types``).
+
+        Callers run it before deleting the units themselves: the FK cascade removes a
+        link from whichever endpoint it reaches first, so two transactions deleting
+        units on either end of a bidirectional pair lock the pair in opposite orders
+        and deadlock (#4251). PG locks the links in one total order first — the
+        order ``delete_chunks_by_ids`` uses. Oracle deletes them plainly (see
+        ``prune_stale_cooccurrences`` for that dialect asymmetry).
+        """
+        ...
+
+    @abstractmethod
     async def bulk_insert_links(
         self,
         conn: DatabaseConnection,

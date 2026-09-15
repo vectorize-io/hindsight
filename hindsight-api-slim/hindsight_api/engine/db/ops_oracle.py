@@ -151,6 +151,26 @@ class OracleOps(DataAccessOps):
         )
         return unit_ids
 
+    async def delete_unit_links(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+        keep_link_types: list[str] | None = None,
+    ) -> None:
+        if not unit_ids:
+            return
+        # No ordered-lock form here (see prune_stale_cooccurrences): a plain delete.
+        keep = " AND NOT (link_type = ANY($3::text[]))" if keep_link_types else ""
+        await conn.execute(
+            f"DELETE FROM {table} WHERE bank_id = $2 "
+            f"AND (from_unit_id = ANY($1::uuid[]) OR to_unit_id = ANY($1::uuid[])){keep}",
+            unit_ids,
+            bank_id,
+            *([keep_link_types] if keep_link_types else []),
+        )
+
     async def bulk_insert_links(
         self,
         conn: DatabaseConnection,
