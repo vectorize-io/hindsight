@@ -270,6 +270,8 @@ class OracleDialect(SQLDialect):
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
         pg_search_function_schema: str = "paradedb",
+        pg_search_tokenizer: str = "",
+        max_query_terms: int = 0,
         extra_where: str = "",
     ) -> str:
         # Oracle Text: CONTAINS() / SCORE() with the CTXSYS.CONTEXT index.

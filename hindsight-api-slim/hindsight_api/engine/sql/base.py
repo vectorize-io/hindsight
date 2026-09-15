@@ -419,6 +419,8 @@ class SQLDialect(ABC):
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
         pg_search_function_schema: str = "paradedb",
+        pg_search_tokenizer: str = "",
+        max_query_terms: int = 0,
         extra_where: str = "",
     ) -> str:
         """Build a BM25/full-text search subquery arm.
@@ -453,6 +455,10 @@ class SQLDialect(ABC):
                             predicate at that default.
             pg_search_function_schema: Schema containing pg_search functions (e.g. "paradedb",
                                        "pgsearch"). Only used by the pg_search backend.
+            pg_search_tokenizer: Normalized tokenizer the pg_search index was built with
+                                 (``""`` = ParadeDB default). When set, the query is
+                                 tokenized in SQL and searched as its distinct word terms.
+            max_query_terms: Cap on those pg_search terms (0 = uncapped).
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).
         """
         ...

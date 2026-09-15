@@ -352,11 +352,58 @@ class TestPostgreSQLDialect:
         # fan the bind param out across all indexed text fields.
         assert "id @@@ paradedb.boolean(should =>" in arm
         assert "paradedb.match('text', $4)" in arm
-        assert "paradedb.match('context', $4)" in arm
         assert "paradedb.match('text_signals', $4)" in arm
+        # `context` multiplies the postings scanned for little signal (#4313).
+        assert "'context'" not in arm
         assert "paradedb.score(id) DESC" in arm
         assert "'bm25' AS source" in arm
         assert "LIMIT $3" in arm
+
+    def test_build_bm25_arm_pg_search_tokenizer_prunes_to_terms(self, d):
+        """With a configured tokenizer the query becomes capped exact term queries (#4313)."""
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="jieba",
+            max_query_terms=16,
+        )
+        assert "unnest($4::text::pdb.jieba::text[])" in arm
+        assert "paradedb.term(f, t)" in arm
+        assert "LIMIT 16" in arm
+        assert "paradedb.match(" not in arm
+
+        uncapped = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="lindera(chinese)",
+        )
+        assert "pdb.lindera(chinese)::text[]" in uncapped
+        assert "min(o) LIMIT" not in uncapped
+
+    def test_build_bm25_arm_pg_search_ngram_keeps_raw_match(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="ngram(2,3)",
+            max_query_terms=16,
+        )
+        assert "paradedb.match('text', $4)" in arm
+        assert "term(" not in arm
 
     def test_build_bm25_arm_pg_search_custom_schema(self, d):
         arm = d.build_bm25_arm(
@@ -372,7 +419,6 @@ class TestPostgreSQLDialect:
         assert "pgsearch.score(id)" in arm
         assert "id @@@ pgsearch.boolean(should =>" in arm
         assert "pgsearch.match('text', $4)" in arm
-        assert "pgsearch.match('context', $4)" in arm
         assert "pgsearch.match('text_signals', $4)" in arm
         assert "pgsearch.score(id) DESC" in arm
         assert "'bm25' AS source" in arm

@@ -28,12 +28,46 @@ class KnowledgeBm25Arm:
     match_filter: str
 
 
+def pg_search_should(fn: str, fields: tuple[str, ...], text_param: str, tokenizer: str, max_query_terms: int) -> str:
+    """The ``paradedb.boolean(should => ...)`` clause array for a pg_search BM25 arm.
+
+    With a configured tokenizer, the query is tokenized in SQL by the index's own
+    tokenizer and only its distinct word tokens are searched — multi-char words
+    first (single CJK chars are mostly particles: 的 了 在), capped at
+    ``max_query_terms`` — as exact term queries over ``fields``. This replaced
+    matching the raw sentence, which ORs every token, whitespace and punctuation
+    included: jieba emits " " as a term that matches every row containing a space,
+    and a long Chinese question fanned out over the global index (#4313). Terms
+    rather than a re-joined ``match`` string, because re-joining reintroduces that
+    whitespace term.
+
+    ngram tokenizers emit overlapping grams, so pruning them would just keep the
+    query's first few characters; they, and the ParadeDB default tokenizer (which
+    keeps a CJK run as one token), keep the raw ``match``. ``tokenizer`` is the
+    normalized config value (``normalize_pg_search_tokenizer``, a whitelist), so it
+    is safe to inline — it is the same ``pdb.<tokenizer>`` the index DDL uses.
+    """
+    if tokenizer and not tokenizer.startswith(("ngram", "edge_ngram")):
+        cap = f" LIMIT {max_query_terms}" if max_query_terms > 0 else ""
+        values = ", ".join(f"('{f}')" for f in fields)
+        return (
+            f"ARRAY(SELECT {fn}.term(f, t) FROM ("
+            f"SELECT t FROM unnest({text_param}::text::pdb.{tokenizer}::text[]) WITH ORDINALITY u(t, o)"
+            f" WHERE t !~ '^[[:space:][:punct:]]*$'"
+            f" GROUP BY t ORDER BY char_length(t) > 1 DESC, min(o){cap}"
+            f") k CROSS JOIN (VALUES {values}) v(f))"
+        )
+    return "ARRAY[" + ", ".join(f"{fn}.match('{f}', {text_param})" for f in fields) + "]"
+
+
 def knowledge_bm25_arm(
     text_search_extension: str,
     *,
     table_alias: str,
     text_param: str,
     pg_search_function_schema: str = "paradedb",
+    pg_search_tokenizer: str = "",
+    max_query_terms: int = 0,
 ) -> KnowledgeBm25Arm:
     """BM25 clauses for ``search_knowledge_pages`` on a given text-search backend.
 
@@ -80,13 +114,13 @@ def knowledge_bm25_arm(
         # ParadeDB pg_search: BM25 index over (id, name, content), key_field='id'.
         # Fan the query across both indexed text fields with paradedb.boolean.
         score = f"{pg_search_function_schema}.score({a}.id)"
+        should = pg_search_should(
+            pg_search_function_schema, ("name", "content"), p, pg_search_tokenizer, max_query_terms
+        )
         return KnowledgeBm25Arm(
             score_expr=score,
             order_by=f"{score} DESC",
-            match_filter=(
-                f"AND {a}.id @@@ {pg_search_function_schema}.boolean(should => ARRAY["
-                f"{pg_search_function_schema}.match('name', {p}), {pg_search_function_schema}.match('content', {p})])"
-            ),
+            match_filter=f"AND {a}.id @@@ {pg_search_function_schema}.boolean(should => {should})",
         )
 
     if text_search_extension == "pg_textsearch":
@@ -318,6 +352,8 @@ class PostgreSQLDialect(SQLDialect):
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
         pg_search_function_schema: str = "paradedb",
+        pg_search_tokenizer: str = "",
+        max_query_terms: int = 0,
         extra_where: str = "",
     ) -> str:
         # Whether the branch's own WHERE enforces ``bm25_min_score``. Branches that
@@ -366,16 +402,15 @@ class PostgreSQLDialect(SQLDialect):
             # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)
             # with key_field='id'. The @@@ operator on the key_field requires a
             # field-qualified query (`text:foo`); to keep the bind-parameter form,
-            # we fan the query out across all indexed text fields with paradedb.boolean.
+            # we fan the query out with paradedb.boolean over `text` and
+            # `text_signals` (`context` is left out: it multiplies the postings
+            # scanned for little recall signal — #4313).
             bm25_score_expr = f"{pg_search_function_schema}.score(id)"
             bm25_order_by = f"{pg_search_function_schema}.score(id) DESC"
-            bm25_where_filter = (
-                f"AND id @@@ {pg_search_function_schema}.boolean(should => ARRAY["
-                f"{pg_search_function_schema}.match('text', {text_param}), "
-                f"{pg_search_function_schema}.match('context', {text_param}), "
-                f"{pg_search_function_schema}.match('text_signals', {text_param})"
-                f"])"
+            should = pg_search_should(
+                pg_search_function_schema, ("text", "text_signals"), text_param, pg_search_tokenizer, max_query_terms
             )
+            bm25_where_filter = f"AND id @@@ {pg_search_function_schema}.boolean(should => {should})"
         else:  # native tsvector
             # bm25_language is validated as a PG identifier in HindsightConfig.validate(),
             # so embedding it as a SQL literal here is safe.

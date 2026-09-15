@@ -80,6 +80,17 @@ def test_pg_search_uses_custom_function_schema():
     assert "paradedb" not in arm.match_filter
 
 
+def test_pg_search_tokenizer_prunes_to_terms_like_memory_recall():
+    """Knowledge search shares recall's pg_search term pruning (#4313)."""
+    arm = knowledge_bm25_arm(
+        "pg_search", table_alias="mm", text_param="$3", pg_search_tokenizer="jieba", max_query_terms=16
+    )
+    assert "unnest($3::text::pdb.jieba::text[])" in arm.match_filter
+    assert "(VALUES ('name'), ('content'))" in arm.match_filter
+    assert "LIMIT 16" in arm.match_filter
+    assert "paradedb.match(" not in arm.match_filter
+
+
 def test_pg_textsearch_ranks_content_by_bm25_distance():
     arm = _arm("pg_textsearch")
     # `<@>` is a distance (lower = closer): order ASC, negate for the score.

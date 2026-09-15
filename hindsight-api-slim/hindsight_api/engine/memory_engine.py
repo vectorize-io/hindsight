@@ -18821,6 +18821,8 @@ class MemoryEngine(MemoryEngineInterface):
                         table_alias="mm",
                         text_param="$3",
                         pg_search_function_schema=pg_search_function_schema,
+                        pg_search_tokenizer=cfg.text_search_extension_pg_search_tokenizer,
+                        max_query_terms=cfg.bm25_max_query_terms,
                     )
                     # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
                     # independently, then RRF-fused (k=60) in SQL.
@@ -18863,6 +18865,8 @@ class MemoryEngine(MemoryEngineInterface):
                         table_alias="mm",
                         text_param="$2",
                         pg_search_function_schema=pg_search_function_schema,
+                        pg_search_tokenizer=cfg.text_search_extension_pg_search_tokenizer,
+                        max_query_terms=cfg.bm25_max_query_terms,
                     )
                     sql = f"""
                         SELECT kp.id, kp.name, kp.mental_model_id,
