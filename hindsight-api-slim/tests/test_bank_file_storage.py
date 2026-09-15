@@ -7,6 +7,28 @@ import pytest
 from hindsight_api.engine.storage import bank_storage_prefix
 
 
+@pytest.mark.parametrize("bank_id", [".", "..", "a/b", "a%2Fb", "user.name", "ü b"])
+def test_every_bank_id_is_one_key_segment_an_object_store_accepts(bank_id):
+    import obstore as obs
+    from obstore.store import MemoryStore
+
+    prefix = bank_storage_prefix(bank_id)
+    segments = prefix.rstrip("/").split("/")
+    assert len(segments) == 4 and segments[2] == "banks"
+    assert segments[3] not in (".", "..")
+    obs.put(MemoryStore(), f"{prefix}f", b"x")  # raises on a path it cannot parse
+
+
+def test_distinct_bank_ids_never_share_a_prefix():
+    ids = [".", "..", "%2E", "a.b", "a%2Eb", "a/b", "a%2Fb"]
+    assert len({bank_storage_prefix(b) for b in ids}) == len(ids)
+
+
+def test_an_empty_bank_id_is_refused():
+    with pytest.raises(ValueError):
+        bank_storage_prefix("")
+
+
 @pytest.mark.asyncio
 async def test_object_store_delete_prefix_stops_at_the_prefix():
     import obstore as obs

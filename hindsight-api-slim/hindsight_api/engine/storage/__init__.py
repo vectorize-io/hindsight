@@ -15,12 +15,26 @@ def bank_storage_prefix(bank_id: str) -> str:
     The tenant comes first because object-store backends share one bucket
     across every tenant schema: without it two tenants' banks with the same id
     wrote the same keys, and a content-addressed attachment one of them deleted
-    was the other's too. Both segments are percent-encoded so a bank id holding
-    a ``/`` cannot nest under another bank's prefix and be swept with it.
+    was the other's too.
     """
     from ..memory_engine import get_current_schema
 
-    return f"tenants/{quote(get_current_schema(), safe='')}/banks/{quote(bank_id, safe='')}/"
+    return f"tenants/{_key_segment(get_current_schema())}/banks/{_key_segment(bank_id)}/"
+
+
+def _key_segment(value: str) -> str:
+    """Encode a name as exactly one key segment, injectively.
+
+    Escaping rather than validating: bank ids are caller-chosen and already in use
+    with dots, spaces and non-ASCII. Percent-encoding with nothing marked safe
+    encodes ``/`` (so one bank cannot nest under another's prefix and be swept with
+    it) and ``%`` itself (so two names never share an encoding). ``quote`` leaves
+    ``.`` alone, and object stores refuse ``.`` and ``..`` as path segments, so dots
+    are encoded as well.
+    """
+    if not value:
+        raise ValueError("A storage key segment cannot be empty")
+    return quote(value, safe="").replace(".", "%2E")
 
 
 def create_file_storage(
