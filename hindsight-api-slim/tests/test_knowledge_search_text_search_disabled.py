@@ -99,6 +99,7 @@ def search(monkeypatch):
                 database_schema="public",
                 text_search_extension=ext,
                 text_search_extension_pg_search_function_schema="paradedb",
+                text_search_extension_pg_search_tokenizer="",
                 bm25_max_query_terms=20,
                 bm25_selective_terms=bm25_selective_terms,
             ),
