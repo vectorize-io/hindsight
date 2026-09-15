@@ -831,6 +831,7 @@ ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENT
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
 ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 ENV_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS"
+ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER = "HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER"
 
 # Webhook configuration (global, static - server-level only)
 ENV_WEBHOOK_URL = "HINDSIGHT_API_WEBHOOK_URL"
@@ -1646,6 +1647,10 @@ DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enab
 # (API/MCP/control plane) ignore it entirely. Per-model
 # `trigger.min_refresh_interval_seconds` overrides this.
 DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = 0
+# Trigger fields layered over the engine's built-in knowledge-page default
+# (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER) when a page is created; a request's
+# own trigger still wins. JSON object, e.g. {"refresh_cron": "0 * * * *"}.
+DEFAULT_KNOWLEDGE_PAGE_DEFAULT_TRIGGER: dict | None = None
 # History (mental-model refresh snapshots and observation update snapshots) lives in
 # the dedicated mental_model_history / observation_history tables, one row per change.
 # On every write we insert the new entry and delete the oldest rows beyond the cap,
@@ -3238,6 +3243,7 @@ class HindsightConfig:
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     mental_model_min_refresh_interval_seconds: int
+    knowledge_page_default_trigger: dict | None
     consolidation_batch_size: int
     consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
@@ -3590,6 +3596,7 @@ class HindsightConfig:
         "observation_scope_limits",
         # Mental model settings
         "mental_model_min_refresh_interval_seconds",
+        "knowledge_page_default_trigger",
         # Reflect settings
         "reflect_mission",
         "reflect_source_facts_max_tokens",
@@ -4788,6 +4795,10 @@ class HindsightConfig:
                     or DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS
                 ),
             ),
+            knowledge_page_default_trigger=json.loads(
+                os.getenv(ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER, "").strip() or "null"
+            )
+            or DEFAULT_KNOWLEDGE_PAGE_DEFAULT_TRIGGER,
             consolidation_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_BATCH_SIZE))
             ),

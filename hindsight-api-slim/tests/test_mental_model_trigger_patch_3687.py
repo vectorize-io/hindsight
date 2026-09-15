@@ -148,3 +148,48 @@ class TestMentalModelTriggerPatch:
         assert not trigger.get("refresh_after_consolidation")
         # The scope settings are unrelated to the schedule and must survive it.
         assert trigger["fact_types"] == ["observation"]
+
+
+class TestKnowledgePageDefaultTriggerConfig:
+    async def test_bank_default_trigger_applies_to_new_pages_and_request_still_wins(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """knowledge_page_default_trigger merges over the built-in page default."""
+        bank_id = f"kpdefault-{uuid.uuid4().hex[:8]}"
+        await memory.update_bank_config(
+            bank_id,
+            {"knowledge_page_default_trigger": {"refresh_cron": "0 * * * *"}},
+            request_context=request_context,
+        )
+
+        default_page = await memory.create_knowledge_page(
+            bank_id=bank_id, name="A", source_query="a", content="", request_context=request_context
+        )
+        assert default_page is not None
+        trigger = await _trigger_of(memory, bank_id, default_page["mental_model_id"], request_context)
+        assert trigger["refresh_cron"] == "0 * * * *"
+        assert not trigger.get("refresh_after_consolidation")  # cron replaced auto-refresh
+        assert trigger["mode"] == "delta"  # built-in default kept
+
+        explicit_page = await memory.create_knowledge_page(
+            bank_id=bank_id,
+            name="B",
+            source_query="b",
+            content="",
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        assert explicit_page is not None
+        trigger = await _trigger_of(memory, bank_id, explicit_page["mental_model_id"], request_context)
+        assert trigger["refresh_after_consolidation"] is True
+        assert not trigger.get("refresh_cron")
+
+    async def test_invalid_bank_default_trigger_is_rejected_on_write(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        with pytest.raises(ValueError, match="knowledge_page_default_trigger"):
+            await memory.update_bank_config(
+                f"kpdefault-{uuid.uuid4().hex[:8]}",
+                {"knowledge_page_default_trigger": {"refresh_cron": "every hour"}},
+                request_context=request_context,
+            )

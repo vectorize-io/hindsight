@@ -1643,7 +1643,7 @@ export class ControlPlaneClient {
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
-        fact_types?: Array<"world" | "experience" | "observation">;
+        fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
         tags_match?: TagsMatch;
@@ -1689,7 +1689,7 @@ export class ControlPlaneClient {
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
-        fact_types?: Array<"world" | "experience" | "observation">;
+        fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
         tags_match?: TagsMatch;

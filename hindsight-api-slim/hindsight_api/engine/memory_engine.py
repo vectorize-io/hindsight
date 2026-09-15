@@ -18318,7 +18318,8 @@ class MemoryEngine(MemoryEngineInterface):
         ``managed`` lets a client tag the page as system-owned vs. hand-authored.
         When ``trigger`` is omitted the page uses ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
         (observation-only, delta, auto-refresh) so a knowledge page is a living
-        document by default.
+        document by default, with the hierarchical ``knowledge_page_default_trigger``
+        config merged over it.
 
         Returns ``None`` when a page with the same name already exists in the same
         folder (a uniqueness violation) — the caller should treat that as
@@ -18338,7 +18339,10 @@ class MemoryEngine(MemoryEngineInterface):
         embedding_vec = await self._mental_model_embedding_vector(name, content)
         embedding = str(embedding_vec) if embedding_vec else None
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        effective_trigger = self._merge_trigger(trigger)
+        # Built-in default <- bank/tenant/global knowledge_page_default_trigger <- request.
+        bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
+        page_default = self._merge_trigger(bank_config.get("knowledge_page_default_trigger"))
+        effective_trigger = self._merge_trigger(trigger, base=page_default)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:

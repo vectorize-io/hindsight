@@ -9,16 +9,7 @@ import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { FactType, FactTypeCheckboxGroup } from "@/components/fact-type-filter";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -64,9 +55,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
-import { ResponseSchemaField } from "./response-schema-field";
 import { TagFilterInput } from "./tag-filter-input";
-import { CronSchedulePreview } from "./cron-schedule-preview";
+import {
+  MentalModelTriggerFields,
+  triggerFormFromTrigger,
+  triggerFromForm,
+} from "./mental-model-trigger-fields";
 import { NextRefresh } from "./next-refresh";
 import { StalenessBadge } from "./staleness-badge";
 import { FreshnessLine } from "./freshness-line";
@@ -694,31 +688,21 @@ function CreateMentalModelDialog({
   const t = useTranslations("mentalModels");
   const { currentBank } = useBank();
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({
-    id: "",
-    name: "",
-    sourceQuery: "",
-    maxTokens: "2048",
-    tags: "",
-    refreshTrigger: "manual" as "manual" | "auto" | "scheduled",
-    mode: "full" as "full" | "delta",
-    refreshCron: "",
-    minRefreshIntervalSeconds: "",
-    factTypes: [] as Array<"world" | "experience" | "observation">,
-    excludeMentalModels: false,
-    excludeMentalModelIds: "",
-    tagsMatch: "" as string,
-    tagGroups: "",
-    // Recall overrides for refresh: "" means inherit bank/global default
-    includeChunks: "" as "" | "true" | "false",
-    recallMaxTokens: "",
-    recallChunksMaxTokens: "",
-    responseSchema: "",
-    keepTrace: false,
-  });
+  const emptyForm = { id: "", name: "", sourceQuery: "", maxTokens: "2048", tags: "" };
+  const [form, setForm] = useState(emptyForm);
+  const [triggerForm, setTriggerForm] = useState(() => triggerFormFromTrigger());
+  const resetForms = () => {
+    setForm(emptyForm);
+    setTriggerForm(triggerFormFromTrigger());
+  };
 
   const handleCreate = async () => {
     if (!currentBank || !form.name.trim() || !form.sourceQuery.trim()) return;
+    const trigger = triggerFromForm(triggerForm);
+    if (!trigger) {
+      toast.error(t("invalidTagGroupsJson"));
+      return;
+    }
 
     setCreating(true);
     try {
@@ -730,85 +714,16 @@ function CreateMentalModelDialog({
       const maxTokens = parseInt(form.maxTokens) || 2048;
 
       // Submit mental model creation - content will be generated in background
-      const excludeIds = form.excludeMentalModelIds
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-
-      let tagGroups: TagGroup[] | undefined;
-      if (form.tagGroups.trim()) {
-        try {
-          tagGroups = JSON.parse(form.tagGroups.trim());
-        } catch {
-          toast.error(t("invalidTagGroupsJson"));
-          return;
-        }
-      }
-
-      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
-        ? parseInt(form.minRefreshIntervalSeconds, 10)
-        : undefined;
-      const recallMaxTokens = form.recallMaxTokens.trim()
-        ? parseInt(form.recallMaxTokens, 10)
-        : undefined;
-      const recallChunksMaxTokens = form.recallChunksMaxTokens.trim()
-        ? parseInt(form.recallChunksMaxTokens, 10)
-        : undefined;
-      const includeChunks =
-        form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
-
-      // response_schema is only ever set through the schema builder, which
-      // guarantees valid, usable JSON.
-      const responseSchema = form.responseSchema.trim()
-        ? JSON.parse(form.responseSchema.trim())
-        : undefined;
-
       await client.createMentalModel(currentBank, {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
         tags: tags.length > 0 ? tags : undefined,
         max_tokens: maxTokens,
-        trigger: {
-          mode: form.mode,
-          refresh_after_consolidation: form.refreshTrigger === "auto",
-          refresh_cron:
-            form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
-          min_refresh_interval_seconds: minRefreshIntervalSeconds,
-          fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
-          exclude_mental_models: form.excludeMentalModels || undefined,
-          exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
-          tags_match: (form.tagsMatch as TagsMatch) || undefined,
-          tag_groups: tagGroups,
-          include_chunks: includeChunks,
-          recall_max_tokens: recallMaxTokens,
-          recall_chunks_max_tokens: recallChunksMaxTokens,
-          response_schema: responseSchema,
-          keep_trace: form.keepTrace,
-        },
+        trigger,
       });
 
-      setForm({
-        id: "",
-        name: "",
-        sourceQuery: "",
-        maxTokens: "2048",
-        tags: "",
-        refreshTrigger: "manual",
-        mode: "full",
-        refreshCron: "",
-        minRefreshIntervalSeconds: "",
-        factTypes: [],
-        excludeMentalModels: false,
-        excludeMentalModelIds: "",
-        tagsMatch: "",
-        tagGroups: "",
-        includeChunks: "",
-        recallMaxTokens: "",
-        recallChunksMaxTokens: "",
-        responseSchema: "",
-        keepTrace: false,
-      });
+      resetForms();
       onCreated();
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
@@ -822,32 +737,12 @@ function CreateMentalModelDialog({
       open={open}
       onOpenChange={(o) => {
         if (!o) {
-          setForm({
-            id: "",
-            name: "",
-            sourceQuery: "",
-            maxTokens: "2048",
-            tags: "",
-            refreshTrigger: "manual",
-            mode: "full",
-            refreshCron: "",
-            minRefreshIntervalSeconds: "",
-            factTypes: [],
-            excludeMentalModels: false,
-            excludeMentalModelIds: "",
-            tagsMatch: "",
-            tagGroups: "",
-            includeChunks: "",
-            recallMaxTokens: "",
-            recallChunksMaxTokens: "",
-            responseSchema: "",
-            keepTrace: false,
-          });
+          resetForms();
           onClose();
         }
       }}
     >
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{t("createDialogTitle")}</DialogTitle>
           <DialogDescription>{t("createDialogDescription")}</DialogDescription>
@@ -907,285 +802,23 @@ function CreateMentalModelDialog({
             </TabsContent>
 
             <TabsContent value="options" className="space-y-6 pt-4">
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionRefresh")}
-                </h3>
-                {/* Single mutually-exclusive choice: manual, after-consolidation, or scheduled. */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshTriggerLabel")}
-                  </label>
-                  <Select
-                    value={form.refreshTrigger}
-                    onValueChange={(value) =>
-                      setForm({
-                        ...form,
-                        refreshTrigger: value as "manual" | "auto" | "scheduled",
-                        // Drop any cron when leaving the scheduled option.
-                        refreshCron: value === "scheduled" ? form.refreshCron : "",
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual" description={t("optionsRefreshTriggerManualDesc")}>
-                        {t("optionsRefreshTriggerManual")}
-                      </SelectItem>
-                      <SelectItem value="auto" description={t("optionsRefreshTriggerAutoDesc")}>
-                        {t("optionsRefreshTriggerAuto")}
-                      </SelectItem>
-                      <SelectItem
-                        value="scheduled"
-                        description={t("optionsRefreshTriggerScheduledDesc")}
-                      >
-                        {t("optionsRefreshTriggerScheduled")}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshTriggerDescription")}
-                  </p>
-                </div>
-                {form.refreshTrigger === "scheduled" && (
+              <MentalModelTriggerFields
+                value={triggerForm}
+                onChange={setTriggerForm}
+                tagsField={
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-foreground">
-                      {t("optionsRefreshCronLabel")}
+                      {t("optionsTagsLabel")}
                     </label>
                     <Input
-                      value={form.refreshCron}
-                      onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
-                      placeholder={t("optionsRefreshCronPlaceholder")}
+                      value={form.tags}
+                      onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                      placeholder={t("optionsTagsPlaceholder")}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {t("optionsRefreshCronDescription")}
-                    </p>
-                    <CronSchedulePreview cron={form.refreshCron} />
+                    <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
                   </div>
-                )}
-                {form.refreshTrigger !== "manual" && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">
-                      {t("optionsMinRefreshIntervalLabel")}
-                    </label>
-                    <Input
-                      type="number"
-                      value={form.minRefreshIntervalSeconds}
-                      onChange={(e) =>
-                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
-                      }
-                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
-                      min="0"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("optionsMinRefreshIntervalDescription")}
-                    </p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshModeLabel")}
-                  </label>
-                  <Select
-                    value={form.mode}
-                    onValueChange={(value) => setForm({ ...form, mode: value as "full" | "delta" })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="full">{t("optionsRefreshModeFull")}</SelectItem>
-                      <SelectItem value="delta">{t("optionsRefreshModeDelta")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshModeDeltaDescription")}
-                  </p>
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionOtherModels")}
-                </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="exclude-mental-models"
-                    checked={form.excludeMentalModels}
-                    onCheckedChange={(checked) =>
-                      setForm({ ...form, excludeMentalModels: checked === true })
-                    }
-                  />
-                  <label
-                    htmlFor="exclude-mental-models"
-                    className="text-sm font-medium text-foreground cursor-pointer"
-                  >
-                    {t("optionsExcludeAllLabel")}
-                  </label>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsExcludeIdsLabel")}
-                  </label>
-                  <Input
-                    value={form.excludeMentalModelIds}
-                    onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                    placeholder={t("optionsExcludeIdsPlaceholder")}
-                  />
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionTags")}
-                </h3>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagsLabel")}
-                  </label>
-                  <Input
-                    value={form.tags}
-                    onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder={t("optionsTagsPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagsMatchLabel")}
-                  </label>
-                  <Select
-                    value={form.tagsMatch}
-                    onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t("optionsTagsMatchDefaultPlaceholder")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">{t("optionsTagsMatchDefault")}</SelectItem>
-                      <SelectItem value="any">{t("optionsTagsMatchAny")}</SelectItem>
-                      <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
-                      <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
-                      <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
-                      <SelectItem value="exact">{t("optionsTagsMatchExact")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsTagsMatchDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagGroupsLabel")}
-                  </label>
-                  <Textarea
-                    value={form.tagGroups}
-                    onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
-                    placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
-                    rows={3}
-                    className="font-mono text-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsTagGroupsDescription")}
-                  </p>
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionRecall")}
-                </h3>
-                <p className="text-xs text-muted-foreground">{t("optionsRecallDescription")}</p>
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsFactTypesLabel")}
-                  </label>
-                  <FactTypeCheckboxGroup
-                    value={form.factTypes}
-                    onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("optionsFactTypesEmpty")}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsIncludeChunksLabel")}
-                  </label>
-                  <Select
-                    value={form.includeChunks || "default"}
-                    onValueChange={(v) =>
-                      setForm({
-                        ...form,
-                        includeChunks: v === "default" ? "" : (v as "true" | "false"),
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">{t("optionsIncludeChunksDefault")}</SelectItem>
-                      <SelectItem value="true">{t("optionsIncludeChunksYes")}</SelectItem>
-                      <SelectItem value="false">{t("optionsIncludeChunksNo")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRecallMaxTokensLabel")}
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.recallMaxTokens}
-                    onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
-                    placeholder={t("optionsRecallMaxTokensPlaceholder")}
-                    min="0"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRecallMaxTokensDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRecallChunksMaxTokensLabel")}
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.recallChunksMaxTokens}
-                    onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
-                    placeholder={t("optionsRecallChunksMaxTokensPlaceholder")}
-                    min="0"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRecallChunksMaxTokensDescription")}
-                  </p>
-                </div>
-                <ResponseSchemaField
-                  value={form.responseSchema}
-                  onChange={(json) => setForm({ ...form, responseSchema: json })}
-                />
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionTroubleshooting")}
-                </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="create-keep-trace"
-                    checked={form.keepTrace}
-                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
-                  />
-                  <label
-                    htmlFor="create-keep-trace"
-                    className="text-sm font-medium text-foreground cursor-pointer"
-                  >
-                    {t("optionsKeepTraceLabel")}
-                  </label>
-                </div>
-                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
-              </section>
+                }
+              />
             </TabsContent>
           </div>
         </Tabs>
@@ -1232,56 +865,25 @@ export function UpdateMentalModelDialog({
     sourceQuery: mentalModel.source_query,
     maxTokens: String(mentalModel.max_tokens || 2048),
     tags: mentalModel.tags.join(", "),
-    refreshTrigger: (mentalModel.trigger?.refresh_cron
-      ? "scheduled"
-      : mentalModel.trigger?.refresh_after_consolidation
-        ? "auto"
-        : "manual") as "manual" | "auto" | "scheduled",
-    mode: (mentalModel.trigger?.mode || "full") as "full" | "delta",
-    refreshCron: mentalModel.trigger?.refresh_cron || "",
-    minRefreshIntervalSeconds:
-      mentalModel.trigger?.min_refresh_interval_seconds != null
-        ? String(mentalModel.trigger.min_refresh_interval_seconds)
-        : "",
-    factTypes:
-      (mentalModel.trigger?.fact_types as
-        | Array<"world" | "experience" | "observation">
-        | undefined) || [],
-    excludeMentalModels: mentalModel.trigger?.exclude_mental_models || false,
-    excludeMentalModelIds: (mentalModel.trigger?.exclude_mental_model_ids || []).join(", "),
-    tagsMatch: (mentalModel.trigger?.tags_match as string) || "",
-    tagGroups: mentalModel.trigger?.tag_groups
-      ? JSON.stringify(mentalModel.trigger.tag_groups, null, 2)
-      : "",
-    includeChunks: (mentalModel.trigger?.include_chunks === true
-      ? "true"
-      : mentalModel.trigger?.include_chunks === false
-        ? "false"
-        : "") as "" | "true" | "false",
-    recallMaxTokens:
-      mentalModel.trigger?.recall_max_tokens != null
-        ? String(mentalModel.trigger.recall_max_tokens)
-        : "",
-    recallChunksMaxTokens:
-      mentalModel.trigger?.recall_chunks_max_tokens != null
-        ? String(mentalModel.trigger.recall_chunks_max_tokens)
-        : "",
-    responseSchema: mentalModel.trigger?.response_schema
-      ? JSON.stringify(mentalModel.trigger.response_schema, null, 2)
-      : "",
-    keepTrace: mentalModel.trigger?.keep_trace || false,
   });
   const [form, setForm] = useState(buildFormState);
+  const [triggerForm, setTriggerForm] = useState(() => triggerFormFromTrigger(mentalModel.trigger));
 
   // Reset form when mental model changes or dialog opens
   useEffect(() => {
     if (open) {
       setForm(buildFormState());
+      setTriggerForm(triggerFormFromTrigger(mentalModel.trigger));
     }
   }, [open, mentalModel]);
 
   const handleUpdate = async () => {
     if (!currentBank || !form.name.trim() || !form.sourceQuery.trim()) return;
+    const trigger = triggerFromForm(triggerForm);
+    if (!trigger) {
+      toast.error(t("invalidTagGroupsJson"));
+      return;
+    }
 
     setUpdating(true);
     try {
@@ -1292,61 +894,12 @@ export function UpdateMentalModelDialog({
 
       const maxTokens = parseInt(form.maxTokens) || 2048;
 
-      const excludeIds = form.excludeMentalModelIds
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-
-      let tagGroups: TagGroup[] | undefined;
-      if (form.tagGroups.trim()) {
-        try {
-          tagGroups = JSON.parse(form.tagGroups.trim());
-        } catch {
-          toast.error(t("invalidTagGroupsJson"));
-          return;
-        }
-      }
-
-      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
-        ? parseInt(form.minRefreshIntervalSeconds, 10)
-        : undefined;
-      const recallMaxTokens = form.recallMaxTokens.trim()
-        ? parseInt(form.recallMaxTokens, 10)
-        : undefined;
-      const recallChunksMaxTokens = form.recallChunksMaxTokens.trim()
-        ? parseInt(form.recallChunksMaxTokens, 10)
-        : undefined;
-      const includeChunks =
-        form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
-
-      // response_schema is only ever set through the schema builder, which
-      // guarantees valid, usable JSON.
-      const responseSchema = form.responseSchema.trim()
-        ? JSON.parse(form.responseSchema.trim())
-        : undefined;
-
       const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
         tags,
         max_tokens: maxTokens,
-        trigger: {
-          mode: form.mode,
-          refresh_after_consolidation: form.refreshTrigger === "auto",
-          refresh_cron:
-            form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
-          min_refresh_interval_seconds: minRefreshIntervalSeconds,
-          fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
-          exclude_mental_models: form.excludeMentalModels || undefined,
-          exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
-          tags_match: (form.tagsMatch as TagsMatch) || undefined,
-          tag_groups: tagGroups,
-          include_chunks: includeChunks,
-          recall_max_tokens: recallMaxTokens,
-          recall_chunks_max_tokens: recallChunksMaxTokens,
-          response_schema: responseSchema,
-          keep_trace: form.keepTrace,
-        },
+        trigger,
       });
 
       onUpdated(updated);
@@ -1360,7 +913,7 @@ export function UpdateMentalModelDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{t("updateDialogTitle")}</DialogTitle>
           <DialogDescription>{t("updateDialogDescription")}</DialogDescription>
@@ -1416,285 +969,23 @@ export function UpdateMentalModelDialog({
             </TabsContent>
 
             <TabsContent value="options" className="space-y-6 pt-4">
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionRefresh")}
-                </h3>
-                {/* Single mutually-exclusive choice: manual, after-consolidation, or scheduled. */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshTriggerLabel")}
-                  </label>
-                  <Select
-                    value={form.refreshTrigger}
-                    onValueChange={(value) =>
-                      setForm({
-                        ...form,
-                        refreshTrigger: value as "manual" | "auto" | "scheduled",
-                        // Drop any cron when leaving the scheduled option.
-                        refreshCron: value === "scheduled" ? form.refreshCron : "",
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual" description={t("optionsRefreshTriggerManualDesc")}>
-                        {t("optionsRefreshTriggerManual")}
-                      </SelectItem>
-                      <SelectItem value="auto" description={t("optionsRefreshTriggerAutoDesc")}>
-                        {t("optionsRefreshTriggerAuto")}
-                      </SelectItem>
-                      <SelectItem
-                        value="scheduled"
-                        description={t("optionsRefreshTriggerScheduledDesc")}
-                      >
-                        {t("optionsRefreshTriggerScheduled")}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshTriggerDescription")}
-                  </p>
-                </div>
-                {form.refreshTrigger === "scheduled" && (
+              <MentalModelTriggerFields
+                value={triggerForm}
+                onChange={setTriggerForm}
+                tagsField={
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-foreground">
-                      {t("optionsRefreshCronLabel")}
+                      {t("optionsTagsLabel")}
                     </label>
                     <Input
-                      value={form.refreshCron}
-                      onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
-                      placeholder={t("optionsRefreshCronPlaceholder")}
+                      value={form.tags}
+                      onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                      placeholder={t("optionsTagsPlaceholder")}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {t("optionsRefreshCronDescription")}
-                    </p>
-                    <CronSchedulePreview cron={form.refreshCron} />
+                    <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
                   </div>
-                )}
-                {form.refreshTrigger !== "manual" && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">
-                      {t("optionsMinRefreshIntervalLabel")}
-                    </label>
-                    <Input
-                      type="number"
-                      value={form.minRefreshIntervalSeconds}
-                      onChange={(e) =>
-                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
-                      }
-                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
-                      min="0"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("optionsMinRefreshIntervalDescription")}
-                    </p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshModeLabel")}
-                  </label>
-                  <Select
-                    value={form.mode}
-                    onValueChange={(value) => setForm({ ...form, mode: value as "full" | "delta" })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="full">{t("optionsRefreshModeFull")}</SelectItem>
-                      <SelectItem value="delta">{t("optionsRefreshModeDelta")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshModeDeltaDescription")}
-                  </p>
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionOtherModels")}
-                </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="update-exclude-mental-models"
-                    checked={form.excludeMentalModels}
-                    onCheckedChange={(checked) =>
-                      setForm({ ...form, excludeMentalModels: checked === true })
-                    }
-                  />
-                  <label
-                    htmlFor="update-exclude-mental-models"
-                    className="text-sm font-medium text-foreground cursor-pointer"
-                  >
-                    {t("optionsExcludeAllLabel")}
-                  </label>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsExcludeIdsLabel")}
-                  </label>
-                  <Input
-                    value={form.excludeMentalModelIds}
-                    onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                    placeholder={t("optionsExcludeIdsPlaceholder")}
-                  />
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionTags")}
-                </h3>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagsLabel")}
-                  </label>
-                  <Input
-                    value={form.tags}
-                    onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder={t("optionsTagsPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagsMatchLabel")}
-                  </label>
-                  <Select
-                    value={form.tagsMatch || "default"}
-                    onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t("optionsTagsMatchDefaultPlaceholder")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">{t("optionsTagsMatchDefault")}</SelectItem>
-                      <SelectItem value="any">{t("optionsTagsMatchAny")}</SelectItem>
-                      <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
-                      <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
-                      <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
-                      <SelectItem value="exact">{t("optionsTagsMatchExact")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsTagsMatchDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsTagGroupsLabel")}
-                  </label>
-                  <Textarea
-                    value={form.tagGroups}
-                    onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
-                    placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
-                    rows={3}
-                    className="font-mono text-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsTagGroupsDescription")}
-                  </p>
-                </div>
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionRecall")}
-                </h3>
-                <p className="text-xs text-muted-foreground">{t("optionsRecallDescription")}</p>
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsFactTypesLabel")}
-                  </label>
-                  <FactTypeCheckboxGroup
-                    value={form.factTypes}
-                    onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("optionsFactTypesEmpty")}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsIncludeChunksLabel")}
-                  </label>
-                  <Select
-                    value={form.includeChunks || "default"}
-                    onValueChange={(v) =>
-                      setForm({
-                        ...form,
-                        includeChunks: v === "default" ? "" : (v as "true" | "false"),
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">{t("optionsIncludeChunksDefault")}</SelectItem>
-                      <SelectItem value="true">{t("optionsIncludeChunksYes")}</SelectItem>
-                      <SelectItem value="false">{t("optionsIncludeChunksNo")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRecallMaxTokensLabel")}
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.recallMaxTokens}
-                    onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
-                    placeholder={t("optionsRecallMaxTokensPlaceholder")}
-                    min="0"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRecallMaxTokensDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRecallChunksMaxTokensLabel")}
-                  </label>
-                  <Input
-                    type="number"
-                    value={form.recallChunksMaxTokens}
-                    onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
-                    placeholder={t("optionsRecallChunksMaxTokensPlaceholder")}
-                    min="0"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRecallChunksMaxTokensDescription")}
-                  </p>
-                </div>
-                <ResponseSchemaField
-                  value={form.responseSchema}
-                  onChange={(json) => setForm({ ...form, responseSchema: json })}
-                />
-              </section>
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  {t("optionsSectionTroubleshooting")}
-                </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="edit-keep-trace"
-                    checked={form.keepTrace}
-                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
-                  />
-                  <label
-                    htmlFor="edit-keep-trace"
-                    className="text-sm font-medium text-foreground cursor-pointer"
-                  >
-                    {t("optionsKeepTraceLabel")}
-                  </label>
-                </div>
-                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
-              </section>
+                }
+              />
             </TabsContent>
           </div>
         </Tabs>

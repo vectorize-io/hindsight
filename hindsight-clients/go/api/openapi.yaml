@@ -5534,6 +5534,9 @@ components:
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
+        knowledge_page_default_trigger:
+          additionalProperties: {}
+          nullable: true
         mental_model_min_refresh_interval_seconds:
           minimum: 0.0
           nullable: true

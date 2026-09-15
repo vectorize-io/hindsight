@@ -11,7 +11,14 @@ import { formatRelativeTime } from "@/lib/relative-time";
  * croniter in UTC), and each run is also shown in the viewer's local time so the
  * UTC offset is obvious.
  */
-export function CronSchedulePreview({ cron }: { cron: string }) {
+export function CronSchedulePreview({
+  cron,
+  compact = false,
+}: {
+  cron: string;
+  /** One line (description + next run); the upcoming runs move to a hover tooltip. */
+  compact?: boolean;
+}) {
   const t = useTranslations("cronPreview");
   const expr = cron.trim();
   if (!expr) return null;
@@ -50,8 +57,21 @@ export function CronSchedulePreview({ cron }: { cron: string }) {
 
   const next = nextRuns[0];
 
+  if (compact) {
+    const upcoming = nextRuns
+      .map((d) => `${fmtUtc(d)} ${t("utc")} · ${fmtLocal(d)} ${t("local")}`)
+      .join("\n");
+    return (
+      <p className="text-xs text-muted-foreground" title={`${t("upcoming")}\n${upcoming}`}>
+        <span className="font-medium text-foreground">{human}</span>
+        {" · "}
+        {t("nextRun")} {formatRelativeTime(next.toISOString())} ({fmtUtc(next)} {t("utc")})
+      </p>
+    );
+  }
+
   return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-xs space-y-2">
+    <div className="rounded-md bg-muted/40 px-3 py-2.5 text-xs space-y-2">
       <div className="font-medium text-foreground">{human}</div>
       <div className="text-muted-foreground">
         {t("nextRun")}:{" "}

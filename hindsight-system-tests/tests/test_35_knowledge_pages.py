@@ -18,6 +18,7 @@ query — and it is the kind of default a refactor silently flattens.
 from __future__ import annotations
 
 import pytest
+from hindsight_client_api.exceptions import ApiException
 
 from hindsight_system_tests import reflect_loop
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -106,3 +107,49 @@ async def test_deleting_a_page_leaves_the_facts_alone(client, bank_id, bank_with
 
     memories = await client.memory.list_memories(bank_id, limit=100)
     assert [m.text for m in memories.items] == ["Alice moved to Berlin | Involving: Alice"]
+
+
+async def test_a_bank_default_trigger_shapes_new_pages(client, llm, bank_id, settled):
+    """``knowledge_page_default_trigger`` is merged over the built-in page default.
+
+    The configured fields win (here an hourly cron, which also replaces the
+    built-in refresh-after-consolidation), everything unmentioned keeps the page
+    contract, and a trigger sent with the create request still beats the bank.
+    """
+    reflect_loop(llm, answer=ANSWER)
+    await client.banks.update_bank_config(
+        bank_id, {"updates": {"knowledge_page_default_trigger": {"refresh_cron": "0 * * * *"}}}
+    )
+
+    scheduled = await client.knowledge_base.create_knowledge_page(
+        bank_id, {"name": PAGE_NAME, "source_query": SOURCE_QUERY}
+    )
+    explicit = await client.knowledge_base.create_knowledge_page(
+        bank_id,
+        {"name": "Explicit", "source_query": SOURCE_QUERY, "trigger": {"refresh_after_consolidation": True}},
+    )
+    await settled(bank_id)
+
+    tree = await client.knowledge_base.get_knowledge_base_tree(bank_id)
+    triggers = {node.id: node.trigger for node in tree.roots}
+
+    page = triggers[scheduled.page_id]
+    assert page.refresh_cron == "0 * * * *"
+    assert page.refresh_after_consolidation is False
+    assert page.mode == "delta"
+    assert page.fact_types == ["observation"]
+    assert page.exclude_mental_models is True
+
+    override = triggers[explicit.page_id]
+    assert override.refresh_after_consolidation is True
+    assert override.refresh_cron is None
+
+
+async def test_an_invalid_bank_default_trigger_is_rejected(client, bank_id):
+    """Rejected at the write, not left to break every later page creation."""
+    with pytest.raises(ApiException) as exc:
+        await client.banks.update_bank_config(
+            bank_id, {"updates": {"knowledge_page_default_trigger": {"refresh_cron": "every hour"}}}
+        )
+    assert exc.value.status == 400
+    assert "knowledge_page_default_trigger" in str(exc.value.body)

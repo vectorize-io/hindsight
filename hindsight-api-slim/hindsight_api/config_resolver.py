@@ -578,6 +578,11 @@ class ConfigResolver:
             except Exception as e:
                 raise ValueError(f"Invalid entity_labels format: {e}")
 
+        # knowledge_page_default_trigger is merged into every new page's trigger, so
+        # hold it to the same contract as a trigger sent with the create request.
+        if normalized_updates.get("knowledge_page_default_trigger") is not None:
+            _validate_knowledge_page_default_trigger(normalized_updates["knowledge_page_default_trigger"])
+
         # Validate retain_strategies: reject empty string keys
         if "retain_strategies" in normalized_updates and normalized_updates["retain_strategies"]:
             empty_keys = [k for k in normalized_updates["retain_strategies"] if not str(k).strip()]
@@ -790,6 +795,22 @@ _TYPE_DESCRIPTIONS: dict[type, str] = {
 
 def _describe_types(allowed: tuple[type, ...]) -> str:
     return " or ".join(dict.fromkeys(_TYPE_DESCRIPTIONS.get(t, t.__name__) for t in allowed))
+
+
+def _validate_knowledge_page_default_trigger(value: dict[str, Any]) -> None:
+    """Reject unknown trigger fields and values ``MentalModelTrigger`` refuses."""
+    from pydantic import ValidationError
+
+    from hindsight_api.api.http import MentalModelTrigger
+
+    unknown = sorted(set(value) - set(MentalModelTrigger.model_fields))
+    if unknown:
+        raise ValueError(f"knowledge_page_default_trigger has unknown fields: {', '.join(unknown)}")
+    try:
+        MentalModelTrigger.model_validate(value)
+    except ValidationError as e:
+        problems = "; ".join(f"{'.'.join(map(str, err['loc'])) or 'trigger'}: {err['msg']}" for err in e.errors())
+        raise ValueError(f"Invalid knowledge_page_default_trigger: {problems}") from e
 
 
 def _validate_config_value_types(updates: dict[str, Any]) -> None:

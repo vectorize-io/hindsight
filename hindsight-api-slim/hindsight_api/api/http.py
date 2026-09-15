@@ -3604,6 +3604,13 @@ class BankTemplateConfig(BaseModel):
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
     )
+    knowledge_page_default_trigger: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Trigger fields merged over the built-in knowledge-page default when a page is created "
+            '(e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.'
+        ),
+    )
     mental_model_min_refresh_interval_seconds: int | None = Field(
         default=None,
         ge=0,

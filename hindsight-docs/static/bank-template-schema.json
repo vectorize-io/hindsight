@@ -384,6 +384,20 @@
           "description": "Max tokens of source facts per reflect call",
           "title": "Reflect Source Facts Max Tokens"
         },
+        "knowledge_page_default_trigger": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trigger fields merged over the built-in knowledge-page default when a page is created (e.g. {\"refresh_cron\": \"0 * * * *\"}). A trigger sent with the create request still wins.",
+          "title": "Knowledge Page Default Trigger"
+        },
         "mental_model_min_refresh_interval_seconds": {
           "anyOf": [
             {

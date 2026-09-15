@@ -7,6 +7,21 @@ import { useFeatures } from "@/lib/features-context";
 import { client } from "@/lib/api";
 import { PreviewPromptButton } from "@/components/prompt-preview-dialog";
 import {
+  MentalModelTriggerFields,
+  TriggerSummary,
+  triggerFormFromTrigger,
+  triggerFromForm,
+  type TriggerForm,
+} from "@/components/mental-model-trigger-fields";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   EntityLabelsEditor,
   type LabelGroup,
   type LabelValue,
@@ -107,6 +122,25 @@ type DocStorageEdits = {
 type MentalModelsEdits = {
   mental_model_min_refresh_interval_seconds: number | null;
 };
+
+// The server's built-in knowledge-page trigger (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER).
+// The configured default merges over it, so the form starts from the pair to show
+// what a new page actually gets.
+const KNOWLEDGE_PAGE_BUILTIN_TRIGGER = {
+  mode: "delta",
+  fact_types: ["observation"],
+  exclude_mental_models: true,
+  refresh_after_consolidation: true,
+} as const;
+
+function effectivePageTrigger(configured: Record<string, any> | null | undefined): TriggerForm {
+  const merged: Record<string, any> = { ...KNOWLEDGE_PAGE_BUILTIN_TRIGGER, ...configured };
+  // Same exclusivity rule as the server's merge: a configured cron replaces the
+  // built-in refresh-after-consolidation.
+  if (configured?.refresh_cron && configured.refresh_after_consolidation === undefined)
+    merged.refresh_after_consolidation = false;
+  return triggerFormFromTrigger(merged);
+}
 
 // Recall pipeline stages. null = inherit the server default (all four ship
 // enabled); explicit false switches that stage off for this bank, trading
@@ -353,6 +387,7 @@ const DEFAULT_PROFILE: ProfileData = {
 
 export function BankConfigView() {
   const t = useTranslations("bankConfig");
+  const tMentalModels = useTranslations("mentalModels");
   const { currentBank: bankId } = useBank();
   const { features } = useFeatures();
   const bankConfigEnabled = features?.bank_config_api ?? true; // optimistic default while loading
@@ -380,6 +415,14 @@ export function BankConfigView() {
   const [mentalModelsEdits, setMentalModelsEdits] = useState<MentalModelsEdits>(
     mentalModelsSlice({})
   );
+  // The knowledge-page default trigger is edited in its own dialog and saved
+  // from there, apart from the section's Save.
+  const [pageTriggerOpen, setPageTriggerOpen] = useState(false);
+  const [pageTriggerForm, setPageTriggerForm] = useState<TriggerForm>(() =>
+    effectivePageTrigger(null)
+  );
+  const [pageTriggerSaving, setPageTriggerSaving] = useState(false);
+  const [pageTriggerError, setPageTriggerError] = useState<string | null>(null);
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -633,6 +676,39 @@ export function BankConfigView() {
       setMentalModelsError(err.message || t("mentalModelsFailedToSave"));
     } finally {
       setMentalModelsSaving(false);
+    }
+  };
+
+  const openPageTrigger = () => {
+    setPageTriggerForm(effectivePageTrigger(baseConfig.knowledge_page_default_trigger));
+    setPageTriggerError(null);
+    setPageTriggerOpen(true);
+  };
+
+  // null clears the bank override; the value inherited from the tenant/server
+  // isn't known client-side, so a reset reloads the resolved config.
+  const savePageTrigger = async (reset: boolean) => {
+    if (!bankId) return;
+    const trigger = reset ? null : triggerFromForm(pageTriggerForm);
+    if (!reset && !trigger) {
+      setPageTriggerError(tMentalModels("invalidTagGroupsJson"));
+      return;
+    }
+    setPageTriggerSaving(true);
+    setPageTriggerError(null);
+    try {
+      await client.updateBankConfig(bankId, { knowledge_page_default_trigger: trigger });
+      if (reset) {
+        await loadAll();
+      } else {
+        setBaseConfig((prev) => ({ ...prev, knowledge_page_default_trigger: trigger }));
+        setBaseOverrides((prev) => ({ ...prev, knowledge_page_default_trigger: trigger }));
+      }
+      setPageTriggerOpen(false);
+    } catch (err: any) {
+      setPageTriggerError(err.message || t("mentalModelsFailedToSave"));
+    } finally {
+      setPageTriggerSaving(false);
     }
   };
 
@@ -932,15 +1008,81 @@ export function BankConfigView() {
               min={0}
               value={mentalModelsEdits.mental_model_min_refresh_interval_seconds ?? ""}
               onChange={(e) =>
-                setMentalModelsEdits({
+                setMentalModelsEdits((prev) => ({
+                  ...prev,
                   mental_model_min_refresh_interval_seconds: e.target.value
                     ? parseInt(e.target.value, 10)
                     : null,
-                })
+                }))
               }
               placeholder={t("serverDefault")}
             />
           </FieldRow>
+          <div className="px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <div className="min-w-0 space-y-2">
+              <div>
+                <p className="text-sm font-medium">{t("knowledgePageDefaultTriggerLabel")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {t("knowledgePageDefaultTriggerDescription")}
+                </p>
+              </div>
+              <TriggerSummary
+                form={effectivePageTrigger(baseConfig.knowledge_page_default_trigger)}
+              />
+            </div>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={openPageTrigger}>
+              {t("knowledgePageDefaultTriggerEdit")}
+            </Button>
+          </div>
+          <Dialog open={pageTriggerOpen} onOpenChange={(o) => !o && setPageTriggerOpen(false)}>
+            <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
+              <DialogHeader>
+                <DialogTitle>{t("knowledgePageDefaultTriggerDialogTitle")}</DialogTitle>
+                <DialogDescription>{t("knowledgePageDefaultTriggerDialogHint")}</DialogDescription>
+              </DialogHeader>
+              <div className="flex-1 overflow-y-auto px-1.5 py-2">
+                <MentalModelTriggerFields value={pageTriggerForm} onChange={setPageTriggerForm} />
+              </div>
+              {pageTriggerError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{pageTriggerError}</AlertDescription>
+                </Alert>
+              )}
+              <DialogFooter className="sm:justify-between">
+                <div>
+                  {baseOverrides.knowledge_page_default_trigger && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => savePageTrigger(true)}
+                      disabled={pageTriggerSaving}
+                    >
+                      {t("resetToInherited")}
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setPageTriggerOpen(false)}
+                    disabled={pageTriggerSaving}
+                  >
+                    {tMentalModels("cancelButton")}
+                  </Button>
+                  <Button onClick={() => savePageTrigger(false)} disabled={pageTriggerSaving}>
+                    {pageTriggerSaving ? (
+                      <>
+                        <Spinner size="sm" className="mr-2" />
+                        {t("saving")}
+                      </>
+                    ) : (
+                      t("saveChanges")
+                    )}
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </ConfigSection>
 
         {/* MCP Tools Section */}

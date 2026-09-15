@@ -884,6 +884,8 @@ export class HindsightClient {
       consolidationSourceFactsMaxTokensPerObservation?: number;
       /** Debounce between mental-model refreshes. */
       mentalModelMinRefreshIntervalSeconds?: number;
+      /** Trigger fields merged over the built-in default for new knowledge pages. */
+      knowledgePageDefaultTrigger?: Record<string, unknown>;
       /** Token budget for source facts during reflect. -1 disables. */
       reflectSourceFactsMaxTokens?: number;
       /** Token budget for facts returned by recall. */
@@ -981,6 +983,8 @@ export class HindsightClient {
     if (options.mentalModelMinRefreshIntervalSeconds !== undefined)
       updates.mental_model_min_refresh_interval_seconds =
         options.mentalModelMinRefreshIntervalSeconds;
+    if (options.knowledgePageDefaultTrigger !== undefined)
+      updates.knowledge_page_default_trigger = options.knowledgePageDefaultTrigger;
     if (options.reflectSourceFactsMaxTokens !== undefined)
       updates.reflect_source_facts_max_tokens = options.reflectSourceFactsMaxTokens;
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;

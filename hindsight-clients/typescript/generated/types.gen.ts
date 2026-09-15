@@ -639,6 +639,14 @@ export type BankTemplateConfig = {
    */
   reflect_source_facts_max_tokens?: number | null;
   /**
+   * Knowledge Page Default Trigger
+   *
+   * Trigger fields merged over the built-in knowledge-page default when a page is created (e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.
+   */
+  knowledge_page_default_trigger?: {
+    [key: string]: unknown;
+  } | null;
+  /**
    * Mental Model Min Refresh Interval Seconds
    *
    * Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds.

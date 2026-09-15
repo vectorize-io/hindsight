@@ -158,3 +158,25 @@ class TestFormatTaskError:
     def test_empty_message_still_identifies_the_exception(self):
         # The reported `Task execution failed: graph_maintenance, error: ` case.
         assert format_task_error(TimeoutError()) == "TimeoutError"
+
+
+class TestKnowledgePageDefaultTrigger:
+    def test_valid_partial_trigger_passes(self):
+        from hindsight_api.config_resolver import _validate_knowledge_page_default_trigger
+
+        _validate_knowledge_page_default_trigger({"refresh_cron": "0 * * * *", "mode": "full"})
+
+    @pytest.mark.parametrize(
+        ("value", "match"),
+        [
+            ({"refresh_crn": "0 * * * *"}, "unknown fields: refresh_crn"),
+            ({"refresh_cron": "not a cron"}, "refresh_cron"),
+            ({"mode": "sideways"}, "mode"),
+            ({"refresh_cron": "0 * * * *", "refresh_after_consolidation": True}, "mutually exclusive"),
+        ],
+    )
+    def test_invalid_trigger_raises(self, value, match):
+        from hindsight_api.config_resolver import _validate_knowledge_page_default_trigger
+
+        with pytest.raises(ValueError, match=match):
+            _validate_knowledge_page_default_trigger(value)
