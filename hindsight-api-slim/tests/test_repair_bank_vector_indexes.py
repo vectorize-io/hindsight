@@ -214,7 +214,7 @@ async def _build_indexes_for(conn, bank_id: str) -> list[str]:
 
         await retry_with_backoff(_rebuild)
 
-    health = await vector_index_health._index_health(conn, _TEST_SCHEMA, names)
+    health = await vector_index_health._index_health(conn, _TEST_SCHEMA, names, bank_id)
     unhealthy = [name for name in names if health.get(name) is not True]
     assert not unhealthy, f"setup: these indexes were not left valid and ready: {unhealthy}"
     return names

@@ -136,15 +136,18 @@ def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-async def _index_health(conn: Any, schema: str, index_names: list[str]) -> dict[str, bool]:
+async def _index_health(conn: Any, schema: str, index_names: list[str], bank_id: str) -> dict[str, bool]:
     """Return valid-and-usable state for each requested index in one query.
 
     Health requires the index to be valid AND ready, defined over the expected
     ``memory_units`` table, to use a supported access method, and to carry our
-    partial predicate. A name-only match is *not* enough: an INVALID leftover
-    (from an interrupted concurrent build) or an index whose access method
-    drifted after a backend switch must count as unhealthy so it is rebuilt —
-    ``pg_indexes``/``IF NOT EXISTS`` alone would silently treat those as present.
+    partial predicate for *this* bank. A name-only match is *not* enough: an
+    INVALID leftover (from an interrupted concurrent build) or an index whose
+    access method drifted after a backend switch must count as unhealthy so it is
+    rebuilt — ``pg_indexes``/``IF NOT EXISTS`` alone would silently treat those as
+    present. So must a renamed bank's index: it is named after the unchanged
+    internal_id, but its predicate still names the old bank_id, so it covers no
+    row of the bank and recall on it silently loses the index.
     """
     if not index_names:
         return {}
@@ -155,6 +158,7 @@ async def _index_health(conn: Any, schema: str, index_names: list[str]) -> dict[
                 AND t.relname = 'memory_units'
                 AND am.amname = ANY($3::text[])
                 AND pg_get_indexdef(i.indexrelid) LIKE $4
+                AND strpos(pg_get_indexdef(i.indexrelid), '(bank_id = ' || quote_literal($5::text) || '::text)') > 0
                ) AS healthy
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -167,6 +171,7 @@ async def _index_health(conn: Any, schema: str, index_names: list[str]) -> dict[
         index_names,
         list(_SUPPORTED_INDEX_AM),
         "%" + _BANK_INDEX_PARTIAL_SUFFIX + "%",
+        bank_id,
     )
     return {row["index_name"]: bool(row["healthy"]) for row in rows}
 
@@ -255,7 +260,7 @@ async def plan_bank_vector_indexes(
         return plan
 
     names = {ft: _bank_index_name(ft, str(internal_id)) for ft in _BANK_INDEX_FACT_TYPES}
-    health = await _index_health(conn, schema, list(names.values()))
+    health = await _index_health(conn, schema, list(names.values()), bank_id)
 
     if per_bank_indexes_are_eager():
         for fact_type, index_name in names.items():
