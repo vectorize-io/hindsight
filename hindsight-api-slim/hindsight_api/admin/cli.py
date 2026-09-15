@@ -887,19 +887,37 @@ async def _rename_bank(
     transaction — doing it inside the rename would hold those table locks, and
     block every bank in the schema, for its whole duration. This is runtime DDL
     rather than a migration on purpose: rename is a rare admin operation, and the
-    schema stays exactly as the migrations declare it. If the process dies
-    between the flips the FKs are left DEFERRABLE INITIALLY IMMEDIATE, which
-    checks every normal write exactly as before; the next rename restores them.
-    Only FKs this call flipped are put back.
+    schema stays exactly as the migrations declare it.
+
+    Only FKs this call flipped are put back. If that restore cannot happen (the
+    process dies, or the restore times out on a lock) they stay DEFERRABLE
+    INITIALLY IMMEDIATE, which checks every normal write exactly as before; a
+    later rename will not restore them, since it only flips what it finds
+    NOT DEFERRABLE, so the failure is reported with the constraint names.
 
     Returns the rows moved per table (tables the bank had no rows in are omitted).
     """
     rigid = await conn.fetch(_RIGID_BANK_ID_FKS_SQL, schema)
-    await _set_fks_deferrable(conn, rigid, "DEFERRABLE INITIALLY IMMEDIATE")
+    try:
+        await _set_fks_deferrable(conn, rigid, "DEFERRABLE INITIALLY IMMEDIATE")
+    except asyncpg.exceptions.LockNotAvailableError as exc:
+        raise RenameBankError(
+            "could not lock the bank tables within 5s to prepare the rename; retry when fewer long transactions run"
+        ) from exc
     try:
         return await _move_bank_rows(conn, schema, old_bank_id, new_bank_id, dry_run=dry_run)
     finally:
-        await _set_fks_deferrable(conn, rigid, "NOT DEFERRABLE")
+        # Never raise from here: it would replace the rename's own outcome (success
+        # or its real error) with a failure that leaves every write checked as before.
+        try:
+            await _set_fks_deferrable(conn, rigid, "NOT DEFERRABLE")
+        except Exception as exc:  # noqa: BLE001
+            names = ", ".join(f"{fk['tbl']}.{fk['conname']}" for fk in rigid)
+            typer.echo(
+                f"Warning: could not restore NOT DEFERRABLE on {names} ({exc}). They still enforce every write "
+                "as before; restore with ALTER TABLE ... ALTER CONSTRAINT ... NOT DEFERRABLE.",
+                err=True,
+            )
 
 
 async def _move_bank_rows(
@@ -1012,7 +1030,7 @@ def rename_bank(
         "--dry-run",
         help="Run the whole rename, report what would move, then roll back.",
     ),
-):
+) -> None:
     """Rename a bank's id in place, keeping every memory, document and mental model.
 
     One transaction moves every row of the bank to the new id. Stop the bank's
