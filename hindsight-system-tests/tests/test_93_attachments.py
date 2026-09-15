@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 
 import pytest
+from hindsight_client_api.exceptions import NotFoundException
 
 from hindsight_system_tests.payloads import consolidation, extracted, fact
 
@@ -122,6 +123,60 @@ async def test_the_stored_image_is_byte_identical(client, bank_with_photo):
     fetched = await client.memory.get_bank_attachment(bank_with_photo, attachment.id)
 
     assert fetched == PNG
+
+
+async def _attachment_id(client, bank: str, document_id: str) -> str:
+    document = await client.documents.get_document(bank, document_id)
+    assert document.attachments, f"{document_id} carries no attachment"
+    return document.attachments[0].id
+
+
+async def test_a_shared_image_stays_fetchable_until_its_last_document_goes(client, llm, bank_id, settled):
+    """Content-addressed: two documents carrying the same photo share one stored copy.
+
+    Deleting one must leave it downloadable for the other — reclaiming it there is
+    data loss — and deleting the last must retire it, or it is kept forever behind
+    an id nothing can reach.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice stood in front of the Brandenburg Gate", who="Alice", entities=["Alice"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    await client.aretain(bank_id=bank_id, content=CONTENT, document_id="d1")
+    await client.aretain(bank_id=bank_id, content=CONTENT, document_id="d2")
+    await settled(bank_id)
+    attachment_id = await _attachment_id(client, bank_id, "d1")
+    assert await _attachment_id(client, bank_id, "d2") == attachment_id
+
+    await client.documents.delete_document(bank_id, "d1")
+    assert await client.memory.get_bank_attachment(bank_id, attachment_id) == PNG
+
+    await client.documents.delete_document(bank_id, "d2")
+    with pytest.raises(NotFoundException):
+        await client.memory.get_bank_attachment(bank_id, attachment_id)
+
+
+async def test_re_retaining_without_the_image_retires_it(client, llm, bank_with_photo, settled):
+    """#4364. The rewrite drops the document's reference; the image must go with it."""
+    attachment_id = await _attachment_id(client, bank_with_photo, "d1")
+    llm.on_step("extract_facts").returns(extracted(fact("Alice went on a trip", who="Alice", entities=["Alice"])))
+
+    await client.aretain(bank_id=bank_with_photo, content="Alice went on a trip.", document_id="d1")
+    await settled(bank_with_photo)
+
+    with pytest.raises(NotFoundException):
+        await client.memory.get_bank_attachment(bank_with_photo, attachment_id)
+
+
+async def test_clearing_the_bank_retires_its_images(client, bank_with_photo):
+    """A cleared bank goes on existing, so nothing cascades from the bank row: an
+    image that outlived the clear stayed downloadable from a bank with no documents."""
+    attachment_id = await _attachment_id(client, bank_with_photo, "d1")
+
+    await client.memory.clear_bank_memories(bank_with_photo)
+
+    with pytest.raises(NotFoundException):
+        await client.memory.get_bank_attachment(bank_with_photo, attachment_id)
 
 
 async def test_the_fact_drawn_from_the_image_is_recallable(client, bank_with_photo):
