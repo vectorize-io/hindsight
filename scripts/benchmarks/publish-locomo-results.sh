@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Publish locomo benchmark results to the dashboard repo's gh-pages branch.
 #
-# Reads a locomo benchmark JSON, strips the heavy per-question detailed_results
-# (kept only in the upload artifact), enriches with commit + workflow metadata,
-# then pushes:
+# Input is AMB's run report (outputs/locomo/<memory>/<mode>/<split>.json), whose
+# field names and accuracy scale differ from the series charted here — see the
+# normalisation at the top of the jq filter below. The in-repo runner that used
+# to produce this file was removed once AMB took over both datasets.
+#
+# Strips the heavy per-question payload (kept only in the upload artifact),
+# enriches with commit + workflow metadata, then pushes:
 #   data/locomo/<timestamp>-<short_sha>.json
 #   data/locomo-index.json   (manifest, newest first)
 # to vectorize-io/hindsight-continuous-performance-monitor (gh-pages).
@@ -83,8 +87,23 @@ jq \
   --arg run_url "$RUN_URL" \
   --arg timestamp "$TIMESTAMP_ISO" \
   '
-    # Drop per-question payloads from each item.
-    .item_results = (.item_results // [] | map(.metrics |= del(.detailed_results)))
+    # AMB shape -> the series this dashboard has always charted. AMB reports a
+    # 0-1 fraction in .accuracy, its own counts, and a flat .results array; the
+    # published series is a PERCENTAGE with num_items (conversations) and
+    # total_questions, 86 runs deep. Normalise rather than restart the chart —
+    # publishing .accuracy raw would read as a drop from ~88 to ~1.
+    # .results is the per-query payload (answers, contexts, raw responses,
+    # ~400KB a run) and stays in the workflow artifact only, exactly as
+    # detailed_results did before it.
+    (if .accuracy != null then {
+        overall_accuracy: (.accuracy * 100),
+        num_items: ([.results[]?.meta.sample_id // empty] | unique | length),
+        total_questions: .total_queries,
+      } else {} end) as $amb
+    | del(.results)
+    | . + $amb
+    # Drop per-question payloads from each item (pre-AMB shape).
+    | .item_results = (.item_results // [] | map(.metrics |= del(.detailed_results)))
     | . + {
         timestamp: $timestamp,
         commit: {

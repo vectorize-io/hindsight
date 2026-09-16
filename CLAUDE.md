@@ -88,17 +88,18 @@ cd hindsight-system-tests && uv run pytest tests/ -v
 
 ### Benchmarks
 ```bash
-# Accuracy benchmarks
-./scripts/benchmarks/run-longmemeval.sh
-./scripts/benchmarks/run-locomo.sh
+# Accuracy benchmarks: LoComo, LongMemEval, BEAM and the coding-agent suite come
+# from AMB (vectorize-io/agent-memory-benchmark), which owns their datasets,
+# judge and scoring. Run them against a local server, or any deployment with
+# --api-url. See hindsight-system-evals/README.md.
+cd hindsight-system-evals
+uv run run-amb --dataset locomo --split locomo10
+uv run run-amb --dataset longmemeval --split s -- --category single-session-user
 
 # Performance benchmarks
 ./scripts/benchmarks/run-perf-test.sh                      # System perf (mock LLM + pg0)
 ./scripts/benchmarks/run-perf-test.sh --scale tiny          # Quick smoke test
 ./scripts/benchmarks/run-consolidation.sh
-
-# Results viewer
-./scripts/benchmarks/start-visualizer.sh  # View results at localhost:8001
 ```
 
 ## Architecture

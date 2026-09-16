@@ -27,6 +27,11 @@ dependencies = [
 # freezes the API surface at whenever the venv was last built.
 hindsight-client = { path = "../hindsight-clients/python", editable = true }
 
+[project.scripts]
+# `run-amb`, not `amb`: AMB's own CLI is named `amb`, and two of them resolving
+# in the same shell is a coin flip.
+run-amb = "hindsight_system_evals.amb:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_system_evals"]
 

@@ -114,6 +114,73 @@ as written) and consolidation/observations off, and each page refresh is
 triggered explicitly. `chunks` also removes a confound: extraction may paraphrase
 a fact, while the gold labels point at the exact authored text.
 
+## Where it points
+
+By default every eval starts its own `hindsight-api` on its own pg0 — that is
+what CI measures, and what makes a run mean the same thing on every machine.
+Pass `--api-url` (or set `HINDSIGHT_EVAL_API_URL`, with `HINDSIGHT_EVAL_API_KEY`)
+to run against a server that is already up instead: cloud dev, a colleague's box,
+a docker compose. The two are independent, so the retain evals can run against a
+deployment while a benchmark runs locally, or the reverse:
+
+```bash
+uv run pytest evals --api-url https://api.dev.example    # evals against cloud dev
+uv run run-amb --dataset locomo --split locomo10         # LoComo against a local server
+```
+
+Two things change on a remote target, and neither is worked around:
+
+- **the model is not asserted, it is read back.** `HINDSIGHT_EVAL_LLM_*` configures
+  a server *we* start; a remote server's model is its own, so the report records
+  what the server says it runs rather than what we hoped;
+- **banks are deleted at the end.** On pg0 they are free and left behind on
+  purpose, for the control plane. In a shared tenant they would accumulate every
+  run. `--keep-banks` opts out, for inspecting a failure.
+
+## Benchmarks (AMB)
+
+LoComo, LongMemEval, BEAM, PersonaMem and the coding-agent suite (sde-bench) live
+in [AMB](https://github.com/vectorize-io/agent-memory-benchmark), which owns their
+datasets, prompts, judge and scoring, and publishes to
+[agentmemorybenchmark.ai](https://agentmemorybenchmark.ai). None of that is
+duplicated here — a second copy of LoComo is how two copies drift until neither
+number means anything. This package only points AMB's `hindsight-http` provider
+at a target:
+
+```bash
+# A split is the dataset slice; one conversation is a `--unit` within it.
+uv run run-amb --dataset locomo --split locomo10 -- --unit conv-26 --query-limit 20
+uv run run-amb --dataset longmemeval --split s -- --category single-session-user --query-limit 20
+uv run run-amb --dataset beam --split 100k --api-url https://api.dev.example
+
+cd "$(uv run python -c 'import os;print(os.path.expanduser("~/.cache/hindsight/amb"))')" && uv run amb splits --dataset locomo
+```
+
+AMB is cloned at the **exact ref in `AMB_REF`** (override with `--amb-ref`, or
+`AMB_REF=`), because unpinned, a movement in the numbers is unattributable:
+benchmark drift and engine drift look identical. Bumping the pin is a one-line PR.
+It needs `GEMINI_API_KEY` — AMB judges and answers with Gemini through the API
+key, not through our VertexAI service account. AMB pins its own interpreter
+(`.python-version`, 3.12) and uv honours it; `--python` / `AMB_PYTHON` override
+that for a one-off. A pin matters there because AMB's `requires-python` is only
+`>=3.11`: unpinned, uv takes the newest interpreter on the machine, and on 3.14
+the install dies before the benchmark starts — `onnxruntime`, via cognee,
+publishes no wheel for it. The sde-bench coding suite needs
+more still (Docker, a boltons host clone, an agent CLI with its own key); it runs
+through the same command with `--dataset sdebench`, but it is a campaign, not a
+scheduled job.
+
+AMB is now the only copy. The in-repo LoComo and LongMemEval runners are gone —
+`hindsight-dev/benchmarks/locomo/`, `longmemeval/`, `run-locomo.sh`,
+`run-longmemeval.sh`, and the benchmark visualizer, which served nothing else.
+`publish-locomo-results.sh` stays — it now reads AMB's report. The `locomo` job in `perf-test.yml` became the `amb`
+job, a matrix over both datasets, and it still publishes the LoComo run to the
+[continuous performance monitor](https://vectorize-io.github.io/hindsight-continuous-performance-monitor/)
+— `publish-locomo-results.sh` normalises AMB's report onto the existing series
+(a percentage, not AMB's 0-1 fraction) so the 86-run chart keeps its shape. `perf/`, `micro/`, `obs/`,
+`document_evolution/` and `multimodal_retain/` measure things AMB does not, and
+stay where they are.
+
 ## Running
 
 ```bash
