@@ -70,6 +70,7 @@ export const HARNESS_NAMES = [
   // ZCode is a per-prompt HOOK host too, registered in its own CLI config
   // (~/.zcode/cli/config.json) under `hooks.events` — never the user's real Claude Code settings.
   "zcode",
+  "kimi-code",
 ];
 
 const HOOK_BINS: Record<string, string> = {
@@ -84,6 +85,7 @@ const HOOK_BINS: Record<string, string> = {
   "qwen-code": "hindsight-qwen-hook",
   "factory-droid": "hindsight-droid-hook",
   zcode: "hindsight-zcode-hook",
+  "kimi-code": "hindsight-kimi-hook",
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 
