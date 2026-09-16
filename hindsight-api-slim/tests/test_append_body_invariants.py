@@ -68,6 +68,49 @@ class TestAppendMonotonicity:
     @pytest.mark.parametrize(
         "stored,body",
         [
+            pytest.param(
+                '[{"role":"user","content":"keep","content":"committed"}]',
+                '[{"role":"user","content":"committed"},{"role":"assistant","content":"new"}]',
+                id="stored-duplicate-content",
+            ),
+            pytest.param(
+                '[{"content":"keep","content":"keep"}]',
+                '[{"content":"keep"},{"content":"new"}]',
+                id="stored-duplicate-same-value",
+            ),
+            pytest.param(
+                '[{"metadata":{"tags":[{"name":"keep","name":"committed"}]}}]',
+                '[{"metadata":{"tags":[{"name":"committed"}]}},{"content":"new"}]',
+                id="stored-nested-duplicate",
+            ),
+            pytest.param(
+                r'[{"content":"keep","\u0063ontent":"committed"}]',
+                '[{"content":"committed"},{"content":"new"}]',
+                id="stored-escaped-duplicate-key",
+            ),
+            pytest.param(
+                '[{"content":"keep"}]',
+                '[{"content":"changed","content":"keep"},{"content":"new"}]',
+                id="candidate-duplicate-prefix",
+            ),
+            pytest.param(
+                '[{"content":"keep"}]',
+                '[{"content":"keep"},{"metadata":{"name":"first","name":"last"}}]',
+                id="candidate-nested-duplicate-tail",
+            ),
+        ],
+    )
+    def test_structural_append_with_duplicate_object_keys_is_refused(self, stored: str, body: str):
+        with pytest.raises(AppendWouldTruncateDocument):
+            assert_append_extends_stored_body(stored, body, document_id="d")
+
+    def test_literal_append_preserves_duplicate_keys_without_parsing(self):
+        stored = '[{"content":"keep","content":"committed"}]'
+        assert_append_extends_stored_body(stored, stored + "\nnew turn", document_id="d")
+
+    @pytest.mark.parametrize(
+        "stored,body",
+        [
             ('[{"content":"old"}]', '[{"content":"new"}]'),
             ('[{"content":"old"}]', '[{"content":"changed"},{"content":"new"}]'),
             ('[{"a":1},{"a":2}]', '[{"a":2},{"a":1},{"a":3}]'),

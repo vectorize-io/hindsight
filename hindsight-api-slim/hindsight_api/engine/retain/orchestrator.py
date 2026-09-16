@@ -145,6 +145,16 @@ class AppendWouldTruncateDocument(Exception):
     """
 
 
+def _json_object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous objects before the append guard can discard committed members."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def assert_append_extends_stored_body(
     stored_original_text: str | None,
     new_body: str,
@@ -160,10 +170,12 @@ def assert_append_extends_stored_body(
     # JSON conversation arrays move their closing bracket when extended. A byte
     # prefix check therefore rejects a valid merge from append_document_body.
     # Compare canonical array prefixes, retaining every old object in order.
+    # Default json.loads collapses duplicate keys, which could hide a removed
+    # committed member. Check both bodies at every nesting level before comparing.
     # Do not broaden the separate oversized-replacement metadata-only shortcut.
     try:
-        stored = json.loads(stored_original_text)
-        appended = json.loads(sanitized)
+        stored = json.loads(stored_original_text, object_pairs_hook=_json_object_without_duplicate_keys)
+        appended = json.loads(sanitized, object_pairs_hook=_json_object_without_duplicate_keys)
     except (json.JSONDecodeError, ValueError, TypeError):
         stored = appended = None
     if (
