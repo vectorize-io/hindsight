@@ -18967,6 +18967,12 @@ class MemoryEngine(MemoryEngineInterface):
         moving = not isinstance(parent_id, KeepParentSentinel)
         new_parent: str | None = parent_id if not isinstance(parent_id, KeepParentSentinel) else None
         page_options = source_query is not None or tags is not None or max_tokens is not None or trigger is not None
+        # Every authorization gate below is keyed on an operation, so a patch that
+        # names none would run no gate and still read (and hand back) the node.
+        # Refuse it up front: an update with nothing to update is a caller error,
+        # never a read the validator was not asked about (#4243).
+        if name is None and not moving and not page_options:
+            raise ValueError("Nothing to update: provide name, parent_id, source_query, tags, max_tokens, and/or trigger")
         if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
