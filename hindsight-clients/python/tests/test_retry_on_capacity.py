@@ -6,6 +6,7 @@ a burst that all obey ``Retry-After: 1`` exactly comes back in lockstep and
 rebuilds the spike that caused the rejection.
 """
 
+import asyncio
 import random
 
 import pytest
@@ -125,3 +126,31 @@ class TestRetryBehaviour:
 
         assert all(0 <= s <= 4 for s in slept), slept
         assert len(set(slept)) > 1, "identical waits: jitter is not being applied"
+
+
+@pytest.mark.parametrize("status", [429, 503])
+async def test_cancel_during_backoff_does_not_send_again(status: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    entered_sleep = asyncio.Event()
+    real_sleep = asyncio.sleep
+    calls = 0
+
+    async def observed_sleep(seconds: float) -> None:
+        entered_sleep.set()
+        await real_sleep(seconds)
+
+    async def send() -> str:
+        nonlocal calls
+        calls += 1
+        raise _at_capacity(status, "30")
+
+    monkeypatch.setattr("hindsight_client.hindsight_client.asyncio.sleep", observed_sleep)
+    task = asyncio.create_task(_retry_on_capacity(send, 3, random.Random(0)))
+    try:
+        await asyncio.wait_for(entered_sleep.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        assert calls == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
