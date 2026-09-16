@@ -220,9 +220,13 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         # Determine device based on hardware availability. We always set
         # low_cpu_mem_usage=False to prevent lazy loading (meta tensors) which can
         # cause issues when accelerate is installed but no GPU is available.
-        # Note: We do NOT use device_map because CrossEncoder internally calls .to(device)
-        # after loading, which conflicts with accelerate's device_map handling.
-        # MPS is opt-in (allow_mps) — see engine/local_device.py for why.
+        # Note: We pass device_map=device so accelerate handles placement. This avoids
+        # the meta-tensor race in transformers ≥5 + sentence-transformers ≥5 that fires
+        # when sentence_transformers.CrossEncoder.__init__ calls self.to(device) on a
+        # model that from_pretrained() just created on the meta device (ref: #4420).
+        # The original "we don't use device_map" assumption was correct for transformers
+        # 4.x; on 5.x it leaves the model on meta and the .to(device) call fails.
+        # MPS opt-in (allow_mps) is unchanged — see engine/local_device.py.
         device = select_local_device(self.force_cpu, self.allow_mps)
 
         # Patch transformers 5.x compatibility for models using XLM-RoBERTa
@@ -260,7 +264,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 self._model = CrossEncoder(
                     self.model_name,
                     device=device,
-                    model_kwargs={"low_cpu_mem_usage": False},
+                    model_kwargs={"low_cpu_mem_usage": False, "device_map": device},
                     trust_remote_code=self.trust_remote_code,
                 )
             finally:
