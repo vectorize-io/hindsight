@@ -80,7 +80,7 @@ interface HookClient {
     query: string,
     opts?: { limit?: number; timeoutMs?: number }
   ): Promise<{ id: string; name: string; snippet: string }[]>;
-  recallMemories(query: string, opts: { timeoutMs: number }): Promise<string[]>;
+  recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]>;
   knowledgePagesSupported?: boolean;
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
@@ -126,7 +126,7 @@ async function injectRecall(
   const t0 = Date.now();
   try {
     // The token budget is the client's `recallMaxTokens`, the types its `recallTypes`.
-    const observations = await client.recallMemories(prompt.slice(0, 2000), { timeoutMs });
+    const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
     if (observations.length) return formatRecallFallback(observations, lead);
   } catch (e) {

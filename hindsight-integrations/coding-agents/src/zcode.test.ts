@@ -210,7 +210,7 @@ describe("ZCode prompt hook", () => {
         reflect: async () => "",
         listPages: async () => ({ items: [] }),
         searchKnowledgePages: async () => [],
-        recallMemories: async () => [],
+        recallObservations: async () => [],
         knowledgePagesSupported: false,
       }));
     } finally {
