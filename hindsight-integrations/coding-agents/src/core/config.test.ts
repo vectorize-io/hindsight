@@ -290,6 +290,19 @@ describe("environment fallback", () => {
     expect(applyBankConfig(base, "other").cfg.autoInject).toBe("pages");
   });
 
+  it("pageSearchLimit / recallMaxTokens: defaults, overrides and env fallbacks", () => {
+    expect(resolveConfig({}).pageSearchLimit).toBe(3);
+    expect(resolveConfig({}).recallMaxTokens).toBe(2000);
+    expect(resolveConfig({ pageSearchLimit: 8 }).pageSearchLimit).toBe(8);
+    expect(resolveConfig({ recallMaxTokens: 500 }).recallMaxTokens).toBe(500);
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_PAGE_SEARCH_LIMIT = "6";
+    process.env.HINDSIGHT_RECALL_MAX_TOKENS = "4000";
+    const cfg = loadConfig({ path: globalCfg });
+    expect(cfg.pageSearchLimit).toBe(6);
+    expect(cfg.recallMaxTokens).toBe(4000);
+  });
+
   it("autoReflect is deprecated: still honoured, but warns only when set", () => {
     // log.warn writes to the plugin log file, not the console — spy on it directly.
     const warn = vi.spyOn(log, "warn").mockImplementation(() => {});

@@ -113,6 +113,19 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(calls[0].url).toContain("/knowledge-base/pages/kp-1");
   });
 
+  it("searchKnowledgePages sends the client's pageSearchLimit — the tool and the hook share it", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.includes("/knowledge-base/search"),
+        json: { results: [] },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", pageSearchLimit: 7 });
+    await c.searchKnowledgePages("components");
+    expect(calls[0].url).toContain("limit=7");
+  });
+
   it("getPage resolves the id shape searchKnowledgePages hands back", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [

@@ -108,6 +108,11 @@ export interface ClientOpts {
   maxParallelRetains?: number;
   /** Observation scoping for every retain this client sends. Default `DEFAULT_OBSERVATION_SCOPES`. */
   observationScopes?: ObservationScopes;
+  /** Pages one knowledge-page search returns. Default `DEFAULT_PAGE_SEARCH_LIMIT`. Lives on the
+   *  client so every caller — the hook's injection and the MCP tool — shares one value. */
+  pageSearchLimit?: number;
+  /** Token budget for one observation recall. Default `DEFAULT_RECALL_MAX_TOKENS`. */
+  recallMaxTokens?: number;
   /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
    *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
    *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
@@ -195,6 +200,12 @@ export class ReflectError extends Error {
 }
 
 export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
+/** Knowledge pages returned by one search — the hook's injection and the agent-facing
+ *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both. */
+export const DEFAULT_PAGE_SEARCH_LIMIT = 3;
+/** Token budget for one observation recall (the `autoInject: "recall"` source and the reflect
+ *  fallback). Big enough for a handful of observations, small enough to stay inside a hook. */
+export const DEFAULT_RECALL_MAX_TOKENS = 2000;
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
@@ -229,6 +240,8 @@ export class HindsightClient {
   private readonly log: (msg: string) => void;
   readonly maxParallelRetains: number;
   readonly observationScopes: ObservationScopes;
+  readonly pageSearchLimit: number;
+  readonly recallMaxTokens: number;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
@@ -239,6 +252,8 @@ export class HindsightClient {
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
+    this.pageSearchLimit = o.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT;
+    this.recallMaxTokens = o.recallMaxTokens || DEFAULT_RECALL_MAX_TOKENS;
   }
 
   /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
@@ -576,10 +591,7 @@ export class HindsightClient {
    * Raw recall restricted to consolidated observations — no LLM in the loop, so it still answers
    * when reflect's synthesis times out or 5xxs. Returns the observation texts in rank order.
    */
-  async recallObservations(
-    query: string,
-    opts: { maxTokens: number; timeoutMs: number }
-  ): Promise<string[]> {
+  async recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]> {
     const r = await this.req(
       "POST",
       this.bankUrl("/memories/recall"),
@@ -587,7 +599,7 @@ export class HindsightClient {
         query,
         types: ["observation"],
         budget: "low",
-        max_tokens: opts.maxTokens,
+        max_tokens: this.recallMaxTokens,
         include: { entities: null },
       },
       [],
@@ -667,17 +679,16 @@ export class HindsightClient {
    *  hindsight_search_knowledge_pages. */
   async searchKnowledgePages(
     query: string,
-    limit = 3,
-    timeoutMs?: number
+    opts: { limit?: number; timeoutMs?: number } = {}
   ): Promise<{ id: string; name: string; snippet: string; score: number }[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
-    const q = `?q=${encodeURIComponent(query)}&limit=${limit}`;
+    const q = `?q=${encodeURIComponent(query)}&limit=${opts.limit ?? this.pageSearchLimit}`;
     const r = await this.req(
       "GET",
       this.bankUrl(`/knowledge-base/search${q}`),
       undefined,
       [],
-      timeoutMs
+      opts.timeoutMs
     );
     const j = (await r.json()) as {
       results?: { id: string; name: string; snippet?: string; score?: number }[];

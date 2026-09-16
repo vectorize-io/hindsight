@@ -196,7 +196,9 @@ export function buildKnowledgeTools(
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
         try {
-          const hits = await client.searchKnowledgePages(args.query, 3);
+          // Limit comes from the client (`pageSearchLimit`), so the tool and the hook's injection
+          // can never drift apart — this used to pass its own literal 3.
+          const hits = await client.searchKnowledgePages(args.query);
           return ok(
             hits.map((h) => ({
               page: h.name,

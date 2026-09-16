@@ -75,13 +75,9 @@ interface HookClient {
   listPages(): Promise<unknown>;
   searchKnowledgePages(
     query: string,
-    limit: number,
-    timeoutMs?: number
+    opts?: { limit?: number; timeoutMs?: number }
   ): Promise<{ id: string; name: string; snippet: string }[]>;
-  recallObservations(
-    query: string,
-    opts: { maxTokens: number; timeoutMs: number }
-  ): Promise<string[]>;
+  recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]>;
   knowledgePagesSupported?: boolean;
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
@@ -90,8 +86,6 @@ interface HookClient {
 /** Shared deadline for the whole fallback chain (page search, then observation recall) that runs
  *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
 const HOOK_FALLBACK_BUDGET_MS = 7_000;
-const FALLBACK_PAGE_LIMIT = 3;
-const FALLBACK_RECALL_MAX_TOKENS = 2_000;
 
 /** Knowledge-page search for the prompt, formatted for injection; undefined when nothing matched
  *  or the search failed (recorded as `event` / `${event}_failed`). Never throws. */
@@ -106,11 +100,8 @@ async function injectPages(
   const t0 = Date.now();
   try {
     // The search query rides in a GET query string; the goal's opening carries its keywords.
-    const hits = await client.searchKnowledgePages(
-      prompt.slice(0, 500),
-      FALLBACK_PAGE_LIMIT,
-      timeoutMs
-    );
+    // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
+    const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: hits.length });
     if (hits.length) return formatPageFallback(hits, lead);
   } catch (e) {
@@ -131,10 +122,8 @@ async function injectObservations(
 ): Promise<string | undefined> {
   const t0 = Date.now();
   try {
-    const observations = await client.recallObservations(prompt.slice(0, 2000), {
-      maxTokens: FALLBACK_RECALL_MAX_TOKENS,
-      timeoutMs,
-    });
+    // The token budget is the client's `recallMaxTokens`.
+    const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
     if (observations.length) return formatObservationFallback(observations, lead);
   } catch (e) {
@@ -404,6 +393,8 @@ export async function runHook(
     bank: bankId,
     maxParallelRetains: cfg.maxParallelRetains,
     observationScopes: cfg.observationScopes,
+    pageSearchLimit: cfg.pageSearchLimit,
+    recallMaxTokens: cfg.recallMaxTokens,
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 

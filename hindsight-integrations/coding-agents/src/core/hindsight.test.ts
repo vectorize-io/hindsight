@@ -585,6 +585,19 @@ describe("HindsightClient.reflect failures", () => {
 });
 
 describe("HindsightClient.recallObservations", () => {
+  it("sends the client's recallMaxTokens, so one setting drives every recall", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", recallMaxTokens: 250 });
+
+    await client.recallObservations("goal", { timeoutMs: 5_000 });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init?.body)).max_tokens).toBe(250);
+  });
+
   it("recalls only observations, low budget, no entities, and returns their texts in order", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: " first " }, { text: "" }, { text: "second" }] })
@@ -592,7 +605,7 @@ describe("HindsightClient.recallObservations", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
 
-    const out = await client.recallObservations("goal", { maxTokens: 2000, timeoutMs: 5_000 });
+    const out = await client.recallObservations("goal", { timeoutMs: 5_000 });
 
     expect(out).toEqual(["first", "second"]);
     const [url, init] = fetchMock.mock.calls[0];

@@ -158,7 +158,8 @@ describe("buildKnowledgeTools", () => {
     const tool = findTool(tools, "hindsight_search_knowledge_pages");
     const result = await tool.handler({ query: "upload retries" });
     expect(result.isError).toBeFalsy();
-    expect(client.searchKnowledgePages).toHaveBeenCalledWith("upload retries", 3);
+    // The tool passes no limit — the client's pageSearchLimit is the single source for it.
+    expect(client.searchKnowledgePages).toHaveBeenCalledWith("upload retries");
     expect(JSON.parse(result.content[0].text)).toEqual([
       {
         page: "Uploader guide",

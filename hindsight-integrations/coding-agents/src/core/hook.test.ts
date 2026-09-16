@@ -45,13 +45,9 @@ function makeClient(
     getPage: (pageId: string) => Promise<unknown>;
     searchKnowledgePages: (
       query: string,
-      limit: number,
-      timeoutMs?: number
+      opts?: { limit?: number; timeoutMs?: number }
     ) => Promise<{ id: string; name: string; snippet: string }[]>;
-    recallObservations: (
-      query: string,
-      opts: { maxTokens: number; timeoutMs: number }
-    ) => Promise<string[]>;
+    recallObservations: (query: string, opts: { timeoutMs: number }) => Promise<string[]>;
   }> = {}
 ) {
   return {
@@ -282,11 +278,10 @@ describe("buildHookOutput", () => {
 
       const t1 = await buildHookOutput(args);
 
-      expect(client.searchKnowledgePages).toHaveBeenCalledWith(
-        MATCHING_PROMPT,
-        3,
-        expect.any(Number)
-      );
+      // No limit argument: it comes from the client's pageSearchLimit.
+      expect(client.searchKnowledgePages).toHaveBeenCalledWith(MATCHING_PROMPT, {
+        timeoutMs: expect.any(Number),
+      });
       expect(client.recallObservations).not.toHaveBeenCalled();
       expect(t1.context).toContain("<hindsight_memory>");
       expect(t1.context).toContain("- Upload retries (kp-1): 200ms jitter window");
@@ -322,7 +317,6 @@ describe("buildHookOutput", () => {
 
       expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
       expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT, {
-        maxTokens: 2000,
         timeoutMs: expect.any(Number),
       });
       expect(out.context).toContain("consolidated observations");

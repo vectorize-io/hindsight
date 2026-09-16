@@ -17,7 +17,12 @@ import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn } from "./bank";
 import { log } from "./log";
-import { DEFAULT_OBSERVATION_SCOPES, type ObservationScopes } from "./hindsight";
+import {
+  DEFAULT_OBSERVATION_SCOPES,
+  DEFAULT_PAGE_SEARCH_LIMIT,
+  DEFAULT_RECALL_MAX_TOKENS,
+  type ObservationScopes,
+} from "./hindsight";
 import { DEFAULT_PAGE_TRIGGER_CRON, isHashedCron, parseHashedCron } from "./missions";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
@@ -114,6 +119,13 @@ export interface RawConfig {
   /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";
    *  ignored when `autoInject` is set. Setting it logs a deprecation warning. */
   autoReflect?: boolean;
+  /** Knowledge pages ONE search returns (default 3). Applies wherever the bank is searched: the
+   *  `autoInject: "pages"` injection, the reflect fallback, and the agent's
+   *  `hindsight_search_knowledge_pages` tool — the limit lives on the client so they can't drift. */
+  pageSearchLimit?: number;
+  /** Token budget for ONE observation recall (default 2000) — the `autoInject: "recall"` source
+   *  and the reflect fallback. */
+  recallMaxTokens?: number;
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -220,6 +232,8 @@ export interface Config {
   reflectToolTimeoutMs: number;
   reflectBudget: "low" | "mid" | "high";
   autoInject: AutoInject;
+  pageSearchLimit: number;
+  recallMaxTokens: number;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -395,6 +409,8 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
     reflectBudget: resolveReflectBudget(raw),
     autoInject: resolveAutoInject(raw),
+    pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
+    recallMaxTokens: raw.recallMaxTokens || DEFAULT_RECALL_MAX_TOKENS,
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
@@ -503,6 +519,8 @@ const ENV_KEYS = {
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
+  pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
+  recallMaxTokens: "HINDSIGHT_RECALL_MAX_TOKENS",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -545,6 +563,8 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "maxParallelRetains",
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
+  "pageSearchLimit",
+  "recallMaxTokens",
   "pageRefreshEveryTurns",
   "seedLimit",
   "surveyBudgetUsd",
