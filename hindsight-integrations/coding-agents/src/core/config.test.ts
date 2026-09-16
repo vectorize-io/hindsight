@@ -290,6 +290,20 @@ describe("environment fallback", () => {
     expect(applyBankConfig(base, "other").cfg.autoInject).toBe("pages");
   });
 
+  it("recallTypes: observation by default, widenable, and a typo cannot reach the API", () => {
+    expect(resolveConfig({}).recallTypes).toEqual(["observation"]);
+    expect(resolveConfig({ recallTypes: ["world", "experience"] }).recallTypes).toEqual([
+      "world",
+      "experience",
+    ]);
+    // An explicit empty list is the "every type" setting, NOT a fall back to the default.
+    expect(resolveConfig({ recallTypes: [] }).recallTypes).toEqual([]);
+    expect(resolveConfig({ recallTypes: [" ", 7] as never }).recallTypes).toEqual([]);
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_RECALL_TYPES = "world,experience";
+    expect(loadConfig({ path: globalCfg }).recallTypes).toEqual(["world", "experience"]);
+  });
+
   it("pageSearchLimit / recallMaxTokens: defaults, overrides and env fallbacks", () => {
     expect(resolveConfig({}).pageSearchLimit).toBe(3);
     expect(resolveConfig({}).recallMaxTokens).toBe(2000);

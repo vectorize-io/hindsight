@@ -395,6 +395,7 @@ export async function runHook(
     observationScopes: cfg.observationScopes,
     pageSearchLimit: cfg.pageSearchLimit,
     recallMaxTokens: cfg.recallMaxTokens,
+    recallTypes: cfg.recallTypes,
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 

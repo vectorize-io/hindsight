@@ -585,6 +585,31 @@ describe("HindsightClient.reflect failures", () => {
 });
 
 describe("HindsightClient.recallObservations", () => {
+  it("asks for the client's recallTypes, and for every type when the list is empty", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallTypes: ["world", "experience"],
+    }).recallObservations("goal", { timeoutMs: 5_000 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).types).toEqual([
+      "world",
+      "experience",
+    ]);
+
+    // Empty list: the field is omitted, which is how the API is told "every fact type".
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallTypes: [],
+    }).recallObservations("goal", { timeoutMs: 5_000 });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).not.toHaveProperty("types");
+  });
+
   it("sends the client's recallMaxTokens, so one setting drives every recall", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: "only" }] })

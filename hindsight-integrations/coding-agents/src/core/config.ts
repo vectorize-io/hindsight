@@ -21,6 +21,7 @@ import {
   DEFAULT_OBSERVATION_SCOPES,
   DEFAULT_PAGE_SEARCH_LIMIT,
   DEFAULT_RECALL_MAX_TOKENS,
+  DEFAULT_RECALL_TYPES,
   type ObservationScopes,
 } from "./hindsight";
 import { DEFAULT_PAGE_TRIGGER_CRON, isHashedCron, parseHashedCron } from "./missions";
@@ -126,6 +127,11 @@ export interface RawConfig {
   /** Token budget for ONE observation recall (default 2000) — the `autoInject: "recall"` source
    *  and the reflect fallback. */
   recallMaxTokens?: number;
+  /** Fact types a recall asks for (default `["observation"]`). Observations are the consolidated
+   *  layer, so they answer best per token — but a bank with consolidation disabled never grows
+   *  any, and an observation-only recall there comes back empty. Those set
+   *  `["world", "experience"]`, or `[]` for every type. */
+  recallTypes?: string[];
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -234,6 +240,7 @@ export interface Config {
   autoInject: AutoInject;
   pageSearchLimit: number;
   recallMaxTokens: number;
+  recallTypes: string[];
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -411,6 +418,11 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     autoInject: resolveAutoInject(raw),
     pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
     recallMaxTokens: raw.recallMaxTokens || DEFAULT_RECALL_MAX_TOKENS,
+    // Same shape as retainTags: a config typo must not reach the API as a fact type and fail the
+    // recall. An explicit empty list survives — that is the "every type" setting.
+    recallTypes: Array.isArray(raw.recallTypes)
+      ? raw.recallTypes.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      : [...DEFAULT_RECALL_TYPES],
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
@@ -521,6 +533,8 @@ const ENV_KEYS = {
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
   recallMaxTokens: "HINDSIGHT_RECALL_MAX_TOKENS",
+  // Comma-separated, e.g. HINDSIGHT_RECALL_TYPES="world,experience".
+  recallTypes: "HINDSIGHT_RECALL_TYPES",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -556,7 +570,7 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "autoUpdate",
   "manageBankConfig",
 ]);
-const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths"]);
+const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths", "recallTypes"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
   "apiPort",
   "daemonIdleTimeout",
