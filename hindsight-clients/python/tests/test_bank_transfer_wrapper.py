@@ -94,3 +94,28 @@ async def test_import_bank_returns_the_operation_id_and_forwards_the_target():
     assert args[0] == "my-bank"
     assert args[1] == ARCHIVE_BYTES
     assert kwargs["target_bank_id"] == "my-bank-copy"
+
+
+async def test_clone_bank_names_source_and_target_and_returns_the_operation_id():
+    client = _make_client()
+    client._bank_transfer_api.clone_bank = AsyncMock(return_value=MagicMock(operation_id=OPERATION_ID))
+
+    operation_id = await client.aclone_bank("my-bank", "my-bank-copy")
+
+    assert operation_id == OPERATION_ID
+    args, kwargs = client._bank_transfer_api.clone_bank.call_args
+    assert args == ("my-bank", "my-bank-copy")
+    assert kwargs["include_data"] is True
+    assert kwargs["include_bank_config"] is True
+    assert kwargs["include_history"] is False
+
+
+async def test_clone_bank_forwards_a_narrowed_scope():
+    """Cloning the memories without the configuration is the documented way to
+    leave the source's webhooks behind — the flag has to reach the server."""
+    client = _make_client()
+    client._bank_transfer_api.clone_bank = AsyncMock(return_value=MagicMock(operation_id=OPERATION_ID))
+
+    await client.aclone_bank("my-bank", "my-bank-copy", include_bank_config=False)
+
+    assert client._bank_transfer_api.clone_bank.call_args.kwargs["include_bank_config"] is False

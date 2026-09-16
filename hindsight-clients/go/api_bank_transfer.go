@@ -25,6 +25,184 @@ import (
 // BankTransferAPIService BankTransferAPI service
 type BankTransferAPIService service
 
+type ApiCloneBankRequest struct {
+	ctx context.Context
+	ApiService *BankTransferAPIService
+	bankId string
+	targetBankId *string
+	includeData *bool
+	includeBankConfig *bool
+	includeHistory *bool
+	authorization *string
+}
+
+// Bank to create; must not already exist
+func (r ApiCloneBankRequest) TargetBankId(targetBankId string) ApiCloneBankRequest {
+	r.targetBankId = &targetBankId
+	return r
+}
+
+// Copy the memories and everything backing them
+func (r ApiCloneBankRequest) IncludeData(includeData bool) ApiCloneBankRequest {
+	r.includeData = &includeData
+	return r
+}
+
+// Copy bank config, mental models, directives and webhooks
+func (r ApiCloneBankRequest) IncludeBankConfig(includeBankConfig bool) ApiCloneBankRequest {
+	r.includeBankConfig = &includeBankConfig
+	return r
+}
+
+// Copy audit_log and llm_requests
+func (r ApiCloneBankRequest) IncludeHistory(includeHistory bool) ApiCloneBankRequest {
+	r.includeHistory = &includeHistory
+	return r
+}
+
+func (r ApiCloneBankRequest) Authorization(authorization string) ApiCloneBankRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiCloneBankRequest) Execute() (*BankTransferSubmitResponse, *http.Response, error) {
+	return r.ApiService.CloneBankExecute(r)
+}
+
+/*
+CloneBank Clone a bank (async)
+
+Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.
+
+This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log), include_bank_config (bank config, mental models and their history, knowledge pages, directives and **webhooks**) and include_history (audit_log, llm_requests).
+
+Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.
+
+target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @return ApiCloneBankRequest
+*/
+func (a *BankTransferAPIService) CloneBank(ctx context.Context, bankId string) ApiCloneBankRequest {
+	return ApiCloneBankRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+	}
+}
+
+// Execute executes the request
+//  @return BankTransferSubmitResponse
+func (a *BankTransferAPIService) CloneBankExecute(r ApiCloneBankRequest) (*BankTransferSubmitResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodPost
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *BankTransferSubmitResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "BankTransferAPIService.CloneBank")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/clone"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.targetBankId == nil {
+		return localVarReturnValue, nil, reportError("targetBankId is required and must be specified")
+	}
+
+	parameterAddToHeaderOrQuery(localVarQueryParams, "target_bank_id", r.targetBankId, "form", "")
+	if r.includeData != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_data", r.includeData, "form", "")
+	} else {
+		var defaultValue bool = true
+		r.includeData = &defaultValue
+	}
+	if r.includeBankConfig != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_bank_config", r.includeBankConfig, "form", "")
+	} else {
+		var defaultValue bool = true
+		r.includeBankConfig = &defaultValue
+	}
+	if r.includeHistory != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_history", r.includeHistory, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.includeHistory = &defaultValue
+	}
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiExportBankTransferRequest struct {
 	ctx context.Context
 	ApiService *BankTransferAPIService

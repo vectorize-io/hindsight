@@ -126,6 +126,7 @@ const OPERATION_TYPE_VALUES = [
   "import_documents",
   "export_bank",
   "import_bank",
+  "clone_bank",
 ] as const;
 
 const STATUS_FILTER_VALUES = [
@@ -183,6 +184,7 @@ export function BankOperationsView() {
     import_documents: t("operationType.importDocuments"),
     export_bank: t("operationType.exportBank"),
     import_bank: t("operationType.importBank"),
+    clone_bank: t("operationType.cloneBank"),
   };
 
   const formatStatus = (status: string | null | undefined) =>

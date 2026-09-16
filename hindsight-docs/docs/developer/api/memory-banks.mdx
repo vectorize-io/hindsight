@@ -690,6 +690,31 @@ In `restore` mode the operation is recorded against `{bank_id}` — the bank in 
 
 A restore carries the operations log as history, not as work: any operation still in flight when the bank was exported is restored as `cancelled`, so a copied bank never re-runs the original's queued retains or re-fires its webhooks.
 
+### Clone a bank
+
+`POST /v1/default/banks/{bank_id}/clone` — copy a bank into a new one in a single call, without handling an archive yourself. This is the export and import above run back to back on this instance: nothing is re-extracted and no LLM is called, so the clone's facts are exactly the source's, re-embedded with the same model.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/agent-42/clone?target_bank_id=agent-43"
+# -> {"operation_id": "…", "status": "pending"}
+```
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `target_bank_id` | — | Required. The bank to create; it must not already exist. |
+| `include_data` | `true` | Copy the memories and everything backing them. |
+| `include_bank_config` | `true` | Copy bank config, mental models and their history, knowledge pages, directives and webhooks. |
+| `include_history` | `false` | Copy `audit_log` and `llm_requests`. |
+
+The clone is independent from the moment it is made: later retains, consolidation and edits on either bank leave the other alone.
+
+The operation is recorded against the **source** bank, because the target does not exist yet — poll the source's operations endpoint for status and the per-component counts.
+
+:::warning A clone inherits the source's webhooks
+Webhooks are part of a bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass `include_bank_config=false`, or delete them on the clone, when they point at a per-bank consumer.
+:::
+
 ### Document export & import (superseded)
 
 The endpoints below still work exactly as documented and are unchanged; new integrations should use `/transfer/export` and `/transfer/import` above, which carry the same document archives plus the bank's own configuration.

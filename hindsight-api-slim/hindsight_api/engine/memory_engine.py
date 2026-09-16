@@ -3067,6 +3067,90 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception:
             logger.warning("Failed to delete bank import archive %s", storage_key, exc_info=True)
 
+    async def _handle_clone_bank(self, task_dict: dict[str, Any]):
+        """Handler for async bank-clone tasks: export the source, restore it as a new bank.
+
+        The archive never leaves this process — a clone is both halves of a
+        transfer on one instance, so stashing it in file storage would only add a
+        round trip and a blob to clean up. Everything else is the transfer path
+        exactly as it stands, which is the point: a clone cannot drift from what
+        export/import do.
+        """
+        import json
+
+        from .memories import get_memories
+        from .transfer import TransferScope, export_bank
+
+        source_bank_id = task_dict.get("bank_id")
+        target_bank_id = task_dict.get("target_bank_id")
+        operation_id = task_dict.get("operation_id")
+        if not source_bank_id or not target_bank_id:
+            raise ValueError("bank_id and target_bank_id are required for clone_bank task")
+        scope = TransferScope(
+            data=task_dict.get("include_data", True),
+            bank_config=task_dict.get("include_bank_config", True),
+            history=task_dict.get("include_history", False),
+        )
+
+        from hindsight_api.models import RequestContext
+
+        context = RequestContext(
+            internal=True,
+            user_initiated=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+
+        backend = await self._get_backend()
+        # One transaction for the whole read: a bank is assembled from a dozen
+        # queries, and without this the clone is a smear of whatever was being
+        # written meanwhile — a fact whose document the copy never got, an
+        # observation citing it. The source stays writable throughout.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                archive_bytes = await export_bank(
+                    conn,
+                    source_bank_id,
+                    scope=scope,
+                    memories=get_memories(),
+                    file_storage=self._file_storage,
+                )
+
+        result = await self.import_bank_async(
+            archive_bytes,
+            context,
+            target_bank_id=target_bank_id,
+            scope=scope,
+        )
+
+        if operation_id:
+            counts = {
+                "target_bank_id": result.bank_id,
+                "documents_imported": result.documents_imported,
+                "facts_imported": result.facts_imported,
+                "observations_imported": result.observations_imported,
+                "attachments_imported": result.attachments_imported,
+                "operations_imported": result.operations_imported,
+                "maintenance_queue_rows_imported": result.maintenance_queue_rows_imported,
+                "invalidated_memories_imported": result.invalidated_memories_imported,
+                "mental_models_imported": result.mental_models_imported,
+                "mental_model_history_imported": result.mental_model_history_imported,
+                "knowledge_pages_imported": result.knowledge_pages_imported,
+                "directives_imported": result.directives_imported,
+                "webhooks_imported": result.webhooks_imported,
+                "history_rows_imported": result.history_rows_imported,
+                "archive_byte_size": len(archive_bytes),
+            }
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('async_operations')} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $1::jsonb "
+                    f"WHERE operation_id = $2",
+                    json.dumps(counts, default=_json_default),
+                    uuid.UUID(operation_id),
+                )
+
     async def _delete_operation_export_archive(self, result_metadata: Any) -> None:
         """Best-effort delete of an export operation's stored archive.
 
@@ -3818,6 +3902,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_export_bank(task_dict)
                 elif task_type == "import_bank":
                     await self._handle_import_bank(task_dict)
+                elif task_type == "clone_bank":
+                    await self._handle_clone_bank(task_dict)
                 elif task_type == "consolidation":
                     consolidation_result = await self._handle_consolidation(task_dict)
                 elif task_type == "graph_maintenance":
@@ -6829,6 +6915,69 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id,
             operation_type="import_bank",
             task_type="import_bank",
+            task_payload=task_payload,
+        )
+
+    async def submit_bank_clone_async(
+        self,
+        bank_id: str,
+        target_bank_id: str,
+        request_context: "RequestContext",
+        *,
+        scope: "TransferScope | None" = None,
+    ) -> dict[str, Any]:
+        """Submit an async clone of ``bank_id`` into ``target_bank_id``.
+
+        A clone is the transfer path with both halves on this instance: the source
+        is exported and restored under a new id in one background operation, with
+        no archive for the caller to carry. ``target_bank_id`` must NOT already
+        exist, and the source must — both checked here so the caller gets the
+        error immediately rather than from a failed background task.
+
+        The clone is independent once made: later retains and consolidation on
+        either bank leave the other alone.
+        """
+        from .transfer import TransferScope
+
+        scope = scope or TransferScope()
+        if target_bank_id == bank_id:
+            raise ValueError("A bank cannot be cloned onto itself; choose a different target_bank_id")
+        bank_utils.validate_new_bank_id(target_bank_id)
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, target_bank_id) is not None:
+            raise ValueError(
+                f"Target bank '{target_bank_id}' already exists; a clone writes into a fresh bank "
+                f"(it is not a merge). Delete it first, or choose a different target bank id."
+            )
+        if self._operation_validator:
+            from hindsight_api.extensions import CreateBankContext
+
+            await self._validate_operation(
+                self._operation_validator.validate_create_bank(
+                    CreateBankContext(bank_id=target_bank_id, request_context=request_context)
+                )
+            )
+
+        task_payload: dict[str, Any] = {
+            "target_bank_id": target_bank_id,
+            "include_data": scope.data,
+            "include_bank_config": scope.bank_config,
+            "include_history": scope.history,
+        }
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        # Recorded against the source: it is the bank that exists, and
+        # async_operations has a foreign key to banks. _submit_async_operation
+        # turns a missing source into a clean 404 rather than an FK violation.
+        return await self._submit_async_operation(
+            bank_id,
+            operation_type="clone_bank",
+            task_type="clone_bank",
             task_payload=task_payload,
         )
 

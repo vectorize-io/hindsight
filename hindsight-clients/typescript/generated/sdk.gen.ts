@@ -29,6 +29,9 @@ import type {
   ClearObservationsData,
   ClearObservationsErrors,
   ClearObservationsResponses,
+  CloneBankData,
+  CloneBankErrors,
+  CloneBankResponses,
   CreateDirectiveData,
   CreateDirectiveErrors,
   CreateDirectiveResponses,
@@ -1404,6 +1407,25 @@ export const importBankTransfer = <ThrowOnError extends boolean = false>(
       "Content-Type": null,
       ...options.headers,
     },
+  });
+
+/**
+ * Clone a bank (async)
+ *
+ * Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.
+ *
+ * This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log), include_bank_config (bank config, mental models and their history, knowledge pages, directives and **webhooks**) and include_history (audit_log, llm_requests).
+ *
+ * Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.
+ *
+ * target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
+ */
+export const cloneBank = <ThrowOnError extends boolean = false>(
+  options: Options<CloneBankData, ThrowOnError>
+) =>
+  (options.client ?? client).post<CloneBankResponses, CloneBankErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/clone",
+    ...options,
   });
 
 /**

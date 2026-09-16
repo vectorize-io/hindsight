@@ -5447,6 +5447,115 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/clone": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Clone a bank (async)",
+        "description": "Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.\n\nThis is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called \u2014 facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log), include_bank_config (bank config, mental models and their history, knowledge pages, directives and **webhooks**) and include_history (audit_log, llm_requests).\n\nNote the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.\n\ntarget_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.",
+        "operationId": "clone_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "target_bank_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Bank to create; must not already exist",
+              "title": "Target Bank Id"
+            },
+            "description": "Bank to create; must not already exist"
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy the memories and everything backing them",
+              "default": true,
+              "title": "Include Data"
+            },
+            "description": "Copy the memories and everything backing them"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy bank config, mental models, directives and webhooks",
+              "default": true,
+              "title": "Include Bank Config"
+            },
+            "description": "Copy bank config, mental models, directives and webhooks"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy audit_log and llm_requests",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Copy audit_log and llm_requests"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/attachments/{attachment_id}": {
       "get": {
         "tags": [

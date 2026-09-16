@@ -589,7 +589,8 @@
       "exportDocuments": "Export Documents",
       "importDocuments": "Import Documents",
       "exportBank": "Export Bank",
-      "importBank": "Import Bank"
+      "importBank": "Import Bank",
+      "cloneBank": "Clone Bank"
     },
     "table": {
       "id": "Operation ID",

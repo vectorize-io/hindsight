@@ -85,6 +85,7 @@ import_documents = "Admin/ops operation, used via the API and control plane, not
 # or the control plane, or run against the database with `hindsight-admin`.
 export_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 import_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+clone_bank = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
 
 # Streams an inline attachment's raw bytes, for a UI or agent that already holds

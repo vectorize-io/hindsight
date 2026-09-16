@@ -152,3 +152,60 @@ async def test_restoring_onto_an_existing_bank_is_refused(client, llm, source_ba
     with pytest.raises(ApiException) as excinfo:
         await client.aimport_bank(source_bank, archive, target_bank_id=source_bank)
     assert "already exists" in str(excinfo.value)
+
+
+async def _await_operation(client, bank: str, operation_id: str) -> dict:
+    """Wait for a background operation on ``bank`` to reach a terminal state."""
+    deadline = asyncio.get_running_loop().time() + 60
+    while True:
+        status = await client.operations.get_operation_status(bank, operation_id)
+        if status.status in ("completed", "failed", "cancelled"):
+            break
+        assert asyncio.get_running_loop().time() < deadline, f"operation did not finish: {status}"
+        await asyncio.sleep(0.1)
+    assert status.status == "completed", status
+    return status.result_metadata or {}
+
+
+async def test_a_bank_can_be_cloned_in_one_call(client, llm, source_bank, copy_bank, settled):
+    """The clone is the whole point of the transfer work: one call, and the new
+    bank holds what the old one knows — no archive for the caller to carry."""
+    operation_id = await client.aclone_bank(source_bank, copy_bank)
+    counts = await _await_operation(client, source_bank, operation_id)
+    await settled(copy_bank)
+
+    assert counts["target_bank_id"] == copy_bank
+    texts = sorted(m.text for m in (await client.memory.list_memories(copy_bank, limit=100)).items)
+    assert texts == sorted([CELLO, TOUR])
+    directives = await client.directives.list_directives(copy_bank)
+    assert [d.name for d in directives.items] == [DIRECTIVE_NAME]
+
+
+async def test_a_clone_and_its_source_evolve_apart(client, llm, source_bank, copy_bank, settled):
+    """A clone that still shared state with its source would be worse than no
+    clone at all — the two banks are supposed to diverge from the moment it is made."""
+    operation_id = await client.aclone_bank(source_bank, copy_bank)
+    await _await_operation(client, source_bank, operation_id)
+    await settled(copy_bank)
+
+    llm.reset()
+    llm.on_step("extract_facts").returns(extracted(fact("Nadia joined a quartet", who="Nadia", entities=["Nadia"])))
+    llm.on_step("consolidate").returns(consolidation())
+    await client.aretain(bank_id=copy_bank, content="Nadia joined a quartet.", document_id="d3")
+    await settled(copy_bank)
+
+    clone_texts = [m.text for m in (await client.memory.list_memories(copy_bank, limit=100)).items]
+    source_texts = [m.text for m in (await client.memory.list_memories(source_bank, limit=100)).items]
+    assert any("quartet" in t for t in clone_texts)
+    assert not any("quartet" in t for t in source_texts)
+
+
+async def test_a_clone_can_leave_the_configuration_behind(client, llm, source_bank, copy_bank, settled):
+    """Webhooks ride with the bank's configuration, so copying an agent's memory
+    into a new agent must be able to skip it."""
+    operation_id = await client.aclone_bank(source_bank, copy_bank, include_bank_config=False)
+    await _await_operation(client, source_bank, operation_id)
+    await settled(copy_bank)
+
+    assert (await client.memory.list_memories(copy_bank, limit=100)).items
+    assert (await client.directives.list_directives(copy_bank)).items == []

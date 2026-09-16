@@ -1828,6 +1828,47 @@ export class HindsightClient {
   }
 
   /**
+   * Copy a bank into a new one, and resolve with the clone operation's id.
+   *
+   * The clone starts with the source's memories as they are at clone time and
+   * evolves independently from then on. It runs server-side as the export and
+   * import back to back, so no archive travels over the wire and no LLM is called;
+   * poll `sdk.getOperationStatus` for progress and the per-component counts.
+   *
+   * `targetBankId` must NOT already exist. Note that webhooks travel with
+   * `includeBankConfig`: a clone made with the defaults will call the source's
+   * webhook endpoints.
+   */
+  async cloneBank(
+    bankId: string,
+    targetBankId: string,
+    options?: {
+      includeData?: boolean;
+      includeBankConfig?: boolean;
+      includeHistory?: boolean;
+      signal?: AbortSignal;
+    }
+  ): Promise<string> {
+    const response = await sdk.cloneBank({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        target_bank_id: targetBankId,
+        ...(options?.includeData !== undefined ? { include_data: options.includeData } : {}),
+        ...(options?.includeBankConfig !== undefined
+          ? { include_bank_config: options.includeBankConfig }
+          : {}),
+        ...(options?.includeHistory !== undefined
+          ? { include_history: options.includeHistory }
+          : {}),
+      },
+      signal: options?.signal,
+    });
+    const submission = this.validateResponse(response, "cloneBank");
+    return submission.operation_id;
+  }
+
+  /**
    * Poll an export operation to completion and download the archive it produced.
    * Shared by `exportDocuments` and `exportBank` — both submit an operation whose
    * `result_metadata` names the finished archive.

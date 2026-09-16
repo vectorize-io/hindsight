@@ -589,7 +589,8 @@
       "exportDocuments": "匯出文件",
       "importDocuments": "匯入文件",
       "exportBank": "匯出記憶庫",
-      "importBank": "匯入記憶庫"
+      "importBank": "匯入記憶庫",
+      "cloneBank": "複製記憶庫"
     },
     "table": {
       "id": "操作 ID",

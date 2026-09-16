@@ -2341,6 +2341,72 @@ class Hindsight:
         )
         return submission.operation_id
 
+    def clone_bank(
+        self,
+        bank_id: str,
+        target_bank_id: str,
+        *,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+    ) -> str:
+        """
+        Copy a bank into a new one (blocking convenience).
+
+        See :meth:`aclone_bank` for the full argument documentation.
+        """
+        return _run_async(
+            self.aclone_bank(
+                bank_id,
+                target_bank_id,
+                include_data=include_data,
+                include_bank_config=include_bank_config,
+                include_history=include_history,
+            )
+        )
+
+    async def aclone_bank(
+        self,
+        bank_id: str,
+        target_bank_id: str,
+        *,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+    ) -> str:
+        """
+        Copy a bank into a new one, and return the clone operation's id.
+
+        The clone starts with the source's memories as they are at clone time and
+        evolves independently from then on. It runs server-side as the export and
+        import back to back, so no archive travels over the wire and no LLM is
+        called; poll ``client.operations.get_operation_status(bank_id, ...)`` for
+        progress and the per-component counts.
+
+        ``target_bank_id`` must NOT already exist. Note that webhooks travel with
+        ``include_bank_config``: a clone made with the defaults will call the
+        source's webhook endpoints.
+
+        Args:
+            bank_id: Bank to copy. The operation is recorded against it.
+            target_bank_id: Bank to create; must not already exist.
+            include_data: Copy the memories and everything backing them.
+            include_bank_config: Copy bank config, mental models, directives, webhooks.
+            include_history: Copy audit_log and llm_requests.
+
+        Returns:
+            The operation id of the background clone.
+        """
+        submission = await self._bank_transfer_api.clone_bank(
+            bank_id,
+            target_bank_id,
+            include_data=include_data,
+            include_bank_config=include_bank_config,
+            include_history=include_history,
+            _request_timeout=self._timeout,
+        )
+        return submission.operation_id
+
     async def _download_operation_archive(
         self,
         bank_id: str,

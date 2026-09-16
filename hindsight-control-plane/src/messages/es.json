@@ -589,7 +589,8 @@
       "exportDocuments": "Exportar documentos",
       "importDocuments": "Importar documentos",
       "exportBank": "Exportar banco",
-      "importBank": "Importar banco"
+      "importBank": "Importar banco",
+      "cloneBank": "Clonar banco"
     },
     "table": {
       "id": "ID de operación",

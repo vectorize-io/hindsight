@@ -589,7 +589,8 @@
       "exportDocuments": "ドキュメントのエクスポート",
       "importDocuments": "ドキュメントのインポート",
       "exportBank": "バンクのエクスポート",
-      "importBank": "バンクのインポート"
+      "importBank": "バンクのインポート",
+      "cloneBank": "バンクの複製"
     },
     "table": {
       "id": "操作 ID",

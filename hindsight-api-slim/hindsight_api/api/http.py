@@ -8602,6 +8602,87 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/transfer/import")
 
+    @app.post(
+        "/v1/default/banks/{bank_id}/clone",
+        response_model=BankTransferSubmitResponse,
+        status_code=202,
+        summary="Clone a bank (async)",
+        description="Copy this bank into a new one, in a single call. The clone starts with the source's "
+        "memories as they are at clone time and evolves independently from then on: later retains, "
+        "consolidation and edits on either bank leave the other alone.\n\n"
+        "This is the export and import above run back to back on this instance, so nothing is re-extracted "
+        "and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. "
+        "The same three flags choose what the clone inherits: include_data (documents, facts, observations, "
+        "attachments, the curation archive, the operations log), include_bank_config (bank config, mental "
+        "models and their history, knowledge pages, directives and **webhooks**) and include_history "
+        "(audit_log, llm_requests).\n\n"
+        "Note the webhooks: they travel with the bank's configuration, so a clone made with the default "
+        "flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on "
+        "the clone, when they point at a per-bank consumer.\n\n"
+        "target_bank_id must not already exist. Returns an operation_id, recorded against the source bank "
+        "(the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for "
+        "status and the per-component counts.",
+        operation_id="clone_bank",
+        tags=["Bank Transfer"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    @audited("clone_bank", request_param=None)
+    async def api_clone_bank(
+        bank_id: str,
+        target_bank_id: str = Query(..., description="Bank to create; must not already exist"),
+        include_data: bool = Query(default=True, description="Copy the memories and everything backing them"),
+        include_bank_config: bool = Query(
+            default=True, description="Copy bank config, mental models, directives and webhooks"
+        ),
+        include_history: bool = Query(default=False, description="Copy audit_log and llm_requests"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit an async clone of a bank."""
+        try:
+            # A clone is an export and an import, so it is gated on both flags: with
+            # either half disabled the operator has turned off bulk bank copying.
+            config = get_config()
+            if not (config.enable_document_export_api and config.enable_document_import_api):
+                raise HTTPException(
+                    status_code=404,
+                    detail="Bank clone API is disabled. It requires both "
+                    "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API and HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API.",
+                )
+            if not (include_data or include_bank_config or include_history):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Nothing to clone: set at least one of include_data, include_bank_config, include_history",
+                )
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+
+            from hindsight_api.engine.transfer import TransferScope
+
+            try:
+                submission = await app.state.memory.submit_bank_clone_async(
+                    bank_id,
+                    target_bank_id,
+                    request_context,
+                    scope=TransferScope(
+                        data=include_data,
+                        bank_config=include_bank_config,
+                        history=include_history,
+                    ),
+                )
+            except ValueError as e:
+                # Target already exists, an invalid bank id, or cloning onto itself.
+                raise HTTPException(status_code=400, detail=str(e))
+            return BankTransferSubmitResponse(operation_id=submission["operation_id"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/clone")
+
     @app.get(
         "/v1/default/banks/{bank_id}/attachments/{attachment_id}",
         summary="Fetch an attachment retained inline with a document",

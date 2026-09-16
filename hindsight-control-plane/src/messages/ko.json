@@ -589,7 +589,8 @@
       "exportDocuments": "문서 내보내기",
       "importDocuments": "문서 가져오기",
       "exportBank": "뱅크 내보내기",
-      "importBank": "뱅크 가져오기"
+      "importBank": "뱅크 가져오기",
+      "cloneBank": "뱅크 복제"
     },
     "table": {
       "id": "작업 ID",

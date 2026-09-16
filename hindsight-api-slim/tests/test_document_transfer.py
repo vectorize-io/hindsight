@@ -2684,3 +2684,93 @@ async def test_transfer_endpoints_refuse_a_request_that_would_do_nothing(api_cli
         assert "mode=restore" in merge_with_scope.json()["detail"]
     finally:
         await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_copies_the_bank_and_leaves_the_two_independent(api_client, memory, request_context):
+    """A clone holds the source's memories and configuration, and then goes its own way."""
+    source = _unique_bank("clone_src")
+    target = _unique_bank("clone_dst")
+    try:
+        await _retain(memory, source, "Lena restores violins.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+        operation_id = response.json()["operation_id"]
+
+        # The operation belongs to the source — the target did not exist when it was submitted.
+        status = await memory.get_operation_status(source, operation_id, request_context=request_context)
+        assert status["status"] == "completed", status
+        assert status["result_metadata"]["target_bank_id"] == target
+
+        source_facts = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert sorted(u["text"] for u in clone_facts["items"]) == sorted(u["text"] for u in source_facts["items"])
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        assert [d["name"] for d in directives.items] == ["tone"]
+
+        # Independent from here: a write to the clone must not reach the source.
+        await _retain(memory, target, "Lena bought a workshop.", request_context, "doc-2")
+        source_after = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        clone_after = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert any("workshop" in u["text"] for u in clone_after["items"])
+        assert not any("workshop" in u["text"] for u in source_after["items"])
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_refuses_a_target_that_would_be_overwritten(api_client, memory, request_context):
+    """Cloning onto an existing bank, or onto itself, is refused up front — both
+    would mix two banks' configuration into one with nothing to undo it."""
+    source = _unique_bank("clone_guard_src")
+    existing = _unique_bank("clone_guard_dst")
+    try:
+        await _retain(memory, source, "Milo tunes pianos.", request_context, "doc-1")
+        await memory.get_bank_profile(existing, request_context=request_context)
+
+        onto_existing = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": existing}
+        )
+        assert onto_existing.status_code == 400
+        assert "already exists" in onto_existing.json()["detail"]
+
+        onto_itself = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": source}
+        )
+        assert onto_itself.status_code == 400
+
+        missing_source = await api_client.post(
+            "/v1/default/banks/does-not-exist-bank/clone", params={"target_bank_id": _unique_bank("clone_never")}
+        )
+        assert missing_source.status_code == 404
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(existing, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_can_leave_the_configuration_behind(api_client, memory, request_context):
+    """Copying an agent's memory without copying what it is wired to do — including
+    its webhooks, which point at the source's own consumer."""
+    source = _unique_bank("clone_data_src")
+    target = _unique_bank("clone_data_dst")
+    try:
+        await _retain(memory, source, "Nina keeps bees.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone",
+            params={"target_bank_id": target, "include_bank_config": False},
+        )
+        assert response.status_code == 202, response.text
+
+        clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        assert clone_facts["items"]
+        assert directives.items == []
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)

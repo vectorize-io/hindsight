@@ -9626,6 +9626,71 @@ export type ImportBankTransferResponses = {
 export type ImportBankTransferResponse =
   ImportBankTransferResponses[keyof ImportBankTransferResponses];
 
+export type CloneBankData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query: {
+    /**
+     * Target Bank Id
+     *
+     * Bank to create; must not already exist
+     */
+    target_bank_id: string;
+    /**
+     * Include Data
+     *
+     * Copy the memories and everything backing them
+     */
+    include_data?: boolean;
+    /**
+     * Include Bank Config
+     *
+     * Copy bank config, mental models, directives and webhooks
+     */
+    include_bank_config?: boolean;
+    /**
+     * Include History
+     *
+     * Copy audit_log and llm_requests
+     */
+    include_history?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/clone";
+};
+
+export type CloneBankErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CloneBankError = CloneBankErrors[keyof CloneBankErrors];
+
+export type CloneBankResponses = {
+  /**
+   * Successful Response
+   */
+  202: BankTransferSubmitResponse;
+};
+
+export type CloneBankResponse = CloneBankResponses[keyof CloneBankResponses];
+
 export type GetBankAttachmentData = {
   body?: never;
   headers?: {

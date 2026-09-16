@@ -589,7 +589,8 @@
       "exportDocuments": "Dokumente exportieren",
       "importDocuments": "Dokumente importieren",
       "exportBank": "Bank exportieren",
-      "importBank": "Bank importieren"
+      "importBank": "Bank importieren",
+      "cloneBank": "Bank klonen"
     },
     "table": {
       "id": "Vorgangs-ID",

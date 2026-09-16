@@ -20,6 +20,7 @@ jest.mock("../generated/sdk.gen");
 const mockedExport = sdk.exportBankTransfer as jest.MockedFunction<typeof sdk.exportBankTransfer>;
 const mockedImport = sdk.importBankTransfer as jest.MockedFunction<typeof sdk.importBankTransfer>;
 const mockedStatus = sdk.getOperationStatus as jest.MockedFunction<typeof sdk.getOperationStatus>;
+const mockedClone = sdk.cloneBank as jest.MockedFunction<typeof sdk.cloneBank>;
 
 const OPERATION_ID = "029110c8-a2b2-464c-a206-52c99b76cbf1";
 const DOWNLOAD_URL = "/v1/default/files/download/banks/my-bank/exports/x/transfer.zip";
@@ -113,5 +114,33 @@ describe("importBank mapping", () => {
     mockedImport.mockClear();
     await client.importBank("my-bank", archive);
     expect((mockedImport.mock.calls[0][0] as any).query.include_bank_config).toBeUndefined();
+  });
+});
+
+describe("cloneBank mapping", () => {
+  let client: HindsightClient;
+
+  beforeEach(() => {
+    client = new HindsightClient({ baseUrl: "http://localhost:8888" });
+    mockedClone.mockReset();
+    mockedClone.mockResolvedValue({ data: { operation_id: OPERATION_ID } } as any);
+  });
+
+  test("names the source in the path and the target in the query", async () => {
+    const operationId = await client.cloneBank("my-bank", "my-bank-copy");
+
+    expect(operationId).toBe(OPERATION_ID);
+    const call = mockedClone.mock.calls[0][0] as any;
+    expect(call.path).toEqual({ bank_id: "my-bank" });
+    expect(call.query.target_bank_id).toBe("my-bank-copy");
+  });
+
+  test("forwards a narrowed scope, and sends nothing when not asked", async () => {
+    await client.cloneBank("my-bank", "my-bank-copy", { includeBankConfig: false });
+    expect((mockedClone.mock.calls[0][0] as any).query.include_bank_config).toBe(false);
+
+    mockedClone.mockClear();
+    await client.cloneBank("my-bank", "my-bank-copy");
+    expect((mockedClone.mock.calls[0][0] as any).query.include_bank_config).toBeUndefined();
   });
 });

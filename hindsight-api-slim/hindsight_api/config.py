@@ -916,6 +916,7 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "export_documents": 0,
     "import_bank": 0,
     "export_bank": 0,
+    "clone_bank": 0,
 }
 
 
