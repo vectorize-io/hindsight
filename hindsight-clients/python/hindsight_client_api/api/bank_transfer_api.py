@@ -397,9 +397,9 @@ class BankTransferApi:
         mode: Annotated[Optional[StrictStr], Field(description="restore (into a fresh bank) | merge (into this bank)")] = None,
         target_bank_id: Annotated[Optional[StrictStr], Field(description="restore mode: the bank to create; defaults to the archive's source bank")] = None,
         document_conflict: Annotated[Optional[StrictStr], Field(description="merge mode: skip | replace | new-id")] = None,
-        include_data: Annotated[Optional[StrictBool], Field(description="Restore the memories and everything backing them")] = None,
-        include_bank_config: Annotated[Optional[StrictBool], Field(description="Restore bank config, mental models, directives")] = None,
-        include_history: Annotated[Optional[StrictBool], Field(description="Restore audit_log and llm_requests")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="restore mode: carry the memories and everything backing them (default true)")] = None,
+        include_bank_config: Annotated[Optional[StrictBool], Field(description="restore mode: carry bank config, mental models, directives (default true)")] = None,
+        include_history: Annotated[Optional[StrictBool], Field(description="restore mode: carry audit_log and llm_requests (default false)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -428,11 +428,11 @@ class BankTransferApi:
         :type target_bank_id: str
         :param document_conflict: merge mode: skip | replace | new-id
         :type document_conflict: str
-        :param include_data: Restore the memories and everything backing them
+        :param include_data: restore mode: carry the memories and everything backing them (default true)
         :type include_data: bool
-        :param include_bank_config: Restore bank config, mental models, directives
+        :param include_bank_config: restore mode: carry bank config, mental models, directives (default true)
         :type include_bank_config: bool
-        :param include_history: Restore audit_log and llm_requests
+        :param include_history: restore mode: carry audit_log and llm_requests (default false)
         :type include_history: bool
         :param authorization:
         :type authorization: str
@@ -497,9 +497,9 @@ class BankTransferApi:
         mode: Annotated[Optional[StrictStr], Field(description="restore (into a fresh bank) | merge (into this bank)")] = None,
         target_bank_id: Annotated[Optional[StrictStr], Field(description="restore mode: the bank to create; defaults to the archive's source bank")] = None,
         document_conflict: Annotated[Optional[StrictStr], Field(description="merge mode: skip | replace | new-id")] = None,
-        include_data: Annotated[Optional[StrictBool], Field(description="Restore the memories and everything backing them")] = None,
-        include_bank_config: Annotated[Optional[StrictBool], Field(description="Restore bank config, mental models, directives")] = None,
-        include_history: Annotated[Optional[StrictBool], Field(description="Restore audit_log and llm_requests")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="restore mode: carry the memories and everything backing them (default true)")] = None,
+        include_bank_config: Annotated[Optional[StrictBool], Field(description="restore mode: carry bank config, mental models, directives (default true)")] = None,
+        include_history: Annotated[Optional[StrictBool], Field(description="restore mode: carry audit_log and llm_requests (default false)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -528,11 +528,11 @@ class BankTransferApi:
         :type target_bank_id: str
         :param document_conflict: merge mode: skip | replace | new-id
         :type document_conflict: str
-        :param include_data: Restore the memories and everything backing them
+        :param include_data: restore mode: carry the memories and everything backing them (default true)
         :type include_data: bool
-        :param include_bank_config: Restore bank config, mental models, directives
+        :param include_bank_config: restore mode: carry bank config, mental models, directives (default true)
         :type include_bank_config: bool
-        :param include_history: Restore audit_log and llm_requests
+        :param include_history: restore mode: carry audit_log and llm_requests (default false)
         :type include_history: bool
         :param authorization:
         :type authorization: str
@@ -597,9 +597,9 @@ class BankTransferApi:
         mode: Annotated[Optional[StrictStr], Field(description="restore (into a fresh bank) | merge (into this bank)")] = None,
         target_bank_id: Annotated[Optional[StrictStr], Field(description="restore mode: the bank to create; defaults to the archive's source bank")] = None,
         document_conflict: Annotated[Optional[StrictStr], Field(description="merge mode: skip | replace | new-id")] = None,
-        include_data: Annotated[Optional[StrictBool], Field(description="Restore the memories and everything backing them")] = None,
-        include_bank_config: Annotated[Optional[StrictBool], Field(description="Restore bank config, mental models, directives")] = None,
-        include_history: Annotated[Optional[StrictBool], Field(description="Restore audit_log and llm_requests")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="restore mode: carry the memories and everything backing them (default true)")] = None,
+        include_bank_config: Annotated[Optional[StrictBool], Field(description="restore mode: carry bank config, mental models, directives (default true)")] = None,
+        include_history: Annotated[Optional[StrictBool], Field(description="restore mode: carry audit_log and llm_requests (default false)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -628,11 +628,11 @@ class BankTransferApi:
         :type target_bank_id: str
         :param document_conflict: merge mode: skip | replace | new-id
         :type document_conflict: str
-        :param include_data: Restore the memories and everything backing them
+        :param include_data: restore mode: carry the memories and everything backing them (default true)
         :type include_data: bool
-        :param include_bank_config: Restore bank config, mental models, directives
+        :param include_bank_config: restore mode: carry bank config, mental models, directives (default true)
         :type include_bank_config: bool
-        :param include_history: Restore audit_log and llm_requests
+        :param include_history: restore mode: carry audit_log and llm_requests (default false)
         :type include_history: bool
         :param authorization:
         :type authorization: str

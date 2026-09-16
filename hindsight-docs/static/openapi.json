@@ -5347,36 +5347,54 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean",
-              "description": "Restore the memories and everything backing them",
-              "default": true,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: carry the memories and everything backing them (default true)",
               "title": "Include Data"
             },
-            "description": "Restore the memories and everything backing them"
+            "description": "restore mode: carry the memories and everything backing them (default true)"
           },
           {
             "name": "include_bank_config",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean",
-              "description": "Restore bank config, mental models, directives",
-              "default": true,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: carry bank config, mental models, directives (default true)",
               "title": "Include Bank Config"
             },
-            "description": "Restore bank config, mental models, directives"
+            "description": "restore mode: carry bank config, mental models, directives (default true)"
           },
           {
             "name": "include_history",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean",
-              "description": "Restore audit_log and llm_requests",
-              "default": false,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: carry audit_log and llm_requests (default false)",
               "title": "Include History"
             },
-            "description": "Restore audit_log and llm_requests"
+            "description": "restore mode: carry audit_log and llm_requests (default false)"
           },
           {
             "name": "authorization",

@@ -9588,21 +9588,21 @@ export type ImportBankTransferData = {
     /**
      * Include Data
      *
-     * Restore the memories and everything backing them
+     * restore mode: carry the memories and everything backing them (default true)
      */
-    include_data?: boolean;
+    include_data?: boolean | null;
     /**
      * Include Bank Config
      *
-     * Restore bank config, mental models, directives
+     * restore mode: carry bank config, mental models, directives (default true)
      */
-    include_bank_config?: boolean;
+    include_bank_config?: boolean | null;
     /**
      * Include History
      *
-     * Restore audit_log and llm_requests
+     * restore mode: carry audit_log and llm_requests (default false)
      */
-    include_history?: boolean;
+    include_history?: boolean | null;
   };
   url: "/v1/default/banks/{bank_id}/transfer/import";
 };

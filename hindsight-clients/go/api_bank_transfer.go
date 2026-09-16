@@ -242,19 +242,19 @@ func (r ApiImportBankTransferRequest) DocumentConflict(documentConflict string) 
 	return r
 }
 
-// Restore the memories and everything backing them
+// restore mode: carry the memories and everything backing them (default true)
 func (r ApiImportBankTransferRequest) IncludeData(includeData bool) ApiImportBankTransferRequest {
 	r.includeData = &includeData
 	return r
 }
 
-// Restore bank config, mental models, directives
+// restore mode: carry bank config, mental models, directives (default true)
 func (r ApiImportBankTransferRequest) IncludeBankConfig(includeBankConfig bool) ApiImportBankTransferRequest {
 	r.includeBankConfig = &includeBankConfig
 	return r
 }
 
-// Restore audit_log and llm_requests
+// restore mode: carry audit_log and llm_requests (default false)
 func (r ApiImportBankTransferRequest) IncludeHistory(includeHistory bool) ApiImportBankTransferRequest {
 	r.includeHistory = &includeHistory
 	return r
@@ -332,21 +332,12 @@ func (a *BankTransferAPIService) ImportBankTransferExecute(r ApiImportBankTransf
 	}
 	if r.includeData != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "include_data", r.includeData, "form", "")
-	} else {
-		var defaultValue bool = true
-		r.includeData = &defaultValue
 	}
 	if r.includeBankConfig != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "include_bank_config", r.includeBankConfig, "form", "")
-	} else {
-		var defaultValue bool = true
-		r.includeBankConfig = &defaultValue
 	}
 	if r.includeHistory != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "include_history", r.includeHistory, "form", "")
-	} else {
-		var defaultValue bool = false
-		r.includeHistory = &defaultValue
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{"multipart/form-data"}

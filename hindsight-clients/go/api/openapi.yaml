@@ -3745,37 +3745,33 @@ paths:
           title: Document Conflict
           type: string
         style: form
-      - description: Restore the memories and everything backing them
+      - description: "restore mode: carry the memories and everything backing them\
+          \ (default true)"
         explode: true
         in: query
         name: include_data
         required: false
         schema:
-          default: true
-          description: Restore the memories and everything backing them
-          title: Include Data
+          nullable: true
           type: boolean
         style: form
-      - description: "Restore bank config, mental models, directives"
+      - description: "restore mode: carry bank config, mental models, directives (default\
+          \ true)"
         explode: true
         in: query
         name: include_bank_config
         required: false
         schema:
-          default: true
-          description: "Restore bank config, mental models, directives"
-          title: Include Bank Config
+          nullable: true
           type: boolean
         style: form
-      - description: Restore audit_log and llm_requests
+      - description: "restore mode: carry audit_log and llm_requests (default false)"
         explode: true
         in: query
         name: include_history
         required: false
         schema:
-          default: false
-          description: Restore audit_log and llm_requests
-          title: Include History
+          nullable: true
           type: boolean
         style: form
       - explode: false
