@@ -3,6 +3,7 @@ hindsight_client_api/__init__.py
 hindsight_client_api/api/__init__.py
 hindsight_client_api/api/audit_api.py
 hindsight_client_api/api/bank_templates_api.py
+hindsight_client_api/api/bank_transfer_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
 hindsight_client_api/api/document_transfer_api.py
@@ -40,6 +41,7 @@ hindsight_client_api/models/bank_template_directive.py
 hindsight_client_api/models/bank_template_import_response.py
 hindsight_client_api/models/bank_template_manifest.py
 hindsight_client_api/models/bank_template_mental_model.py
+hindsight_client_api/models/bank_transfer_submit_response.py
 hindsight_client_api/models/base64_attachment_source.py
 hindsight_client_api/models/budget.py
 hindsight_client_api/models/cancel_operation_response.py

@@ -340,7 +340,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> DocumentExportSubmitResponse:
-        """Export documents (async)
+        """(Deprecated) Export documents (async)
 
         Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
 
@@ -375,6 +375,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer/export is deprecated.", DeprecationWarning)
 
         _param = self._export_documents_serialize(
             bank_id=bank_id,
@@ -424,7 +425,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[DocumentExportSubmitResponse]:
-        """Export documents (async)
+        """(Deprecated) Export documents (async)
 
         Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
 
@@ -459,6 +460,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer/export is deprecated.", DeprecationWarning)
 
         _param = self._export_documents_serialize(
             bank_id=bank_id,
@@ -508,7 +510,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Export documents (async)
+        """(Deprecated) Export documents (async)
 
         Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
 
@@ -543,6 +545,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer/export is deprecated.", DeprecationWarning)
 
         _param = self._export_documents_serialize(
             bank_id=bank_id,
@@ -950,7 +953,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> DocumentImportSubmitResponse:
-        """Import documents (async)
+        """(Deprecated) Import documents (async)
 
         Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.
 
@@ -983,6 +986,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer is deprecated.", DeprecationWarning)
 
         _param = self._import_documents_serialize(
             bank_id=bank_id,
@@ -1030,7 +1034,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[DocumentImportSubmitResponse]:
-        """Import documents (async)
+        """(Deprecated) Import documents (async)
 
         Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.
 
@@ -1063,6 +1067,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer is deprecated.", DeprecationWarning)
 
         _param = self._import_documents_serialize(
             bank_id=bank_id,
@@ -1110,7 +1115,7 @@ class DocumentTransferApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Import documents (async)
+        """(Deprecated) Import documents (async)
 
         Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.
 
@@ -1143,6 +1148,7 @@ class DocumentTransferApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/document-transfer is deprecated.", DeprecationWarning)
 
         _param = self._import_documents_serialize(
             bank_id=bank_id,

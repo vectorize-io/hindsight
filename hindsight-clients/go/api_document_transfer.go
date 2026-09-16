@@ -192,6 +192,8 @@ Submit an async export of a bank's documents (extracted facts, entity names, cau
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiExportDocumentsRequest
+
+Deprecated
 */
 func (a *DocumentTransferAPIService) ExportDocuments(ctx context.Context, bankId string) ApiExportDocumentsRequest {
 	return ApiExportDocumentsRequest{
@@ -203,6 +205,7 @@ func (a *DocumentTransferAPIService) ExportDocuments(ctx context.Context, bankId
 
 // Execute executes the request
 //  @return DocumentExportSubmitResponse
+// Deprecated
 func (a *DocumentTransferAPIService) ExportDocumentsExecute(r ApiExportDocumentsRequest) (*DocumentExportSubmitResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodPost
@@ -476,6 +479,8 @@ Submit a transfer archive (produced by the export endpoint) for import into a ba
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiImportDocumentsRequest
+
+Deprecated
 */
 func (a *DocumentTransferAPIService) ImportDocuments(ctx context.Context, bankId string) ApiImportDocumentsRequest {
 	return ApiImportDocumentsRequest{
@@ -487,6 +492,7 @@ func (a *DocumentTransferAPIService) ImportDocuments(ctx context.Context, bankId
 
 // Execute executes the request
 //  @return DocumentImportSubmitResponse
+// Deprecated
 func (a *DocumentTransferAPIService) ImportDocumentsExecute(r ApiImportDocumentsRequest) (*DocumentImportSubmitResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodPost

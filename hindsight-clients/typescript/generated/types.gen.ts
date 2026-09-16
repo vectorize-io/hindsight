@@ -943,6 +943,27 @@ export type BankTemplateMentalModel = {
 };
 
 /**
+ * BankTransferSubmitResponse
+ *
+ * Response for the unified bank-transfer endpoints (202).
+ *
+ * The transfer runs in the background; poll
+ * GET /v1/default/banks/{bank_id}/operations/{operation_id}. An export's
+ * ``result_metadata`` carries ``download_url`` / ``storage_key`` /
+ * ``byte_size`` / ``filename``; an import's carries the per-component counts.
+ */
+export type BankTransferSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * Base64AttachmentSource
  *
  * Inline attachment bytes, base64-encoded.
@@ -986,6 +1007,18 @@ export type BodyFileRetain = {
    * JSON string with FileRetainRequest model
    */
   request: string;
+};
+
+/**
+ * Body_import_bank_transfer
+ */
+export type BodyImportBankTransfer = {
+  /**
+   * File
+   *
+   * Transfer ZIP archive
+   */
+  file: Blob | File;
 };
 
 /**
@@ -9452,6 +9485,146 @@ export type ExportDocumentsResponses = {
 };
 
 export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
+
+export type ExportBankTransferData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Include Data
+     *
+     * Carry the memories and everything backing them
+     */
+    include_data?: boolean;
+    /**
+     * Include Bank Config
+     *
+     * Carry bank config, mental models, directives
+     */
+    include_bank_config?: boolean;
+    /**
+     * Include History
+     *
+     * Carry audit_log and llm_requests
+     */
+    include_history?: boolean;
+    /**
+     * Document Id
+     *
+     * Document id(s); omit for the whole bank
+     */
+    document_id?: Array<string> | null;
+  };
+  url: "/v1/default/banks/{bank_id}/transfer/export";
+};
+
+export type ExportBankTransferErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportBankTransferError = ExportBankTransferErrors[keyof ExportBankTransferErrors];
+
+export type ExportBankTransferResponses = {
+  /**
+   * Successful Response
+   */
+  202: BankTransferSubmitResponse;
+};
+
+export type ExportBankTransferResponse =
+  ExportBankTransferResponses[keyof ExportBankTransferResponses];
+
+export type ImportBankTransferData = {
+  body: BodyImportBankTransfer;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Mode
+     *
+     * restore (into a fresh bank) | merge (into this bank)
+     */
+    mode?: string;
+    /**
+     * Target Bank Id
+     *
+     * restore mode: the bank to create; defaults to the archive's source bank
+     */
+    target_bank_id?: string | null;
+    /**
+     * Document Conflict
+     *
+     * merge mode: skip | replace | new-id
+     */
+    document_conflict?: string;
+    /**
+     * Include Data
+     *
+     * Restore the memories and everything backing them
+     */
+    include_data?: boolean;
+    /**
+     * Include Bank Config
+     *
+     * Restore bank config, mental models, directives
+     */
+    include_bank_config?: boolean;
+    /**
+     * Include History
+     *
+     * Restore audit_log and llm_requests
+     */
+    include_history?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/transfer/import";
+};
+
+export type ImportBankTransferErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImportBankTransferError = ImportBankTransferErrors[keyof ImportBankTransferErrors];
+
+export type ImportBankTransferResponses = {
+  /**
+   * Successful Response
+   */
+  202: BankTransferSubmitResponse;
+};
+
+export type ImportBankTransferResponse =
+  ImportBankTransferResponses[keyof ImportBankTransferResponses];
 
 export type GetBankAttachmentData = {
   body?: never;

@@ -43,6 +43,7 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 #: refused with 422 rather than silently dropping the attachments.
 ContentBlock = dict[str, Any]
 from hindsight_client_api.api import (
+    bank_transfer_api,
     banks_api,
     directives_api,
     document_transfer_api,
@@ -305,6 +306,7 @@ class Hindsight:
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
         self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
+        self._bank_transfer_api = bank_transfer_api.BankTransferApi(self._api_client)
 
     # -- Retain suspension ------------------------------------------------------
 
@@ -2187,8 +2189,170 @@ class Hindsight:
             include_knowledge_base=include_knowledge_base,
             _request_timeout=self._timeout,
         )
-        operation_id = submission.operation_id
+        return await self._download_operation_archive(bank_id, submission.operation_id, poll_interval, timeout)
 
+    @property
+    def bank_transfer(self) -> bank_transfer_api.BankTransferApi:
+        """Low-level Bank Transfer API — submit an async bank export or import."""
+        return self._bank_transfer_api
+
+    def export_bank(
+        self,
+        bank_id: str,
+        *,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """
+        Export a whole bank as a transfer ZIP archive (blocking convenience).
+
+        See :meth:`aexport_bank` for the full argument documentation.
+        """
+        return _run_async(
+            self.aexport_bank(
+                bank_id,
+                include_data=include_data,
+                include_bank_config=include_bank_config,
+                include_history=include_history,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+        )
+
+    async def aexport_bank(
+        self,
+        bank_id: str,
+        *,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """
+        Export a whole bank as a transfer ZIP archive — submit, poll, download, return bytes.
+
+        Three flags decide what the archive carries. ``include_data`` covers the
+        memories and everything backing them (documents, facts, observations,
+        attachments and their bytes, the curation archive, the operations log and
+        the maintenance queues); ``include_bank_config`` the bank's own config,
+        mental models and their history, knowledge pages, directives and webhooks;
+        ``include_history`` the audit and LLM-request logs.
+
+        Embeddings never travel — the importing instance regenerates them with its
+        own model, which is what makes an archive portable between instances
+        configured differently.
+
+        Args:
+            bank_id: Source bank.
+            include_data: Carry the memories and everything backing them.
+            include_bank_config: Carry bank config, mental models, directives, webhooks.
+            include_history: Carry audit_log and llm_requests.
+            poll_interval: Seconds between operation-status polls.
+            timeout: Maximum seconds to wait for the export to finish.
+
+        Returns:
+            The transfer ZIP archive as bytes (restore it with :meth:`aimport_bank`).
+
+        Raises:
+            TimeoutError: if the export does not finish within ``timeout``.
+            RuntimeError: if the export operation fails or completes without an archive.
+        """
+        submission = await self._bank_transfer_api.export_bank_transfer(
+            bank_id,
+            include_data=include_data,
+            include_bank_config=include_bank_config,
+            include_history=include_history,
+            _request_timeout=self._timeout,
+        )
+        return await self._download_operation_archive(bank_id, submission.operation_id, poll_interval, timeout)
+
+    def import_bank(
+        self,
+        bank_id: str,
+        archive: bytes,
+        *,
+        target_bank_id: str | None = None,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+    ) -> str:
+        """
+        Restore a bank archive into a fresh bank (blocking convenience).
+
+        See :meth:`aimport_bank` for the full argument documentation.
+        """
+        return _run_async(
+            self.aimport_bank(
+                bank_id,
+                archive,
+                target_bank_id=target_bank_id,
+                include_data=include_data,
+                include_bank_config=include_bank_config,
+                include_history=include_history,
+            )
+        )
+
+    async def aimport_bank(
+        self,
+        bank_id: str,
+        archive: bytes,
+        *,
+        target_bank_id: str | None = None,
+        include_data: bool = True,
+        include_bank_config: bool = True,
+        include_history: bool = False,
+    ) -> str:
+        """
+        Restore a bank archive into a fresh bank, and return the operation id.
+
+        The restore runs in the background (facts are re-embedded and entities
+        re-resolved); poll ``client.operations.get_operation_status(bank_id, ...)``
+        for its progress and per-component counts.
+
+        ``target_bank_id`` must NOT already exist — this restores a whole bank
+        rather than merging into one. ``bank_id`` is simply the bank the operation
+        is recorded against, because the target does not exist yet. To fold an
+        archive's documents into an existing bank instead, use
+        ``client.document_transfer.import_documents``.
+
+        Args:
+            bank_id: Bank the operation is recorded against (must exist).
+            archive: A transfer ZIP produced by :meth:`aexport_bank`.
+            target_bank_id: Bank to create; defaults to the archive's source bank.
+            include_data: Restore the memories and everything backing them.
+            include_bank_config: Restore bank config, mental models, directives, webhooks.
+            include_history: Restore audit_log and llm_requests.
+
+        Returns:
+            The operation id of the background restore.
+        """
+        submission = await self._bank_transfer_api.import_bank_transfer(
+            bank_id,
+            archive,
+            target_bank_id=target_bank_id,
+            include_data=include_data,
+            include_bank_config=include_bank_config,
+            include_history=include_history,
+            _request_timeout=self._timeout,
+        )
+        return submission.operation_id
+
+    async def _download_operation_archive(
+        self,
+        bank_id: str,
+        operation_id: str,
+        poll_interval: float,
+        timeout: float,
+    ) -> bytes:
+        """Poll an export operation to completion and download the archive it produced.
+
+        Shared by the document and whole-bank exports: both submit an operation
+        whose ``result_metadata`` names the finished archive.
+        """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         while True:
