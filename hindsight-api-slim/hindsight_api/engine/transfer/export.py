@@ -23,6 +23,7 @@ from uuid import UUID
 import anyio.to_thread
 
 from ..causal_links import CAUSAL_LINK_TYPES
+from ..chunk_ids import parse_chunk_id
 from ..db_utils import acquire_with_retry
 from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
@@ -469,7 +470,8 @@ async def export_bank(
             loaded = await _load_documents(conn, bank_id, None, include_lifecycle=True)
             documents = loaded.documents
             observations = await _load_observations(conn, bank_id, loaded.unit_index)
-        attachments, blobs = await _dump_attachments(conn, bank_id, file_storage)
+        exported_attachments = await _dump_attachments(conn, bank_id, file_storage)
+        attachments, blobs = exported_attachments.rows, exported_attachments.blobs
         data_rows["document_attachments"] = await _dump_bank_rows(conn, "document_attachments", bank_id)
         data_rows.update(await _dump_operational_rows(conn, bank_id))
         data_rows["invalidated_memory_units"] = await _dump_invalidated_units(conn, bank_id)
@@ -564,7 +566,16 @@ async def export_bank(
     return archive.getvalue()
 
 
-async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> tuple[list[TransferAttachment], dict]:
+@dataclass
+class _ExportedAttachments:
+    """Attachment rows paired with the archive entries carrying their bytes."""
+
+    rows: list[TransferAttachment] = field(default_factory=list)
+    #: archive entry name -> the bytes written under it
+    blobs: dict[str, bytes] = field(default_factory=dict)
+
+
+async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> _ExportedAttachments:
     """Attachment rows plus their bytes, read out of file storage.
 
     The bytes are the point: ``attachments`` rows only name a storage key, and a
@@ -581,7 +592,7 @@ async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> tuple
         bank_id,
     )
     if not rows:
-        return [], {}
+        return _ExportedAttachments()
     if file_storage is None:
         raise ValueError(
             f"Bank '{bank_id}' has {len(rows)} attachment(s) but no file storage was supplied to the export; "
@@ -616,7 +627,7 @@ async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> tuple
                 entry=entry,
             )
         )
-    return attachments, blobs
+    return _ExportedAttachments(rows=attachments, blobs=blobs)
 
 
 async def _dump_operational_rows(conn: Any, bank_id: str) -> dict[str, list[dict]]:
@@ -672,7 +683,11 @@ async def _dump_invalidated_units(conn: Any, bank_id: str) -> list[dict]:
     dumped: list[dict] = []
     for row in rows:
         record = {k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k not in ("id", "entity_ids")}
-        record["chunk_index"] = _chunk_index_from_chunk_id(record.pop("chunk_id", None))
+        # parse_chunk_id, not a naive rsplit: ids written since #4244 escape the
+        # separator inside the bank and document components, so splitting on the
+        # last underscore recovers the wrong ordinal for an escaped id.
+        parsed_chunk = parse_chunk_id(record.pop("chunk_id", None))
+        record["chunk_index"] = parsed_chunk.chunk_index if parsed_chunk else None
         record["entity_names"] = sorted(n for n in (names.get(e) for e in (row["entity_ids"] or [])) if n)
         dumped.append(record)
     return dumped

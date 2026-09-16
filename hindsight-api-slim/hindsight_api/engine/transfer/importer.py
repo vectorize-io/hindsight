@@ -698,6 +698,14 @@ async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[Transfer
 _LIVE_OPERATION_STATUSES = ("pending", "processing")
 
 
+@dataclass
+class _RestoredOperational:
+    """How many operational rows a restore wrote, per kind."""
+
+    operations: int = 0
+    queue_rows: int = 0
+
+
 def _remapped_document_id(row: dict, document_id_map: dict[str, str]) -> str | None:
     """The target's id for the document this row belongs to.
 
@@ -813,10 +821,10 @@ async def _restore_operational_rows(
     *,
     unit_id_map: dict[str, str],
     bank_rows_json_encoding: BankRowsJSONEncoding,
-) -> tuple[int, int]:
+) -> _RestoredOperational:
     """Restore the operations log and the maintenance queues.
 
-    Returns ``(operations, queue_rows)``. Queue rows are work-to-do keyed by ids
+    Queue rows are work-to-do keyed by ids
     the replay regenerated: a row whose unit or entity did not come back is
     dropped rather than restored against an id that means nothing here — the
     target re-enqueues its own maintenance as the import writes land.
@@ -848,7 +856,7 @@ async def _restore_operational_rows(
     queue_restored += await _restore_rows(
         conn, "entity_maintenance_queue", entity_rows, bank_rows_json_encoding=bank_rows_json_encoding
     )
-    return restored_ops, queue_restored
+    return _RestoredOperational(operations=restored_ops, queue_rows=queue_restored)
 
 
 async def _restore_invalidated_units(
@@ -1100,13 +1108,15 @@ async def import_bank(
                 document_attachments,
                 bank_rows_json_encoding=bank_rows_json_encoding,
             )
-            result.operations_imported, result.maintenance_queue_rows_imported = await _restore_operational_rows(
+            operational = await _restore_operational_rows(
                 conn,
                 bank_id,
                 parsed.data_rows,
                 unit_id_map=unit_id_map,
                 bank_rows_json_encoding=bank_rows_json_encoding,
             )
+            result.operations_imported = operational.operations
+            result.maintenance_queue_rows_imported = operational.queue_rows
             result.invalidated_memories_imported = await _restore_invalidated_units(
                 conn,
                 bank_id,

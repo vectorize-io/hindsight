@@ -2370,17 +2370,24 @@ async def test_bank_copy_carries_directives_and_webhooks(memory, request_context
         assert result.directives_imported == 1
         assert result.webhooks_imported == 1
 
-        # The counts above are what lied before the fix; these are the rows.
+        # The counts above are what lied before the fix; these are the rows, read
+        # back through the same API a user would.
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        webhooks = await memory.list_webhooks(target, request_context=request_context)
+        assert [d["name"] for d in directives.items] == ["tone"]
+        assert [w["url"] for w in webhooks["items"]] == ["https://example.com/hook"]
+
+        # Fresh ids: keeping the source's is what made the insert a no-op. Read
+        # directly because the id is the mechanism rather than the observable
+        # outcome — the assertions above are what a user sees, this is why they hold.
         async with acquire_with_retry(backend) as conn:
-            directives = await conn.fetch(f"SELECT id, name FROM {fq_table('directives')} WHERE bank_id = $1", target)
-            webhooks = await conn.fetch(f"SELECT id, url FROM {fq_table('webhooks')} WHERE bank_id = $1", target)
-            source_directive_ids = {
+            copied_ids = {
+                r["id"] for r in await conn.fetch(f"SELECT id FROM {fq_table('directives')} WHERE bank_id = $1", target)
+            }
+            source_ids = {
                 r["id"] for r in await conn.fetch(f"SELECT id FROM {fq_table('directives')} WHERE bank_id = $1", source)
             }
-        assert [r["name"] for r in directives] == ["tone"]
-        assert [r["url"] for r in webhooks] == ["https://example.com/hook"]
-        # Fresh ids: keeping the source's is what made the insert a no-op.
-        assert not ({r["id"] for r in directives} & source_directive_ids)
+        assert copied_ids and not (copied_ids & source_ids)
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
