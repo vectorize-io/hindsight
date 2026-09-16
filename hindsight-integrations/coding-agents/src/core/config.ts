@@ -20,8 +20,6 @@ import { log } from "./log";
 import {
   DEFAULT_OBSERVATION_SCOPES,
   DEFAULT_PAGE_SEARCH_LIMIT,
-  DEFAULT_RECALL_MAX_TOKENS,
-  DEFAULT_RECALL_TYPES,
   type ObservationScopes,
 } from "./hindsight";
 import { DEFAULT_PAGE_TRIGGER_CRON, isHashedCron, parseHashedCron } from "./missions";
@@ -114,7 +112,7 @@ export interface RawConfig {
   /** What to inject on the session's first prompt (default "reflect"):
    *    "reflect" — one low-budget reflect synthesis (falls back to pages, then recall, on timeout/5xx)
    *    "pages"   — the knowledge pages matching the prompt by search (retrieval only, no LLM)
-   *    "recall"  — the bank's memories recalled for the prompt (`recallTypes`; no LLM)
+   *    "recall"  — the bank's memories recalled for the prompt (`recallOptions`; no LLM)
    *    "none"    — nothing; the tool guide routes new goals through pages before optional reflection */
   autoInject?: AutoInject;
   /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";
@@ -124,14 +122,17 @@ export interface RawConfig {
    *  `autoInject: "pages"` injection, the reflect fallback, and the agent's
    *  `hindsight_search_knowledge_pages` tool — the limit lives on the client so they can't drift. */
   pageSearchLimit?: number;
-  /** Token budget for ONE observation recall (default 2000) — the `autoInject: "recall"` source
-   *  and the reflect fallback. */
-  recallMaxTokens?: number;
-  /** Fact types a recall asks for (default `["observation"]`). Observations are the consolidated
-   *  layer, so they answer best per token — but a bank with consolidation disabled never grows
-   *  any, and an observation-only recall there comes back empty. Those set
-   *  `["world", "experience"]`, or `[]` for every type. */
-  recallTypes?: string[];
+  /** Recall-request overrides, merged key-by-key into the body every recall sends (the
+   *  `autoInject: "recall"` source and the reflect fallback) — `{"types": ["world",
+   *  "experience"], "max_tokens": 4000}`. Keys are the API's own recall parameters, passed
+   *  through unchanged, so a parameter the API gains needs no new setting here; `query` is the
+   *  one field a config cannot replace. Defaults to `{"types": ["observation"], "budget": "low",
+   *  "max_tokens": 2000, "include": {"entities": null}}`.
+   *
+   *  A bank with consolidation disabled never grows observations, and the default recall comes
+   *  back empty on it: those set `{"types": ["world", "experience"]}`, or `{"types": null}` for
+   *  every type. */
+  recallOptions?: Record<string, unknown>;
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -239,8 +240,7 @@ export interface Config {
   reflectBudget: "low" | "mid" | "high";
   autoInject: AutoInject;
   pageSearchLimit: number;
-  recallMaxTokens: number;
-  recallTypes: string[];
+  recallOptions: Record<string, unknown>;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -417,12 +417,14 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     reflectBudget: resolveReflectBudget(raw),
     autoInject: resolveAutoInject(raw),
     pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
-    recallMaxTokens: raw.recallMaxTokens || DEFAULT_RECALL_MAX_TOKENS,
-    // Same shape as retainTags: a config typo must not reach the API as a fact type and fail the
-    // recall. An explicit empty list survives — that is the "every type" setting.
-    recallTypes: Array.isArray(raw.recallTypes)
-      ? raw.recallTypes.filter((t): t is string => typeof t === "string" && t.trim() !== "")
-      : [...DEFAULT_RECALL_TYPES],
+    // Same shape as retainMetadata: an object, or nothing. An array would spread into numeric
+    // keys and reach the API as garbage, so it is rejected like any other non-object.
+    recallOptions:
+      raw.recallOptions &&
+      typeof raw.recallOptions === "object" &&
+      !Array.isArray(raw.recallOptions)
+        ? { ...raw.recallOptions }
+        : {},
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
@@ -502,7 +504,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * containers, CI, and secret managers that inject `HINDSIGHT_API_TOKEN` rather than writing a
  * credential to disk.
  *
- * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata) are deliberately
+ * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */
@@ -532,9 +534,6 @@ const ENV_KEYS = {
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
-  recallMaxTokens: "HINDSIGHT_RECALL_MAX_TOKENS",
-  // Comma-separated, e.g. HINDSIGHT_RECALL_TYPES="world,experience".
-  recallTypes: "HINDSIGHT_RECALL_TYPES",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -570,7 +569,7 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "autoUpdate",
   "manageBankConfig",
 ]);
-const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths", "recallTypes"]);
+const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
   "apiPort",
   "daemonIdleTimeout",
@@ -578,7 +577,6 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
   "pageSearchLimit",
-  "recallMaxTokens",
   "pageRefreshEveryTurns",
   "seedLimit",
   "surveyBudgetUsd",

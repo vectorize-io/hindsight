@@ -585,7 +585,7 @@ describe("HindsightClient.reflect failures", () => {
 });
 
 describe("HindsightClient.recallObservations", () => {
-  it("asks for the client's recallTypes, and for every type when the list is empty", async () => {
+  it("merges recallOptions key-by-key over the defaults, leaving untouched keys alone", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: "only" }] })
     );
@@ -594,33 +594,49 @@ describe("HindsightClient.recallObservations", () => {
     await new HindsightClient({
       apiUrl: "http://x",
       bank: "b",
-      recallTypes: ["world", "experience"],
+      recallOptions: { types: ["world", "experience"], max_tokens: 250, tags: ["t"] },
     }).recallObservations("goal", { timeoutMs: 5_000 });
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).types).toEqual([
-      "world",
-      "experience",
-    ]);
 
-    // Empty list: the field is omitted, which is how the API is told "every fact type".
-    await new HindsightClient({
-      apiUrl: "http://x",
-      bank: "b",
-      recallTypes: [],
-    }).recallObservations("goal", { timeoutMs: 5_000 });
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).not.toHaveProperty("types");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      query: "goal",
+      types: ["world", "experience"],
+      max_tokens: 250,
+      // An option the client knows nothing about rides along untouched — the point of the object.
+      tags: ["t"],
+      // Not overridden, so the defaults stand.
+      budget: "low",
+      include: { entities: null },
+    });
   });
 
-  it("sends the client's recallMaxTokens, so one setting drives every recall", async () => {
+  it("asks for every fact type when recallOptions sets types to null", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: "only" }] })
     );
     vi.stubGlobal("fetch", fetchMock);
-    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", recallMaxTokens: 250 });
 
-    await client.recallObservations("goal", { timeoutMs: 5_000 });
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { types: null },
+    }).recallObservations("goal", { timeoutMs: 5_000 });
 
-    const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(String(init?.body)).max_tokens).toBe(250);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).types).toBeNull();
+  });
+
+  it("never lets recallOptions replace the query — the goal is not configurable", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { results: [{ text: "only" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { query: "a fixed string" },
+    }).recallObservations("the real goal", { timeoutMs: 5_000 });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).query).toBe("the real goal");
   });
 
   it("recalls only observations, low budget, no entities, and returns their texts in order", async () => {

@@ -113,8 +113,8 @@ async function injectPages(
   return undefined;
 }
 
-/** Raw recall over the bank (which types is the client's `recallTypes`), formatted for injection;
- *  same contract as `injectPages`. */
+/** Raw recall over the bank (what it asks for is the client's `recallOptions`), formatted for
+ *  injection; same contract as `injectPages`. */
 async function injectRecall(
   harness: string,
   prompt: string,
@@ -125,7 +125,7 @@ async function injectRecall(
 ): Promise<string | undefined> {
   const t0 = Date.now();
   try {
-    // The token budget is the client's `recallMaxTokens`, the types its `recallTypes`.
+    // What is asked for — types, token budget, everything — is the client's `recallOptions`.
     const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
     if (observations.length) return formatRecallFallback(observations, lead);
@@ -393,8 +393,7 @@ export async function runHook(
     maxParallelRetains: cfg.maxParallelRetains,
     observationScopes: cfg.observationScopes,
     pageSearchLimit: cfg.pageSearchLimit,
-    recallMaxTokens: cfg.recallMaxTokens,
-    recallTypes: cfg.recallTypes,
+    recallOptions: cfg.recallOptions,
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 

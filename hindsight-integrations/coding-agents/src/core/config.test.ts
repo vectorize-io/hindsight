@@ -290,31 +290,28 @@ describe("environment fallback", () => {
     expect(applyBankConfig(base, "other").cfg.autoInject).toBe("pages");
   });
 
-  it("recallTypes: observation by default, widenable, and a typo cannot reach the API", () => {
-    expect(resolveConfig({}).recallTypes).toEqual(["observation"]);
-    expect(resolveConfig({ recallTypes: ["world", "experience"] }).recallTypes).toEqual([
-      "world",
-      "experience",
-    ]);
-    // An explicit empty list is the "every type" setting, NOT a fall back to the default.
-    expect(resolveConfig({ recallTypes: [] }).recallTypes).toEqual([]);
-    expect(resolveConfig({ recallTypes: [" ", 7] as never }).recallTypes).toEqual([]);
-    writeJson(globalCfg, {});
-    process.env.HINDSIGHT_RECALL_TYPES = "world,experience";
-    expect(loadConfig({ path: globalCfg }).recallTypes).toEqual(["world", "experience"]);
+  it("recallOptions: empty by default, passed through verbatim, non-objects rejected", () => {
+    // Empty at this layer — the DEFAULTS live on the client, so config states only overrides.
+    expect(resolveConfig({}).recallOptions).toEqual({});
+    expect(resolveConfig({ recallOptions: { types: null, max_tokens: 9 } }).recallOptions).toEqual({
+      types: null,
+      max_tokens: 9,
+    });
+    // An array would spread into numeric keys and reach the API as garbage.
+    expect(resolveConfig({ recallOptions: ["types"] as never }).recallOptions).toEqual({});
+    expect(resolveConfig({ recallOptions: "types" as never }).recallOptions).toEqual({});
+    // File-only, like retainMetadata: an object does not flatten into an env var.
+    expect(resolveConfig({ recallOptions: { a: 1 } }).recallOptions).not.toBe(
+      resolveConfig({ recallOptions: { a: 1 } }).recallOptions
+    );
   });
 
-  it("pageSearchLimit / recallMaxTokens: defaults, overrides and env fallbacks", () => {
+  it("pageSearchLimit: default, override and env fallback", () => {
     expect(resolveConfig({}).pageSearchLimit).toBe(3);
-    expect(resolveConfig({}).recallMaxTokens).toBe(2000);
     expect(resolveConfig({ pageSearchLimit: 8 }).pageSearchLimit).toBe(8);
-    expect(resolveConfig({ recallMaxTokens: 500 }).recallMaxTokens).toBe(500);
     writeJson(globalCfg, {});
     process.env.HINDSIGHT_PAGE_SEARCH_LIMIT = "6";
-    process.env.HINDSIGHT_RECALL_MAX_TOKENS = "4000";
-    const cfg = loadConfig({ path: globalCfg });
-    expect(cfg.pageSearchLimit).toBe(6);
-    expect(cfg.recallMaxTokens).toBe(4000);
+    expect(loadConfig({ path: globalCfg }).pageSearchLimit).toBe(6);
   });
 
   it("autoReflect is deprecated: still honoured, but warns only when set", () => {

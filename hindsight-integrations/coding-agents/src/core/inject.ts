@@ -56,7 +56,7 @@ export function formatPageFallback(
   );
 }
 
-// Deliberately says "memories", not "observations": `recallTypes` decides what comes back, so a
+// Deliberately says "memories", not "observations": `recallOptions` decides what comes back, so a
 // bank that recalls world/experience facts would otherwise be told they are consolidated
 // observations — a claim about provenance that the injected block has no business guessing at.
 const RECALL_FALLBACK_LEAD =
@@ -65,7 +65,7 @@ const RECALL_FALLBACK_LEAD =
 export const RECALL_INJECT_LEAD =
   "(These memories were recalled from the bank for the goal, unsynthesized.)";
 
-/** The memory body injected from a raw recall over the bank (`recallTypes`): after a failed
+/** The memory body injected from a raw recall over the bank (`recallOptions`): after a failed
  *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
 export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
   return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");

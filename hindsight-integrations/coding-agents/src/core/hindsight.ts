@@ -111,10 +111,9 @@ export interface ClientOpts {
   /** Pages one knowledge-page search returns. Default `DEFAULT_PAGE_SEARCH_LIMIT`. Lives on the
    *  client so every caller — the hook's injection and the MCP tool — shares one value. */
   pageSearchLimit?: number;
-  /** Token budget for one observation recall. Default `DEFAULT_RECALL_MAX_TOKENS`. */
-  recallMaxTokens?: number;
-  /** Fact types one recall asks for. Default `DEFAULT_RECALL_TYPES`; `[]` means every type. */
-  recallTypes?: string[];
+  /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
+   *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
+  recallOptions?: Record<string, unknown>;
   /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
    *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
    *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
@@ -205,14 +204,21 @@ export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
 /** Knowledge pages returned by one search — the hook's injection and the agent-facing
  *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both. */
 export const DEFAULT_PAGE_SEARCH_LIMIT = 3;
-/** Token budget for one observation recall (the `autoInject: "recall"` source and the reflect
- *  fallback). Big enough for a handful of observations, small enough to stay inside a hook. */
-export const DEFAULT_RECALL_MAX_TOKENS = 2000;
-/** Fact types one recall asks for. Observations are the consolidated layer, so they are the best
- *  answer per token — but a bank whose consolidation is off never grows any, and recalling only
- *  observations there returns nothing. Such a bank sets `["world", "experience"]`, or `[]` for
- *  every type (the API recalls all types when `types` is omitted). */
-export const DEFAULT_RECALL_TYPES = ["observation"];
+/**
+ * The recall body this client sends when `recallOptions` overrides nothing — one object rather
+ * than a field per parameter, so a new recall parameter needs no plumbing here.
+ *
+ * Observations are the consolidated layer, so they are the best answer per token; a bank whose
+ * consolidation is off never grows any, and recalling only observations there returns nothing.
+ * Such a bank sets `{"types": ["world", "experience"]}`, or `{"types": null}` for every type.
+ * The budget stays low and entities are excluded because this runs inside a hook window.
+ */
+export const DEFAULT_RECALL_OPTIONS: Record<string, unknown> = {
+  types: ["observation"],
+  budget: "low",
+  max_tokens: 2000,
+  include: { entities: null },
+};
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
@@ -248,8 +254,7 @@ export class HindsightClient {
   readonly maxParallelRetains: number;
   readonly observationScopes: ObservationScopes;
   readonly pageSearchLimit: number;
-  readonly recallMaxTokens: number;
-  readonly recallTypes: string[];
+  readonly recallOptions: Record<string, unknown>;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
@@ -261,10 +266,10 @@ export class HindsightClient {
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
     this.pageSearchLimit = o.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT;
-    this.recallMaxTokens = o.recallMaxTokens || DEFAULT_RECALL_MAX_TOKENS;
-    // Copied, not aliased: the default is a module-level array, and handing every client the same
-    // reference makes one caller's mutation everyone's.
-    this.recallTypes = o.recallTypes ?? [...DEFAULT_RECALL_TYPES];
+    // Merged once here, not per call, and copied rather than aliased: the default is a
+    // module-level object, and handing every client the same reference makes one caller's
+    // mutation everyone's.
+    this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
   }
 
   /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
@@ -600,26 +605,21 @@ export class HindsightClient {
 
   /**
    * Raw recall with no LLM in the loop, so it still answers when reflect's synthesis times out or
-   * 5xxs. Restricted to `recallTypes` (consolidated observations by default) — a bank that grows
+   * 5xxs. The body is `recallOptions` (consolidated observations by default) — a bank that grows
    * no observations widens it rather than getting nothing back. Returns the texts in rank order.
    *
-   * The name predates `recallTypes` (the observation type used to be hardcoded here) and is kept
-   * deliberately: this is the client's published surface, so renaming it would break importers
-   * for a cosmetic gain. The doc above is the contract, not the name.
+   * The name predates `recallOptions` (the observation type used to be hardcoded here) and is
+   * kept deliberately: this is the client's published surface, so renaming it would break
+   * importers for a cosmetic gain. The doc above is the contract, not the name.
    */
   async recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]> {
     const r = await this.req(
       "POST",
       this.bankUrl("/memories/recall"),
-      {
-        query,
-        // Omitted entirely when empty: the API recalls every fact type when `types` is absent,
-        // which is what an empty list is asking for.
-        types: this.recallTypes.length ? this.recallTypes : undefined,
-        budget: "low",
-        max_tokens: this.recallMaxTokens,
-        include: { entities: null },
-      },
+      // `query` is applied AFTER the spread: everything else is the caller's to override, but a
+      // config that could replace the goal with a fixed string would silently recall for the
+      // wrong question on every turn.
+      { ...this.recallOptions, query },
       [],
       opts.timeoutMs
     );
