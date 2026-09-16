@@ -234,12 +234,14 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
   const packageDir = join(root, "package");
   const workDir = join(root, "workspace");
   const resultDir = join(root, "results");
+  const diagnosticsPath = join(resultDir, "diagnostics.jsonl");
   const configPath = join(root, "hindsight-config.json");
   const bankId = `e2e-${harness.name}-${basename(root)}`.replace(/[^a-zA-Z0-9:_-]/g, "-");
   let stub: StubModel | undefined;
 
   try {
     run("mkdir", ["-p", packageDir, workDir, resultDir]);
+    writeFileSync(diagnosticsPath, "", { mode: 0o600 });
     const tarball = packageTarball(packageDir);
     run("git", ["init", "-q"], { cwd: workDir });
     writeFileSync(join(workDir, "README.md"), "# Hindsight harness E2E fixture\n");
@@ -348,7 +350,6 @@ export async function runHarnessE2e(harness: HarnessDockerSetup): Promise<E2eRun
       );
     }
     const outputPath = join(resultDir, "last-message.txt");
-    const diagnosticsPath = join(resultDir, "diagnostics.jsonl");
     const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : result.stdout;
     const diagnostics = existsSync(diagnosticsPath) ? readFileSync(diagnosticsPath, "utf8") : "";
     return {
