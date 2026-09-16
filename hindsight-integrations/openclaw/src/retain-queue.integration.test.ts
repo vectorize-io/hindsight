@@ -91,6 +91,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 interface FakeServer {
   /** Bodies of every retain POST that reached the server. */
   retainBodies: Array<Record<string, unknown>>;
+  /** URLs of those same POSTs — the bank id is in the path, so this is the routing. */
+  retainUrls: string[];
   /** How many `/version` probes have been answered (or refused). */
   versionRequests: () => number;
   /** "unknown" makes the probe throw, mimicking an unreachable /version. */
@@ -110,6 +112,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
   let resolveDeferred: ((response: Response) => void) | undefined;
   let notifyDeferredStarted: (() => void) | undefined;
   const retainBodies: Array<Record<string, unknown>> = [];
+  const retainUrls: string[] = [];
 
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -140,6 +143,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
     if (request.method === "POST" && request.url.includes("/memories")) {
       const body = JSON.parse(await request.clone().text()) as Record<string, unknown>;
       retainBodies.push(body);
+      retainUrls.push(request.url);
       // Record the body first: a lost acknowledgement is a request the server
       // *did* process, which is the case operation_id has to cover.
       if (retainFailures > 0) {
@@ -163,6 +167,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
 
   return {
     retainBodies,
+    retainUrls,
     versionRequests: () => versionRequests,
     setCapability: (next) => {
       capability = next;
@@ -472,6 +477,76 @@ describe("session_end flushes the un-retained tail (#4341)", () => {
     );
 
     expect(server.retainBodies).toHaveLength(0);
+    await service.stop();
+  });
+});
+
+// The bank id lives in the retain URL, so these pin the routing itself rather than
+// deriveBankId's return value — what would break is a call site reaching the client
+// without consulting the map. (#3890)
+describe("agentBankMap routes retains to the mapped bank", () => {
+  const ctxFor = (agentId: string, session: string) =>
+    ({
+      agentId,
+      sessionKey: `agent:${agentId}:discord:direct:${session}`,
+      messageProvider: "discord",
+      channelId: `direct:${session}`,
+      senderId: `user-${session}`,
+    }) as PluginHookAgentContext;
+
+  const oneTurn = (text: string) => ({
+    success: true,
+    messages: [
+      { role: "user", content: text },
+      { role: "assistant", content: "Noted." },
+    ],
+  });
+
+  it("sends mapped agents to one shared bank and leaves an unmapped one derived", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+    const api = makeApi(queuePath, 1_000, {
+      dynamicBankId: true,
+      bankId: undefined,
+      dynamicBankGranularity: ["agent", "channel", "user"],
+      agentBankMap: { inbound: "ps-technology", outbound: "ps-technology" },
+    });
+    const service = api.service();
+    await service.start();
+
+    await api.agentEnd()(oneTurn("Postgres 16 in production."), ctxFor("inbound", "s1"));
+    await api.agentEnd()(oneTurn("Campaigns ship on Tuesday."), ctxFor("outbound", "s2"));
+    await api.agentEnd()(oneTurn("This agent is not in the map."), ctxFor("stranger", "s3"));
+
+    expect(server.retainUrls).toHaveLength(3);
+    // Two different agents, one named bank.
+    expect(server.retainUrls[0]).toContain("/banks/ps-technology/");
+    expect(server.retainUrls[1]).toContain("/banks/ps-technology/");
+    // The unmapped agent keeps the bank it would have derived anyway.
+    expect(server.retainUrls[2]).toContain("stranger");
+    expect(server.retainUrls[2]).not.toContain("ps-technology");
+
+    await service.stop();
+  });
+
+  it("overrides a static bank for mapped agents only", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+    // The harness config is dynamicBankId:false — without the map every agent
+    // would share `integration-bank`.
+    const api = makeApi(queuePath, 1_000, {
+      agentBankMap: { limpieza: "ps-limpieza" },
+    });
+    const service = api.service();
+    await service.start();
+
+    await api.agentEnd()(oneTurn("The crew starts at 06:00."), ctxFor("limpieza", "s1"));
+    await api.agentEnd()(oneTurn("Anything else."), ctxFor("other", "s2"));
+
+    expect(server.retainUrls).toHaveLength(2);
+    expect(server.retainUrls[0]).toContain("/banks/ps-limpieza/");
+    expect(server.retainUrls[1]).toContain("/banks/integration-bank/");
+
     await service.stop();
   });
 });

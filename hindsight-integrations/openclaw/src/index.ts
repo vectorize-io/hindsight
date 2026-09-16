@@ -622,7 +622,10 @@ if (typeof global !== "undefined") {
     ): Promise<BankScopedClient | null> => {
       if (!client) return null;
       const config = currentPluginConfig || {};
-      const bankId = usesStaticBank(config) ? getStaticBankId(config) : deriveBankId(ctx, config);
+      // deriveBankId already returns the static bank when dynamicBankId is false,
+      // so the branch that used to stand here was redundant — and it routed around
+      // the agentBankMap lookup for static configs. (#3890)
+      const bankId = deriveBankId(ctx, config);
       const scoped = scopeClient(client, bankId);
 
       // Stamp configured defaults onto this bank on first use (recall or retain).
@@ -662,6 +665,60 @@ function getConfiguredBankId(pluginConfig: PluginConfig): string | undefined {
 
 function usesStaticBank(pluginConfig: PluginConfig): boolean {
   return pluginConfig.dynamicBankId === false;
+}
+
+/**
+ * Normalise the optional `agentBankMap` (agentId -> bankId).
+ *
+ * The value comes from user-edited config, so an entry whose bank is not a
+ * non-empty string is dropped rather than trusted — an empty one would otherwise
+ * route that agent to a bank literally named "". A map left with no usable entry
+ * is treated as unset. (#3890)
+ */
+export function normalizeAgentBankMap(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+
+  const normalized: Record<string, string> = {};
+  const dropped: string[] = [];
+  for (const [agentId, bankId] of Object.entries(input as Record<string, unknown>)) {
+    const trimmedBank = typeof bankId === "string" ? bankId.trim() : "";
+    if (!agentId.trim() || !trimmedBank) {
+      dropped.push(agentId);
+      continue;
+    }
+    normalized[agentId] = trimmedBank;
+  }
+
+  // Silently dropped config keys have bitten this plugin before (#1443), so say so.
+  if (dropped.length > 0) {
+    log.warn(
+      `agentBankMap: ignoring ${dropped.length} entr${dropped.length === 1 ? "y" : "ies"} with a missing or blank bank id (${dropped.join(", ")})`
+    );
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+/**
+ * The bank an agent is explicitly mapped to, if any.
+ *
+ * `agentBankMap` exists so one gateway can mix topologies: several agents share a
+ * named bank while the rest keep their derived per-agent/channel/user banks
+ * (#3890). The mapped name is used exactly as configured — `bankIdPrefix` is
+ * deliberately not applied, because the operator named this bank themselves.
+ */
+function mappedBankIdForAgent(
+  ctx: PluginHookAgentContext | undefined,
+  pluginConfig: PluginConfig
+): string | undefined {
+  const map = pluginConfig.agentBankMap;
+  if (!map || !ctx) return undefined;
+
+  const resolvedCtx = resolveSessionIdentity(ctx);
+  const agentId =
+    resolvedCtx?.agentId ||
+    (resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey).agentId : undefined);
+  return agentId ? map[agentId] : undefined;
 }
 
 function getDefaultBankId(pluginConfig: PluginConfig): string {
@@ -1362,7 +1419,11 @@ export function getIdentitySkipReason(
     pluginConfig?.dynamicBankId === false &&
     typeof pluginConfig?.bankId === "string" &&
     pluginConfig.bankId.length > 0;
-  const allowCliSessions = agentBanking || staticBanking;
+  //   - the agent has an explicit agentBankMap entry → the operator named that
+  //     bank for this agent, so its sessions belong there too (#3890)
+  const mappedBanking =
+    pluginConfig !== undefined && mappedBankIdForAgent(resolvedCtx, pluginConfig) !== undefined;
+  const allowCliSessions = agentBanking || staticBanking || mappedBanking;
 
   if (typeof sessionKey === "string") {
     if (/^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
@@ -1449,6 +1510,15 @@ export function deriveBankId(
   ctx: PluginHookAgentContext | undefined,
   pluginConfig: PluginConfig
 ): string {
+  // An explicit agent -> bank mapping wins over both the static bank and dynamic
+  // derivation, so a gateway can give one group of agents a shared bank while the
+  // rest keep derived ones (#3890). Resolved only when a map is configured, so the
+  // common path is untouched.
+  const mappedBankId = mappedBankIdForAgent(ctx, pluginConfig);
+  if (mappedBankId) {
+    return mappedBankId;
+  }
+
   if (pluginConfig.dynamicBankId === false) {
     return getStaticBankId(pluginConfig);
   }
@@ -1526,15 +1596,22 @@ export function resolveBankIdForKnowledgeTools(
   toolCtx: PluginToolContext,
   pluginConfig: PluginConfig
 ): KnowledgeToolBankResolution {
-  if (usesStaticBank(pluginConfig)) {
-    return { bankId: getStaticBankId(pluginConfig), resolvedCtx: undefined };
-  }
-
   const hookCtx: PluginHookAgentContext = {
     agentId: toolCtx.agentId,
     sessionKey: toolCtx.sessionKey,
     workspaceDir: toolCtx.workspaceDir,
   };
+
+  // An explicitly mapped agent needs no identity resolution: its bank does not
+  // depend on the sender, so the user-scoped guards below must not reject it. (#3890)
+  const mappedBankId = mappedBankIdForAgent(hookCtx, pluginConfig);
+  if (mappedBankId) {
+    return { bankId: mappedBankId, resolvedCtx: undefined };
+  }
+
+  if (usesStaticBank(pluginConfig)) {
+    return { bankId: getStaticBankId(pluginConfig), resolvedCtx: undefined };
+  }
 
   const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
     sessionKey: toolCtx.sessionKey,
@@ -2043,6 +2120,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
         ? config.bankId.trim()
         : undefined,
     bankIdPrefix: config.bankIdPrefix,
+    agentBankMap: normalizeAgentBankMap(config.agentBankMap),
     retainTags: normalizeRetainTags(config.retainTags),
     retainSource:
       typeof config.retainSource === "string" && config.retainSource.trim().length > 0
