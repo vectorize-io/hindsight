@@ -1030,11 +1030,24 @@ class TestMoveRenameDelete:
         )
 
         assert resp.status_code == 400, resp.text
-        assert "name" not in resp.json() and "source_query" not in resp.json()
+        assert "Nothing to update" in resp.json()["detail"]
         # And the engine refuses the same no-op directly, before any bank access.
         with pytest.raises(ValueError, match="Nothing to update"):
             await memory.update_knowledge_node(bank_id=bank_id, node_id=ids.orders, request_context=request_context)
         assert validator.write_ops == []
+        assert validator.read_ops == []
+
+    async def test_update_with_a_real_field_and_null_page_options_still_applies(self, api_client, kb_bank):
+        # The tightening only removes the no-op case: a null page option next to
+        # a real change is still "leave that field alone", as before.
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Orders (renamed)", "tags": None, "source_query": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Orders (renamed)"
+        assert resp.json()["tags"] == ["type:runbook", "sales", "revenue"]
 
     async def test_move_into_folder(self, api_client, kb_bank):
         bank_id, ids = kb_bank

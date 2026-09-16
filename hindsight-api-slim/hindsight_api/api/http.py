@@ -7036,7 +7036,7 @@ def _register_routes(app: FastAPI):
             if body.name is None and "parent_id" not in body.model_fields_set and not page_fields:
                 raise HTTPException(
                     status_code=400,
-                    detail="Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update",
+                    detail="Nothing to update: provide name, parent_id, source_query, tags, max_tokens, and/or trigger",
                 )
             # One call, one transaction: a rename must not survive the move that
             # fails after it, which is what left clients retrying against a tree
