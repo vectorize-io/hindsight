@@ -44,6 +44,18 @@ def _usage_from_anthropic_response(response: Any) -> LLMResponseUsage:
 
 _EPHEMERAL_CACHE = {"type": "ephemeral"}
 
+# The Messages API *requires* ``max_tokens``, so there is no "uncapped" transport
+# option here the way there is on OpenAI/Gemini: when a caller passes no cap we
+# still have to send a number. 4096 (the old value) silently truncated long
+# completions whose caller deliberately left the cap open -- reflect's tool-call
+# loop cut off mid-``done`` payload and lost the answer field (#4437), the same
+# class of bug as #2668 on the consolidation path.
+# ponytail: one flat number instead of a per-model table. Every current Claude
+# model caps at 64K output or more; a model with a lower ceiling gets an explicit
+# 400 from the API (not a silent truncation) and the operator can set the
+# scope's max_completion_tokens config.
+_DEFAULT_MAX_TOKENS = 64000
+
 
 def _cached_system_blocks(system_prompt: str) -> list[dict[str, Any]]:
     """Render the system prompt as a block list with a cache_control marker.
@@ -310,7 +322,7 @@ class AnthropicLLM(LLMInterface):
         call_params: dict[str, Any] = {
             "model": self.model,
             "messages": anthropic_messages,
-            "max_tokens": max_completion_tokens if max_completion_tokens is not None else 4096,
+            "max_tokens": max_completion_tokens if max_completion_tokens is not None else _DEFAULT_MAX_TOKENS,
         }
 
         if system_prompt:
@@ -587,7 +599,7 @@ class AnthropicLLM(LLMInterface):
             "model": self.model,
             "messages": anthropic_messages,
             "tools": anthropic_tools,
-            "max_tokens": max_completion_tokens or 4096,
+            "max_tokens": max_completion_tokens or _DEFAULT_MAX_TOKENS,
         }
         if system_prompt:
             call_params["system"] = _cached_system_blocks(system_prompt)
@@ -714,7 +726,7 @@ class AnthropicLLM(LLMInterface):
 
         Mirrors the conversion rules of ``call()``: system messages fold into
         the ``system`` param; ``max_completion_tokens`` becomes ``max_tokens``
-        (default 4096); ``temperature`` is dropped (the sync path never sends
+        (default ``_DEFAULT_MAX_TOKENS``); ``temperature`` is dropped (the sync path never sends
         it either — current Claude models reject non-default sampling params);
         an OpenAI ``response_format`` json_schema becomes a single forced
         tool_use tool when strict (native constrained decoding, issue #1002),
@@ -739,7 +751,7 @@ class AnthropicLLM(LLMInterface):
         params: dict[str, Any] = {
             "model": body.get("model") or self.model,
             "messages": messages,
-            "max_tokens": body.get("max_completion_tokens") or 4096,
+            "max_tokens": body.get("max_completion_tokens") or _DEFAULT_MAX_TOKENS,
         }
 
         json_schema = (body.get("response_format") or {}).get("json_schema") or {}

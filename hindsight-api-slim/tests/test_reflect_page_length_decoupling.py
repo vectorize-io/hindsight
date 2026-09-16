@@ -149,6 +149,35 @@ async def test_forced_synthesis_uses_config_cap_when_set(monkeypatch):
         clear_config_cache()
 
 
+@pytest.mark.asyncio
+async def test_tool_call_loop_uses_config_cap(monkeypatch):
+    """The per-iteration loop gets the same cap as the synthesis calls (#4437).
+
+    Left unset it fell through to the provider's own default, which on Anthropic
+    is a fixed number (the Messages API requires ``max_tokens``) — truncating a
+    long ``done`` payload before the answer field was written.
+    """
+    monkeypatch.setenv("HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS", "12345")
+    clear_config_cache()
+    try:
+        llm = _mock_llm()
+        _stop_after_evidence(llm)
+        await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="q",
+            bank_profile=BANK,
+            has_mental_models=True,
+            budget="low",
+            max_tokens=64,
+            **_mock_functions(),
+        )
+        for call in llm.call_with_tools.await_args_list:
+            assert call.kwargs["max_completion_tokens"] == 12345
+    finally:
+        clear_config_cache()
+
+
 # --------------------------------------------------------------------------- #
 # Gemini surfaces MAX_TOKENS truncation instead of a silent success
 # --------------------------------------------------------------------------- #

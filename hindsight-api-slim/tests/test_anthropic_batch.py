@@ -9,7 +9,7 @@ which bills all token usage at 50% of standard price.
 
 Translation rules mirror the provider's synchronous ``call()`` path:
 - system messages fold into the ``system`` param;
-- ``max_completion_tokens`` becomes ``max_tokens`` (default 4096);
+- ``max_completion_tokens`` becomes ``max_tokens`` (default ``_DEFAULT_MAX_TOKENS``);
 - ``temperature`` is dropped (the sync path never sends it either — current
   Claude models reject non-default sampling params);
 - ``response_format`` with ``strict=True`` becomes a single forced tool_use
@@ -141,6 +141,24 @@ async def test_submit_batch_translates_openai_requests():
     assert metadata["batch_id"] == "msgbatch_test1"
     assert metadata["status"] == "in_progress"
     assert metadata["request_count"] == 2
+
+
+async def test_uncapped_request_gets_the_headroom_default():
+    """No caller cap → the shared default, not a value that truncates long output.
+
+    The Messages API requires ``max_tokens``, so "uncapped" still has to send a
+    number; it must be one with headroom for a full completion (#4437).
+    """
+    from hindsight_api.engine.providers.anthropic_llm import _DEFAULT_MAX_TOKENS
+
+    provider = _make_provider()
+    request = _openai_request("chunk_0")
+    del request["body"]["max_completion_tokens"]
+
+    params = provider._translate_batch_body(request["body"])
+
+    assert params["max_tokens"] == _DEFAULT_MAX_TOKENS
+    assert _DEFAULT_MAX_TOKENS >= 64000
 
 
 async def test_submit_batch_non_strict_schema_injects_into_system():
