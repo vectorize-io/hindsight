@@ -589,9 +589,11 @@ class OperationValidatorExtension(Extension, ABC):
         - retain, recall, reflect (core memory operations)
         - consolidate (mental models consolidation)
 
-    Validators are not given an ExtensionContext: ``self.context`` raises. Everything a
-    hook needs is on its argument (``ctx.bank_id``, ``ctx.request_context``). Take the
-    tenant from those, never from shared engine state, which is not per-request.
+    ``self.context`` is the process-wide ExtensionContext, set by the engine at
+    construction: use it for process-global handles, e.g. ``get_memory_engine()`` for the
+    data-plane pool. It carries NO per-request state -- take the tenant and bank from the
+    hook's own argument (``ctx.bank_id``, ``ctx.request_context``), never from the context
+    or other shared engine state.
     """
 
     # =========================================================================

@@ -2682,6 +2682,18 @@ class MemoryEngine(MemoryEngineInterface):
             webhook_manager=None,
         )
 
+        # One context for every extension the engine owns. The tenant extension and the
+        # operation validator are constructed BEFORE the engine and handed to __init__, so
+        # load_extension() never got to set a context on them -- without this, a validator
+        # hook reaching context.get_memory_engine() raises "Extension context not set".
+        # Safe to share: the context holds only process-global handles (db url, engine,
+        # webhook manager) and no per-request state. getattr rather than a bare call
+        # because tests hand in duck-typed extensions that are not Extension subclasses.
+        for _ext in (self._tenant_extension, self._operation_validator):
+            _set_context = getattr(_ext, "set_context", None)
+            if _set_context is not None:
+                _set_context(self._ext_ctx)
+
         loaded = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension, context=self._ext_ctx)
         if loaded is not None:
             self._memory_defense: MemoryDefenseExtension = loaded

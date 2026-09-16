@@ -45,7 +45,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from hindsight_api import MemoryEngine
 from hindsight_api.api import create_app
 from hindsight_api.extensions import (
-    DefaultExtensionContext,
     OperationValidatorExtension,
     TenantExtension,
     load_extension,
@@ -74,14 +73,9 @@ _memory = MemoryEngine(
     run_migrations=config.run_migrations_on_startup,
 )
 
-# Set extension context on tenant extension (needed for schema provisioning)
-if tenant_extension:
-    extension_context = DefaultExtensionContext(
-        database_url=config.database_url,
-        memory_engine=_memory,
-    )
-    tenant_extension.set_context(extension_context)
-    logging.info("Extension context set on tenant extension")
+# The extension context is set by MemoryEngine.__init__ on every extension it owns (tenant
+# extension, operation validator), from the same context it gives the memory defense
+# extension -- there is one per process, not one per construction site.
 
 # Create unified app with both HTTP and optionally MCP
 app = create_app(

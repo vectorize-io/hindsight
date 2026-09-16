@@ -59,7 +59,6 @@ from .daemon import (
 _LAZY_IMPORTS: "dict[str, tuple[str, str]]" = {
     "MemoryEngine": (".", "MemoryEngine"),
     "create_app": (".api", "create_app"),
-    "DefaultExtensionContext": (".extensions", "DefaultExtensionContext"),
     "OperationValidatorExtension": (".extensions", "OperationValidatorExtension"),
     "TenantExtension": (".extensions", "TenantExtension"),
     "load_extension": (".extensions", "load_extension"),
@@ -362,7 +361,6 @@ def main():
     load_extension = _this.load_extension
     OperationValidatorExtension = _this.OperationValidatorExtension
     TenantExtension = _this.TenantExtension
-    DefaultExtensionContext = _this.DefaultExtensionContext
 
     # Load operation validator extension if configured
     operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
@@ -404,14 +402,9 @@ def main():
             run_migrations=config.run_migrations_on_startup,
         )
 
-        # Set extension context on tenant extension (needed for schema provisioning)
-        if tenant_extension:
-            extension_context = DefaultExtensionContext(
-                database_url=config.database_url,
-                memory_engine=_memory,
-            )
-            tenant_extension.set_context(extension_context)
-            logging.info("Extension context set on tenant extension")
+        # The extension context is set by MemoryEngine.__init__ on every extension it owns
+        # (tenant extension, operation validator), from the same context it gives the memory
+        # defense extension -- there is one per process, not one per construction site.
 
         # Create FastAPI app
         app = create_app(

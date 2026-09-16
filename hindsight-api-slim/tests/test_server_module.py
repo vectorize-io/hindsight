@@ -58,7 +58,6 @@ class TestServerModuleExtensionLoading:
             patch("hindsight_api.api.create_app") as mock_create_app,
             patch("hindsight_api.config.get_config") as mock_get_config,
             patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension),
-            patch("hindsight_api.extensions.DefaultExtensionContext"),
         ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
@@ -107,7 +106,6 @@ class TestServerModuleExtensionLoading:
             patch("hindsight_api.api.create_app") as mock_create_app,
             patch("hindsight_api.config.get_config") as mock_get_config,
             patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension),
-            patch("hindsight_api.extensions.DefaultExtensionContext"),
         ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
@@ -149,7 +147,6 @@ class TestServerModuleExtensionLoading:
             patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
             patch("hindsight_api.api.create_app") as mock_create_app,
             patch("hindsight_api.config.get_config") as mock_get_config,
-            patch("hindsight_api.extensions.DefaultExtensionContext"),
         ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
@@ -170,51 +167,6 @@ class TestServerModuleExtensionLoading:
         assert call_kwargs["tenant_extension"] is not None, (
             "tenant_extension was None - server.py did not pass loaded extension to MemoryEngine!"
         )
-
-    def test_server_sets_extension_context_on_tenant_extension(self, monkeypatch):
-        """
-        Verify that server.py sets the extension context on tenant extension.
-
-        This is required for tenant extensions that need to provision schemas.
-        """
-        monkeypatch.setenv(
-            "HINDSIGHT_API_TENANT_EXTENSION",
-            "tests.test_server_module:MockTenantExtension",
-        )
-
-        _clean_server_module()
-
-        context_set_calls = []
-        captured_tenant_ext = [None]
-
-        def capture_memory_engine(*args, **kwargs):
-            captured_tenant_ext[0] = kwargs.get("tenant_extension")
-            return MagicMock()
-
-        def capture_context(*args, **kwargs):
-            ctx = MagicMock()
-            context_set_calls.append(ctx)
-            return ctx
-
-        with (
-            patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
-            patch("hindsight_api.api.create_app") as mock_create_app,
-            patch("hindsight_api.config.get_config") as mock_get_config,
-            patch("hindsight_api.extensions.DefaultExtensionContext", side_effect=capture_context),
-        ):
-            mock_config = MagicMock()
-            mock_config.mcp_enabled = False
-            mock_config.run_migrations_on_startup = False
-            mock_config.database_url = "postgresql://test:test@localhost/test"
-            mock_get_config.return_value = mock_config
-            mock_create_app.return_value = MagicMock()
-
-            import hindsight_api.server
-
-        # Verify context was created and set
-        assert len(context_set_calls) == 1, "DefaultExtensionContext should be created"
-        assert captured_tenant_ext[0] is not None, "Tenant extension should be captured"
-        assert captured_tenant_ext[0]._context_set, "set_context was not called on tenant extension"
 
     def test_server_works_without_extensions(self, monkeypatch):
         """
@@ -271,10 +223,6 @@ from hindsight_api.extensions import (
 class MockTenantExtension(TenantExtension):
     """Mock tenant extension for testing server.py extension loading."""
 
-    def __init__(self, config: dict):
-        super().__init__(config)
-        self._context_set = False
-
     async def authenticate(self, request_context: RequestContext) -> TenantContext:
         return TenantContext(schema_name="public")
 
@@ -282,9 +230,6 @@ class MockTenantExtension(TenantExtension):
         from hindsight_api.extensions.tenant import Tenant
 
         return [Tenant(schema="public")]
-
-    def set_context(self, context) -> None:
-        self._context_set = True
 
 
 class MockOperationValidator(OperationValidatorExtension):
