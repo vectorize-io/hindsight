@@ -70,14 +70,14 @@ async def copy_bank(client) -> AsyncIterator[str]:
     await client.banks.delete_bank(bank)
 
 
-async def _restore(client, source: str, archive: bytes, target: str, **scope) -> dict:
+async def _restore(client, source: str, archive: bytes, target: str) -> dict:
     """Restore ``archive`` into ``target`` and wait for the operation to finish.
 
     The restore is a background operation — it re-embeds every fact — so the
     submit returns an id, not an outcome. Polling here rather than in the wrapper
     keeps the wrapper honest about that; the story wants the finished state.
     """
-    operation_id = await client.aimport_bank(source, archive, target_bank_id=target, **scope)
+    operation_id = await client.aimport_bank(source, archive, target_bank_id=target)
     deadline = asyncio.get_running_loop().time() + 60
     while True:
         status = await client.operations.get_operation_status(source, operation_id)
