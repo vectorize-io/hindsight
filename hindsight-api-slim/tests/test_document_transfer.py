@@ -2617,10 +2617,13 @@ async def test_transfer_endpoints_round_trip_a_bank(api_client, memory, request_
         )
         assert response.status_code == 202, response.text
 
-        recalled = await memory.recall_async(
-            bank_id=target, query="What does Ivan speak?", request_context=request_context
-        )
-        assert [r.text for r in recalled.results] == ["Ivan speaks Portuguese."]
+        # The copy holds exactly the source's facts. Comparing the two banks rather
+        # than naming the texts keeps the assertion total without pinning what the
+        # mock LLM happens to extract from the prompt it echoes back.
+        source_facts = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        target_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert sorted(u["text"] for u in target_facts["items"]) == sorted(u["text"] for u in source_facts["items"])
+        assert any(u["text"] == "Ivan speaks Portuguese." for u in target_facts["items"])
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
