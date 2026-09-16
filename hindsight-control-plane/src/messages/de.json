@@ -587,7 +587,9 @@
       "graphMaintenance": "Graph-Wartung",
       "vectorIndexMaintenance": "Wartung des Vektorindex",
       "exportDocuments": "Dokumente exportieren",
-      "importDocuments": "Dokumente importieren"
+      "importDocuments": "Dokumente importieren",
+      "exportBank": "Bank exportieren",
+      "importBank": "Bank importieren"
     },
     "table": {
       "id": "Vorgangs-ID",

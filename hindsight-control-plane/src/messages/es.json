@@ -587,7 +587,9 @@
       "graphMaintenance": "Mantenimiento del grafo",
       "vectorIndexMaintenance": "Mantenimiento del índice vectorial",
       "exportDocuments": "Exportar documentos",
-      "importDocuments": "Importar documentos"
+      "importDocuments": "Importar documentos",
+      "exportBank": "Exportar banco",
+      "importBank": "Importar banco"
     },
     "table": {
       "id": "ID de operación",

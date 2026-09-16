@@ -587,7 +587,9 @@
       "graphMaintenance": "图谱维护",
       "vectorIndexMaintenance": "向量索引维护",
       "exportDocuments": "导出文档",
-      "importDocuments": "导入文档"
+      "importDocuments": "导入文档",
+      "exportBank": "导出记忆库",
+      "importBank": "导入记忆库"
     },
     "table": {
       "id": "操作 ID",

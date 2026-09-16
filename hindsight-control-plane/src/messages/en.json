@@ -587,7 +587,9 @@
       "graphMaintenance": "Graph Maintenance",
       "vectorIndexMaintenance": "Vector index maintenance",
       "exportDocuments": "Export Documents",
-      "importDocuments": "Import Documents"
+      "importDocuments": "Import Documents",
+      "exportBank": "Export Bank",
+      "importBank": "Import Bank"
     },
     "table": {
       "id": "Operation ID",

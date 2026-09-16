@@ -587,7 +587,9 @@
       "graphMaintenance": "그래프 유지관리",
       "vectorIndexMaintenance": "벡터 인덱스 유지 관리",
       "exportDocuments": "문서 내보내기",
-      "importDocuments": "문서 가져오기"
+      "importDocuments": "문서 가져오기",
+      "exportBank": "뱅크 내보내기",
+      "importBank": "뱅크 가져오기"
     },
     "table": {
       "id": "작업 ID",

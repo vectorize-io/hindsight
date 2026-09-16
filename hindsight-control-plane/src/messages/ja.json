@@ -587,7 +587,9 @@
       "graphMaintenance": "グラフメンテナンス",
       "vectorIndexMaintenance": "ベクトルインデックスのメンテナンス",
       "exportDocuments": "ドキュメントのエクスポート",
-      "importDocuments": "ドキュメントのインポート"
+      "importDocuments": "ドキュメントのインポート",
+      "exportBank": "バンクのエクスポート",
+      "importBank": "バンクのインポート"
     },
     "table": {
       "id": "操作 ID",

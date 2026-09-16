@@ -23,6 +23,7 @@ So the assertions here are about separateness as much as fidelity.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
@@ -69,10 +70,21 @@ async def copy_bank(client) -> AsyncIterator[str]:
     await client.banks.delete_bank(bank)
 
 
-async def _restore(client, source: str, archive: bytes, target: str, **scope) -> None:
-    """Restore ``archive`` into ``target`` and wait for the operation to finish."""
+async def _restore(client, source: str, archive: bytes, target: str, **scope) -> dict:
+    """Restore ``archive`` into ``target`` and wait for the operation to finish.
+
+    The restore is a background operation — it re-embeds every fact — so the
+    submit returns an id, not an outcome. Polling here rather than in the wrapper
+    keeps the wrapper honest about that; the story wants the finished state.
+    """
     operation_id = await client.aimport_bank(source, archive, target_bank_id=target, **scope)
-    status = await client.operations.get_operation_status(source, operation_id)
+    deadline = asyncio.get_running_loop().time() + 60
+    while True:
+        status = await client.operations.get_operation_status(source, operation_id)
+        if status.status in ("completed", "failed", "cancelled"):
+            break
+        assert asyncio.get_running_loop().time() < deadline, f"restore did not finish: {status}"
+        await asyncio.sleep(0.1)
     assert status.status == "completed", status
     return status.result_metadata or {}
 
@@ -115,7 +127,13 @@ async def test_the_copy_and_the_original_evolve_apart(client, llm, source_bank, 
     await _restore(client, source_bank, archive, copy_bank)
     await settled(copy_bank)
 
+    # Reset first: rules are matched in registration order, so without this the
+    # fixture's extraction rule still answers and the retain below re-extracts the
+    # facts the copy already has — leaving the assertion to pass or fail for a
+    # reason that has nothing to do with the two banks being separate.
+    llm.reset()
     llm.on_step("extract_facts").returns(extracted(fact("Nadia bought a viola", who="Nadia", entities=["Nadia"])))
+    llm.on_step("consolidate").returns(consolidation())
     await client.aretain(bank_id=copy_bank, content="Nadia bought a viola.", document_id="d2")
     await settled(copy_bank)
 
