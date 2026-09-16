@@ -1086,6 +1086,13 @@ class EntityResolver:
         pg_trgm), so it is backend-agnostic — no DB round-trip on the retain hot path, and it runs
         identically on PostgreSQL, Oracle, and the pg_trgm-absent "full" fallback. Label entities
         are excluded so distinct label values stay separate (GH-1558).
+
+        A similar pair must also agree word by word (``_tokens_are_compatible``), the same second
+        gate the existing-entity path applies after its own trigram floor. Trigram similarity alone
+        lets a long shared word drown out a completely different short one, and "Dr John
+        Richardson" / "Dr Jane Richardson" is 0.65, comfortably over the 0.5 in-batch bar. Without
+        the word check two people who share a surname become one entity when they are named in the
+        same retain and stay two when they are not.
         """
         rep_by_lower: dict[str, str] = {}
         count_by_lower: dict[str, int] = {}
@@ -1106,7 +1113,11 @@ class EntityResolver:
                 _INTRABATCH_MAX_NAMES,
             )
             return {}
-        pairs = _find_intrabatch_similar_pairs(list(rep_by_lower.values()), self._intrabatch_merge_similarity)
+        pairs = [
+            pair
+            for pair in _find_intrabatch_similar_pairs(list(rep_by_lower.values()), self._intrabatch_merge_similarity)
+            if _tokens_are_compatible(pair.name_a.lower(), pair.name_b.lower())
+        ]
         if not pairs:
             return {}
         return _cluster_new_entity_names(rep_by_lower, count_by_lower, pairs)

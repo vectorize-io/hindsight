@@ -244,3 +244,65 @@ def test_single_word_names_are_exempt_from_word_level_agreement():
     reject real variants with no long shared word to hide behind."""
     assert _tokens_are_compatible("nick", "nicolas"), "0.55 by sequence ratio — under the word cutoff"
     assert _tokens_are_compatible("iran", "iraq"), "not compatible in truth, but not this rule's job"
+
+
+async def _resolve_new_names(names: list[str]) -> list[str]:
+    """Resolve several brand-new names arriving in ONE retain, and report the entity each got.
+
+    No candidates, so every name goes down the create path and the in-batch clustering pass is
+    what decides how many entities the batch ends up with. Only the connection and the INSERT are
+    doubles; the clustering itself is the real code.
+    """
+    resolver = _resolver({name.lower(): f"id-{name.lower()}" for name in names})
+    resolved = await resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=[{"text": name, "nearby_entities": [], "event_date": NOW} for name in names],
+        unit_event_date=NOW,
+        all_candidates=dict.fromkeys(names, []),
+        cooccurrence_map={},
+    )
+    return [entity.canonical_name for entity in resolved]
+
+
+@pytest.mark.asyncio
+async def test_a_different_given_name_is_not_absorbed_by_a_shared_surname_in_the_same_batch():
+    """The same rule as the existing-entity path above, on the path that runs before it.
+
+    In-batch clustering merged on trigram similarity alone, and one long shared word carries a
+    pair right over the 0.5 bar: "Dr John Richardson"/"Dr Jane Richardson" is 0.65. So two people
+    who share a surname were one entity when a single retain named them both and two entities when
+    separate retains did, which is the asymmetry #3107 set out to remove.
+    """
+    assert await _resolve_new_names(["Dr John Richardson", "Dr Jane Richardson"]) == [
+        "Dr John Richardson",
+        "Dr Jane Richardson",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_substituted_qualifier_does_not_collapse_two_records_in_the_same_batch():
+    """Not only people: "Q3 revenue report"/"Q4 revenue report" is 0.78 by trigram, and the one
+    word that distinguishes them is the short one."""
+    assert await _resolve_new_names(["Q3 revenue report", "Q4 revenue report"]) == [
+        "Q3 revenue report",
+        "Q4 revenue report",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_same_batch_surface_variants_of_one_name_still_collapse():
+    """The word check gates substitutions; it is not a tightening of in-batch dedup. Every
+    multi-word variant #3107 exists to collapse agrees word by word and still reaches one entity.
+    """
+    assert await _resolve_new_names(["Dr Wall", "Dr Waler"]) == ["Dr Wall", "Dr Wall"], "typo"
+    assert await _resolve_new_names(["Microsoft Corp", "Microsoft Corporation"]) == [
+        "Microsoft Corp",
+        "Microsoft Corp",
+    ], "abbreviation, via prefix"
+    assert await _resolve_new_names(["Ann Arbor", "Ann Arbour"]) == ["Ann Arbor", "Ann Arbor"], "spelling"
+    assert await _resolve_new_names(["Jean-Luc Picard", "Jean Luc Picard"]) == [
+        "Jean Luc Picard",
+        "Jean Luc Picard",
+    ], "separator"
+    assert await _resolve_new_names(["Aster", "aster 0"]) == ["Aster", "Aster"], "single word, decorated"
