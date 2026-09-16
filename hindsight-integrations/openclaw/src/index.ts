@@ -132,6 +132,9 @@ const MIN_VERSION_FOR_ASYNC_RETAIN_OPERATION_ID = "0.8.6";
 let currentPluginConfig: PluginConfig | null = null;
 let serviceGeneration = 0;
 let serviceAbortController: AbortController | null = null;
+// External-API hooks can lazy-initialize before the first service.start(). Keep
+// that recall-only lifetime cancellable without enabling pre-start retention.
+const preServiceRecallController = new AbortController();
 
 // Track which banks have had configured defaults applied (missions + bank config).
 const banksWithDefaultsApplied = new Set<string>();
@@ -161,7 +164,8 @@ export interface BankScopedClient {
       preferObservations?: boolean;
       minScores?: MinScores;
     },
-    timeoutMs?: number
+    timeoutMs?: number,
+    signal?: globalThis.AbortSignal
   ): Promise<RecallResponse>;
   setMissions(opts: BankMissionsUpdate): Promise<void>;
 }
@@ -187,18 +191,23 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
         ...(capability === "supported" && req.operationId ? { operationId: req.operationId } : {}),
       });
     },
-    async recall(req, timeoutMs) {
-      const controller = new AbortController();
-      const signal = controller.signal;
+    async recall(req, timeoutMs, signal) {
+      signal?.throwIfAborted();
+      // Two independent reasons to stop: the caller's service-owned signal (stop
+      // or restart) and this call's own deadline. Compose them so the transport is
+      // cancelled by whichever fires first, while the reason the caller classifies
+      // on survives — a TimeoutError for the deadline, an AbortError for a stop.
+      const deadline = new AbortController();
+      const effective = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
       let onAbort!: () => void;
       const cancelled = new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason);
-        signal.addEventListener("abort", onAbort, { once: true });
+        onAbort = () => reject(effective.reason);
+        effective.addEventListener("abort", onAbort, { once: true });
       });
       const timer = timeoutMs
         ? setTimeout(
             () =>
-              controller.abort(
+              deadline.abort(
                 new DOMException(`Recall timed out after ${timeoutMs}ms`, "TimeoutError")
               ),
             timeoutMs
@@ -206,7 +215,7 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
         : undefined;
       try {
         // A race alone only stopped the hook's wait. Forward cancellation to the
-        // client too, so its HTTP request receives the deadline.
+        // client too, so its HTTP request receives the deadline and service stops.
         //
         // The race stays as a backstop for a transport that ignores the signal,
         // which is not hypothetical: from client 0.10.x recall routes through
@@ -219,15 +228,15 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
             types: req.types,
             preferObservations: req.preferObservations,
             minScores: req.minScores,
-            signal,
+            signal: effective,
           }),
           cancelled,
         ]);
-        signal.throwIfAborted();
+        effective.throwIfAborted();
         return response;
       } finally {
         clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
+        effective.removeEventListener("abort", onAbort);
       }
     },
     async setMissions(opts) {
@@ -2293,7 +2302,9 @@ export default function (api: MoltbotPluginAPI) {
     api.registerService({
       id: "hindsight-memory",
       async start() {
+        preServiceRecallController.abort();
         serviceAbortController?.abort();
+        inflightRecalls.clear();
         const serviceController = new AbortController();
         serviceAbortController = serviceController;
         const startGeneration = ++serviceGeneration;
@@ -2573,8 +2584,10 @@ export default function (api: MoltbotPluginAPI) {
       async stop() {
         try {
           serviceGeneration++;
+          preServiceRecallController.abort();
           serviceAbortController?.abort();
           serviceAbortController = null;
+          inflightRecalls.clear();
           debug("[Hindsight] Service stopping...");
 
           // Only stop daemon if in local mode
@@ -2683,6 +2696,15 @@ export default function (api: MoltbotPluginAPI) {
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on("before_prompt_build", async (event: any, ctx?: PluginHookAgentContext) => {
+      const recallGeneration = serviceGeneration;
+      const recallController =
+        serviceAbortController ?? (recallGeneration === 0 ? preServiceRecallController : null);
+      const isCurrentRecall = () =>
+        recallController !== null &&
+        (serviceAbortController ?? preServiceRecallController) === recallController &&
+        recallGeneration === serviceGeneration &&
+        !recallController.signal.aborted;
+      if (!isCurrentRecall()) return;
       // Optional perf instrumentation (#1406). Captured here at hook entry so
       // the early-return paths below don't influence the measurement of slow
       // recall calls — perf lines are only emitted on the recall path.
@@ -2814,9 +2836,11 @@ export default function (api: MoltbotPluginAPI) {
         }
 
         await clientGlobal.waitForReady();
+        if (!isCurrentRecall()) return;
 
         // Get client configured for this context's bank (async to handle mission setup)
         const client = await clientGlobal.getClientForContext(resolvedCtxForRecall);
+        if (!isCurrentRecall()) return;
         if (!client) {
           debug("[Hindsight] Client not initialized, skipping auto-recall");
           return;
@@ -2844,14 +2868,22 @@ export default function (api: MoltbotPluginAPI) {
               preferObservations: pluginConfig.preferObservations,
               minScores: pluginConfig.recallMinScores,
             },
-            recallTimeoutMs
+            recallTimeoutMs,
+            recallController?.signal
           );
           inflightRecalls.set(recallKey, recallPromise);
-          void recallPromise.catch(() => {}).finally(() => inflightRecalls.delete(recallKey));
+          void recallPromise
+            .catch(() => {})
+            .finally(() => {
+              // An old generation can settle after start() installed a successor.
+              if (inflightRecalls.get(recallKey) === recallPromise)
+                inflightRecalls.delete(recallKey);
+            });
         }
 
         const recallStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
         const response = await recallPromise;
+        if (!isCurrentRecall()) return;
         const recallElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - recallStart : 0;
 
         if (!response.results || response.results.length === 0) {
@@ -2924,9 +2956,18 @@ ${memoriesFormatted}
             `[Hindsight] Auto-recall timed out after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`
           );
         } else if (error instanceof Error && error.name === "AbortError") {
-          log.warn(
-            `[Hindsight] Auto-recall aborted after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`
-          );
+          // An AbortError now has two sources. The deadline is handled above as a
+          // TimeoutError; this branch is reached when the service was stopped or
+          // restarted mid-recall, which is not a timeout — quoting recallTimeoutMs
+          // there reports a deadline that never elapsed, with a number unrelated
+          // to the time actually spent. (#4450)
+          if (recallController?.signal.aborted) {
+            debug("[Hindsight] Auto-recall cancelled: service stopped, skipping memory injection");
+          } else {
+            log.warn(
+              `[Hindsight] Auto-recall aborted after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`
+            );
+          }
         } else {
           log.error("auto-recall error", error);
         }

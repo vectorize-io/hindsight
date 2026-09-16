@@ -1978,6 +1978,8 @@ describe("recallMinScores (#4143)", () => {
       types: undefined,
       preferObservations: undefined,
       minScores: { reranker: 0.3 },
+      // A deadline controller is always created, so the client sees a real signal
+      // even when no service signal was passed in.
       signal: expect.any(AbortSignal),
     });
   });
