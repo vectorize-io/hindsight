@@ -132,7 +132,8 @@ def append_document_body(existing_text: str, incoming_text: str) -> str:
 class AppendWouldTruncateDocument(Exception):
     """An append produced a body that does not extend the document it was appending to.
 
-    An append is monotonic by definition: whatever it writes must start with what was stored. When
+    An append is monotonic by definition: whatever it writes must preserve the stored prefix
+    (text, or the ordered objects of a JSON conversation array). When
     that does not hold, the write is about to DESTROY committed content — and silently, because the
     chunks come from the real content, so extraction still looks correct and only the stored body
     is wrong. That is exactly how #3989 went unnoticed: an oversized append reported the new tail
@@ -156,6 +157,26 @@ def assert_append_extends_stored_body(
     if _is_strict_append_of_stored_document(stored_original_text, new_body):
         return
     sanitized = fact_extraction._sanitize_text(new_body) or ""
+    # JSON conversation arrays move their closing bracket when extended. A byte
+    # prefix check therefore rejects a valid merge from append_document_body.
+    # Compare canonical array prefixes, retaining every old object in order.
+    # Do not broaden the separate oversized-replacement metadata-only shortcut.
+    try:
+        stored = json.loads(stored_original_text)
+        appended = json.loads(sanitized)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        stored = appended = None
+    if (
+        isinstance(stored, list)
+        and isinstance(appended, list)
+        and len(appended) > len(stored)
+        and all(isinstance(item, dict) for item in stored)
+        and all(isinstance(item, dict) for item in appended)
+        # Python equality considers True == 1; serialized JSON must not.
+        and json.dumps(appended[: len(stored)], sort_keys=True, ensure_ascii=False)
+        == json.dumps(stored, sort_keys=True, ensure_ascii=False)
+    ):
+        return
     raise AppendWouldTruncateDocument(
         f"append to {document_id} produced a {len(sanitized):,}-char body that does not extend the "
         f"stored {len(stored_original_text):,}-char one; refusing to overwrite it"
