@@ -584,7 +584,7 @@ describe("HindsightClient.reflect failures", () => {
   });
 });
 
-describe("HindsightClient.recallObservations", () => {
+describe("HindsightClient.recallMemories", () => {
   it("asks for the client's recallTypes, and for every type when the list is empty", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: "only" }] })
@@ -595,7 +595,7 @@ describe("HindsightClient.recallObservations", () => {
       apiUrl: "http://x",
       bank: "b",
       recallTypes: ["world", "experience"],
-    }).recallObservations("goal", { timeoutMs: 5_000 });
+    }).recallMemories("goal", { timeoutMs: 5_000 });
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).types).toEqual([
       "world",
       "experience",
@@ -606,7 +606,7 @@ describe("HindsightClient.recallObservations", () => {
       apiUrl: "http://x",
       bank: "b",
       recallTypes: [],
-    }).recallObservations("goal", { timeoutMs: 5_000 });
+    }).recallMemories("goal", { timeoutMs: 5_000 });
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).not.toHaveProperty("types");
   });
 
@@ -617,7 +617,7 @@ describe("HindsightClient.recallObservations", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new HindsightClient({ apiUrl: "http://x", bank: "b", recallMaxTokens: 250 });
 
-    await client.recallObservations("goal", { timeoutMs: 5_000 });
+    await client.recallMemories("goal", { timeoutMs: 5_000 });
 
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(String(init?.body)).max_tokens).toBe(250);
@@ -630,7 +630,7 @@ describe("HindsightClient.recallObservations", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
 
-    const out = await client.recallObservations("goal", { timeoutMs: 5_000 });
+    const out = await client.recallMemories("goal", { timeoutMs: 5_000 });
 
     expect(out).toEqual(["first", "second"]);
     const [url, init] = fetchMock.mock.calls[0];

@@ -56,18 +56,18 @@ export function formatPageFallback(
   );
 }
 
-const OBSERVATION_FALLBACK_LEAD =
-  "(Hindsight's synthesis was unavailable this turn; these consolidated observations were " +
-  "recalled from the bank for the goal, unsynthesized.)";
-export const OBSERVATION_INJECT_LEAD =
-  "(These consolidated observations were recalled from the bank for the goal, unsynthesized.)";
+// Deliberately says "memories", not "observations": `recallTypes` decides what comes back, so a
+// bank that recalls world/experience facts would otherwise be told they are consolidated
+// observations — a claim about provenance that the injected block has no business guessing at.
+const RECALL_FALLBACK_LEAD =
+  "(Hindsight's synthesis was unavailable this turn; these memories were recalled from the bank " +
+  "for the goal, unsynthesized.)";
+export const RECALL_INJECT_LEAD =
+  "(These memories were recalled from the bank for the goal, unsynthesized.)";
 
-/** The memory body injected from a raw recall over the bank's consolidated observations: after a
- *  failed reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
-export function formatObservationFallback(
-  observations: string[],
-  lead = OBSERVATION_FALLBACK_LEAD
-): string {
+/** The memory body injected from a raw recall over the bank (`recallTypes`): after a failed
+ *  reflect found no page (default lead), or as the configured `autoInject: "recall"`. */
+export function formatRecallFallback(observations: string[], lead = RECALL_FALLBACK_LEAD): string {
   return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 

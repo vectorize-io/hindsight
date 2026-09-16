@@ -2,8 +2,11 @@
  * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
  *
  * The ONE runtime path (see docs/superpowers/specs/2026-07-27-reflect-pages-runtime.md):
- *   - REFLECT once per session, on the first prompt: agentic synthesis over the bank returning the
- *     root-cause decision with exact values. Cached per session, re-injected every turn.
+ *   - AUTO-INJECT once per session, on the first prompt, from the source `cfg.autoInject` names:
+ *     "reflect" (default) is an agentic synthesis over the bank returning the root-cause decision
+ *     with exact values; "pages" is a knowledge-page search and "recall" a raw memory recall, both
+ *     retrieval-only and far cheaper; "none" injects nothing and leaves it to the tools. Cached
+ *     per session, injected on the turn it ran.
  *   - KNOWLEDGE PAGES every turn: the page set is fetched on a cadence and matched LOCALLY against
  *     the prompt (section-level lexical scoring — no server/LLM call); the top sections are
  *     injected with provenance. Fast like recall, organized like reflect.
@@ -30,10 +33,10 @@ import { brandWord } from "./brand";
 import {
   buildReflectQuery,
   buildSystemInjection,
-  formatObservationFallback,
   formatPageFallback,
-  OBSERVATION_INJECT_LEAD,
+  formatRecallFallback,
   PAGE_INJECT_LEAD,
+  RECALL_INJECT_LEAD,
 } from "./inject";
 import type { PageRef } from "./knowledge-injection";
 import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
@@ -77,7 +80,7 @@ interface HookClient {
     query: string,
     opts?: { limit?: number; timeoutMs?: number }
   ): Promise<{ id: string; name: string; snippet: string }[]>;
-  recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]>;
+  recallMemories(query: string, opts: { timeoutMs: number }): Promise<string[]>;
   knowledgePagesSupported?: boolean;
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
@@ -110,9 +113,9 @@ async function injectPages(
   return undefined;
 }
 
-/** Raw recall over the bank's consolidated observations, formatted for injection; same contract
- *  as `injectPages`. */
-async function injectObservations(
+/** Raw recall over the bank (which types is the client's `recallTypes`), formatted for injection;
+ *  same contract as `injectPages`. */
+async function injectRecall(
   harness: string,
   prompt: string,
   client: HookClient,
@@ -122,10 +125,10 @@ async function injectObservations(
 ): Promise<string | undefined> {
   const t0 = Date.now();
   try {
-    // The token budget is the client's `recallMaxTokens`.
-    const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
+    // The token budget is the client's `recallMaxTokens`, the types its `recallTypes`.
+    const observations = await client.recallMemories(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
-    if (observations.length) return formatObservationFallback(observations, lead);
+    if (observations.length) return formatRecallFallback(observations, lead);
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
   }
@@ -135,7 +138,7 @@ async function injectObservations(
 /**
  * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
  * curated knowledge pages first (search), and only when none match fall back to a raw recall
- * over consolidated observations. Returns the memory body to inject, or undefined when both came
+ * over the bank's memories. Returns the memory body to inject, or undefined when both came
  * back empty or failed. Never throws.
  */
 async function reflectFallback(
@@ -147,13 +150,9 @@ async function reflectFallback(
   const remaining = () => Math.max(deadline - Date.now(), 1);
   return (
     (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
-    (await injectObservations(
-      harness,
-      prompt,
-      client,
-      remaining(),
-      "reflect_fallback_observations"
-    ))
+    // Event name predates the `injectRecall` rename and is kept: it is a logged contract that
+    // other tools read, so renaming it would silently break them.
+    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations"))
   );
 }
 
@@ -214,13 +213,13 @@ export async function buildHookOutput(args: {
   } else if (cfg.autoInject === "recall" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAnswer =
-      (await injectObservations(
+      (await injectRecall(
         harness,
         prompt,
         client,
         HOOK_FALLBACK_BUDGET_MS,
-        "inject_observations",
-        OBSERVATION_INJECT_LEAD
+        "inject_recall",
+        RECALL_INJECT_LEAD
       )) ?? "";
   } else if (cfg.autoInject === "reflect" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;

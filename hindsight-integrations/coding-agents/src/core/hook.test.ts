@@ -47,7 +47,7 @@ function makeClient(
       query: string,
       opts?: { limit?: number; timeoutMs?: number }
     ) => Promise<{ id: string; name: string; snippet: string }[]>;
-    recallObservations: (query: string, opts: { timeoutMs: number }) => Promise<string[]>;
+    recallMemories: (query: string, opts: { timeoutMs: number }) => Promise<string[]>;
   }> = {}
 ) {
   return {
@@ -55,7 +55,7 @@ function makeClient(
     listPages: vi.fn(async () => ({ items: [{ id: "p1", name: "Uploader guide" }] })),
     getPage: vi.fn(async () => ({ content: PAGE_CONTENT })),
     searchKnowledgePages: vi.fn(async () => [] as { id: string; name: string; snippet: string }[]),
-    recallObservations: vi.fn(async () => [] as string[]),
+    recallMemories: vi.fn(async () => [] as string[]),
     ...overrides,
   };
 }
@@ -282,7 +282,7 @@ describe("buildHookOutput", () => {
       expect(client.searchKnowledgePages).toHaveBeenCalledWith(MATCHING_PROMPT, {
         timeoutMs: expect.any(Number),
       });
-      expect(client.recallObservations).not.toHaveBeenCalled();
+      expect(client.recallMemories).not.toHaveBeenCalled();
       expect(t1.context).toContain("<hindsight_memory>");
       expect(t1.context).toContain("- Upload retries (kp-1): 200ms jitter window");
       expect(t1.context).toContain("hindsight_read_knowledge_page");
@@ -301,7 +301,7 @@ describe("buildHookOutput", () => {
         reflect: vi.fn(async () => {
           throw serverError();
         }),
-        recallObservations: vi.fn(async () => [
+        recallMemories: vi.fn(async () => [
           "Retries back off exponentially.",
           "Tokens rotate daily.",
         ]),
@@ -316,10 +316,10 @@ describe("buildHookOutput", () => {
       });
 
       expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
-      expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT, {
+      expect(client.recallMemories).toHaveBeenCalledWith(MATCHING_PROMPT, {
         timeoutMs: expect.any(Number),
       });
-      expect(out.context).toContain("consolidated observations");
+      expect(out.context).toContain("recalled from the bank");
       expect(out.context).toContain("- Retries back off exponentially.\n- Tokens rotate daily.");
       expect(out.notice).toBeUndefined();
     });
@@ -332,7 +332,7 @@ describe("buildHookOutput", () => {
         searchKnowledgePages: vi.fn(async () => {
           throw new Error("knowledge pages unavailable");
         }),
-        recallObservations: vi.fn(async () => ["An observation."]),
+        recallMemories: vi.fn(async () => ["An observation."]),
       });
 
       const out = await buildHookOutput({
@@ -361,7 +361,7 @@ describe("buildHookOutput", () => {
         cacheFile,
       });
 
-      expect(client.recallObservations).toHaveBeenCalledTimes(1);
+      expect(client.recallMemories).toHaveBeenCalledTimes(1);
       expect(out.context).toBeUndefined();
       expect(out.notice).toContain("no memory this turn");
       expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
@@ -383,7 +383,7 @@ describe("buildHookOutput", () => {
           cacheFile,
         });
         expect(client.searchKnowledgePages).not.toHaveBeenCalled();
-        expect(client.recallObservations).not.toHaveBeenCalled();
+        expect(client.recallMemories).not.toHaveBeenCalled();
         expect(out.notice).toContain("no memory this turn");
       }
     });
@@ -395,7 +395,7 @@ describe("buildHookOutput", () => {
         reflect: vi.fn(async () => {
           throw timedOut();
         }),
-        recallObservations: vi.fn(async () => ["An observation."]),
+        recallMemories: vi.fn(async () => ["An observation."]),
       });
 
       await buildHookOutput({
@@ -430,7 +430,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).not.toHaveBeenCalled();
-    expect(client.recallObservations).not.toHaveBeenCalled();
+    expect(client.recallMemories).not.toHaveBeenCalled();
     expect(out.context).toContain("<hindsight_memory>");
     expect(out.context).toContain("Uploader guide (p1): retry backoff 200ms jitter");
     expect(out.context).not.toContain("synthesis was unavailable");
@@ -448,7 +448,7 @@ describe("buildHookOutput", () => {
 
   it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {
     const client = makeClient({
-      recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
+      recallMemories: vi.fn(async () => ["Uploads retry 3 times."]),
     });
     const out = await buildHookOutput({
       harness: "claude-code",
@@ -465,7 +465,7 @@ describe("buildHookOutput", () => {
 
   it("autoInject pages/recall: an empty or failed retrieval injects nothing and no notice", async () => {
     const client = makeClient({
-      recallObservations: vi.fn(async () => {
+      recallMemories: vi.fn(async () => {
         throw new Error("boom");
       }),
     });

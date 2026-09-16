@@ -114,7 +114,7 @@ export interface RawConfig {
   /** What to inject on the session's first prompt (default "reflect"):
    *    "reflect" — one low-budget reflect synthesis (falls back to pages, then recall, on timeout/5xx)
    *    "pages"   — the knowledge pages matching the prompt by search (retrieval only, no LLM)
-   *    "recall"  — the bank's consolidated observations recalled for the prompt (no LLM)
+   *    "recall"  — the bank's memories recalled for the prompt (`recallTypes`; no LLM)
    *    "none"    — nothing; the tool guide routes new goals through pages before optional reflection */
   autoInject?: AutoInject;
   /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";

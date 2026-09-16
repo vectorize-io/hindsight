@@ -602,8 +602,12 @@ export class HindsightClient {
    * Raw recall with no LLM in the loop, so it still answers when reflect's synthesis times out or
    * 5xxs. Restricted to `recallTypes` (consolidated observations by default) — a bank that grows
    * no observations widens it rather than getting nothing back. Returns the texts in rank order.
+   *
+   * Named for what it returns now, not what it returned first: it was `recallObservations` back
+   * when the observation type was hardcoded here, which read as a lie once `recallTypes` made the
+   * types configurable.
    */
-  async recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]> {
+  async recallMemories(query: string, opts: { timeoutMs: number }): Promise<string[]> {
     const r = await this.req(
       "POST",
       this.bankUrl("/memories/recall"),
