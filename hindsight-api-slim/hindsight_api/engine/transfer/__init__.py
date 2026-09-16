@@ -16,6 +16,7 @@ from .export import export_bank, export_documents
 from .importer import BankImportResult, ImportResult, import_bank, import_documents
 from .schema import (
     SCHEMA_VERSION,
+    TransferAttachment,
     TransferCausalRelation,
     TransferChunk,
     TransferDocument,
@@ -23,12 +24,14 @@ from .schema import (
     TransferManifest,
     TransferObservation,
     TransferObservationSource,
+    TransferScope,
 )
 
 __all__ = [
     "SCHEMA_VERSION",
     "BankImportResult",
     "ImportResult",
+    "TransferAttachment",
     "TransferCausalRelation",
     "TransferChunk",
     "TransferDocument",
@@ -36,6 +39,7 @@ __all__ = [
     "TransferManifest",
     "TransferObservation",
     "TransferObservationSource",
+    "TransferScope",
     "export_bank",
     "export_documents",
     "import_bank",

@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mental-model refresh: the full flow — Hindsight</title>
+  <meta name="description" content="Step-by-step trace of the Hindsight mental-model refresh pipeline: every branch, delta vs full, and where markdown crosses into structure.">
+  <style>
+    /* Minimal reset — the artifact host used to supply this. */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -moz-text-size-adjust: none; -webkit-text-size-adjust: none; text-size-adjust: none; }
+    body, h1, h2, h3, h4, p, figure, blockquote, dl, dd, ol, ul { margin: 0; }
+    ol[role="list"], ul[role="list"] { list-style: none; }
+    body { min-height: 100vh; }
+    img, picture, svg { max-width: 100%; display: block; }
+    input, button, textarea, select { font: inherit; }
+  </style>
+
+  <style>
+    .theme-toggle {
+      position: fixed; top: 1rem; right: 1rem; z-index: 10;
+      font-family: var(--mono); font-size: .72rem; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted);
+      background: var(--card); border: 1px solid var(--rule);
+      border-radius: 5px; padding: .45rem .7rem; cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+    .theme-toggle:hover { color: var(--ink); }
+    .theme-toggle:focus-visible { outline: 2px solid var(--struct); outline-offset: 3px; }
+    @media print { .theme-toggle { display: none; } }
+  </style>
+
+  <style>
+  :root {
+    --paper:   #F5F7F9;
+    --card:    #FFFFFF;
+    --ink:     #191D24;
+    --muted:   #64707F;
+    --rule:    #DDE3EA;
+    --struct:  #2D5BD6;
+    --lossy:   #B0224A;
+    --ok:      #0C7A63;
+    --shadow:  0 1px 2px rgba(25,29,36,.06), 0 8px 24px -16px rgba(25,29,36,.28);
+
+    --serif: "Iowan Old Style", Georgia, "Times New Roman", serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --measure: 72ch;
+    --wide: 1080px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:  #12151A;
+      --card:   #191D24;
+      --ink:    #E4E8EE;
+      --muted:  #93A0B0;
+      --rule:   #262C35;
+      --struct: #7398F7;
+      --lossy:  #F2789C;
+      --ok:     #35C6A4;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:  #12151A;
+    --card:   #191D24;
+    --ink:    #E4E8EE;
+    --muted:  #93A0B0;
+    --rule:   #262C35;
+    --struct: #7398F7;
+    --lossy:  #F2789C;
+    --ok:     #35C6A4;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+  :root[data-theme="light"] {
+    --paper:  #F5F7F9;
+    --card:   #FFFFFF;
+    --ink:    #191D24;
+    --muted:  #64707F;
+    --rule:   #DDE3EA;
+    --struct: #2D5BD6;
+    --lossy:  #B0224A;
+    --ok:     #0C7A63;
+    --shadow: 0 1px 2px rgba(25,29,36,.06), 0 8px 24px -16px rgba(25,29,36,.28);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2.25rem;
+  }
+  .page > * { max-width: var(--measure); }
+  .page > .bleed { max-width: 100%; width: 100%; }
+
+  /* Masthead ------------------------------------------------------------ */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    line-height: 1.08;
+    font-weight: 600;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin-top: .4rem;
+  }
+  .standfirst {
+    font-size: 1.1rem;
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+  .masthead-rule {
+    border: 0;
+    border-top: 2px solid var(--ink);
+    max-width: var(--measure);
+    margin: .5rem 0 0;
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 1.7rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin-top: 1.5rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--rule);
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 1.02rem;
+    font-weight: 650;
+    letter-spacing: -.005em;
+    margin-top: .75rem;
+  }
+  p { text-wrap: pretty; }
+  a { color: var(--struct); text-underline-offset: .18em; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--struct);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    padding: .12em .34em;
+    border-radius: 3px;
+  }
+
+  ul, ol { padding-left: 1.3rem; display: flex; flex-direction: column; gap: .45rem; }
+  li::marker { color: var(--muted); }
+
+  /* Contents ------------------------------------------------------------ */
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1.1rem 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  .toc ol {
+    list-style: none;
+    padding: 0;
+    counter-reset: toc;
+    gap: .3rem;
+  }
+  .toc li { display: flex; gap: .7rem; align-items: baseline; }
+  .toc li::before {
+    counter-increment: toc;
+    content: counter(toc, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--muted);
+  }
+  .toc a { text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Figures ------------------------------------------------------------- */
+  figure {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1.5rem 1.5rem 1.1rem;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: .9rem;
+    overflow-x: auto;
+  }
+  figure svg { display: block; max-width: 100%; height: auto; min-width: 560px; margin: 0 auto; }
+  figcaption {
+    font-size: .875rem;
+    color: var(--muted);
+    border-top: 1px solid var(--rule);
+    padding-top: .8rem;
+    text-wrap: pretty;
+    min-width: 0;
+  }
+  figcaption b { color: var(--ink); font-weight: 620; }
+
+  /* Tables -------------------------------------------------------------- */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td {
+    text-align: left;
+    padding: .62rem .85rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { background: none; padding: 0; }
+  .yes { color: var(--ok); font-weight: 600; }
+  .no  { color: var(--muted); }
+  .raise { color: var(--lossy); font-weight: 600; }
+
+  /* Callout ------------------------------------------------------------- */
+  .note {
+    border-left: 3px solid var(--struct);
+    background: color-mix(in srgb, var(--struct) 7%, transparent);
+    padding: .9rem 1.15rem;
+    border-radius: 0 5px 5px 0;
+    font-size: .94rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+  .note.warn {
+    border-left-color: var(--lossy);
+    background: color-mix(in srgb, var(--lossy) 8%, transparent);
+  }
+  .note-label {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--struct);
+  }
+  .note.warn .note-label { color: var(--lossy); }
+
+  .src {
+    font-family: var(--mono);
+    font-size: .76rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* SVG shared ---------------------------------------------------------- */
+  .d-box   { fill: var(--card); stroke: currentColor; stroke-width: 1.25; }
+  .d-fill  { fill: color-mix(in srgb, var(--ink) 5%, transparent); stroke: currentColor; stroke-width: 1.25; }
+  .d-struct{ fill: color-mix(in srgb, var(--struct) 12%, transparent); stroke: var(--struct); stroke-width: 1.5; }
+  .d-lossy { fill: color-mix(in srgb, var(--lossy) 12%, transparent); stroke: var(--lossy); stroke-width: 1.5; }
+  .d-ok    { fill: color-mix(in srgb, var(--ok) 12%, transparent); stroke: var(--ok); stroke-width: 1.5; }
+  .d-line  { stroke: currentColor; stroke-width: 1.25; fill: none; }
+  .d-line-lossy { stroke: var(--lossy); stroke-width: 1.75; fill: none; }
+  .d-line-struct{ stroke: var(--struct); stroke-width: 1.5; fill: none; }
+  .d-dash  { stroke-dasharray: 5 4; }
+  .d-t     { font-family: var(--sans); font-size: 12.5px; fill: var(--ink); }
+  .d-t-sm  { font-family: var(--sans); font-size: 11px; fill: var(--muted); }
+  .d-m     { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+  .d-m-sm  { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+  .d-m-lossy { font-family: var(--mono); font-size: 11px; fill: var(--lossy); }
+  .d-m-ok  { font-family: var(--mono); font-size: 11px; fill: var(--ok); }
+  .d-num   { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+  .d-head  { font-family: var(--sans); font-size: 12px; font-weight: 650; fill: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<button class="theme-toggle" type="button" id="themeToggle" aria-label="Switch colour theme">theme</button>
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Hindsight · engine/reflect · knowledge pages</div>
+    <h1>How a mental model refreshes</h1>
+    <hr class="masthead-rule">
+  </header>
+
+  <p class="standfirst">Every knowledge page in Hindsight is a mental model that rewrites itself. This is the whole pipeline — the mode decision, the seven phases, every branch, and each of the four outcomes — traced against the code as it stands today.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#shape">The shape of one refresh</a></li>
+      <li><a href="#gate">Phase 2 — the mode gate</a></li>
+      <li><a href="#delta">Phase 5 — inside the delta branch</a></li>
+      <li><a href="#guards">Phase 6 — the guards</a></li>
+      <li><a href="#outcomes">Phase 7 — what actually gets written</a></li>
+      <li><a href="#crossings">Where markdown becomes structure</a></li>
+      <li><a href="#inversion">The inversion, drawn</a></li>
+    </ol>
+  </nav>
+
+  <p>A refresh is split in two on purpose. <code>_execute_mental_model_refresh</code> runs the entire pipeline and <b>writes nothing</b> — it returns a <code>_MentalModelRefreshRun</code> recording every decision it made. <code>refresh_mental_model</code> persists that run; <code>dry_run_refresh_mental_model</code> reports it and throws it away. There is deliberately no flag that makes the executor behave differently for a preview, because a preview that could be configured would stop predicting the refresh it exists to predict.</p>
+
+  <!-- ================================================================== -->
+  <h2 id="shape">1 · The shape of one refresh</h2>
+
+  <p>Seven phases, in order. Phases 1–4 are unconditional: even a pure full-mode refresh resolves scope, takes a snapshot, and calls reflect. The branching all happens in 5 and 6.</p>
+
+  <figure class="bleed">
+    <svg viewBox="0 0 900 660" role="img" aria-label="The seven phases of a refresh, running top to bottom, with three no-write exits leaving to the right from phases 5 and 6.">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="a1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--lossy)"/>
+        </marker>
+        <marker id="a1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)"/>
+        </marker>
+      </defs>
+
+      <!-- spine -->
+      <g>
+        <rect class="d-box" x="40" y="14"  width="400" height="56" rx="4"/>
+        <text class="d-num"  x="56" y="36">01</text>
+        <text class="d-head" x="86" y="36">Read the trigger</text>
+        <text class="d-m-sm" x="86" y="54">requested_mode = trigger.mode or "full"</text>
+
+        <rect class="d-struct" x="40" y="102" width="400" height="56" rx="4"/>
+        <text class="d-num"  x="56" y="124">02</text>
+        <text class="d-head" x="86" y="124">Mode gate</text>
+        <text class="d-m-sm" x="86" y="142">resolves use_delta · loads structured_content</text>
+
+        <rect class="d-box" x="40" y="190" width="400" height="56" rx="4"/>
+        <text class="d-num"  x="56" y="212">03</text>
+        <text class="d-head" x="86" y="212">Scope + snapshot</text>
+        <text class="d-m-sm" x="86" y="230">refresh_cutoff · processed_watermark</text>
+
+        <rect class="d-box" x="40" y="278" width="400" height="56" rx="4"/>
+        <text class="d-num"  x="56" y="300">04</text>
+        <text class="d-head" x="86" y="300">reflect_async</text>
+        <text class="d-m-sm" x="86" y="318">→ candidate markdown (reflect_result.text)</text>
+
+        <rect class="d-struct" x="40" y="366" width="400" height="70" rx="4"/>
+        <text class="d-num"  x="56" y="388">05</text>
+        <text class="d-head" x="86" y="388">Delta operations</text>
+        <text class="d-m-sm" x="86" y="406">only when use_delta — otherwise skipped whole</text>
+        <text class="d-m-sm" x="86" y="424">sets delta_applied, final_content, final_structured</text>
+
+        <rect class="d-box" x="40" y="468" width="400" height="70" rx="4"/>
+        <text class="d-num"  x="56" y="490">06</text>
+        <text class="d-head" x="86" y="490">Guards</text>
+        <text class="d-m-sm" x="86" y="508">empty render · delta-window candidate</text>
+        <text class="d-m-sm" x="86" y="526">then parse_markdown(final_content) if needed</text>
+
+        <rect class="d-ok" x="40" y="570" width="400" height="56" rx="4"/>
+        <text class="d-num"  x="56" y="592">07</text>
+        <text class="d-head" x="86" y="592">Persist</text>
+        <text class="d-m-sm" x="86" y="610">content + structured_content + watermark</text>
+      </g>
+
+      <!-- spine arrows -->
+      <g class="d-line" marker-end="url(#a1)">
+        <line x1="240" y1="70"  x2="240" y2="98"/>
+        <line x1="240" y1="158" x2="240" y2="186"/>
+        <line x1="240" y1="246" x2="240" y2="274"/>
+        <line x1="240" y1="334" x2="240" y2="362"/>
+        <line x1="240" y1="436" x2="240" y2="464"/>
+        <line x1="240" y1="538" x2="240" y2="566"/>
+      </g>
+
+      <!-- full-mode bypass -->
+      <path class="d-line d-dash" d="M 40 130 L 18 130 L 18 502 L 36 502" marker-end="url(#a1)"/>
+      <text class="d-m-sm" x="10" y="316" transform="rotate(-90 10 316)" text-anchor="middle">full mode: phase 5 skipped</text>
+
+      <!-- exits -->
+      <g>
+        <rect class="d-ok" x="560" y="366" width="310" height="46" rx="4"/>
+        <text class="d-m-ok" x="576" y="384">content_preserved_no_new_facts</text>
+        <text class="d-t-sm" x="576" y="402">document untouched · watermark advances</text>
+        <path class="d-line-struct" d="M 440 389 L 556 389" marker-end="url(#a1g)"/>
+
+        <rect class="d-lossy" x="560" y="452" width="310" height="46" rx="4"/>
+        <text class="d-m-lossy" x="576" y="470">refresh_failed_empty_candidate</text>
+        <text class="d-t-sm" x="576" y="488">raises · watermark held</text>
+        <path class="d-line-lossy" d="M 440 475 L 556 475" marker-end="url(#a1r)"/>
+
+        <rect class="d-lossy" x="560" y="512" width="310" height="46" rx="4"/>
+        <text class="d-m-lossy" x="576" y="530">refresh_failed_delta_not_applied</text>
+        <text class="d-t-sm" x="576" y="548">raises · watermark held</text>
+        <path class="d-line-lossy" d="M 440 535 L 556 535" marker-end="url(#a1r)"/>
+
+        <rect class="d-ok" x="560" y="580" width="310" height="36" rx="4"/>
+        <text class="d-m-ok" x="576" y="602">content_written</text>
+        <path class="d-line" d="M 440 598 L 556 598" marker-end="url(#a1g)" stroke="var(--ok)"/>
+      </g>
+    </svg>
+    <figcaption><b>One refresh, end to end.</b> The executor writes nothing; it returns a run object carrying the outcome. Three of the four outcomes leave the stored document exactly as it was — only <code>content_written</code> replaces it. Note the dashed bypass: in full mode phase 5 does not run at all, which is why full-mode pages never exhibit delta-specific damage.</figcaption>
+  </figure>
+
+  <!-- ================================================================== -->
+  <h2 id="gate">2 · Phase 2 — the mode gate</h2>
+
+  <p>Asking for delta mode is not the same as getting it. <code>requested_mode</code> comes from the trigger — knowledge pages get <code>KNOWLEDGE_PAGE_DEFAULT_TRIGGER</code>, which sets <code>mode: "delta"</code>, so <b>delta is the default for every page</b>. Three gates then decide whether the request survives.</p>
+
+  <figure class="bleed">
+    <svg viewBox="0 0 900 400" role="img" aria-label="The mode gate: a delta request passes through a baseline check and a source-query check to become use_delta, with two fallback reasons branching off to full mode.">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="a2s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--struct)"/>
+        </marker>
+      </defs>
+
+      <rect class="d-fill" x="24" y="150" width="150" height="56" rx="4"/>
+      <text class="d-head" x="40" y="172">trigger.mode</text>
+      <text class="d-m-sm" x="40" y="190">"delta" | "full"</text>
+
+      <!-- gate 1 -->
+      <rect class="d-box" x="228" y="140" width="180" height="76" rx="4"/>
+      <text class="d-head" x="244" y="164">Gate 1 — baseline</text>
+      <text class="d-m-sm" x="244" y="182">content non-empty and</text>
+      <text class="d-m-sm" x="244" y="198">≠ "Generating content..."</text>
+
+      <!-- gate 2 -->
+      <rect class="d-box" x="462" y="140" width="194" height="76" rx="4"/>
+      <text class="d-head" x="478" y="164">Gate 2 — topic</text>
+      <text class="d-m-sm" x="478" y="182">last_refreshed_source_query</text>
+      <text class="d-m-sm" x="478" y="198">is NULL or unchanged</text>
+
+      <!-- result -->
+      <rect class="d-struct" x="700" y="140" width="176" height="76" rx="4"/>
+      <text class="d-head" x="716" y="164">use_delta = True</text>
+      <text class="d-m-sm" x="716" y="182">loads structured_content</text>
+      <text class="d-m-sm" x="716" y="198">(may be NULL)</text>
+
+      <g class="d-line" marker-end="url(#a2)">
+        <line x1="174" y1="178" x2="224" y2="178"/>
+      </g>
+      <path class="d-line-struct" d="M 408 178 L 458 178" marker-end="url(#a2s)"/>
+      <path class="d-line-struct" d="M 656 178 L 696 178" marker-end="url(#a2s)"/>
+
+      <!-- fallbacks down -->
+      <rect class="d-fill" x="228" y="290" width="180" height="46" rx="4"/>
+      <text class="d-m" x="244" y="312">no_baseline_content</text>
+      <text class="d-t-sm" x="244" y="328">first ever refresh</text>
+      <path class="d-line" d="M 318 216 L 318 286" marker-end="url(#a2)"/>
+
+      <rect class="d-fill" x="462" y="290" width="194" height="46" rx="4"/>
+      <text class="d-m" x="478" y="312">source_query_changed</text>
+      <text class="d-t-sm" x="478" y="328">topic shifted</text>
+      <path class="d-line" d="M 559 216 L 559 286" marker-end="url(#a2)"/>
+
+      <rect class="d-fill" x="700" y="290" width="176" height="46" rx="4"/>
+      <text class="d-head" x="716" y="318">→ runs as full</text>
+
+      <path class="d-line" d="M 408 313 L 458 313" marker-end="url(#a2)"/>
+      <path class="d-line" d="M 656 313 L 696 313" marker-end="url(#a2)"/>
+
+      <text class="d-t-sm" x="24" y="60">Two more fallback reasons are set later, inside phase 5, once delta is already running:</text>
+      <text class="d-m-sm" x="24" y="82">structured_doc_unreadable · delta_ops_failed · delta_ops_all_skipped</text>
+      <line class="d-line d-dash" x1="24" y1="100" x2="876" y2="100"/>
+    </svg>
+    <figcaption><b>Delta is requested, then earned.</b> Gate 1 is why a brand-new page's first refresh is always full — there is no content to edit yet. Gate 2 catches a changed source query, where surgical edits to a document about the old topic would be wrong. <code>use_delta</code> being true still says nothing about whether delta will <i>succeed</i>; three further fallback reasons wait inside phase 5.</figcaption>
+  </figure>
+
+  <div class="note">
+    <span class="note-label">Worth knowing</span>
+    <p>Gate 2 passes when <code>last_refreshed_source_query</code> is <code>NULL</code>, not just when it matches. That is deliberate: someone who hand-writes a page and <i>then</i> turns on delta mode expects their prose to be the starting point, not to be discarded by a one-time full rebuild.</p>
+  </div>
+
+  <!-- ================================================================== -->
+  <h2 id="delta">3 · Phase 5 — inside the delta branch</h2>
+
+  <p>This is where the interesting failures live. The branch needs a baseline document to edit, and it will try two sources in order before giving up.</p>
+
+  <figure class="bleed">
+    <svg viewBox="0 0 900 620" role="img" aria-label="Inside the delta branch: the baseline is loaded from structured_content or re-parsed from markdown, then an LLM emits operations which are applied, with four possible exits.">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="a3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--lossy)"/>
+        </marker>
+        <marker id="a3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ok)"/>
+        </marker>
+      </defs>
+
+      <text class="d-head" x="24" y="24">Step A — find a baseline</text>
+
+      <rect class="d-struct" x="24" y="46" width="250" height="62" rx="4"/>
+      <text class="d-m" x="40" y="68">structured_content</text>
+      <text class="d-t-sm" x="40" y="86">stored StructuredDocument</text>
+      <text class="d-t-sm" x="40" y="100">validated with Pydantic</text>
+
+      <rect class="d-lossy" x="324" y="46" width="250" height="62" rx="4"/>
+      <text class="d-m" x="340" y="68">parse_markdown(content)</text>
+      <text class="d-t-sm" x="340" y="86">fallback — re-derives structure</text>
+      <text class="d-t-sm" x="340" y="100">from the stored markdown</text>
+
+      <rect class="d-fill" x="624" y="46" width="252" height="62" rx="4"/>
+      <text class="d-m" x="640" y="68">structured_doc_unreadable</text>
+      <text class="d-t-sm" x="640" y="86">no baseline at all</text>
+      <text class="d-t-sm" x="640" y="100">→ delta abandoned</text>
+
+      <path class="d-line-lossy" d="M 274 77 L 320 77" marker-end="url(#a3r)"/>
+      <text class="d-m-sm" x="297" y="36" text-anchor="middle">NULL / invalid</text>
+      <path class="d-line" d="M 574 77 L 620 77" marker-end="url(#a3)"/>
+      <text class="d-m-sm" x="597" y="36" text-anchor="middle">raises</text>
+
+      <line class="d-line d-dash" x1="24" y1="126" x2="876" y2="126"/>
+
+      <text class="d-head" x="24" y="156">Step B — is there anything new?</text>
+
+      <rect class="d-box" x="24" y="172" width="250" height="56" rx="4"/>
+      <text class="d-m" x="40" y="194">supporting_facts</text>
+      <text class="d-t-sm" x="40" y="212">from this run's reflect only</text>
+
+      <rect class="d-ok" x="324" y="172" width="310" height="56" rx="4"/>
+      <text class="d-m-ok" x="340" y="194">content_preserved_no_new_facts</text>
+      <text class="d-t-sm" x="340" y="212">returns immediately · no LLM call</text>
+
+      <path class="d-line" d="M 274 200 L 320 200" marker-end="url(#a3g)" stroke="var(--ok)"/>
+      <text class="d-m-sm" x="277" y="191">empty</text>
+
+      <line class="d-line d-dash" x1="24" y1="252" x2="876" y2="252"/>
+
+      <text class="d-head" x="24" y="282">Step C — the operations call</text>
+
+      <rect class="d-struct" x="24" y="298" width="250" height="76" rx="4"/>
+      <text class="d-m" x="40" y="320">delta LLM call</text>
+      <text class="d-t-sm" x="40" y="338">sees current_doc as JSON,</text>
+      <text class="d-t-sm" x="40" y="352">never as markdown</text>
+      <text class="d-t-sm" x="40" y="366">text-mode, hand-parsed</text>
+
+      <rect class="d-box" x="324" y="298" width="250" height="76" rx="4"/>
+      <text class="d-m" x="340" y="320">apply_operations</text>
+      <text class="d-t-sm" x="340" y="338">typed Block payloads:</text>
+      <text class="d-t-sm" x="340" y="352">paragraph · bullet_list ·</text>
+      <text class="d-t-sm" x="340" y="366">ordered_list · code · table</text>
+
+      <path class="d-line-struct" d="M 274 336 L 320 336" marker-end="url(#a3)" stroke="var(--struct)"/>
+
+      <!-- three exits from step C -->
+      <rect class="d-ok" x="624" y="290" width="252" height="46" rx="4"/>
+      <text class="d-m-ok" x="640" y="310">delta_applied = True</text>
+      <text class="d-t-sm" x="640" y="327">render_document(doc) → content</text>
+      <path class="d-line" d="M 574 313 L 620 313" marker-end="url(#a3g)" stroke="var(--ok)"/>
+
+      <rect class="d-lossy" x="624" y="348" width="252" height="40" rx="4"/>
+      <text class="d-m-lossy" x="640" y="372">delta_ops_all_skipped</text>
+      <path class="d-line-lossy" d="M 574 350 L 600 350 L 600 368 L 620 368" marker-end="url(#a3r)"/>
+
+      <rect class="d-lossy" x="624" y="400" width="252" height="40" rx="4"/>
+      <text class="d-m-lossy" x="640" y="424">delta_ops_failed</text>
+      <path class="d-line-lossy" d="M 149 374 L 149 420 L 620 420" marker-end="url(#a3r)"/>
+      <text class="d-m-sm" x="160" y="414">any exception</text>
+
+      <line class="d-line d-dash" x1="24" y1="462" x2="876" y2="462"/>
+
+      <text class="d-head" x="24" y="492">Step D — what the caller sees</text>
+      <text class="d-t" x="24" y="516">effective_mode = "delta" if delta_applied else "full"</text>
+      <text class="d-t-sm" x="24" y="540">A page can request delta, pass both gates, call the LLM — and still be recorded as having run in full mode,</text>
+      <text class="d-t-sm" x="24" y="558">because effective_mode reports what happened to the document, not what was attempted.</text>
+      <text class="d-m-sm" x="24" y="586">When delta did not apply, final_content is still the reflect candidate — which phase 6 then refuses to write.</text>
+    </svg>
+    <figcaption><b>The delta branch has four exits, and only one of them edits the document.</b> Note step A's fallback arrow: whenever <code>structured_content</code> is missing or fails validation, the baseline is <i>re-derived from the stored markdown</i>. Since <code>create_mental_model</code> never populates <code>structured_content</code>, that fallback is guaranteed to run on a hand-authored page's first delta refresh.</figcaption>
+  </figure>
+
+  <!-- ================================================================== -->
+  <h2 id="guards">4 · Phase 6 — the guards</h2>
+
+  <p>Two guards stand between a candidate and the database, and then one last conversion.</p>
+
+  <ul>
+    <li><b>Empty render.</b> If <code>final_content</code> is blank the refresh fails. A small model, an exhausted retry ladder, or an over-eager answer-cleaning regex can all yield an empty answer, and writing it would destroy a working document.</li>
+    <li><b>Delta-window candidate.</b> If delta was requested but did not apply, <code>final_content</code> is still the reflect candidate — and that candidate was synthesised under <code>created_after</code>, so it only covers memories newer than the last refresh. Writing it would silently delete everything the document knew from older ones <i>and</i> advance the watermark past it. The guard is keyed on the window rather than on each failure branch, so any future branch inherits it.</li>
+    <li><b>Baseline seeding.</b> If <code>final_structured</code> is still <code>None</code> — which is every full-mode refresh and every failed delta — the candidate markdown is parsed so the next refresh has something to edit.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="note-label">Where the table bug lived</span>
+    <p>That last step is the lossy one. It runs on every full-mode refresh, and until recently a markdown table it could not recognise became a paragraph joined with spaces — the whole table welded onto one line. Because that join is idempotent, the next refresh re-parsed the wreck as prose and re-emitted it, so the page could never recover.</p>
+  </div>
+
+  <!-- ================================================================== -->
+  <h2 id="outcomes">5 · Phase 7 — what actually gets written</h2>
+
+  <p>The outcome literal decides everything about persistence. Two of the four raise <code>MentalModelRefreshError</code> after recording the failure for audit.</p>
+
+  <div class="table-wrap bleed">
+    <table>
+      <thead>
+        <tr>
+          <th>Outcome</th>
+          <th>content</th>
+          <th>structured_content</th>
+          <th>watermark</th>
+          <th>raises</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>content_written</code></td>
+          <td class="yes">written</td>
+          <td class="yes">written</td>
+          <td class="yes">advances</td>
+          <td class="no">no</td>
+          <td>The normal path, for both full and delta.</td>
+        </tr>
+        <tr>
+          <td><code>content_preserved_no_new_facts</code></td>
+          <td class="no">untouched</td>
+          <td class="no">untouched</td>
+          <td class="yes">advances</td>
+          <td class="no">no</td>
+          <td>Nothing new in the window. The watermark still moves so the empty window is not re-read.</td>
+        </tr>
+        <tr>
+          <td><code>refresh_failed_empty_candidate</code></td>
+          <td class="no">untouched</td>
+          <td class="no">untouched</td>
+          <td class="raise">held</td>
+          <td class="raise">yes</td>
+          <td>Almost always an upstream LLM failure. Holding the watermark means a retry re-reads the same window.</td>
+        </tr>
+        <tr>
+          <td><code>refresh_failed_delta_not_applied</code></td>
+          <td class="no">untouched</td>
+          <td class="no">untouched</td>
+          <td class="raise">held</td>
+          <td class="raise">yes</td>
+          <td>The candidate covers only the delta window, so it is not a document.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>A fifth failure can occur during persistence itself: when the trigger carries a <code>response_schema</code>, the stored content is projected into <code>structured_output</code>, and if that extraction fails the whole refresh is failed rather than persisting content with a stale machine-readable view beside it.</p>
+
+  <div class="note">
+    <span class="note-label">Edge case</span>
+    <p>The delta-window guard only fires when <code>created_after</code> is set. A model with no <code>last_refreshed_at</code> would fall through and write the candidate as a full document — legitimate, because a candidate read over full history <i>is</i> a document. In practice the column is <code>NOT NULL</code> and defaults to creation time, so a delta refresh always has a window.</p>
+  </div>
+
+  <!-- ================================================================== -->
+  <h2 id="crossings">6 · Where markdown becomes structure</h2>
+
+  <p>This is the diagram that matters for the design decision. The delta LLM never sees markdown — it is handed <code>current_doc.model_dump_json()</code> and answers in typed blocks. Markdown enters the structured world at exactly three points, and two of them are on the refresh hot path.</p>
+
+  <figure class="bleed">
+    <svg viewBox="0 0 900 470" role="img" aria-label="Three places where markdown is parsed into structure: page creation, the delta baseline fallback, and baseline seeding after a full refresh, with the last two forming a loop that re-parses stored markdown on every refresh.">
+      <defs>
+        <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="a4r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--lossy)"/>
+        </marker>
+        <marker id="a4s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--struct)"/>
+        </marker>
+      </defs>
+
+      <!-- storage lane -->
+      <rect class="d-fill" x="300" y="196" width="300" height="86" rx="4"/>
+      <text class="d-head" x="450" y="222" text-anchor="middle">mental_models row</text>
+      <text class="d-m" x="450" y="244" text-anchor="middle">content — markdown, authoritative</text>
+      <text class="d-m-sm" x="450" y="264" text-anchor="middle">structured_content — nullable cache</text>
+
+      <!-- 1 create -->
+      <rect class="d-box" x="24" y="28" width="240" height="66" rx="4"/>
+      <text class="d-head" x="40" y="50">① create_knowledge_page</text>
+      <text class="d-t-sm" x="40" y="68">client POSTs markdown</text>
+      <text class="d-m-sm" x="40" y="85">structured_content stays NULL</text>
+      <path class="d-line" d="M 264 61 L 282 61 L 282 239 L 296 239" marker-end="url(#a4)"/>
+
+      <!-- 2 baseline fallback -->
+      <rect class="d-lossy" x="636" y="28" width="240" height="66" rx="4"/>
+      <text class="d-head" x="652" y="50">② delta baseline</text>
+      <text class="d-m-sm" x="652" y="68">parse_markdown(current_content)</text>
+      <text class="d-t-sm" x="652" y="85">when the cache is NULL/invalid</text>
+      <path class="d-line-lossy" d="M 600 239 L 618 239 L 618 61 L 632 61" marker-end="url(#a4r)"/>
+
+      <!-- 3 seeding -->
+      <rect class="d-lossy" x="636" y="376" width="240" height="66" rx="4"/>
+      <text class="d-head" x="652" y="398">③ baseline seeding</text>
+      <text class="d-m-sm" x="652" y="416">parse_markdown(final_content)</text>
+      <text class="d-t-sm" x="652" y="433">every full-mode refresh</text>
+
+      <!-- reflect -->
+      <rect class="d-box" x="24" y="376" width="240" height="66" rx="4"/>
+      <text class="d-head" x="40" y="398">reflect candidate</text>
+      <text class="d-t-sm" x="40" y="416">free-form markdown prose</text>
+      <text class="d-m-sm" x="40" y="433">reflect_result.text</text>
+      <path class="d-line" d="M 264 409 L 632 409" marker-end="url(#a4r)" stroke="var(--lossy)"/>
+
+      <!-- delta engine -->
+      <rect class="d-struct" x="300" y="102" width="300" height="56" rx="4"/>
+      <text class="d-head" x="450" y="124" text-anchor="middle">delta LLM — typed blocks only</text>
+      <text class="d-m-sm" x="450" y="143" text-anchor="middle">model_dump_json() in · operations out</text>
+
+      <!-- render back -->
+      <path class="d-line-struct" d="M 340 196 L 340 162" marker-end="url(#a4s)"/>
+      <text class="d-m-sm" x="350" y="182">structure in</text>
+      <path class="d-line-struct" d="M 470 162 L 470 192" marker-end="url(#a4s)"/>
+      <text class="d-m-sm" x="480" y="182">render_document</text>
+
+      <!-- the loop -->
+      <path class="d-line-lossy d-dash" d="M 876 376 L 890 376 L 890 100 L 876 100"/>
+      <text class="d-m-sm" x="876" y="330" text-anchor="end" fill="var(--lossy)">damage written here…</text>
+      <text class="d-m-sm" x="876" y="348" text-anchor="end" fill="var(--lossy)">…is read back as the next baseline</text>
+
+      <text class="d-t-sm" x="24" y="326">Blue = never leaves the structured representation.</text>
+      <text class="d-t-sm" x="24" y="344">Red = a markdown → structure conversion, where anything the schema cannot express is lost.</text>
+    </svg>
+    <figcaption><b>Two of the three conversions are on the hot path.</b> ② and ③ run during refresh, repeatedly and silently, and they feed each other: a full-mode refresh seeds the cache by parsing its own markdown output, and the next delta refresh edits whatever that parse produced. The structured spine in the middle — where the LLM actually works — is already lossless.</figcaption>
+  </figure>
+
+  <!-- ================================================================== -->
+  <h2 id="inversion">7 · The inversion, drawn</h2>
+
+  <p>The open question is whether <code>structured_content</code> should become the source of truth, with markdown rendered on read. Here is the difference, and it is narrower than it first appears — because on the delta path Hindsight already works this way.</p>
+
+  <figure class="bleed">
+    <svg viewBox="0 0 900 430" role="img" aria-label="Side-by-side comparison: today markdown is authoritative and is re-parsed on every refresh, whereas under the inversion structure is authoritative, markdown is a rendered projection, and the re-parse arrow disappears.">
+      <defs>
+        <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+        <marker id="a5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--lossy)"/>
+        </marker>
+        <marker id="a5s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--struct)"/>
+        </marker>
+      </defs>
+
+      <line class="d-line d-dash" x1="450" y1="14" x2="450" y2="416"/>
+
+      <!-- TODAY -->
+      <text class="d-head" x="24" y="30">Today</text>
+      <text class="d-t-sm" x="24" y="48">markdown authoritative · structure is a cache</text>
+
+      <rect class="d-fill" x="24" y="70" width="180" height="52" rx="4"/>
+      <text class="d-m" x="114" y="92" text-anchor="middle">content</text>
+      <text class="d-t-sm" x="114" y="110" text-anchor="middle">markdown · indexed</text>
+
+      <rect class="d-box" x="234" y="70" width="180" height="52" rx="4"/>
+      <text class="d-m" x="324" y="92" text-anchor="middle">structured_content</text>
+      <text class="d-t-sm" x="324" y="110" text-anchor="middle">nullable</text>
+
+      <path class="d-line-lossy" d="M 204 88 L 230 88" marker-end="url(#a5r)"/>
+      <text class="d-m-sm" x="217" y="62" text-anchor="middle" fill="var(--lossy)">parse</text>
+
+      <rect class="d-struct" x="234" y="170" width="180" height="46" rx="4"/>
+      <text class="d-m" x="324" y="198" text-anchor="middle">delta ops</text>
+      <path class="d-line-struct" d="M 324 122 L 324 166" marker-end="url(#a5s)"/>
+
+      <rect class="d-fill" x="24" y="170" width="180" height="46" rx="4"/>
+      <text class="d-m" x="114" y="198" text-anchor="middle">reflect candidate</text>
+
+      <path class="d-line-lossy" d="M 114 216 L 114 264 L 324 264 L 324 220" marker-end="url(#a5r)"/>
+      <text class="d-m-sm" x="219" y="280" text-anchor="middle" fill="var(--lossy)">re-parsed every full refresh</text>
+
+      <rect class="d-fill" x="24" y="310" width="390" height="80" rx="4"/>
+      <text class="d-t-sm" x="40" y="332">• Parsing runs on the hot path, silently, forever</text>
+      <text class="d-t-sm" x="40" y="352">• Schema ceiling applies only sometimes — depends on mode</text>
+      <text class="d-t-sm" x="40" y="372">• A bad parse is re-signed on every later refresh</text>
+
+      <!-- INVERTED -->
+      <text class="d-head" x="486" y="30">Inverted</text>
+      <text class="d-t-sm" x="486" y="48">structure authoritative · markdown is a projection</text>
+
+      <rect class="d-struct" x="486" y="70" width="180" height="52" rx="4"/>
+      <text class="d-m" x="576" y="92" text-anchor="middle">structured_content</text>
+      <text class="d-t-sm" x="576" y="110" text-anchor="middle">source of truth</text>
+
+      <rect class="d-fill" x="696" y="70" width="180" height="52" rx="4"/>
+      <text class="d-m" x="786" y="92" text-anchor="middle">content</text>
+      <text class="d-t-sm" x="786" y="110" text-anchor="middle">rendered · still indexed</text>
+
+      <path class="d-line-struct" d="M 666 88 L 692 88" marker-end="url(#a5s)"/>
+      <text class="d-m-sm" x="681" y="62" text-anchor="middle" fill="var(--struct)">render</text>
+
+      <rect class="d-struct" x="486" y="170" width="180" height="46" rx="4"/>
+      <text class="d-m" x="576" y="198" text-anchor="middle">delta ops</text>
+      <path class="d-line-struct" d="M 576 122 L 576 166" marker-end="url(#a5s)"/>
+
+      <rect class="d-box" x="696" y="170" width="180" height="46" rx="4"/>
+      <text class="d-m" x="786" y="192" text-anchor="middle">ingest parse</text>
+      <text class="d-t-sm" x="786" y="209" text-anchor="middle">create · import only</text>
+      <path class="d-line" d="M 696 193 L 670 193" marker-end="url(#a5s)" stroke="var(--struct)"/>
+
+      <rect class="d-fill" x="486" y="310" width="390" height="80" rx="4"/>
+      <text class="d-t-sm" x="502" y="332">• Parsing happens once, at the edge, where failure is visible</text>
+      <text class="d-t-sm" x="502" y="352">• Schema ceiling applies always — consistent, not intermittent</text>
+      <text class="d-t-sm" x="502" y="372">• New cost: content must be kept in sync as a read model</text>
+    </svg>
+    <figcaption><b>The edge that disappears is the re-parse.</b> Under the inversion the parser survives, demoted from the refresh loop to the ingest boundary — page creation, import, transfer — where a failure happens once and someone can see it. The delta spine is unchanged in both columns because it is already structure-native.</figcaption>
+  </figure>
+
+  <h3>What the inversion does not remove</h3>
+  <ul>
+    <li><b>The <code>content</code> column.</b> <code>search_knowledge_pages</code> fuses BM25 over page name and content, and returns content snippets. A rendered form has to stay materialised, so the parser problem is traded for a projection-sync problem.</li>
+    <li><b>The parser.</b> <code>create_knowledge_page</code> accepts markdown from clients, and imports restore markdown bodies. Both still need markdown → structure.</li>
+    <li><b>The schema ceiling.</b> Five block types, with images and raw HTML explicitly out of scope. Under inversion, anything unmodelled becomes unrepresentable at ingest rather than degraded later — arguably better, since it fails where someone can act on it.</li>
+  </ul>
+
+  <p>Neither approach repairs pages already damaged: a collapsed table is a single physical line, and recognising a table needs at least two. That backfill is its own piece of work regardless of which direction wins.</p>
+
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById("themeToggle");
+    var stored = null;
+    try { stored = localStorage.getItem("mmflow-theme"); } catch (e) {}
+    if (stored) root.setAttribute("data-theme", stored);
+    btn.addEventListener("click", function () {
+      var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      var current = root.getAttribute("data-theme") || (dark ? "dark" : "light");
+      var next = current === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("mmflow-theme", next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ into archive entry names. The real id lives inside each payload.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -30,6 +31,81 @@ HISTORY_TABLES = ("audit_log", "llm_requests")
 # Logical tree carried as typed rows (not raw dicts) and restored parent-first
 # after its backing mental models exist.
 KNOWLEDGE_TABLES = ("knowledge_pages",)
+
+# Operational rows that back the memories: carried with ``data`` and written to
+# ``data/<table>.json``. Not replayed like documents — restored verbatim with
+# their ids remapped (see importer._restore_operational_rows), because every one
+# of them is keyed by a globally-unique id or references a row whose id the
+# replay regenerates.
+OPERATIONAL_TABLES = ("async_operations", "graph_maintenance_queue", "entity_maintenance_queue")
+# Attachment bytes live in file storage, not in a column, so the rows travel with
+# the blobs they point at (``blobs/``) rather than on their own.
+ATTACHMENT_TABLES = ("attachments", "document_attachments")
+
+
+@dataclass(frozen=True)
+class TransferScope:
+    """Which slices of a bank an archive carries.
+
+    Three booleans rather than a component list, so a caller never has to know
+    the table layout. The mapping, which the API documents verbatim:
+
+    ``data`` — everything backing the memories:
+        documents, chunks, memory_units (replayed and re-embedded), consolidated
+        observations, entities/links (rebuilt from the replay), attachments and
+        their bytes, the curation archive (``invalidated_memory_units``), the
+        async operations log, and the graph/entity maintenance queues.
+    ``bank_config`` — the bank's own configuration and synthesized state:
+        the ``banks`` row (per-bank config overrides), mental models and their
+        refresh history, knowledge pages, directives and webhooks.
+    ``history`` — operational history: ``audit_log`` and ``llm_requests``.
+
+    Mental-model refresh history sits under ``bank_config``, not ``history``: it
+    is the state of a mental model rather than a log about it, and a migration
+    that dropped it by default would silently lose it (it is carried
+    unconditionally today).
+    """
+
+    data: bool = True
+    bank_config: bool = True
+    history: bool = False
+
+    def __post_init__(self) -> None:
+        if not (self.data or self.bank_config or self.history):
+            raise ValueError("A transfer must include at least one of data, bank_config or history")
+
+
+class TransferScopeManifest(BaseModel):
+    """The scope an archive was produced with, recorded in the manifest.
+
+    Defaults describe a pre-scope archive: whole-bank archives carried data and
+    bank config, and named their history separately via ``includes_history``.
+    """
+
+    data: bool = True
+    bank_config: bool = True
+    history: bool = False
+
+
+class TransferAttachment(BaseModel):
+    """An attachment row plus the archive entry holding its bytes.
+
+    ``storage_key`` is the source instance's key, which the target does not reuse
+    — the key encodes the source tenant and bank (see ``bank_storage_prefix``), so
+    import recomputes it and rewrites the row. ``entry`` names the ZIP member the
+    bytes live in, kept opaque (an ordinal) because a storage key is caller-shaped
+    and must never become a path inside the archive.
+    """
+
+    bank_id: str
+    attachment_hash: str
+    short_id: str
+    media_type: str
+    byte_size: int
+    kind: str = "image"
+    created_at: datetime | None = None
+    entry: str
+
 
 ObservationScopes = Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
 BankRowsJSONEncoding = Literal["decoded", "serialized"]
@@ -184,8 +260,16 @@ class TransferManifest(BaseModel):
     archive_type: Literal["documents", "bank"] = "documents"
     directive_count: int = 0
     webhook_count: int = 0
-    # True when --include-history carried audit_log / llm_requests.
+    # True when --include-history carried audit_log / llm_requests. Kept as the
+    # wire name it has always had; `scope.history` says the same thing for
+    # archives produced with an explicit scope.
     includes_history: bool = False
+    # What the producer was asked to carry. Absent on pre-scope archives, which
+    # the importer reads as "data + bank_config" (what a whole-bank export was).
+    scope: TransferScopeManifest | None = None
+    attachment_count: int = 0
+    operation_count: int = 0
+    invalidated_memory_count: int = 0
     # How JSON/JSONB values in bank/history row files were represented by the
     # producing connection. Absent on legacy v1 archives; import treats those as
     # decoded because the released producer was the codec-enabled admin CLI.

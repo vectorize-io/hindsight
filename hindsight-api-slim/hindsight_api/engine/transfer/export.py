@@ -27,10 +27,13 @@ from ..db_utils import acquire_with_retry
 from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
 from .schema import (
+    ATTACHMENT_TABLES,
     CARRIED_HISTORY_TABLES,
     HISTORY_TABLES,
+    OPERATIONAL_TABLES,
     SCHEMA_VERSION,
     BankRowsJSONEncoding,
+    TransferAttachment,
     TransferCausalRelation,
     TransferChunk,
     TransferDocument,
@@ -39,6 +42,8 @@ from .schema import (
     TransferManifest,
     TransferObservation,
     TransferObservationSource,
+    TransferScope,
+    TransferScopeManifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,31 +85,22 @@ _BANK_ROW_TABLES = ("banks", "mental_models", "directives", "webhooks")
 # keep their (id, bank_id) across export/import, so their refresh history can be
 # re-attached. The surrogate ``id`` is dropped on dump so the target reassigns it
 # (see _dump_history_rows); restored after its parent table (mental_models).
-# Operational history — only carried with include_history=True.
+# Operational history — only carried with scope.history.
+# Carried under ``scope.data`` as verbatim rows under ``data/``, alongside the
+# attachment rows (whose bytes ride in ``blobs/``). These are keyed by globally
+# unique ids, or reference ids the replay regenerates, so the importer remaps
+# them rather than inserting them as they stand.
+_DATA_ROW_TABLES = (*OPERATIONAL_TABLES, *ATTACHMENT_TABLES, "invalidated_memory_units")
 # Intentionally never exported.
 _SKIP_TABLES = frozenset(
     {
-        "async_operations",  # in-flight ops; drain on the source before migrating
-        "graph_maintenance_queue",  # transient work queue; regenerated on import
-        "entity_maintenance_queue",  # transient work queue; regenerated on import
-        "file_storage",  # raw uploads; documents.original_text is already carried
-        # Attachments retained as inline content, and the document edges derived
-        # from the text. Skipped because the bytes they point at live in
-        # file_storage, which is skipped just above — carrying the rows alone
-        # would give the target a bank full of records referencing blobs it does
-        # not have. The placeholders survive in documents.original_text, and both
-        # extraction and the read paths already degrade gracefully when one
-        # resolves to nothing, so an imported document keeps its facts and simply
-        # cannot show the attachment. Carrying them properly means bundling their
-        # bytes into the archive — a deliberate feature, not a line in this set.
-        "attachments",
-        "document_attachments",
-        # Curation archive of retired facts — local operational state, not part of
-        # the live knowledge the export replays. Its rows mirror memory_units (stale
-        # embedding) and snapshot source-bank entity ids that the import re-resolves
-        # to fresh ids, so carrying them would only produce dangling associations.
-        # Revert anything worth keeping on the source before migrating.
-        "invalidated_memory_units",
+        # The native file-storage backend's own table. Blobs travel as archive
+        # entries (``blobs/``) keyed to the attachment rows that name them, not as
+        # rows of whatever backend happens to hold them on the source — an S3
+        # deployment has no rows here at all. Raw document uploads are not carried:
+        # documents.original_text already holds the extracted text, which is what
+        # the replay needs.
+        "file_storage",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with
@@ -429,47 +425,65 @@ async def export_bank(
     conn: Any,
     bank_id: str,
     *,
-    include_history: bool = False,
+    scope: TransferScope | None = None,
     bank_rows_json_encoding: BankRowsJSONEncoding = "serialized",
     memories: Any = None,
+    file_storage: Any = None,
 ) -> bytes:
     """Export an entire bank into a portable ZIP archive (no embeddings).
 
-    Produces a superset of the documents archive: the logical
-    document/fact/observation export (replayed and re-embedded on import) plus
-    the bank's config, mental models, directives and webhooks as JSON rows. With
-    ``include_history`` the operational tails (audit_log, llm_requests) are also
-    carried. Intended for migrating a bank to a new instance configured with a
-    different embedding model / vector / text-search backend — every vector is
-    regenerated on the target, so nothing here is encoder-specific.
+    ``scope`` decides what travels — see :class:`TransferScope` for the mapping
+    from its three booleans to tables. The default carries data and bank config
+    but not the operational history tails. Intended for migrating a bank to a new
+    instance configured with a different embedding model / vector / text-search
+    backend — every vector is regenerated on the target, so nothing here is
+    encoder-specific.
 
     ``conn`` is a live connection scoped to the bank's schema (the admin CLI sets
     ``_current_schema`` and passes its raw connection; the engine acquires one
-    after tenant auth).
+    after tenant auth). ``file_storage`` is needed only for attachment bytes; a
+    bank with attachments exported without one raises rather than silently
+    producing rows that point at blobs the archive does not carry.
     """
+    scope = scope or TransferScope()
     memories = _resolve_memories(memories)
-    # Whole-bank export always carries observations (they're bank-level state)
-    # and, with them, the per-fact consolidation lifecycle so the target restores
-    # exact eligibility instead of re-consolidating historical facts (#2965).
-    #
-    # Only the memories move to the store. Everything below — bank config, mental models,
-    # directives, webhooks, knowledge pages, the history tails — lives in Postgres for every
-    # deployment, so `conn` stays the source for all of it.
-    if _is_store_owned(memories, bank_id):
-        loaded = await _load_documents_from_store(memories, bank_id, None, include_lifecycle=True)
-        documents = loaded.documents
-        observations = await _load_observations_from_store(memories, bank_id, loaded.unit_index)
-    else:
-        loaded = await _load_documents(conn, bank_id, None, include_lifecycle=True)
-        documents = loaded.documents
-        observations = await _load_observations(conn, bank_id, loaded.unit_index)
+    documents: list[TransferDocument] = []
+    observations: list[TransferObservation] = []
+    attachments: list[TransferAttachment] = []
+    blobs: dict[str, bytes] = {}
+    data_rows: dict[str, list[dict]] = {}
 
-    bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
-    for table in CARRIED_HISTORY_TABLES:
-        bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
-    knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+    if scope.data:
+        # Whole-bank export always carries observations (they're bank-level state)
+        # and, with them, the per-fact consolidation lifecycle so the target restores
+        # exact eligibility instead of re-consolidating historical facts (#2965).
+        #
+        # Only the memories move to the store. Everything below — bank config, mental models,
+        # directives, webhooks, knowledge pages, the history tails — lives in Postgres for every
+        # deployment, so `conn` stays the source for all of it.
+        if _is_store_owned(memories, bank_id):
+            loaded = await _load_documents_from_store(memories, bank_id, None, include_lifecycle=True)
+            documents = loaded.documents
+            observations = await _load_observations_from_store(memories, bank_id, loaded.unit_index)
+        else:
+            loaded = await _load_documents(conn, bank_id, None, include_lifecycle=True)
+            documents = loaded.documents
+            observations = await _load_observations(conn, bank_id, loaded.unit_index)
+        attachments, blobs = await _dump_attachments(conn, bank_id, file_storage)
+        data_rows["document_attachments"] = await _dump_bank_rows(conn, "document_attachments", bank_id)
+        data_rows.update(await _dump_operational_rows(conn, bank_id))
+        data_rows["invalidated_memory_units"] = await _dump_invalidated_units(conn, bank_id)
+
+    bank_rows: dict[str, list[dict]] = {}
+    knowledge_pages: list[TransferKnowledgePage] = []
+    if scope.bank_config:
+        bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
+        for table in CARRIED_HISTORY_TABLES:
+            bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
+        knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+
     history_rows: dict[str, list[dict]] = {}
-    if include_history:
+    if scope.history:
         history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
 
     archive = io.BytesIO()
@@ -483,16 +497,28 @@ async def export_bank(
             payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
             zf.writestr("observations.json", payload)
 
+        if attachments:
+            payload = "[\n" + ",\n".join(a.model_dump_json(indent=2) for a in attachments) + "\n]\n"
+            zf.writestr("attachments.json", payload)
+            for entry, data in blobs.items():
+                # Stored, not deflated: attachment bytes are images/PDFs that are
+                # already compressed, so DEFLATE would burn CPU for nothing.
+                zf.writestr(zipfile.ZipInfo(entry), data, compress_type=zipfile.ZIP_STORED)
+
+        for table, rows in data_rows.items():
+            zf.writestr(f"data/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
+
         for table, rows in bank_rows.items():
             zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
         # Typed knowledge-page tree (parent-first). Written even when empty so the
         # importer can distinguish "no pages" from a pre-tree archive.
-        zf.writestr(
-            "knowledge_pages.json",
-            "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
-            if knowledge_pages
-            else "[]\n",
-        )
+        if scope.bank_config:
+            zf.writestr(
+                "knowledge_pages.json",
+                "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
+                if knowledge_pages
+                else "[]\n",
+            )
         for table, rows in history_rows.items():
             zf.writestr(f"history/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
 
@@ -508,25 +534,148 @@ async def export_bank(
             knowledge_page_count=len(knowledge_pages),
             directive_count=len(bank_rows.get("directives", [])),
             webhook_count=len(bank_rows.get("webhooks", [])),
-            includes_history=include_history,
+            includes_history=scope.history,
+            scope=TransferScopeManifest(data=scope.data, bank_config=scope.bank_config, history=scope.history),
+            attachment_count=len(attachments),
+            operation_count=len(data_rows.get("async_operations", [])),
+            invalidated_memory_count=len(data_rows.get("invalidated_memory_units", [])),
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
     logger.info(
-        "[transfer] Exported bank %s: %d document(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d knowledge page(s), %d directive(s), %d webhook(s)%s",
+        "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), %d fact(s), "
+        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d knowledge page(s), "
+        "%d directive(s), %d webhook(s)",
         bank_id,
+        scope.data,
+        scope.bank_config,
+        scope.history,
         len(documents),
         fact_total,
         len(observations),
+        len(attachments),
+        len(data_rows.get("async_operations", [])),
         len(bank_rows.get("mental_models", [])),
         len(knowledge_pages),
         len(bank_rows.get("directives", [])),
         len(bank_rows.get("webhooks", [])),
-        " (with history)" if include_history else "",
     )
     return archive.getvalue()
+
+
+async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> tuple[list[TransferAttachment], dict]:
+    """Attachment rows plus their bytes, read out of file storage.
+
+    The bytes are the point: ``attachments`` rows only name a storage key, and a
+    target instance has neither that key nor the blob behind it. Without the
+    bytes an imported bank keeps facts extracted *from* an attachment while the
+    attachment itself resolves to nothing.
+
+    Raises when a bank has attachments and no ``file_storage`` was supplied — the
+    alternative is an archive that looks complete and silently is not.
+    """
+    rows = await conn.fetch(
+        f"SELECT bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, created_at "
+        f"FROM {fq_table('attachments')} WHERE bank_id = $1 ORDER BY attachment_hash",
+        bank_id,
+    )
+    if not rows:
+        return [], {}
+    if file_storage is None:
+        raise ValueError(
+            f"Bank '{bank_id}' has {len(rows)} attachment(s) but no file storage was supplied to the export; "
+            f"their bytes cannot be carried."
+        )
+    attachments: list[TransferAttachment] = []
+    blobs: dict[str, bytes] = {}
+    for index, row in enumerate(rows):
+        entry = f"blobs/{index:06d}.bin"
+        data = await file_storage.retrieve(row["storage_key"])
+        if data is None:
+            # The row outlived its blob (an interrupted reclaim, a storage
+            # migration). Carrying the row alone reproduces the dangling state on
+            # the target, so drop it: the facts keep their text either way.
+            logger.warning(
+                "[transfer] Attachment %s of bank %s has no bytes at %s; not carried",
+                row["short_id"],
+                bank_id,
+                row["storage_key"],
+            )
+            continue
+        blobs[entry] = bytes(data)
+        attachments.append(
+            TransferAttachment(
+                bank_id=row["bank_id"],
+                attachment_hash=row["attachment_hash"],
+                short_id=row["short_id"],
+                media_type=row["media_type"],
+                byte_size=row["byte_size"],
+                kind=row["kind"],
+                created_at=row["created_at"],
+                entry=entry,
+            )
+        )
+    return attachments, blobs
+
+
+async def _dump_operational_rows(conn: Any, bank_id: str) -> dict[str, list[dict]]:
+    """Dump the operations log and the maintenance queues.
+
+    The queues are keyed by ids the import regenerates, so each row is annotated
+    with what the target can resolve it by: a unit's ``unit_id`` survives as the
+    source id the importer maps, and an entity is named rather than numbered
+    (entities are re-resolved by canonical name on the target).
+    """
+    rows: dict[str, list[dict]] = {}
+    rows["async_operations"] = await _dump_bank_rows(conn, "async_operations", bank_id)
+    rows["graph_maintenance_queue"] = await _dump_bank_rows(conn, "graph_maintenance_queue", bank_id)
+    entity_queue = await conn.fetch(
+        f"""
+        SELECT q.bank_id, q.entity_id, q.enqueued_at, e.canonical_name
+        FROM {fq_table("entity_maintenance_queue")} q
+        LEFT JOIN {fq_table("entities")} e ON e.id = q.entity_id
+        WHERE q.bank_id = $1
+        ORDER BY q.enqueued_at
+        """,
+        bank_id,
+    )
+    rows["entity_maintenance_queue"] = [
+        {k: v for k, v in dict(row).items() if k != "entity_id"} for row in entity_queue if row["canonical_name"]
+    ]
+    return rows
+
+
+async def _dump_invalidated_units(conn: Any, bank_id: str) -> list[dict]:
+    """Dump the curation archive (facts a user invalidated but can still revert).
+
+    Two columns cannot travel as they are. ``entity_ids`` point at source-bank
+    entity rows, so they are carried as canonical names for the target to
+    re-resolve; ``chunk_id`` embeds the bank id (see ``chunk_ids``), so only its
+    ordinal is carried and the target rebuilds the id. The surrogate ``id`` is
+    dropped — the replay mints fresh unit ids and nothing references an archived
+    one across a transfer.
+    """
+    rows = await conn.fetch(
+        f"SELECT * FROM {fq_table('invalidated_memory_units')} WHERE bank_id = $1 ORDER BY invalidated_at, id",
+        bank_id,
+    )
+    if not rows:
+        return []
+    every_entity = {e for row in rows for e in (row["entity_ids"] or [])}
+    names: dict[Any, str] = {}
+    if every_entity:
+        name_rows = await conn.fetch(
+            f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1)", list(every_entity)
+        )
+        names = {r["id"]: r["canonical_name"] for r in name_rows}
+    dumped: list[dict] = []
+    for row in rows:
+        record = {k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k not in ("id", "entity_ids")}
+        record["chunk_index"] = _chunk_index_from_chunk_id(record.pop("chunk_id", None))
+        record["entity_names"] = sorted(n for n in (names.get(e) for e in (row["entity_ids"] or [])) if n)
+        dumped.append(record)
+    return dumped
 
 
 # One page of a store scan/listing. Export is a bulk operation and the store pages server-side,

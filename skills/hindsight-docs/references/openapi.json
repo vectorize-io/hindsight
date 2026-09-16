@@ -4984,6 +4984,7 @@
         "summary": "Import documents (async)",
         "description": "Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved \u2014 no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
         "operationId": "import_documents",
+        "deprecated": true,
         "parameters": [
           {
             "name": "bank_id",
@@ -5065,6 +5066,7 @@
         "summary": "Export documents (async)",
         "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).",
         "operationId": "export_documents",
+        "deprecated": true,
         "parameters": [
           {
             "name": "bank_id",
@@ -5144,6 +5146,272 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DocumentExportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/transfer/export": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Export a bank (async)",
+        "description": "Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages, directives, webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried \u2014 importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).",
+        "operationId": "export_bank_transfer",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry the memories and everything backing them",
+              "default": true,
+              "title": "Include Data"
+            },
+            "description": "Carry the memories and everything backing them"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry bank config, mental models, directives",
+              "default": true,
+              "title": "Include Bank Config"
+            },
+            "description": "Carry bank config, mental models, directives"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry audit_log and llm_requests",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Carry audit_log and llm_requests"
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s); omit for the whole bank",
+              "title": "Document Id"
+            },
+            "description": "Document id(s); omit for the whole bank"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/transfer/import": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Import a bank (async)",
+        "description": "Submit a transfer archive (produced by the export endpoint) for import. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved \u2014 no LLM extraction, so the import costs no tokens and invents no new facts.\n\nTwo modes. `restore` (default) writes a whole bank into target_bank_id, which must NOT already exist \u2014 it restores a bank rather than merging into one, and is how a bank is moved between instances or copied under a new id. `merge` folds an archive's documents into this bank, with document_conflict deciding what happens to ids that already exist (skip, replace, new-id).\n\nThe include flags narrow what is restored to a subset of what the archive holds; they cannot add what the producer did not export. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and per-component counts. The operation is recorded against {bank_id} even in restore mode, because the target bank does not exist yet.",
+        "operationId": "import_bank_transfer",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "restore (into a fresh bank) | merge (into this bank)",
+              "default": "restore",
+              "title": "Mode"
+            },
+            "description": "restore (into a fresh bank) | merge (into this bank)"
+          },
+          {
+            "name": "target_bank_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: the bank to create; defaults to the archive's source bank",
+              "title": "Target Bank Id"
+            },
+            "description": "restore mode: the bank to create; defaults to the archive's source bank"
+          },
+          {
+            "name": "document_conflict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "merge mode: skip | replace | new-id",
+              "default": "skip",
+              "title": "Document Conflict"
+            },
+            "description": "merge mode: skip | replace | new-id"
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Restore the memories and everything backing them",
+              "default": true,
+              "title": "Include Data"
+            },
+            "description": "Restore the memories and everything backing them"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Restore bank config, mental models, directives",
+              "default": true,
+              "title": "Include Bank Config"
+            },
+            "description": "Restore bank config, mental models, directives"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Restore audit_log and llm_requests",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Restore audit_log and llm_requests"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_bank_transfer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
                 }
               }
             }
@@ -8686,6 +8954,25 @@
         "title": "BankTemplateMentalModel",
         "description": "A mental model definition within a bank template manifest."
       },
+      "BankTransferSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "BankTransferSubmitResponse",
+        "description": "Response for the unified bank-transfer endpoints (202).\n\nThe transfer runs in the background; poll\nGET /v1/default/banks/{bank_id}/operations/{operation_id}. An export's\n``result_metadata`` carries ``download_url`` / ``storage_key`` /\n``byte_size`` / ``filename``; an import's carries the per-component counts."
+      },
       "Base64AttachmentSource": {
         "properties": {
           "type": {
@@ -8736,6 +9023,21 @@
           "request"
         ],
         "title": "Body_file_retain"
+      },
+      "Body_import_bank_transfer": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File",
+            "description": "Transfer ZIP archive",
+            "format": "binary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_bank_transfer"
       },
       "Body_import_documents": {
         "properties": {

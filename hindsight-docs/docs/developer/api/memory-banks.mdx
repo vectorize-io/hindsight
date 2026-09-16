@@ -633,7 +633,66 @@ To apply **every** active directive regardless of tags, set `apply_all_directive
 
 ---
 
-## Document export & import
+## Bank transfer (export & import)
+
+Move a bank — or just its documents — between banks and instances **without re-running the LLM**. One archive format, one pair of endpoints, and three flags that decide what travels:
+
+| Flag | Default | What it carries |
+|------|---------|-----------------|
+| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, and the maintenance queues. |
+| `include_bank_config` | `true` | The bank's config overrides, mental models and their refresh history, knowledge pages, directives, and webhooks. |
+| `include_history` | `false` | `audit_log` and `llm_requests`. |
+
+Embeddings and database ids are never carried: facts are re-embedded with the *target* bank's model and entities are re-resolved against it, so an archive moves cleanly to an instance configured with a different embedding model, vector extension, or text-search backend.
+
+Webhooks travel with `include_bank_config`. When copying a bank whose webhooks point at a per-bank consumer, export with `include_bank_config=false`, or delete them on the copy.
+
+### Export
+
+`POST /v1/default/banks/{bank_id}/transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive). Returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
+
+```bash
+# Whole bank, memories + config, no history
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export"
+
+# Just the memories
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?include_bank_config=false"
+
+# Specific documents (a document subset carries no bank-level sections)
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?document_id=doc-1&document_id=doc-2"
+```
+
+### Import
+
+`POST /v1/default/banks/{bank_id}/transfer/import` — multipart upload (`file` = the ZIP), also a background operation.
+
+| Mode | Behaviour |
+|------|-----------|
+| `restore` (default) | Writes a whole bank into `target_bank_id`, which **must not already exist**. This is how a bank is moved to another instance, or copied under a new id. |
+| `merge` | Folds the archive's documents into `{bank_id}`. `document_conflict` decides what happens to document ids that already exist: `skip` (default), `replace`, `new-id`. |
+
+```bash
+# Restore a bank under a new id
+curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/import?target_bank_id=my-bank-copy"
+
+# Merge an archive's documents into an existing bank
+curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/other-bank/transfer/import?mode=merge&document_conflict=replace"
+```
+
+The include flags apply here too, and can only narrow: they restore a subset of what the archive holds, never more.
+
+In `restore` mode the operation is recorded against `{bank_id}` — the bank in the URL — because the target bank does not exist yet. Poll that bank's operations endpoint for status and the per-component counts.
+
+A restore carries the operations log as history, not as work: any operation still in flight when the bank was exported is restored as `cancelled`, so a copied bank never re-runs the original's queued retains or re-fires its webhooks.
+
+### Document export & import (superseded)
+
+The endpoints below still work exactly as documented and are unchanged; new integrations should use `/transfer/export` and `/transfer/import` above, which carry the same document archives plus the bank's own configuration.
 
 Move documents — and the facts already extracted from them — between banks **without re-running the LLM**. Useful for testing a different embedding model, or copying data between banks/instances without paying for re-extraction. The archive carries documents, raw chunks, and extracted facts (entities by canonical name, causal links) — but **no embeddings or database ids**. On import, facts are re-embedded with the *target* bank's model and entities/links are recomputed against it, so imported documents are integrated with whatever already exists there.
 

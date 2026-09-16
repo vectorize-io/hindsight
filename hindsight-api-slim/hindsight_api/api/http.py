@@ -2771,6 +2771,19 @@ class DocumentExportSubmitResponse(BaseModel):
     status: str = "pending"
 
 
+class BankTransferSubmitResponse(BaseModel):
+    """Response for the unified bank-transfer endpoints (202).
+
+    The transfer runs in the background; poll
+    GET /v1/default/banks/{bank_id}/operations/{operation_id}. An export's
+    ``result_metadata`` carries ``download_url`` / ``storage_key`` /
+    ``byte_size`` / ``filename``; an import's carries the per-component counts.
+    """
+
+    operation_id: str
+    status: str = "pending"
+
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
 
@@ -8281,6 +8294,10 @@ def _register_routes(app: FastAPI):
         "Mental Models plus Knowledge Pages (all whole-bank export only).",
         operation_id="export_documents",
         tags=["Document Transfer"],
+        # Superseded by POST /v1/default/banks/{bank_id}/transfer/export, which
+        # carries the same document subsets plus the bank's own config and
+        # history. Kept working unchanged for existing callers.
+        deprecated=True,
     )
     async def api_export_documents(
         bank_id: str,
@@ -8339,6 +8356,10 @@ def _register_routes(app: FastAPI):
         "result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
         operation_id="import_documents",
         tags=["Document Transfer"],
+        # Superseded by POST /v1/default/banks/{bank_id}/transfer/import with
+        # mode=merge, which is this endpoint's behaviour under the unified
+        # vocabulary. Kept working unchanged for existing callers.
+        deprecated=True,
     )
     @audited("import_documents", request_param=None)
     async def api_import_documents(
@@ -8374,6 +8395,193 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/document-transfer")
+
+    # =====================================================================
+    # Bank Transfer (unified export / import)
+    # =====================================================================
+    #
+    # One archive format and one vocabulary for every transfer: what used to be
+    # the document-transfer pair plus the admin-only `hindsight-admin export-bank`
+    # / `import-bank`. Three booleans choose what travels:
+    #
+    #   include_data        documents, facts, observations, entities and links,
+    #                       attachments (bytes included), the curation archive,
+    #                       the operations log and the maintenance queues
+    #   include_bank_config the bank row (per-bank config), mental models and
+    #                       their refresh history, knowledge pages, directives,
+    #                       webhooks
+    #   include_history     audit_log and llm_requests
+    #
+    # The older endpoints stay, and keep their exact request and response shapes.
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/transfer/export",
+        response_model=BankTransferSubmitResponse,
+        status_code=202,
+        summary="Export a bank (async)",
+        description="Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the "
+        "archive carries: include_data (documents, facts, observations, attachments and their bytes, the "
+        "curation archive, the operations log and the maintenance queues), include_bank_config (bank config, "
+        "mental models and their history, knowledge pages, directives, webhooks) and include_history "
+        "(audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with "
+        "the target bank's model and re-resolves entities, so an archive moves between instances configured "
+        "with different embedding models. Returns an operation_id; poll "
+        "GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the "
+        "download_url in its result_metadata. Pass document_id to export specific documents instead of the "
+        "whole bank (a document subset carries no bank-level sections).",
+        operation_id="export_bank_transfer",
+        tags=["Bank Transfer"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    async def api_bank_transfer_export(
+        bank_id: str,
+        include_data: bool = Query(default=True, description="Carry the memories and everything backing them"),
+        include_bank_config: bool = Query(default=True, description="Carry bank config, mental models, directives"),
+        include_history: bool = Query(default=False, description="Carry audit_log and llm_requests"),
+        document_id: list[str] | None = Query(default=None, description="Document id(s); omit for the whole bank"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit an async bank export."""
+        try:
+            if not get_config().enable_document_export_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Bank export API is disabled. Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
+                )
+            if not (include_data or include_bank_config or include_history):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Nothing to export: set at least one of include_data, include_bank_config, include_history",
+                )
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+
+            from hindsight_api.engine.transfer import TransferScope
+
+            try:
+                if document_id:
+                    # A subset of documents is not a bank: the bank-level sections
+                    # describe the whole of it, and observations can span documents
+                    # outside the subset.
+                    if include_bank_config or include_history:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="include_bank_config and include_history are only supported for a whole-bank "
+                            "export (omit document_id)",
+                        )
+                    submission = await app.state.memory.submit_export_documents_async(
+                        bank_id,
+                        request_context,
+                        list(document_id),
+                    )
+                else:
+                    submission = await app.state.memory.submit_bank_export_async(
+                        bank_id,
+                        request_context,
+                        scope=TransferScope(
+                            data=include_data,
+                            bank_config=include_bank_config,
+                            history=include_history,
+                        ),
+                    )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            return BankTransferSubmitResponse(operation_id=submission["operation_id"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/transfer/export")
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/transfer/import",
+        response_model=BankTransferSubmitResponse,
+        status_code=202,
+        summary="Import a bank (async)",
+        description="Submit a transfer archive (produced by the export endpoint) for import. Runs as a "
+        "background operation: facts are re-embedded with the target bank's embedding model and entities are "
+        "re-resolved — no LLM extraction, so the import costs no tokens and invents no new facts.\n\n"
+        "Two modes. `restore` (default) writes a whole bank into target_bank_id, which must NOT already exist "
+        "— it restores a bank rather than merging into one, and is how a bank is moved between instances or "
+        "copied under a new id. `merge` folds an archive's documents into this bank, with document_conflict "
+        "deciding what happens to ids that already exist (skip, replace, new-id).\n\n"
+        "The include flags narrow what is restored to a subset of what the archive holds; they cannot add "
+        "what the producer did not export. Returns an operation_id; poll "
+        "GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and per-component counts. The "
+        "operation is recorded against {bank_id} even in restore mode, because the target bank does not exist "
+        "yet.",
+        operation_id="import_bank_transfer",
+        tags=["Bank Transfer"],
+    )
+    @audited("import_bank_transfer", request_param=None)
+    async def api_bank_transfer_import(
+        bank_id: str,
+        file: UploadFile = File(..., description="Transfer ZIP archive"),
+        mode: str = Query(default="restore", description="restore (into a fresh bank) | merge (into this bank)"),
+        target_bank_id: str | None = Query(
+            default=None, description="restore mode: the bank to create; defaults to the archive's source bank"
+        ),
+        document_conflict: str = Query(default="skip", description="merge mode: skip | replace | new-id"),
+        include_data: bool = Query(default=True, description="Restore the memories and everything backing them"),
+        include_bank_config: bool = Query(default=True, description="Restore bank config, mental models, directives"),
+        include_history: bool = Query(default=False, description="Restore audit_log and llm_requests"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit a transfer archive for async import."""
+        try:
+            if not get_config().enable_document_import_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Bank import API is disabled. Set HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API=true to enable.",
+                )
+            if mode not in ("restore", "merge"):
+                raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}' (expected restore|merge)")
+            if document_conflict not in ("skip", "replace", "new-id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid document_conflict '{document_conflict}' (expected skip|replace|new-id)",
+                )
+            archive_bytes = await file.read()
+
+            from hindsight_api.engine.transfer import TransferScope
+
+            try:
+                if mode == "merge":
+                    if target_bank_id:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="target_bank_id is only valid in restore mode; merge imports into {bank_id}",
+                        )
+                    submission = await app.state.memory.import_documents_async(
+                        bank_id, archive_bytes, request_context, document_conflict
+                    )
+                else:
+                    submission = await app.state.memory.submit_bank_import_async(
+                        bank_id,
+                        archive_bytes,
+                        request_context,
+                        target_bank_id=target_bank_id,
+                        scope=TransferScope(
+                            data=include_data,
+                            bank_config=include_bank_config,
+                            history=include_history,
+                        ),
+                    )
+            except ValueError as e:
+                # Invalid archive, unsupported schema version, or a target bank
+                # that already exists — all caller errors.
+                raise HTTPException(status_code=400, detail=str(e))
+            return BankTransferSubmitResponse(operation_id=submission["operation_id"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/transfer/import")
 
     @app.get(
         "/v1/default/banks/{bank_id}/attachments/{attachment_id}",

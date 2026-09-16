@@ -9,15 +9,14 @@ import io
 import json
 import uuid
 import zipfile
-from urllib.parse import quote
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.consolidation.consolidator import (
     _apply_create_observation,
@@ -25,6 +24,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
 from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive
 from hindsight_api.engine.transfer.schema import (
@@ -238,12 +238,18 @@ def test_export_bank_covers_schema():
     """Every bank-scoped table must be classified by export_bank — logical, carried,
     history, or explicitly skipped — so a future migration can't silently drop one."""
     from hindsight_api.admin.cli import BACKUP_TABLES
-    from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _REPLAYED_TABLES, _SKIP_TABLES
+    from hindsight_api.engine.transfer.export import (
+        _BANK_ROW_TABLES,
+        _DATA_ROW_TABLES,
+        _REPLAYED_TABLES,
+        _SKIP_TABLES,
+    )
     from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES, KNOWLEDGE_TABLES
 
     buckets = [
         set(_REPLAYED_TABLES),
         set(_BANK_ROW_TABLES),
+        set(_DATA_ROW_TABLES),
         set(CARRIED_HISTORY_TABLES),
         set(KNOWLEDGE_TABLES),
         set(HISTORY_TABLES),
@@ -404,8 +410,8 @@ async def test_restore_rows_normalizes_jsonb_strings(memory):
 @pytest.mark.asyncio
 async def test_export_bank_contents(memory, request_context):
     """export_bank produces a whole-bank archive: docs + bank config + webhooks,
-    no embeddings, with history gated behind include_history."""
-    from hindsight_api.engine.transfer import export_bank
+    no embeddings, with history gated behind scope.history."""
+    from hindsight_api.engine.transfer import TransferScope, export_bank
 
     bank = _unique_bank("export_bank")
     webhook_id = uuid.uuid4()
@@ -425,7 +431,7 @@ async def test_export_bank_contents(memory, request_context):
 
         # Without history.
         async with acquire_with_retry(backend) as conn:
-            archive = await export_bank(conn, bank, include_history=False)
+            archive = await export_bank(conn, bank, scope=TransferScope(history=False))
         with zipfile.ZipFile(io.BytesIO(archive)) as zf:
             names = set(zf.namelist())
             manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
@@ -449,7 +455,7 @@ async def test_export_bank_contents(memory, request_context):
 
         # With history.
         async with acquire_with_retry(backend) as conn:
-            archive_h = await export_bank(conn, bank, include_history=True)
+            archive_h = await export_bank(conn, bank, scope=TransferScope(history=True))
         with zipfile.ZipFile(io.BytesIO(archive_h)) as zf:
             names_h = set(zf.namelist())
             manifest_h = TransferManifest.model_validate_json(zf.read("manifest.json"))
@@ -2328,3 +2334,309 @@ async def test_embed_in_batches_handles_empty_input():
 
     assert await _embed_in_batches(embedder, []) == []
     assert embedder.batch_sizes == []
+
+
+@pytest.mark.asyncio
+async def test_bank_copy_carries_directives_and_webhooks(memory, request_context):
+    """Copying a bank on the same instance must actually write its directives and webhooks.
+
+    Both tables have a globally-unique ``id`` primary key. The archive carried
+    those ids verbatim and ``_restore_rows`` inserts ON CONFLICT DO NOTHING, so
+    every row collided with the still-present source row, wrote nothing, and was
+    still counted as imported — a copy that reported success and silently had no
+    directives and no webhooks.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("copy_src")
+    target = _unique_bank("copy_dst")
+    try:
+        await _retain(memory, source, "Dana works at Vectorize.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('webhooks')} "
+                f"(id, bank_id, url, secret, event_types, enabled, created_at, updated_at) "
+                f"VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())",
+                uuid.uuid4(),
+                source,
+                "https://example.com/hook",
+                ["retain.completed"],
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.directives_imported == 1
+        assert result.webhooks_imported == 1
+
+        # The counts above are what lied before the fix; these are the rows.
+        async with acquire_with_retry(backend) as conn:
+            directives = await conn.fetch(f"SELECT id, name FROM {fq_table('directives')} WHERE bank_id = $1", target)
+            webhooks = await conn.fetch(f"SELECT id, url FROM {fq_table('webhooks')} WHERE bank_id = $1", target)
+            source_directive_ids = {
+                r["id"] for r in await conn.fetch(f"SELECT id FROM {fq_table('directives')} WHERE bank_id = $1", source)
+            }
+        assert [r["name"] for r in directives] == ["tone"]
+        assert [r["url"] for r in webhooks] == ["https://example.com/hook"]
+        # Fresh ids: keeping the source's is what made the insert a no-op.
+        assert not ({r["id"] for r in directives} & source_directive_ids)
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_scope_exports_and_restores_only_what_was_asked_for(memory, request_context):
+    """The three booleans select what travels, on both halves of the transfer."""
+    from hindsight_api.engine.transfer import TransferScope, export_bank
+
+    source = _unique_bank("scope_src")
+    config_only = _unique_bank("scope_cfg")
+    data_only = _unique_bank("scope_data")
+    try:
+        await _retain(memory, source, "Eve lives in Berlin.", request_context, "doc-1")
+        await memory.create_mental_model(
+            source,
+            name="Places",
+            source_query="where do people live",
+            content="People and their cities.",
+            mental_model_id="mm-1",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+
+        async with acquire_with_retry(backend) as conn:
+            config_archive = await export_bank(
+                conn, source, scope=TransferScope(data=False, bank_config=True), file_storage=memory._file_storage
+            )
+            data_archive = await export_bank(
+                conn, source, scope=TransferScope(data=True, bank_config=False), file_storage=memory._file_storage
+            )
+
+        with zipfile.ZipFile(io.BytesIO(config_archive)) as zf:
+            config_names = set(zf.namelist())
+        with zipfile.ZipFile(io.BytesIO(data_archive)) as zf:
+            data_names = set(zf.namelist())
+        assert not any(n.startswith("documents/") for n in config_names)
+        assert "mental_models.json" in config_names
+        assert any(n.startswith("documents/") for n in data_names)
+        assert "mental_models.json" not in data_names
+
+        config_result = await memory.import_bank_async(config_archive, request_context, target_bank_id=config_only)
+        assert config_result.documents_imported == 0
+        assert config_result.mental_models_imported == 1
+
+        data_result = await memory.import_bank_async(data_archive, request_context, target_bank_id=data_only)
+        assert data_result.documents_imported == 1
+        assert data_result.mental_models_imported == 0
+        # The bank row came from this instance's defaults rather than the archive,
+        # but it exists — the facts had to land somewhere.
+        assert await memory.get_bank_profile(data_only, request_context=request_context) is not None
+    finally:
+        for bank in (source, config_only, data_only):
+            await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory, request_context):
+    """An operation still in flight at export time restores as cancelled.
+
+    ``async_operations`` is the task queue as well as the log: a restored
+    ``pending`` row is work the target's worker would actually run, re-firing the
+    source bank's webhooks against a bank that never asked for it.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("ops_src")
+    target = _unique_bank("ops_dst")
+    try:
+        await _retain(memory, source, "Frank plays the cello.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('async_operations')} "
+                f"(operation_id, bank_id, operation_type, status, task_payload) "
+                f"VALUES ($1, $2, 'retain', 'pending', '{{}}'::jsonb)",
+                uuid.uuid4(),
+                source,
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        await memory.import_bank_async(archive, request_context, target_bank_id=target)
+
+        async with acquire_with_retry(backend) as conn:
+            statuses = [
+                r["status"]
+                for r in await conn.fetch(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE bank_id = $1 AND operation_type = 'retain'",
+                    target,
+                )
+            ]
+        assert statuses, "the operations log was not carried"
+        assert "pending" not in statuses and "processing" not in statuses
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
+    """An attachment's bytes ride in the archive and land under the target's own key.
+
+    The storage key encodes tenant and bank, so carrying the source's key would
+    point the copy at the source's blob — which deleting the source bank then
+    sweeps out from under it.
+    """
+    from hindsight_api.engine.retain.attachment_content import RetainAttachment
+    from hindsight_api.engine.retain.attachment_store import store_images
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("att_src")
+    target = _unique_bank("att_dst")
+    payload = b"\x89PNG\r\n\x1a\n-not-really-a-png"
+    try:
+        await _retain(memory, source, "Grace shared a diagram.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            stored = await store_images(
+                memory._file_storage,
+                conn,
+                source,
+                [
+                    RetainAttachment(
+                        attachment_hash="a" * 64,
+                        media_type="image/png",
+                        data=payload,
+                        block_index=0,
+                    )
+                ],
+            )
+            await conn.execute(
+                f"INSERT INTO {fq_table('document_attachments')} (bank_id, document_id, attachment_hash, filename) "
+                f"VALUES ($1, $2, $3, $4)",
+                source,
+                "doc-1",
+                stored[0].attachment_hash,
+                "diagram.png",
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.attachments_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"SELECT storage_key, short_id, media_type FROM {fq_table('attachments')} WHERE bank_id = $1", target
+            )
+            linked = await conn.fetchval(
+                f"SELECT count(*) FROM {fq_table('document_attachments')} WHERE bank_id = $1", target
+            )
+        assert row is not None
+        assert row["storage_key"] != stored[0].storage_key
+        assert linked == 1
+        assert bytes(await memory._file_storage.retrieve(row["storage_key"])) == payload
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_invalidated_facts_survive_a_bank_copy(memory, request_context):
+    """The curation archive travels, so a copied bank can still revert what was retired."""
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("inv_src")
+    target = _unique_bank("inv_dst")
+    try:
+        unit_ids = await _retain(memory, source, "Helen owns a red bicycle.", request_context, "doc-1")
+        await memory.update_memory_unit(
+            source,
+            str(unit_ids[0]),
+            state="invalidated",
+            reason="wrong colour",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.invalidated_memories_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT id, text, document_id, invalidation_reason FROM {fq_table('invalidated_memory_units')} "
+                f"WHERE bank_id = $1",
+                target,
+            )
+            source_ids = {
+                r["id"]
+                for r in await conn.fetch(
+                    f"SELECT id FROM {fq_table('invalidated_memory_units')} WHERE bank_id = $1", source
+                )
+            }
+        assert len(rows) == 1
+        assert rows[0]["invalidation_reason"] == "wrong colour"
+        assert rows[0]["document_id"] == "doc-1"
+        # Fresh unit id: the source row is still there on a same-instance copy.
+        assert rows[0]["id"] not in source_ids
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_endpoints_round_trip_a_bank(api_client, memory, request_context):
+    """The unified endpoints export a bank and restore it under a new id."""
+    source = _unique_bank("http_src")
+    target = _unique_bank("http_dst")
+    try:
+        await _retain(memory, source, "Ivan speaks Portuguese.", request_context, "doc-1")
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/transfer/export")
+        assert response.status_code == 202, response.text
+        operation_id = response.json()["operation_id"]
+
+        operation = await api_client.get(f"/v1/default/banks/{quote(source)}/operations/{operation_id}")
+        assert operation.status_code == 200, operation.text
+        storage_key = operation.json()["result_metadata"]["storage_key"]
+        archive = await memory._file_storage.retrieve(storage_key)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/transfer/import",
+            params={"target_bank_id": target},
+            files={"file": ("transfer.zip", bytes(archive), "application/zip")},
+        )
+        assert response.status_code == 202, response.text
+
+        recalled = await memory.recall_async(
+            bank_id=target, query="What does Ivan speak?", request_context=request_context
+        )
+        assert recalled.memories, "the restored bank recalled nothing"
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_import_rejects_an_existing_target(api_client, memory, request_context):
+    """Restoring into a bank that exists is a caller error, not a background failure."""
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("exists_src")
+    try:
+        await _retain(memory, source, "Jo collects stamps.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/transfer/import",
+            params={"target_bank_id": source},
+            files={"file": ("transfer.zip", archive, "application/zip")},
+        )
+        assert response.status_code == 400
+        assert "already exists" in response.json()["detail"]
+    finally:
+        await memory.delete_bank(source, request_context=request_context)

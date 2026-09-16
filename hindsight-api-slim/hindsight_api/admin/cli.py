@@ -24,7 +24,7 @@ from ..engine.memories import get_memories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
-from ..engine.transfer import export_bank
+from ..engine.transfer import TransferScope, export_bank
 from ..engine.vector_index_health import (
     BankIndexResult,
     drop_orphaned_bank_indexes,
@@ -1076,6 +1076,41 @@ def rename_bank(
         )
 
 
+class _SingleConnectionPool:
+    """Pool adapter over the admin CLI's one raw connection.
+
+    File storage takes a pool because the API serves many requests from one; the
+    CLI has a single connection and a single export running on it, so acquiring
+    hands the same connection back. Only the native (PostgreSQL) backend touches
+    this at all — an S3/GCS/Azure deployment never calls the pool.
+    """
+
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self._conn = conn
+
+    async def acquire(self) -> asyncpg.Connection:
+        return self._conn
+
+    async def release(self, conn: asyncpg.Connection) -> None:
+        """No-op: the caller owns the connection's lifetime, and closes it."""
+
+
+def _admin_file_storage(conn: asyncpg.Connection, schema: str) -> Any:
+    """File storage for an export run from the CLI, on this instance's config.
+
+    Attachment bytes live here rather than in a column, so a bank with
+    attachments cannot be exported without it.
+    """
+    from ..engine.storage import create_file_storage
+
+    config = HindsightConfig.from_env()
+    return create_file_storage(
+        storage_type=config.file_storage_type,
+        pool_getter=lambda: _SingleConnectionPool(conn),
+        schema=schema,
+    )
+
+
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
     """Export a whole bank to a ZIP archive.
 
@@ -1098,9 +1133,10 @@ async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str,
         data = await export_bank(
             conn,
             bank_id,
-            include_history=include_history,
+            scope=TransferScope(data=True, bank_config=True, history=include_history),
             bank_rows_json_encoding="decoded",
             memories=get_memories(),
+            file_storage=_admin_file_storage(conn, schema),
         )
     finally:
         await conn.close()
@@ -1165,7 +1201,7 @@ async def _run_import_bank(archive_path: Path, schema: str, target_bank_id: str 
             archive_bytes,
             context,
             target_bank_id=target_bank_id,
-            include_history=include_history,
+            scope=TransferScope(data=True, bank_config=True, history=include_history),
         )
     finally:
         await engine.close()

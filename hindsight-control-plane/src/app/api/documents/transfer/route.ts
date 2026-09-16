@@ -40,7 +40,14 @@ export async function GET(request: NextRequest) {
     }
 
     // 1. Submit the async export operation.
-    const submitSuffix = `/document-transfer/export${qs.toString() ? `?${qs.toString()}` : ""}`;
+    // The unified transfer endpoint. A document subset carries no bank-level
+    // sections, so include_bank_config is left at its default only for a
+    // whole-bank export.
+    if (searchParams.getAll("document_id").length > 0) {
+      qs.set("include_bank_config", "false");
+      qs.set("include_history", "false");
+    }
+    const submitSuffix = `/transfer/export${qs.toString() ? `?${qs.toString()}` : ""}`;
     const submitResponse = await fetch(dataplaneBankUrl(bankId, submitSuffix), {
       method: "POST",
       headers: getDataplaneHeaders(),
@@ -135,7 +142,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * Import a transfer ZIP archive into a bank.
- * Proxies the multipart upload to POST /v1/default/banks/{bank_id}/document-transfer.
+ * Proxies the multipart upload to POST /v1/default/banks/{bank_id}/transfer/import (mode=merge).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -168,7 +175,9 @@ export async function POST(request: NextRequest) {
     const filename = file instanceof File ? file.name : "transfer.zip";
     outForm.append("file", file, filename);
 
-    const suffix = `/document-transfer?on_conflict=${encodeURIComponent(onConflict)}`;
+    // mode=merge is what this dialog has always done: fold the archive's
+    // documents into the bank the user is looking at.
+    const suffix = `/transfer/import?mode=merge&document_conflict=${encodeURIComponent(onConflict)}`;
     const response = await fetch(dataplaneBankUrl(bankId, suffix), {
       method: "POST",
       headers: getDataplaneHeaders(),

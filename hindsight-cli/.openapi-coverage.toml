@@ -80,6 +80,11 @@ get_bank_profile = "Retired endpoint kept as a 410 stub; `bank disposition` read
 update_bank_disposition = "Retired endpoint kept as a 410 stub; `bank set-disposition` writes the bank config instead"
 add_bank_background = "Retired endpoint kept as a 410 stub; use `bank mission`"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+# Unified bank transfer (export/import of a whole bank or a document subset).
+# Same admin/ops shape as the document-transfer pair above: submitted from the API
+# or the control plane, or run against the database with `hindsight-admin`.
+export_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+import_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
 
 # Streams an inline attachment's raw bytes, for a UI or agent that already holds

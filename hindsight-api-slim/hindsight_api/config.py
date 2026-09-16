@@ -914,6 +914,8 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "vector_index_maintenance": 0,
     "import_documents": 0,
     "export_documents": 0,
+    "import_bank": 0,
+    "export_bank": 0,
 }
 
 
