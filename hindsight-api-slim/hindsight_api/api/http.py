@@ -8526,9 +8526,18 @@ def _register_routes(app: FastAPI):
             default=None, description="restore mode: the bank to create; defaults to the archive's source bank"
         ),
         document_conflict: str = Query(default="skip", description="merge mode: skip | replace | new-id"),
-        include_data: bool = Query(default=True, description="Restore the memories and everything backing them"),
-        include_bank_config: bool = Query(default=True, description="Restore bank config, mental models, directives"),
-        include_history: bool = Query(default=False, description="Restore audit_log and llm_requests"),
+        # Optional rather than defaulted, so "not passed" is distinguishable from
+        # "passed the default": merge mode takes documents only, and accepting a
+        # scope flag there would silently do nothing (rejected below instead).
+        include_data: bool | None = Query(
+            default=None, description="restore mode: carry the memories and everything backing them (default true)"
+        ),
+        include_bank_config: bool | None = Query(
+            default=None, description="restore mode: carry bank config, mental models, directives (default true)"
+        ),
+        include_history: bool | None = Query(
+            default=None, description="restore mode: carry audit_log and llm_requests (default false)"
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Submit a transfer archive for async import."""
@@ -8556,6 +8565,16 @@ def _register_routes(app: FastAPI):
                             status_code=400,
                             detail="target_bank_id is only valid in restore mode; merge imports into {bank_id}",
                         )
+                    # A merge takes the archive's documents and nothing else, so a
+                    # scope flag here would be accepted and then do nothing —
+                    # refuse it rather than quietly ignore a caller who asked for
+                    # the bank's config.
+                    if include_data is not None or include_bank_config is not None or include_history is not None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="include_data / include_bank_config / include_history apply to mode=restore; "
+                            "a merge imports the archive's documents only",
+                        )
                     submission = await app.state.memory.import_documents_async(
                         bank_id, archive_bytes, request_context, document_conflict
                     )
@@ -8566,9 +8585,9 @@ def _register_routes(app: FastAPI):
                         request_context,
                         target_bank_id=target_bank_id,
                         scope=TransferScope(
-                            data=include_data,
-                            bank_config=include_bank_config,
-                            history=include_history,
+                            data=True if include_data is None else include_data,
+                            bank_config=True if include_bank_config is None else include_bank_config,
+                            history=False if include_history is None else include_history,
                         ),
                     )
             except ValueError as e:

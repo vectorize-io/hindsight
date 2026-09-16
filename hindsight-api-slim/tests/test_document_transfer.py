@@ -2620,7 +2620,7 @@ async def test_transfer_endpoints_round_trip_a_bank(api_client, memory, request_
         recalled = await memory.recall_async(
             bank_id=target, query="What does Ivan speak?", request_context=request_context
         )
-        assert recalled.memories, "the restored bank recalled nothing"
+        assert [r.text for r in recalled.results] == ["Ivan speaks Portuguese."]
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
@@ -2647,3 +2647,37 @@ async def test_transfer_import_rejects_an_existing_target(api_client, memory, re
         assert "already exists" in response.json()["detail"]
     finally:
         await memory.delete_bank(source, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_endpoints_refuse_a_request_that_would_do_nothing(api_client, memory, request_context):
+    """A scope that carries nothing, and a scope flag that a merge would ignore,
+    are both caller errors — accepting either produces an archive or an import
+    that silently is not what was asked for."""
+    bank = _unique_bank("guards")
+    try:
+        await _retain(memory, bank, "Kim studies geology.", request_context, "doc-1")
+
+        nothing = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/export",
+            params={"include_data": False, "include_bank_config": False, "include_history": False},
+        )
+        assert nothing.status_code == 400
+        assert "Nothing to export" in nothing.json()["detail"]
+
+        # A document subset is not a bank, so it cannot carry bank-level sections.
+        subset = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/export",
+            params={"document_id": "doc-1", "include_bank_config": True},
+        )
+        assert subset.status_code == 400
+
+        merge_with_scope = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/import",
+            params={"mode": "merge", "include_bank_config": True},
+            files={"file": ("transfer.zip", b"not-a-zip", "application/zip")},
+        )
+        assert merge_with_scope.status_code == 400
+        assert "mode=restore" in merge_with_scope.json()["detail"]
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

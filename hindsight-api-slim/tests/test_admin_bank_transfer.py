@@ -43,13 +43,19 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
         include_history=True,
     )
 
-    export_bank.assert_awaited_once_with(
-        connection,
-        "source-bank",
-        include_history=True,
-        bank_rows_json_encoding="decoded",
-        memories=store,
-    )
+    from hindsight_api.engine.transfer import TransferScope
+
+    call = export_bank.await_args
+    assert call.args == (connection, "source-bank")
+    assert call.kwargs["bank_rows_json_encoding"] == "decoded"
+    assert call.kwargs["memories"] is store
+    # --include-history maps onto the scope's third flag; the other two are what a
+    # migration always carries.
+    assert call.kwargs["scope"] == TransferScope(data=True, bank_config=True, history=True)
+    # Attachment bytes live in file storage rather than in a column, so the CLI has
+    # to hand the export a storage client or a bank with attachments exports rows
+    # pointing at blobs the archive does not carry.
+    assert call.kwargs["file_storage"] is not None
     assert output.read_bytes() == b"archive"
     assert size == len(b"archive")
     assert connection.closed is True
