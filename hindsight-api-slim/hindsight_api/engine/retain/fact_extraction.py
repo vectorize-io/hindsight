@@ -1041,7 +1041,7 @@ def _iter_jsonl_chunks(text: str, max_chars: int, structured_limit: int) -> Iter
 # purpose: a variant mapping "English input gives English facts, Italian input gives
 # Italian facts" also fixed luna, but pushed gemini-2.5-flash-lite to translate Japanese
 # into English in 10/10 runs (the #181 priming effect). Shorter too: 31 tokens, from 67.
-_DEFAULT_LANGUAGE_RULE = """LANGUAGE: Write every fact in the same language as the input text. Never translate. Names, identifiers, code, and quoted text stay verbatim."""
+_DEFAULT_LANGUAGE_RULE = """LANGUAGE: Write every fact in the input text's own language and script. Never translate, never switch language. Names, identifiers, code, and quoted text stay verbatim."""
 
 
 # Base prompt template (shared by concise and custom modes)
