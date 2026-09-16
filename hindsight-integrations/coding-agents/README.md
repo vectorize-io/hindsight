@@ -107,7 +107,9 @@ path. So installing either harness wires both, and uninstalling either removes t
 Two differences from v1, both because of the host: the one-time codebase survey runs under another
 installed agent's CLI (v2 plugins cannot define the read-only agent the survey needs), and the seed
 banner is written to the plugin log instead of a TUI toast (v2 plugins cannot raise one). Recall,
-injection, the native `hindsight_*` tools and session write-back are identical.
+injection, the native `hindsight_*` tools and session write-back are identical. The companion skill
+is identical too, but it is registered in memory through v2's skill API rather than copied into a
+skills directory — opencode2 has none of its own, and the two it reads belong to other agents.
 
 #### <img src="https://hindsight.vectorize.io/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
 
@@ -261,7 +263,9 @@ resolved per session workspace rather than once per process; and dsh has no plug
 channel, so the seed line goes to the plugin log rather than the UI. Everything model-facing —
 recalled memory, the knowledge preamble, the `hindsight_*` tools — is unaffected. If you prefer the
 published-package route, `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` works
-too: the package ships the profile patch layer, so nothing else needs editing.
+too: the package ships the profile patch layer, so nothing else needs editing. Either route gets the
+companion skill — a plugin wired by the host's own plugin manager installs it itself on the first
+session, since that route never runs our installer.
 
 Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 

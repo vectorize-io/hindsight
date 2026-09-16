@@ -11,7 +11,9 @@
  * sibling nobody wrote a test for is the sibling that gets forgotten, so the list lives once and
  * `installer.test.ts` asserts it over the whole family.
  *
- * A host absent here has no skills mechanism at all (opencode and its Kilo fork).
+ * A host absent here writes no skills DIRECTORY: opencode and its Kilo fork have no skills
+ * mechanism at all, and opencode2 has one but no directory of its own to install into — its plugin
+ * registers the packaged skill in memory instead (harness/opencode2.ts, #4352).
  */
 export const SKILL_DIRS: Record<string, string[]> = {
   "claude-code": [".claude", "skills"],

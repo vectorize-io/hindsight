@@ -26,6 +26,7 @@ import { memoryCursorStore } from "./retain-cursor";
 import { memoryUsageCursorStore, recordUsage } from "./usage";
 import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
+import { syncCompanionSkill } from "./skill-sync";
 import { buildHookOutput } from "./hook";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
 
@@ -109,6 +110,12 @@ export class RuntimeCore {
     // HINDSIGHT_DISABLE_HOOKS=1 — the tools stay registered (toolSpecs, so the survey can ingest),
     // but seeding/recall/write-back must no-op or the survey would re-seed itself (see core/survey.ts).
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
+    // Companion skill, the same housekeeping `runSessionStartHook` does for hook harnesses — but
+    // with `install`, because a persistent-plugin host can be wired by its OWN plugin manager
+    // (`dsh plugin add …`, `cline plugin install`), a route our installer never sees, leaving the
+    // plugin loaded with its tools registered and no skill on disk at all (#4406). No-op for a host
+    // with no skills directory (opencode; opencode2 registers it in memory instead).
+    syncCompanionSkill(this.harness, { install: true });
     // Daemon mode: this is the SessionStart of a persistent-plugin host, so it owns the same
     // warm-up the hook harnesses do in `runSessionStartHook` — start it before the user has typed
     // anything, wait only briefly, and let a cold one keep coming up in the background. Without it
