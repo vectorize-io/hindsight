@@ -563,3 +563,38 @@ async def test_ollama_records_usage_for_a_capped_response_before_raising():
         assert usage.output_tokens == 567
     finally:
         reset_response_usage(token)
+
+
+@pytest.mark.parametrize(
+    ("body", "headers", "expected_seconds"),
+    [
+        # A gateway that states the pause as a number in the body, with no
+        # Retry-After header and no preposition in the prose. Before this both
+        # hints were invisible and the caller backed off blindly — on a real
+        # deployment that meant retrying after ~7s a pause the server had set
+        # to 27s, burning the retry budget and failing the call.
+        ({"detail": {"retry_after": 27}}, {}, 27),
+        ({"retry_after": 12}, {}, 12),
+        ({"detail": {"retry_after": "30"}}, {}, 30),
+        # Imperative prose without a preposition: "Wait 10 seconds and try again".
+        ({"message": "High load. Limit reached. Wait 10 seconds and try again."}, {}, 10),
+        # An explicit Retry-After header still wins over the body hint.
+        ({"detail": {"retry_after": 300}}, {"retry-after": "2"}, 2),
+    ],
+)
+def test_rate_limit_retry_at_reads_a_numeric_retry_after_in_the_body(
+    body: dict, headers: Mapping[str, str], expected_seconds: float
+) -> None:
+    error = SimpleNamespace(body=body, response=SimpleNamespace(headers=headers))
+    retry_at = _rate_limit_retry_at(error)
+    assert retry_at is not None
+    wait = (retry_at - datetime.now(UTC)).total_seconds()
+    assert expected_seconds - 1 < wait <= expected_seconds + 1
+
+
+def test_rate_limit_retry_at_ignores_a_non_positive_or_unparsable_retry_after() -> None:
+    """Zero, negative and junk values must not manufacture a bogus future wait."""
+    for value in (0, -5, "soon", None):
+        error = SimpleNamespace(body={"detail": {"retry_after": value}}, response=SimpleNamespace(headers={}))
+        assert _rate_limit_retry_at(error) is None
+

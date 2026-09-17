@@ -522,7 +522,12 @@ _RATE_LIMIT_RESET_AT_RE = re.compile(
     re.IGNORECASE,
 )
 _RATE_LIMIT_WINDOW_RE = re.compile(
-    r"\b(?:for|in)\s+(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?\b",
+    # "try again in 5 hours", "retry for 30 seconds" — and the imperative form
+    # "Wait 10 seconds and try again", which gateways emit without any
+    # preposition at all. Without `wait` that message parses to nothing and the
+    # caller falls back to a blind exponential backoff that can be shorter than
+    # the pause the server just asked for.
+    r"\b(?:for|in|wait)\s+(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?\b",
     re.IGNORECASE,
 )
 
@@ -546,6 +551,49 @@ def _parse_go_duration_seconds(text: str) -> float | None:
         total += float(m.group("amount")) * _GO_DURATION_UNIT_SECONDS[m.group("unit")]
         pos = m.end()
     return total if pos else None
+
+
+def _retry_after_seconds_in_body(e: APIStatusError) -> float | None:
+    """Seconds from a machine-readable ``retry_after`` field in the error body.
+
+    Some OpenAI-compatible gateways state the pause as a number in the JSON body
+    (``{"detail": {"retry_after": 27}}``) rather than in a ``Retry-After``
+    header or in prose. That number is the most reliable hint available for
+    those providers: reading it turns a blind backoff into the wait the server
+    actually asked for. Searched recursively because the field sits under
+    ``detail``/``error`` as often as at the top level.
+    """
+
+    def walk(node: Any, depth: int = 0) -> float | None:
+        if depth > 4:
+            return None
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key.lower() in ("retry_after", "retryafter"):
+                    try:
+                        seconds = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if seconds > 0:
+                        return seconds
+            for value in node.values():
+                found = walk(value, depth + 1)
+                if found is not None:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = walk(value, depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    body: Any = getattr(e, "body", None)
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (ValueError, TypeError):
+            return None
+    return walk(body)
 
 
 def _status_error_body_text(e: APIStatusError) -> str:
@@ -633,6 +681,13 @@ def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
         retry_at = _parse_reset_at_datetime(reset_match.group("reset_at"))
         if retry_at is not None and retry_at > now:
             body_retry_at = retry_at
+
+    if body_retry_at is None:
+        # A numeric field beats prose: it needs no locale-specific parsing and
+        # is what the gateway's own client libraries read.
+        seconds = _retry_after_seconds_in_body(e)
+        if seconds is not None:
+            body_retry_at = now + timedelta(seconds=seconds)
 
     if body_retry_at is None:
         window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
