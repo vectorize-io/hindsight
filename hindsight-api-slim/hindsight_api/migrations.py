@@ -128,24 +128,49 @@ def _bootstrap_vector_extension_for_migrations(conn: Connection, vector_extensio
     conn.commit()
 
 
-def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
-    """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
+def _vector_index_names(conn: Connection, schema_name: str, table_name: str, name_like: str | None = None) -> list[str]:
+    """Names of the vector indexes on ``table_name.embedding``, from the catalog.
+
+    Deliberately NOT ``pg_indexes``: that view renders every row through
+    ``pg_get_indexdef()``, which is evaluated for indexes outside the schema we
+    asked about. When a concurrent session drops a schema mid-scan — pytest-xdist
+    workers do exactly this — the render fails with "cache lookup failed for
+    attribute N of relation OID" (an internal_error) and takes the whole
+    statement with it. Resolving the relation first and reading ``pg_am`` keeps
+    the scan inside one table's own indexes, so an unrelated schema going away
+    cannot break it.
+    """
     rows = conn.execute(
         text("""
-            SELECT indexname
-            FROM pg_indexes
-            WHERE schemaname = :schema_name
-              AND tablename = 'memory_units'
-              AND indexname LIKE 'idx_mu_emb_%'
-              AND indexdef LIKE '%embedding%'
+            SELECT i.relname
+            FROM pg_class t
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_index x ON x.indrelid = t.oid
+            JOIN pg_class i ON i.oid = x.indexrelid
+            JOIN pg_am am ON am.oid = i.relam
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(x.indkey)
+            WHERE n.nspname = :schema
+              AND t.relname = :table
+              AND a.attname = 'embedding'
+              AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')
+              AND (:name_like IS NULL OR i.relname LIKE :name_like)
         """),
-        {"schema_name": schema_name},
+        {"schema": schema_name, "table": table_name, "name_like": name_like},
     ).fetchall()
-    # DDL identifiers cannot be passed as bound parameters, so escape inline.
+    return [row[0] for row in rows]
+
+
+def _drop_index(conn: Connection, schema_name: str, index_name: str) -> None:
+    """Drop one index. DDL identifiers cannot be bound parameters, so escape inline."""
     safe_schema = schema_name.replace('"', '""')
-    for row in rows:
-        safe_index = row[0].replace('"', '""')
-        conn.execute(text(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"'))
+    safe_index = index_name.replace('"', '""')
+    conn.execute(text(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"'))
+
+
+def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
+    """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
+    for index_name in _vector_index_names(conn, schema_name, "memory_units", name_like="idx\\_mu\\_emb\\_%"):
+        _drop_index(conn, schema_name, index_name)
 
 
 def _get_schema_lock_id(schema: str) -> int:
@@ -443,41 +468,10 @@ def run_migrations(
         raise RuntimeError("Database migration failed") from e
 
 
-def _vector_index_names(conn: Connection, schema_name: str, table_name: str) -> list[str]:
-    """Names of the vector indexes on ``table_name.embedding``, from the catalog.
-
-    Deliberately NOT ``pg_indexes``: that view renders every row through
-    ``pg_get_indexdef()``, which is evaluated for indexes outside the schema we
-    asked about. When a concurrent session drops a schema mid-scan — pytest-xdist
-    workers do exactly this — the render fails with "cache lookup failed for
-    attribute N of relation OID" (an internal_error) and takes the whole
-    statement with it. Resolving the relation first and reading ``pg_am`` keeps
-    the scan inside one table's own indexes, so an unrelated schema going away
-    cannot break it.
-    """
-    rows = conn.execute(
-        text("""
-            SELECT i.relname
-            FROM pg_class t
-            JOIN pg_namespace n ON n.oid = t.relnamespace
-            JOIN pg_index x ON x.indrelid = t.oid
-            JOIN pg_class i ON i.oid = x.indexrelid
-            JOIN pg_am am ON am.oid = i.relam
-            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(x.indkey)
-            WHERE n.nspname = :schema
-              AND t.relname = :table
-              AND a.attname = 'embedding'
-              AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')
-        """),
-        {"schema": schema_name, "table": table_name},
-    ).fetchall()
-    return [row[0] for row in rows]
-
-
 def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_name: str) -> None:
     """Drop every vector index on ``table_name.embedding`` (HNSW, DiskANN, vchordrq, ScaNN)."""
     for index_name in _vector_index_names(conn, schema_name, table_name):
-        conn.execute(text(f'DROP INDEX IF EXISTS "{schema_name}"."{index_name}"'))
+        _drop_index(conn, schema_name, index_name)
 
 
 def _migrate_table_embedding_dimension(
