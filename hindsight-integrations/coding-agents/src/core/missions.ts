@@ -276,16 +276,45 @@ const PAGE_TAXONOMY: readonly KnowledgePage[] = [
   },
 ];
 
+/** The seeded pages' names, in taxonomy order — the keys `RawConfig.pages` accepts. */
+export const PAGE_NAMES: readonly string[] = PAGE_TAXONOMY.map((page) => page.name);
+
 /**
- * The seeded pages for one subject: the taxonomy above with `project` named in every query.
- *
- * A pure function of `project`, so the query text is STABLE for a given subject and `seedPages()`
- * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run — which
- * holds only while the caller's `project` is itself stable per bank (see `bankProjectName`).
+ * What a config says about ONE seeded page, keyed by its name in `RawConfig.pages`:
+ *   false                   — don't seed it at all
+ *   { source_query: "..." } — seed it, but ask this question instead of the taxonomy's
+ * An absent entry means the taxonomy's own query, which is what every page gets by default.
  */
-export function pagesFor(project: string): KnowledgePage[] {
+export type PageOverride = false | { source_query?: string };
+export type PagesConfig = Record<string, PageOverride>;
+
+/**
+ * The seeded pages for one subject: the taxonomy above with `project` named in every query, minus
+ * the ones `pages` disables and with its custom queries substituted.
+ *
+ * A pure function of its arguments, so the query text is STABLE for a given subject and
+ * `seedPages()` PATCHes once (on the upgrade that introduces the clause) rather than on every
+ * deepen run — which holds only while the caller's `project` is itself stable per bank (see
+ * `bankProjectName`), and while `pages` itself is stable.
+ *
+ * `pageScopeRule` is appended to a CUSTOM query too. It is what stops the synthesizer presenting a
+ * dependency's decisions as this project's own (#3476) — a failure mode someone rewording the
+ * question is not thereby choosing to take on.
+ */
+export function pagesFor(project: string, pages: PagesConfig = {}): KnowledgePage[] {
   const scope = pageScopeRule(project);
-  return PAGE_TAXONOMY.map((page) => ({ ...page, source_query: page.source_query + scope }));
+  // Matched case-insensitively on the same key `seedPages` matches live pages by, so a config
+  // entry and the page it names can't disagree about which page that is.
+  const byName = new Map(
+    Object.entries(pages).map(([name, override]) => [name.trim().toLowerCase(), override])
+  );
+  const out: KnowledgePage[] = [];
+  for (const page of PAGE_TAXONOMY) {
+    const override = byName.get(page.name.toLowerCase());
+    if (override === false) continue;
+    out.push({ ...page, source_query: (override?.source_query || page.source_query) + scope });
+  }
+  return out;
 }
 
 // Refresh policy shared by every page this plugin creates — the seeded taxonomy above and the

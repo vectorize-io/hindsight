@@ -306,6 +306,41 @@ describe("environment fallback", () => {
     );
   });
 
+  it("pages: valid entries kept, unknown names and unusable values dropped with a warning", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    expect(resolveConfig({}).pages).toEqual({});
+    expect(
+      resolveConfig({
+        pages: { "Component map": false, "Key decisions and rationale": { source_query: "why?" } },
+      }).pages
+    ).toEqual({
+      "Component map": false,
+      "Key decisions and rationale": { source_query: "why?" },
+    });
+    expect(warn).not.toHaveBeenCalled();
+
+    // A name matching no seeded page reads as having disabled or reworded something and would
+    // otherwise do nothing at all — the reason this is validated rather than passed through.
+    expect(resolveConfig({ pages: { "Componnet map": false } }).pages).toEqual({});
+    // Values that would travel and become a page whose description is `5`, or blank.
+    expect(
+      resolveConfig({ pages: { "Core concepts": { source_query: 5 } } as never }).pages
+    ).toEqual({});
+    expect(resolveConfig({ pages: { "Core concepts": { source_query: "  " } } }).pages).toEqual({});
+    expect(resolveConfig({ pages: ["Core concepts"] as never }).pages).toEqual({});
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("pages: a banks.<id> section replaces the global map rather than merging into it", () => {
+    const base = resolveConfig({
+      pages: { "Component map": false },
+      banks: { b: { pages: { "Core concepts": false } } },
+    });
+    expect(applyBankConfig(base, "b").cfg.pages).toEqual({ "Core concepts": false });
+    expect(applyBankConfig(base, "other").cfg.pages).toEqual({ "Component map": false });
+  });
+
   it("pageSearchLimit: default, override and env fallback", () => {
     expect(resolveConfig({}).pageSearchLimit).toBe(3);
     expect(resolveConfig({ pageSearchLimit: 8 }).pageSearchLimit).toBe(8);

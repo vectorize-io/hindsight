@@ -167,6 +167,31 @@ describe("HindsightClient knowledge-page reads", () => {
 });
 
 describe("HindsightClient.seedPages", () => {
+  it("honours the pages config: a disabled page is never created, a custom query is what is sent", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages(buildPageTrigger(), {
+      "Component map": false,
+      "Key decisions and rationale": { source_query: "what did we decide and why?" },
+    });
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts.map((p) => p.body.name).sort()).toEqual(
+      PAGES.filter((p) => p.name !== "Component map")
+        .map((p) => p.name)
+        .sort()
+    );
+    const decisions = posts.find((p) => p.body.name === "Key decisions and rationale")!;
+    expect(decisions.body.source_query).toBe(
+      "what did we decide and why?" + pageScopeRule("repo-a")
+    );
+  });
+
   it("skips page writes when the server has no knowledge-pages API", async () => {
     const calls: any[] = [];
     vi.stubGlobal(

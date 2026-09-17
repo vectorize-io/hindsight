@@ -12,6 +12,7 @@ import {
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
   pagesFor,
+  type PagesConfig,
   pageScopeRule,
   type PageTrigger,
   pageTriggerDrifted,
@@ -453,7 +454,13 @@ export class HindsightClient {
    *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
    *  it just falls back to the bank's own config, so the miss is silent. */
   async configureBank(
-    opts: { reset?: boolean; pageTrigger?: PageTrigger; manage?: boolean } = {}
+    opts: {
+      reset?: boolean;
+      pageTrigger?: PageTrigger;
+      /** Which pages to seed and with what query — see RawConfig.pages. */
+      pages?: PagesConfig;
+      manage?: boolean;
+    } = {}
   ): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
@@ -473,7 +480,7 @@ export class HindsightClient {
         this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
       }
     }
-    await this.seedPages(opts.pageTrigger);
+    await this.seedPages(opts.pageTrigger, opts.pages);
   }
 
   /**
@@ -730,11 +737,14 @@ export class HindsightClient {
    * `source_query` re-syncs onto the live page instead of orphaning its synthesized content —
    * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
-  async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
+  async seedPages(
+    pageTrigger: PageTrigger = buildPageTrigger(),
+    pagesConfig: PagesConfig = {}
+  ): Promise<void> {
     // The bank id is the fallback subject, not a degraded one: for a bank no single repository
     // owns it is the only name that stays put across sessions, and under the default
     // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
-    const pages = pagesFor(this.project ?? this.bank);
+    const pages = pagesFor(this.project ?? this.bank, pagesConfig);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -794,6 +804,12 @@ export class HindsightClient {
         if (sourceDrift) {
           patch.source_query = page.source_query;
           patch.tags = page.tags;
+          // Say so. This replaces a query edited through the API or the control plane, which used
+          // to happen silently and read as the edit never having saved (#4460).
+          this.log(
+            `[bank] re-syncing "${page.name}" to its configured source_query — set ` +
+              `pages[${JSON.stringify(page.name)}].source_query to keep your own wording`
+          );
         }
         // The page's OWN resolved trigger (a hashed cron differs per page), not the shared one.
         if (triggerDrift) patch.trigger = pageTriggerPatch(body.trigger);

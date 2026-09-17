@@ -8,6 +8,9 @@ import {
   DEFAULT_PAGE_TRIGGER_CRON,
   expandCronHash,
   KNOWLEDGE_LABELS,
+  PAGE_NAMES,
+  pagesFor,
+  pageScopeRule,
   pageTriggerDrifted,
   pageTriggerFor,
   pageTriggerPatch,
@@ -395,5 +398,43 @@ describe("codingBankManifest (#3927)", () => {
     }
     // A blank override is not a choice.
     expect(bankOf({ reflect_mission: "   " })!.reflect_mission).toBe(REFLECT_MISSION);
+  });
+});
+
+/**
+ * WHICH pages a repo gets and what each one asks. The config surface behind #4460, where a
+ * `source_query` edited through the API was silently restored on the next session because the
+ * taxonomy was the only wording `seedPages` would accept.
+ */
+describe("pagesFor page configuration", () => {
+  const scope = pageScopeRule("repo-a");
+
+  it("seeds the whole taxonomy with its built-in queries when no config is given", () => {
+    const pages = pagesFor("repo-a");
+    expect(pages.map((p) => p.name)).toEqual([...PAGE_NAMES]);
+    for (const page of pages) expect(page.source_query.endsWith(scope)).toBe(true);
+  });
+
+  it("false skips a page and leaves the rest in taxonomy order", () => {
+    const pages = pagesFor("repo-a", { "Component map": false });
+    expect(pages.map((p) => p.name)).toEqual(PAGE_NAMES.filter((n) => n !== "Component map"));
+  });
+
+  it("a custom source_query replaces the built-in one, scoping clause still appended", () => {
+    const pages = pagesFor("repo-a", { "Key decisions and rationale": { source_query: "why?" } });
+    const page = pages.find((p) => p.name === "Key decisions and rationale")!;
+    // The clause rides along with a reworded query: it is what keeps a dependency's decisions off
+    // this project's page (#3476), which rewording the question is not a choice to take on.
+    expect(page.source_query).toBe("why?" + scope);
+    // The tier tag is the taxonomy's — it selects the facts the synthesis reads, so a reworded
+    // query must not drop it.
+    expect(page.tags).toEqual(["knowledge:decision"]);
+    expect(pages.find((p) => p.name === "Core concepts")!.source_query).toContain("core concepts");
+  });
+
+  it("matches names case- and whitespace-insensitively, as seedPages matches live pages", () => {
+    expect(pagesFor("repo-a", { "  component MAP  ": false }).map((p) => p.name)).not.toContain(
+      "Component map"
+    );
   });
 });

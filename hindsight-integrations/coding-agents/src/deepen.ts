@@ -164,6 +164,7 @@ async function main() {
 
     await client.configureBank({
       pageTrigger: buildPageTrigger(cfg),
+      pages: cfg.pages,
       manage: cfg.manageBankConfig,
     });
     if (client.knowledgePagesSupported === false) {
