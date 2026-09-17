@@ -50,24 +50,17 @@ def test_zero_disables_the_cap():
 async def test_http_recall_zero_cap_accepts_a_long_query(api_client, monkeypatch):
     """Issue #4455: `0` documents as "no limit", but the HTTP edge compared against it
     literally, so every recall was rejected with "exceeds maximum of 0"."""
-    from hindsight_api.api import http as http_mod
+    from hindsight_api.api.http import get_config
 
-    real = http_mod.get_config()
-
-    class _ZeroCap:
-        recall_max_query_tokens = 0
-
-        def __getattr__(self, name):
-            return getattr(real, name)
-
-    monkeypatch.setattr(http_mod, "get_config", _ZeroCap)
+    # `get_config()` returns a read-only proxy; the cap lives on the dataclass behind it.
+    monkeypatch.setattr(get_config()._config, "recall_max_query_tokens", 0)
 
     response = await api_client.post(
         "/v1/default/banks/zero-cap-test/memories/recall",
         json={"query": "alpha beta gamma delta " * 500},
     )
 
-    assert response.status_code != 400, response.text
+    assert response.status_code == 200, response.text
 
 
 def test_degenerate_repetition_stays_far_below_the_tsquery_stack_cliff():
