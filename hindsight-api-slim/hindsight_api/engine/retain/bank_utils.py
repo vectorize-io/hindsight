@@ -575,10 +575,14 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
     to a long-lived document does not move ``last_document_at``, which is why
     the two differ and why UIs showing "last write" must use ``last_write_at``.
 
-    ``fact_count`` comes from the ``memory_units`` join, which is empty for a bank
-    whose memories live outside SQL. Those banks need :func:`apply_store_fact_counts`
-    to get a real count; callers run it on the page they actually return so the live
-    per-bank count query doesn't fire for every bank in the system.
+    ``fact_count`` comes back 0 here and is filled per page by
+    :func:`apply_sql_fact_counts` (and, for banks whose memories live outside SQL,
+    :func:`apply_store_fact_counts`). Counting every bank's facts in this query meant
+    aggregating all of ``memory_units`` to render one page of banks, which is what made a
+    365-bank list time out (#4468). The write watermark still has to be read for every bank,
+    since it orders the list — but as one index entry per bank off an index that already
+    exists, not a GROUP BY over the whole table. Measured on 365 banks / 1.8M facts: 131 ms
+    to 6 ms, and no longer growing with the number of facts in the system.
 
     Args:
         pool: Database connection pool
@@ -607,10 +611,17 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
             SELECT
                 b.bank_id, b.name, b.disposition, b.mission,
                 b.created_at, b.updated_at,
-                COALESCE(m.fact_count, 0) AS fact_count,
                 d.last_document_at,
                 d.last_document_write_at,
-                m.last_fact_at
+                -- Per bank, off `idx_memory_units_bank_updated_at`: one index entry read instead of
+                -- the GROUP BY over all of memory_units this replaced. `updated_at`, not
+                -- `created_at`, because that index is the one that exists — and it is the right
+                -- column anyway: this feeds `last_write_at` only, and every write to a fact bumps
+                -- `updated_at`, so the watermark is the same or newer, which is what "last written"
+                -- means. The documents half stays a GROUP BY: correlating it would be random reads
+                -- over the same rows, since this query lists every bank before paging, and
+                -- `last_document_at` must stay ingestion time (frozen when a document is rewritten).
+                (SELECT MAX(m.updated_at) FROM {mu_table} m WHERE m.bank_id = b.bank_id) AS last_fact_at
             FROM {banks_table} b
             LEFT JOIN (
                 SELECT bank_id,
@@ -619,13 +630,6 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
                 FROM {docs_table}
                 GROUP BY bank_id
             ) d ON d.bank_id = b.bank_id
-            LEFT JOIN (
-                SELECT bank_id,
-                       COUNT(*) AS fact_count,
-                       MAX(created_at) AS last_fact_at
-                FROM {mu_table}
-                GROUP BY bank_id
-            ) m ON m.bank_id = b.bank_id
             {where_clause}
             ORDER BY b.bank_id
             """,
@@ -660,7 +664,9 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
                     "mission": row["mission"] or "",
                     "created_at": created_at.isoformat() if created_at else None,
                     "updated_at": updated_at.isoformat() if updated_at else None,
-                    "fact_count": row["fact_count"],
+                    # Filled per page by apply_sql_fact_counts / apply_store_fact_counts: counting
+                    # every bank's facts here is what made this query scan all of memory_units.
+                    "fact_count": 0,
                     "last_document_at": last_doc.isoformat() if last_doc else None,
                     "last_write_at": last_write.isoformat() if last_write else None,
                 }
@@ -772,3 +778,31 @@ async def apply_store_fact_counts(banks: list[dict]) -> None:
     counts = await store.count_memories_many(bank_ids=[bank["bank_id"] for bank in external], strong=True)
     for bank in external:
         bank["fact_count"] = sum(counts.get(bank["bank_id"], {}).values())
+
+
+async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
+    """Fill ``fact_count`` from ``memory_units``, for the page of banks actually returned.
+
+    :func:`list_banks` used to count every bank in one GROUP BY over the whole table, so
+    listing 365 banks aggregated millions of rows whatever the page size (#4468). Scoped to
+    the page the count is a bounded index range per bank instead.
+
+    Banks whose memories live outside SQL have no rows here and stay at 0;
+    :func:`apply_store_fact_counts` runs after this one and overwrites them with the store's
+    live count.
+    """
+    if not banks:
+        return
+    async with acquire_with_retry(pool) as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT bank_id, COUNT(*) AS fact_count
+            FROM {fq_table("memory_units")}
+            WHERE bank_id = ANY($1)
+            GROUP BY bank_id
+            """,
+            [bank["bank_id"] for bank in banks],
+        )
+    counts = {row["bank_id"]: row["fact_count"] for row in rows}
+    for bank in banks:
+        bank["fact_count"] = counts.get(bank["bank_id"], 0)

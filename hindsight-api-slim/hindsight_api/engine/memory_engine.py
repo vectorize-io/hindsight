@@ -14802,8 +14802,9 @@ class MemoryEngine(MemoryEngineInterface):
         limit = max(limit, 0)
         offset = max(offset, 0)
         page = banks[offset : offset + limit]
-        # Per-bank work below is done for the returned page only — a live store count
-        # for banks whose memories live outside SQL, plus config resolution.
+        # Per-bank work below is done for the returned page only — the SQL fact count, a
+        # live store count for banks whose memories live outside SQL, plus config resolution.
+        await bank_utils.apply_sql_fact_counts(self._backend, page)
         await bank_utils.apply_store_fact_counts(page)
         # Overlay resolved bank config (reflect_mission + disposition_*) on top of the
         # legacy banks.disposition / banks.mission columns, mirroring get_bank_profile so

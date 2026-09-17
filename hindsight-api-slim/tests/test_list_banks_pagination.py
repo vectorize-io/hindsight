@@ -83,6 +83,30 @@ async def test_negative_paging_values_are_clamped(memory, request_context, three
 
 
 @pytest.mark.asyncio
+async def test_fact_counts_are_right_for_the_banks_on_the_page(memory, request_context, three_banks):
+    """Counting facts moved out of the list query and into a per-page query (#4468): the
+    banks actually returned must still carry their own count, on any page."""
+    prefix, bank_ids = three_banks
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        for index, bank_id in enumerate(bank_ids):
+            for fact in range(index + 1):
+                await conn.execute(
+                    "INSERT INTO memory_units (bank_id, text, event_date) VALUES ($1, $2, NOW())",
+                    bank_id,
+                    f"fact {fact}",
+                )
+
+    expected = {bank_id: index + 1 for index, bank_id in enumerate(bank_ids)}
+    seen = {}
+    for offset in (0, 2):
+        page = await memory.list_banks(search_query=prefix, limit=2, offset=offset, request_context=request_context)
+        seen.update({bank["bank_id"]: bank["fact_count"] for bank in page["banks"]})
+
+    assert seen == expected
+
+
+@pytest.mark.asyncio
 async def test_search_matches_bank_name_case_insensitively(memory, request_context):
     bank_id = f"searchname{uuid.uuid4().hex[:8]}"
     display_name = f"Zeta {uuid.uuid4().hex[:8]}"
