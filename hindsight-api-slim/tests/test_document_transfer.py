@@ -2824,3 +2824,69 @@ async def test_a_copy_keeps_a_name_someone_chose(api_client, memory, request_con
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
+
+
+def test_archive_assembly_is_confined_to_threadable_builders():
+    """Every ZIP is written by a plain function whose name starts with `_build_`.
+
+    Those are the ones the async wrappers hand to a worker thread. Assembling an
+    archive inline in an async function instead — which `export_bank` did until
+    the transfer and clone endpoints started calling it inside the API process —
+    serialises the whole bank and DEFLATEs it on the event loop, stalling every
+    other request for as long as the bank is big (the shape of issue #3321).
+    """
+    import ast
+    from pathlib import Path
+
+    from hindsight_api.engine.transfer import export as export_module
+
+    source = Path(export_module.__file__).read_text()
+    tree = ast.parse(source)
+
+    offenders = []
+    builders = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name.startswith("_build_"):
+            builders.add(node.name)
+            # A builder has to be callable from a thread, so it must not be async.
+            assert isinstance(node, ast.FunctionDef), f"{node.name} must be a plain def to run in a thread"
+            continue
+        body = ast.get_source_segment(source, node) or ""
+        if "zipfile.ZipFile(" in body:
+            offenders.append(node.name)
+
+    assert offenders == [], f"archive written outside a threadable builder: {offenders}"
+    assert {"_build_archive_bytes", "_build_bank_archive_bytes"} <= builders
+
+
+@pytest.mark.asyncio
+async def test_bank_archive_builds_without_the_connection_that_read_it(memory, request_context):
+    """The compression runs after the read transaction is closed.
+
+    Loading and building are separate calls precisely so a pooled connection is
+    not held for the length of a whole-bank DEFLATE. Building from a payload with
+    no connection in scope is what proves the two halves are actually independent.
+    """
+    from hindsight_api.engine.transfer import build_bank_archive, load_bank_export
+
+    bank = _unique_bank("export_seam")
+    try:
+        await _retain(memory, bank, "Rosa sails dinghies.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                payload = await load_bank_export(bank_id=bank, conn=conn, file_storage=memory._file_storage)
+
+        # The connection is back in the pool here.
+        archive = await build_bank_archive(payload)
+
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            names = set(zf.namelist())
+            manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        assert any(n.startswith("documents/") for n in names)
+        assert manifest.source_bank_id == bank
+        assert manifest.document_count == 1
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

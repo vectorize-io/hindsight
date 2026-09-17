@@ -455,6 +455,60 @@ async def export_bank(
     bank with attachments exported without one raises rather than silently
     producing rows that point at blobs the archive does not carry.
     """
+    payload = await load_bank_export(
+        conn,
+        bank_id,
+        scope=scope,
+        bank_rows_json_encoding=bank_rows_json_encoding,
+        memories=memories,
+        file_storage=file_storage,
+    )
+    return await build_bank_archive(payload)
+
+
+@dataclass
+class BankExportPayload:
+    """Everything a whole-bank archive is built from, already read out of the bank.
+
+    Loading and building are separate so the CPU-bound half — Pydantic JSON for
+    every document plus DEFLATE over the whole bank — can run off the event loop
+    *and* outside the read transaction. Before the split, ``export_bank`` did both
+    while the caller held an open transaction, so a large bank's compression both
+    stalled the loop and pinned a pooled connection for its duration. That was
+    harmless while the only caller was the admin CLI (its own short-lived
+    process); it stopped being harmless when the transfer and clone endpoints
+    started calling it inside the API/worker process.
+    """
+
+    bank_id: str
+    scope: TransferScope
+    bank_rows_json_encoding: BankRowsJSONEncoding = "serialized"
+    documents: list[TransferDocument] = field(default_factory=list)
+    observations: list[TransferObservation] = field(default_factory=list)
+    attachments: list[TransferAttachment] = field(default_factory=list)
+    #: archive entry name -> attachment bytes
+    blobs: dict[str, bytes] = field(default_factory=dict)
+    data_rows: dict[str, list[dict]] = field(default_factory=dict)
+    bank_rows: dict[str, list[dict]] = field(default_factory=dict)
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
+    history_rows: dict[str, list[dict]] = field(default_factory=dict)
+
+
+async def load_bank_export(
+    conn: Any,
+    bank_id: str,
+    *,
+    scope: TransferScope | None = None,
+    bank_rows_json_encoding: BankRowsJSONEncoding = "serialized",
+    memories: Any = None,
+    file_storage: Any = None,
+) -> BankExportPayload:
+    """Read everything ``scope`` asks for out of the bank, without building anything.
+
+    Every query lives here, so a caller that wants a point-in-time archive wraps
+    only this call in a transaction and lets the connection go before handing the
+    payload to :func:`build_bank_archive`.
+    """
     scope = scope or TransferScope()
     memories = _resolve_memories(memories)
     documents: list[TransferDocument] = []
@@ -504,6 +558,66 @@ async def export_bank(
     if scope.history:
         history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
 
+    return BankExportPayload(
+        bank_id=bank_id,
+        scope=scope,
+        bank_rows_json_encoding=bank_rows_json_encoding,
+        documents=documents,
+        observations=observations,
+        attachments=attachments,
+        blobs=blobs,
+        data_rows=data_rows,
+        bank_rows=bank_rows,
+        knowledge_pages=knowledge_pages,
+        history_rows=history_rows,
+    )
+
+
+async def build_bank_archive(payload: BankExportPayload) -> bytes:
+    """Serialise a loaded bank into its ZIP archive, off the event loop.
+
+    Needs no database connection — everything it writes is already in ``payload``
+    — which is the point: the caller's read transaction is closed by the time the
+    compression starts. Mirrors what the document export does for the same reason
+    (issue #3321).
+    """
+    archive_bytes = await anyio.to_thread.run_sync(_build_bank_archive_bytes, payload)
+    scope = payload.scope
+    logger.info(
+        "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), "
+        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d knowledge page(s), "
+        "%d directive(s), %d webhook(s), %d byte(s)",
+        payload.bank_id,
+        scope.data,
+        scope.bank_config,
+        scope.history,
+        len(payload.documents),
+        len(payload.observations),
+        len(payload.attachments),
+        len(payload.data_rows.get("async_operations", [])),
+        len(payload.bank_rows.get("mental_models", [])),
+        len(payload.knowledge_pages),
+        len(payload.bank_rows.get("directives", [])),
+        len(payload.bank_rows.get("webhooks", [])),
+        len(archive_bytes),
+    )
+    return archive_bytes
+
+
+def _build_bank_archive_bytes(payload: BankExportPayload) -> bytes:
+    """Assemble the whole-bank ZIP. Pure CPU, no I/O — runs in a worker thread."""
+    bank_id = payload.bank_id
+    scope = payload.scope
+    documents = payload.documents
+    observations = payload.observations
+    attachments = payload.attachments
+    blobs = payload.blobs
+    data_rows = payload.data_rows
+    bank_rows = payload.bank_rows
+    knowledge_pages = payload.knowledge_pages
+    history_rows = payload.history_rows
+    bank_rows_json_encoding = payload.bank_rows_json_encoding
+
     archive = io.BytesIO()
     fact_total = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -512,12 +626,12 @@ async def export_bank(
             zf.writestr(f"documents/{index:06d}.json", document.model_dump_json(indent=2, exclude_none=False))
 
         if observations:
-            payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
-            zf.writestr("observations.json", payload)
+            section = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
+            zf.writestr("observations.json", section)
 
         if attachments:
-            payload = "[\n" + ",\n".join(a.model_dump_json(indent=2) for a in attachments) + "\n]\n"
-            zf.writestr("attachments.json", payload)
+            section = "[\n" + ",\n".join(a.model_dump_json(indent=2) for a in attachments) + "\n]\n"
+            zf.writestr("attachments.json", section)
             for entry, data in blobs.items():
                 # Stored, not deflated: attachment bytes are images/PDFs that are
                 # already compressed, so DEFLATE would burn CPU for nothing.
@@ -561,24 +675,6 @@ async def export_bank(
         )
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
-    logger.info(
-        "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), %d fact(s), "
-        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d knowledge page(s), "
-        "%d directive(s), %d webhook(s)",
-        bank_id,
-        scope.data,
-        scope.bank_config,
-        scope.history,
-        len(documents),
-        fact_total,
-        len(observations),
-        len(attachments),
-        len(data_rows.get("async_operations", [])),
-        len(bank_rows.get("mental_models", [])),
-        len(knowledge_pages),
-        len(bank_rows.get("directives", [])),
-        len(bank_rows.get("webhooks", [])),
-    )
     return archive.getvalue()
 
 

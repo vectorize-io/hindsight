@@ -2945,7 +2945,7 @@ class MemoryEngine(MemoryEngineInterface):
         import json
 
         from .memories import get_memories
-        from .transfer import TransferScope, export_bank
+        from .transfer import TransferScope, build_bank_archive, load_bank_export
 
         bank_id = task_dict.get("bank_id")
         operation_id = task_dict.get("operation_id")
@@ -2958,18 +2958,21 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         backend = await self._get_backend()
-        # One connection for the whole export: a bank is read across a dozen
+        # One connection for the whole read: a bank is read across a dozen
         # queries, and a transaction is what makes them one point in time rather
-        # than a smear of whatever was being written meanwhile.
+        # than a smear of whatever was being written meanwhile. Only the *read*
+        # is in here — building the archive is CPU-bound and runs after the
+        # connection is back in the pool (see build_bank_archive).
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                archive_bytes = await export_bank(
+                payload = await load_bank_export(
                     conn,
                     bank_id,
                     scope=scope,
                     memories=get_memories(),
                     file_storage=self._file_storage,
                 )
+        archive_bytes = await build_bank_archive(payload)
 
         storage_key = f"banks/{bank_id}/exports/{uuid.uuid4()}/transfer.zip"
         await self._file_storage.store(
@@ -3079,7 +3082,7 @@ class MemoryEngine(MemoryEngineInterface):
         import json
 
         from .memories import get_memories
-        from .transfer import TransferScope, export_bank
+        from .transfer import TransferScope, build_bank_archive, load_bank_export
 
         source_bank_id = task_dict.get("bank_id")
         target_bank_id = task_dict.get("target_bank_id")
@@ -3106,16 +3109,18 @@ class MemoryEngine(MemoryEngineInterface):
         # One transaction for the whole read: a bank is assembled from a dozen
         # queries, and without this the clone is a smear of whatever was being
         # written meanwhile — a fact whose document the copy never got, an
-        # observation citing it. The source stays writable throughout.
+        # observation citing it. The source stays writable throughout, and the
+        # connection goes back to the pool before the archive is built.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                archive_bytes = await export_bank(
+                payload = await load_bank_export(
                     conn,
                     source_bank_id,
                     scope=scope,
                     memories=get_memories(),
                     file_storage=self._file_storage,
                 )
+        archive_bytes = await build_bank_archive(payload)
 
         result = await self.import_bank_async(
             archive_bytes,
