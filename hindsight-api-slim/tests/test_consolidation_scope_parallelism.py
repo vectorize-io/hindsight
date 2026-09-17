@@ -144,7 +144,7 @@ async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEng
     with the memory's full tag set. With three disjoint tag sets, dispatch
     runs all three groups concurrently and each writes its own scope."""
     bank_id = f"test-combined-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice likes tea", ["user:alice"], None)
@@ -186,7 +186,7 @@ async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEng
     the same global scope (the per-session-tag dedup use case) instead of one
     isolated observation per tag."""
     bank_id = f"test-shared-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice likes tea", ["session:s1"], "shared")
@@ -232,7 +232,7 @@ async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory
     batch_size=2 so a single shared batch is actually observable.
     """
     bank_id = f"test-shared-pool-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             mem_a = await _insert_memory(
@@ -298,7 +298,7 @@ async def test_combined_and_per_tag_same_tags_do_not_share_a_batch(memory: Memor
     fanning the combined memory out per tag.
     """
     bank_id = f"test-combined-per-tag-collision-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice likes tea and coffee", ["a", "b"], None)
@@ -342,7 +342,7 @@ async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: Memo
     dispatcher must serialise on the shared scope and yields the same
     observation set as the sequential path."""
     bank_id = f"test-pertag-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             # M1: per_tag on [alice] -> writes obs at [alice]
@@ -387,7 +387,7 @@ async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: Memo
 async def test_all_combinations_mode_parallel_writes_every_subset(memory: MemoryEngine, request_context):
     """all_combinations with tags [a, b] → three observations at [a], [b], [a, b]."""
     bank_id = f"test-allcombo-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice session detail", ["alice", "session"], "all_combinations")
@@ -423,7 +423,7 @@ async def test_explicit_scope_list_parallel_writes_declared_scopes(memory: Memor
     """Explicit list[list[str]] → observations land at exactly those scopes,
     regardless of the memory's own tag set."""
     bank_id = f"test-explicit-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(
@@ -468,7 +468,7 @@ async def test_empty_explicit_scope_list_does_not_pool_across_tags(memory: Memor
     observations took ``memories[0]``'s tags and alice's observation carried
     bob's fact (or vice versa)."""
     bank_id = f"test-empty-scope-list-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice likes tea", ["user:alice"], [])
@@ -509,7 +509,7 @@ async def test_heterogeneous_batch_is_split_not_leaked(memory: MemoryEngine, req
     own scope: no untagged observation built from a tagged fact, no dropped
     ``shared`` override."""
     bank_id = f"test-hetero-split-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "A session note", ["user:alice"], "shared")
@@ -573,7 +573,7 @@ async def test_overlapping_scopes_serialise_under_parallelism(memory: MemoryEngi
     assert max concurrency per scope == 1.
     """
     bank_id = f"test-locks-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     from hindsight_api.engine.consolidation import consolidator as consolidator_mod
 
@@ -660,7 +660,7 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
     import logging
 
     bank_id = f"test-perbatch-log-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice fact", ["alice"], None)
@@ -729,7 +729,7 @@ async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_co
     groups run in parallel — we should observe simultaneous in-flight recalls
     on *different* scopes."""
     bank_id = f"test-disjoint-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     from hindsight_api.engine.consolidation import consolidator as consolidator_mod
 

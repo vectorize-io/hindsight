@@ -3885,7 +3885,6 @@ async def apply_bank_template_manifest(
         await memory.get_bank_profile(
             bank_id,
             request_context=request_context,
-            create_if_missing=False,
         )
         is not None
     )
@@ -8172,9 +8171,7 @@ def _register_routes(app: FastAPI):
         """Export a bank's config and mental models as a template manifest."""
         try:
             # Read endpoint: do not auto-create on missing bank.
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
@@ -8319,9 +8316,7 @@ def _register_routes(app: FastAPI):
                     detail="Document export API is disabled. "
                     "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
                 )
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 

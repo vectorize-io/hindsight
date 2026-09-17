@@ -269,7 +269,7 @@ class TestRealModelFillsTheDocumentShape:
 
     async def test_document_mode_reflect_returns_a_rendered_document(self, memory_real_llm, request_context):
         bank_id = f"test-doc-shape-{uuid.uuid4().hex[:8]}"
-        await memory_real_llm.get_bank_profile(bank_id, request_context=request_context)
+        await memory_real_llm.ensure_bank_profile(bank_id, request_context=request_context)
         await memory_real_llm.retain_batch_async(
             bank_id=bank_id,
             contents=[

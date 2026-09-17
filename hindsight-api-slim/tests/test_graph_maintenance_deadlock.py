@@ -212,7 +212,7 @@ async def test_graph_maintenance_sweep_retries_on_deadlock(memory: MemoryEngine,
     happens and the job still returns correct prune counts.
     """
     bank_id = f"dl-fix-sweep-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     pool = await memory._get_pool()
     ent_a = uuid.uuid4()

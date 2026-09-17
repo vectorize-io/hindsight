@@ -19,27 +19,27 @@ class TestAgentProfile:
 
     @pytest.mark.asyncio
     async def test_get_bank_profile_no_auto_create_returns_none(self, memory: MemoryEngine, request_context):
-        """When create_if_missing=False is passed, a missing bank returns None
-        rather than being silently auto-created. This is what read-only
-        endpoints (HTTP GET, polling, etc.) must use to avoid creating banks
-        as a side effect of a stale client request."""
+        """get_bank_profile returns None for a missing bank rather than silently
+        auto-creating it. This is what read-only endpoints (HTTP GET, polling,
+        etc.) must use to avoid creating banks as a side effect of a stale client
+        request; callers that mean to create one call ensure_bank_profile."""
         bank_id = unique_agent_id("test_no_auto_create")
 
-        # First call with create_if_missing=False on a non-existent bank
-        result = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
-        assert result is None, "Expected None for missing bank with create_if_missing=False"
+        # The read-only call on a non-existent bank
+        result = await memory.get_bank_profile(bank_id, request_context=request_context)
+        assert result is None, "Expected None for a missing bank"
 
         # Verify the bank was NOT created as a side effect
-        result_again = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        result_again = await memory.get_bank_profile(bank_id, request_context=request_context)
         assert result_again is None, "Bank must not exist after read-only call"
 
         # And explicit auto-create still works
-        created = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+        created = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         assert created is not None
         assert created["disposition"]["skepticism"] == 3
 
         # Now read-only call sees it
-        seen = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        seen = await memory.get_bank_profile(bank_id, request_context=request_context)
         assert seen is not None
         assert seen["disposition"]["skepticism"] == 3
 
@@ -48,7 +48,7 @@ class TestAgentProfile:
         """Test that getting a profile for a new agent creates default disposition."""
         bank_id = unique_agent_id("test_profile_default")
 
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         assert profile is not None
         assert "disposition" in profile
@@ -63,7 +63,7 @@ class TestAgentProfile:
         """Test updating agent disposition traits."""
         bank_id = unique_agent_id("test_profile_update")
 
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         assert profile["disposition"]["skepticism"] == 3
 
         new_disposition = {
@@ -73,7 +73,7 @@ class TestAgentProfile:
         }
         await memory.update_bank_disposition(bank_id, new_disposition, request_context=request_context)
 
-        updated_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        updated_profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         disposition = updated_profile["disposition"]
         assert disposition["skepticism"] == new_disposition["skepticism"]
         assert disposition["literalism"] == new_disposition["literalism"]
@@ -86,9 +86,9 @@ class TestAgentProfile:
         agent_id_2 = unique_agent_id("test_list")
         agent_id_3 = unique_agent_id("test_list")
 
-        await memory.get_bank_profile(agent_id_1, request_context=request_context)
-        await memory.get_bank_profile(agent_id_2, request_context=request_context)
-        await memory.get_bank_profile(agent_id_3, request_context=request_context)
+        await memory.ensure_bank_profile(agent_id_1, request_context=request_context)
+        await memory.ensure_bank_profile(agent_id_2, request_context=request_context)
+        await memory.ensure_bank_profile(agent_id_3, request_context=request_context)
 
         page = await memory.list_banks(search_query="test_list", limit=1000, request_context=request_context)
         agents = page["banks"]
@@ -117,7 +117,7 @@ class TestAgentEndpoint:
             disposition=DispositionTraits(skepticism=4, literalism=5, empathy=2),
         )
 
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         if request.disposition is not None:
             await memory.update_bank_disposition(
@@ -126,7 +126,7 @@ class TestAgentEndpoint:
                 request_context=request_context,
             )
 
-        final_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        final_profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         assert final_profile["disposition"]["skepticism"] == 4
         assert final_profile["disposition"]["literalism"] == 5

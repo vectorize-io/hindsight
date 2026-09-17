@@ -53,7 +53,7 @@ async def seeded_memory(memory_no_llm_verify: MemoryEngine):
     engine = memory_no_llm_verify
     bank_id = f"test-min-score-{uuid.uuid4().hex[:8]}"
 
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
 
     embeddings = await embedding_utils.generate_embeddings_batch(
         engine.embeddings,

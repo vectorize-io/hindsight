@@ -40,7 +40,7 @@ def _to_str(emb: list[float]) -> str:
 @pytest_asyncio.fixture
 async def seeded_combo(memory, request_context):
     bank_id = f"test-pg-enrich-combo-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     fact_id = str(uuid.uuid4())
     obs_id = str(uuid.uuid4())

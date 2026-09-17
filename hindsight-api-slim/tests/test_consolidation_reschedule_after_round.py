@@ -85,7 +85,7 @@ async def test_round_limited_consolidation_leaves_followup_pending_op(memory: Me
     op in ``async_operations`` for the same bank so the worker poller can
     drain the backlog without external intervention."""
     bank_id = f"test-reschedule-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     round_limit = 5
     backlog_size = 12  # > 2x round_limit so we expect multiple re-queues

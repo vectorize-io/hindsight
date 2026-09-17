@@ -25,25 +25,25 @@ def _bank(prefix: str) -> str:
 @pytest.mark.asyncio
 async def test_a_disposition_update_is_visible_to_the_next_read(memory: MemoryEngine, request_context):
     bank_id = _bank("cache_disposition")
-    warm = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    warm = await memory.ensure_bank_profile(bank_id, request_context=request_context)
     assert warm["disposition"]["skepticism"] == 3
 
     await memory.update_bank_disposition(
         bank_id, {"skepticism": 5, "literalism": 4, "empathy": 2}, request_context=request_context
     )
 
-    after = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+    after = await memory.get_bank_profile(bank_id, request_context=request_context)
     assert after["disposition"]["skepticism"] == 5, "the cached profile survived a disposition write"
 
 
 @pytest.mark.asyncio
 async def test_a_mission_update_is_visible_to_the_next_read(memory: MemoryEngine, request_context):
     bank_id = _bank("cache_mission")
-    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     await memory.set_bank_mission(bank_id, "the new mission", request_context=request_context)
 
-    after = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+    after = await memory.get_bank_profile(bank_id, request_context=request_context)
     assert after["mission"] == "the new mission", "the cached profile survived a mission write"
 
 
@@ -52,7 +52,7 @@ async def test_update_bank_returns_what_it_wrote(memory: MemoryEngine, request_c
     """`update_bank` reads the profile back to return it, so a stale entry makes a successful
     update answer with the values it just replaced."""
     bank_id = _bank("cache_update_bank")
-    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     returned = await memory.update_bank(bank_id, name="renamed", request_context=request_context)
     assert returned["name"] == "renamed", "update_bank answered with the pre-update profile"
@@ -63,7 +63,7 @@ async def test_a_config_override_is_visible_to_the_next_resolve(memory: MemoryEn
     """The config row is cached under its own key, so it needs its own invalidation -- and the
     resolved config is what a retain reads, which is the path the cache exists to speed up."""
     bank_id = _bank("cache_config")
-    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     resolver = memory._config_resolver
     await resolver._load_bank_config(bank_id)
 
@@ -86,7 +86,7 @@ async def test_a_config_read_back_does_not_go_through_the_cache(memory: MemoryEn
     from hindsight_api.engine import bank_info_cache
 
     bank_id = _bank("cache_bypass")
-    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     # Warm the config entry, then take invalidation away before the write.
     await memory.get_bank_config(bank_id, request_context=request_context)
 
@@ -117,7 +117,7 @@ async def test_recall_reads_its_config_through_the_cache(memory: MemoryEngine, r
     sites, so a new hot-path caller that forces a read fails here.
     """
     bank_id = _bank("cache_hot_path")
-    await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     resolver = memory._config_resolver
     await resolver.get_bank_config(bank_id, request_context)  # warm

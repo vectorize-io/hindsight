@@ -101,7 +101,7 @@ async def test_delete_chunks_by_ids_sweeps_links_on_both_endpoints(
     if get_memories().store_owned_for(bank_id):
         pytest.skip("memory_links reference memory_units rows, which this store keeps outside SQL")
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     pool = await memory._get_pool()
 
     doc_id = str(uuid.uuid4())

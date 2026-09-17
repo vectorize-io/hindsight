@@ -149,7 +149,7 @@ async def test_dedup_create_fold_widens_bounds_of_the_twin(memory: MemoryEngine,
     ``occurred_start``/``occurred_end`` as NULL — the exact shape reported in the issue.
     """
     bank_id = f"test-temporal-fold-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     undated_fact = await _retain_fact(
         memory, request_context, observations_enabled, bank_id, "Alice moved to Berlin for work.", "Alice"
@@ -192,7 +192,7 @@ async def test_dedup_create_fold_widens_bounds_of_the_twin(memory: MemoryEngine,
 async def test_update_widens_bounds_from_its_source_facts(memory: MemoryEngine, request_context, observations_enabled):
     """The ordinary UPDATE path inherits every temporal field from its sources, event_date included."""
     bank_id = f"test-temporal-update-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     undated_fact = await _retain_fact(
         memory, request_context, observations_enabled, bank_id, "Bob plays the cello.", "cello"
@@ -246,7 +246,7 @@ async def test_dedup_update_fold_unions_the_bounds_of_both_rows(
 ):
     """The UPDATE-time fold deletes the folded-from row, so the survivor must absorb its dates."""
     bank_id = f"test-temporal-updfold-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     twin_fact = await _retain_fact(
         memory, request_context, observations_enabled, bank_id, "Carla ran the Rome marathon.", "marathon"

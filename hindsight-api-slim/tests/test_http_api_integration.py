@@ -1674,7 +1674,7 @@ async def test_update_bank_combines_profile_and_config_with_one_authentication(m
     """Combined bank updates authenticate once but validate every requested operation."""
     bank_id = f"combined_bank_update_{datetime.now().timestamp()}"
     request_context = RequestContext()
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     validator = _make_operation_validator()
     authenticate = AsyncMock(wraps=memory._authenticate_tenant)
     monkeypatch.setattr(memory, "_operation_validator", validator)
@@ -1714,13 +1714,13 @@ async def test_update_bank_persists_name_and_mission(memory):
             mission="Do the thing well",
             request_context=request_context,
         )
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         assert profile["name"] == "Profile name"
         assert profile["mission"] == "Do the thing well"
 
         # Mission-only update must not disturb the name.
         await memory.update_bank(bank_id, mission="Do the other thing", request_context=request_context)
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         assert profile["mission"] == "Do the other thing"
         assert profile["name"] == "Profile name"
     finally:
@@ -1755,7 +1755,7 @@ async def test_update_bank_read_denial_has_no_side_effects(memory, monkeypatch):
             request_context=request_context,
         )
     monkeypatch.setattr(memory, "_operation_validator", None)
-    profile = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+    profile = await memory.get_bank_profile(bank_id, request_context=request_context)
     assert profile is None
 
 
@@ -1790,7 +1790,6 @@ async def test_update_bank_validates_against_projected_default_config(memory, mo
     profile = await memory.get_bank_profile(
         bank_id,
         request_context=request_context,
-        create_if_missing=False,
     )
     assert profile is None
 
@@ -2115,7 +2114,7 @@ async def test_import_write_preauthorization_is_bound_to_resource_context_and_ta
     """A cached grant can only be spent by its exact resource and task."""
     bank_id = f"import_scoped_authorization_{datetime.now().timestamp()}"
     request_context = RequestContext()
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     validator = _make_operation_validator()
     monkeypatch.setattr(memory, "_operation_validator", validator)
     write = BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, "allowed")
@@ -2166,7 +2165,7 @@ async def test_import_config_preauthorization_rejects_mismatch_and_reuse(memory,
     """Config drift or reuse cannot silently trigger a second validator call."""
     bank_id = f"import_config_authorization_mismatch_{datetime.now().timestamp()}"
     request_context = RequestContext()
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     validator = _make_operation_validator()
     monkeypatch.setattr(memory, "_operation_validator", validator)
     updates = {"reflect_mission": "Authorized"}

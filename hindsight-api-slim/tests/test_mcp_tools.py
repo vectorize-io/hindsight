@@ -242,6 +242,7 @@ def mock_memory():
     memory.list_tags = AsyncMock(return_value={"items": ["tag1", "tag2"], "total": 2})
     memory._ensure_bank_exists = AsyncMock(return_value=True)
     memory.get_bank_profile = AsyncMock(return_value={"id": "test-bank", "name": "Test Bank", "mission": "Testing"})
+    memory.ensure_bank_profile = AsyncMock(return_value={"id": "test-bank", "name": "Test Bank", "mission": "Testing"})
     memory.get_bank_stats = AsyncMock(return_value={"nodes": 100, "links": 50})
     memory.delete_bank = AsyncMock(return_value={"deleted_memories": 10, "deleted_entities": 5})
 
@@ -1727,21 +1728,21 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
         result = await _tools(mcp)["get_bank"].fn()
         assert '"test-bank"' in result or "test-bank" in result
-        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+        mock_memory.ensure_bank_profile.assert_not_awaited()  # the read must not create the bank
 
     async def test_get_bank_missing_does_not_create(self, mock_memory):
         mock_memory.get_bank_profile.return_value = None
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
         result = await _tools(mcp)["get_bank"].fn(bank_id="missing-bank")
         assert json.loads(result)["error"] == "Bank 'missing-bank' not found"
-        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+        mock_memory.ensure_bank_profile.assert_not_awaited()  # the read must not create the bank
 
     async def test_create_bank_uses_public_profile_api(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"create_bank"}, include_bank_id=True)
         result = await _tools(mcp)["create_bank"].fn(bank_id="new-bank")
         assert '"test-bank"' in result or "test-bank" in result
-        mock_memory.get_bank_profile.assert_awaited_once()
-        assert mock_memory.get_bank_profile.call_args.args[0] == "new-bank"
+        mock_memory.ensure_bank_profile.assert_awaited_once()
+        assert mock_memory.ensure_bank_profile.call_args.args[0] == "new-bank"
         mock_memory.update_bank.assert_not_awaited()
         mock_memory._ensure_bank_exists.assert_not_awaited()
 
@@ -1757,7 +1758,7 @@ class TestTagsAndBankTools:
         assert mock_memory.update_bank.call_args.args[0] == "new-bank"
         assert mock_memory.update_bank.call_args.kwargs["name"] == "New Bank"
         assert mock_memory.update_bank.call_args.kwargs["mission"] == "Help the user"
-        mock_memory.get_bank_profile.assert_not_awaited()
+        mock_memory.ensure_bank_profile.assert_not_awaited()
         mock_memory._ensure_bank_exists.assert_not_awaited()
 
     async def test_get_bank_stats(self, mock_memory):
@@ -1803,14 +1804,14 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
         result = await _tools(mcp)["get_bank"].fn()
         assert isinstance(result, dict)
-        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+        mock_memory.ensure_bank_profile.assert_not_awaited()  # the read must not create the bank
 
     async def test_get_bank_single_bank_missing_does_not_create(self, mock_memory):
         mock_memory.get_bank_profile.return_value = None
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
         result = await _tools(mcp)["get_bank"].fn()
         assert result["error"] == "Bank 'test-bank' not found"
-        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+        mock_memory.ensure_bank_profile.assert_not_awaited()  # the read must not create the bank
 
     async def test_delete_bank_single_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"delete_bank"}, include_bank_id=False)

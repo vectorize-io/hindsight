@@ -264,7 +264,7 @@ async def main():
     try:
         # Create bank
         console.print("\n[2] Creating test bank...")
-        await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
         console.print(f"[green]✓[/green] Created bank: {bank_id}")
 
         # Get initial stats

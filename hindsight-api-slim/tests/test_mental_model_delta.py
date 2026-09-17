@@ -177,7 +177,7 @@ class TestDeltaRefreshPlumbing:
     ):
         """When trigger.mode='full', no second LLM call for delta merge occurs."""
         bank_id = f"test-delta-full-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -219,7 +219,7 @@ class TestDeltaRefreshPlumbing:
         )
 
         bank_id = f"test-mm-create-structure-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         authored = "## Ops\n\n| Name | Role |\n|---|---|\n| Alice | Lead\n\n- top\n  - nested\n"
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -261,7 +261,7 @@ class TestDeltaRefreshPlumbing:
         )
 
         bank_id = f"test-mm-update-structure-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -307,7 +307,7 @@ class TestDeltaRefreshPlumbing:
         )
 
         bank_id = f"test-doc-answer-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -352,7 +352,7 @@ class TestDeltaRefreshPlumbing:
     ):
         """The refresh must request document mode; markdown mode would reintroduce the parse."""
         bank_id = f"test-doc-flag-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -383,7 +383,7 @@ class TestDeltaRefreshPlumbing:
         )
 
         bank_id = f"test-doc-fallback-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -425,7 +425,7 @@ class TestDeltaRefreshPlumbing:
         )
 
         bank_id = f"test-delta-render-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -499,7 +499,7 @@ class TestDeltaRefreshPlumbing:
         candidate from reflect_async is used verbatim.
         """
         bank_id = f"test-delta-empty-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -537,7 +537,7 @@ class TestDeltaRefreshPlumbing:
         pre-existing facts instead of scoping recall to last_refreshed_at.
         """
         bank_id = f"test-delta-placeholder-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -573,7 +573,7 @@ class TestDeltaRefreshPlumbing:
     ):
         """If source_query changes after a refresh, the next delta run must do a full rewrite."""
         bank_id = f"test-delta-query-change-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -630,7 +630,7 @@ class TestDeltaRefreshPlumbing:
         than the watermark (see ``test_delta_refresh_watermark_survives_straddling_commit``).
         """
         bank_id = f"test-delta-watermark-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Preferences\n\nThe user prefers concise answers.\n"
         mm = await memory.create_mental_model(
@@ -761,7 +761,7 @@ class TestDeltaRefreshPlumbing:
         newer than the watermark and is picked up next time.
         """
         bank_id = f"test-delta-straddle-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="User Preferences",
@@ -884,7 +884,7 @@ class TestDeltaRefreshPlumbing:
         renders byte-identical, the new fact lands in a new block.
         """
         bank_id = f"test-delta-apply-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
         mm = await memory.create_mental_model(
@@ -976,7 +976,7 @@ class TestDeltaRefreshPlumbing:
         from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 
         bank_id = f"test-delta-schema-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -1038,7 +1038,7 @@ class TestDeltaRefreshPlumbing:
         from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 
         bank_id = f"test-delta-trace-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
         mm = await memory.create_mental_model(
@@ -1105,7 +1105,7 @@ class TestDeltaRefreshPlumbing:
         The accumulated set is still persisted in ``reflect_response.based_on``.
         """
         bank_id = f"test-delta-newfacts-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
         mm = await memory.create_mental_model(
@@ -1197,7 +1197,7 @@ class TestDeltaRefreshPlumbing:
         re-rendered it) is byte-stable.
         """
         bank_id = f"test-delta-noop-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice\n"
         mm = await memory.create_mental_model(
@@ -1251,7 +1251,7 @@ class TestDeltaRefreshPlumbing:
         preserves the document and fails, the same way an empty candidate does.
         """
         bank_id = f"test-delta-llm-fail-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nExisting.\n"
         mm = await memory.create_mental_model(
@@ -1331,7 +1331,7 @@ class TestDeltaRefreshPlumbing:
         legitimate "nothing to add" and is covered by the byte-identical test above.
         """
         bank_id = f"test-delta-all-skipped-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n"
         mm = await memory.create_mental_model(
@@ -1401,7 +1401,7 @@ class TestDeltaRefreshPlumbing:
         this run's evidence never landed.
         """
         bank_id = f"test-delta-partial-skip-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -1479,7 +1479,7 @@ class TestDeltaRefreshPlumbing:
         nothing else rewrites that column.
         """
         bank_id = f"test-delta-bad-struct-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -1536,7 +1536,7 @@ class TestDeltaRefreshPlumbing:
         here as it is after an LLM failure, so it is refused for the same reason.
         """
         bank_id = f"test-delta-no-baseline-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n"
         mm = await memory.create_mental_model(
@@ -1593,7 +1593,7 @@ class TestDeltaRefreshPlumbing:
         break the ordinary refresh path.
         """
         bank_id = f"test-full-mode-writes-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -1641,7 +1641,7 @@ class TestDeltaRefreshPlumbing:
         fallback would write "" to the DB; with it, the existing content stays.
         """
         bank_id = f"test-empty-reflect-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice\n"
         mm = await memory.create_mental_model(
@@ -1828,7 +1828,7 @@ class TestDeltaRefreshGeminiEval:
         existing_markdown: str,
         memories: list[str],
     ) -> dict[str, Any]:
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Skill Doc",
@@ -2029,7 +2029,7 @@ class TestDeltaRefreshGeminiEval:
     ):
         """Changing source_query must bypass delta and produce a full regeneration."""
         bank_id = f"eval-delta-query-change-{uuid.uuid4().hex[:8]}"
-        await gemini_memory.get_bank_profile(bank_id, request_context=request_context)
+        await gemini_memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         mm = await gemini_memory.create_mental_model(
             bank_id=bank_id,
@@ -2384,7 +2384,7 @@ class TestDocumentBudget:
     ):
         """Every delta refresh reports where the document stands."""
         bank_id = f"test-mm-budget-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -2420,7 +2420,7 @@ class TestDocumentBudget:
     ):
         """Going over is a warning, never a silent deletion of content."""
         bank_id = f"test-mm-over-budget-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         long_body = " ".join(f"sentence number {i} about the API." for i in range(200))
         mm = await memory.create_mental_model(
             bank_id=bank_id,

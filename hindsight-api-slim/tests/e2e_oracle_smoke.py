@@ -176,7 +176,7 @@ async def _run() -> None:
         # 2. Create bank
         # ------------------------------------------------------------------
         _log(2, total_steps, f"Creating bank '{bank_id}' ...")
-        profile = await engine.get_bank_profile(bank_id=bank_id, request_context=ctx)
+        profile = await engine.ensure_bank_profile(bank_id=bank_id, request_context=ctx)
         assert profile is not None, "Bank profile should not be None"
         assert profile["bank_id"] == bank_id
         print(f"    -> bank created: {profile['bank_id']}")

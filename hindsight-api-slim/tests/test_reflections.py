@@ -36,7 +36,7 @@ class TestMentalModelsCRUD:
         bank_id = f"test-mental-model-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model
         mental_model = await memory.create_mental_model(
@@ -85,7 +85,6 @@ class TestMentalModelsCRUD:
         profile = await memory.get_bank_profile(
             bank_id=bank_id,
             request_context=request_context,
-            create_if_missing=False,
         )
         assert profile is not None
 
@@ -115,7 +114,6 @@ class TestMentalModelsCRUD:
         profile = await memory.get_bank_profile(
             bank_id=bank_id,
             request_context=request_context,
-            create_if_missing=False,
         )
         assert profile is None, "bank should have rolled back with the failed insert"
 
@@ -125,7 +123,7 @@ class TestMentalModelsCRUD:
         bank_id = f"test-mental-model-list-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create multiple mental models
         await memory.create_mental_model(
@@ -171,7 +169,7 @@ class TestMentalModelsCRUD:
         bank_id = f"test-mental-model-update-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model
         mental_model = await memory.create_mental_model(
@@ -209,7 +207,7 @@ class TestMentalModelsCRUD:
         no longer holds.
         """
         bank_id = f"test-mm-partial-embed-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         mental_model = await memory.create_mental_model(
             bank_id=bank_id,
@@ -272,7 +270,7 @@ class TestMentalModelsCRUD:
         bank_id = f"test-mental-model-delete-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model
         mental_model = await memory.create_mental_model(
@@ -307,7 +305,7 @@ class TestMentalModelsCRUD:
         bank_id = f"test-mental-model-custom-id-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model with a custom ID
         custom_id = "team-communication-preferences"
@@ -575,7 +573,7 @@ class TestReflectUsesMentalModels:
         bank_id = f"test-reflect-mm-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model about team collaboration
         mental_model = await memory.create_mental_model(
@@ -635,7 +633,7 @@ class TestReflectUsesMentalModels:
         bank_id = f"test-reflect-reason-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Run reflect - it should use observations or recall
         result = await memory.reflect_async(
@@ -660,7 +658,7 @@ class TestMentalModelReflectOptions:
     async def test_trigger_stores_fact_types(self, memory: MemoryEngine, request_context):
         """Trigger field persists fact_types and returns them via get_mental_model."""
         bank_id = f"test-mm-trigger-ft-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -683,7 +681,7 @@ class TestMentalModelReflectOptions:
     async def test_trigger_stores_exclude_mental_models(self, memory: MemoryEngine, request_context):
         """Trigger field persists exclude_mental_models flag."""
         bank_id = f"test-mm-trigger-em-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -705,7 +703,7 @@ class TestMentalModelReflectOptions:
     async def test_trigger_stores_exclude_mental_model_ids(self, memory: MemoryEngine, request_context):
         """Trigger field persists exclude_mental_model_ids list."""
         bank_id = f"test-mm-trigger-eid-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         excluded_ids = ["mm-abc", "mm-xyz"]
         mm = await memory.create_mental_model(
@@ -728,7 +726,7 @@ class TestMentalModelReflectOptions:
     async def test_update_trigger_reflect_options(self, memory: MemoryEngine, request_context):
         """update_mental_model persists updated trigger reflect options."""
         bank_id = f"test-mm-trigger-upd-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -766,7 +764,7 @@ class TestReflectFactTypeFiltering:
     async def test_exclude_mental_models_skips_search_mental_models_tool(self, memory: MemoryEngine, request_context):
         """When exclude_mental_models=True, search_mental_models is never called."""
         bank_id = f"test-reflect-exmm-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model so the bank has one
         await memory.create_mental_model(
@@ -795,7 +793,7 @@ class TestReflectFactTypeFiltering:
     async def test_exclude_observations_via_fact_types(self, memory: MemoryEngine, request_context):
         """When fact_types excludes observation, search_observations is never called."""
         bank_id = f"test-reflect-exobs-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         result = await memory.reflect_async(
             bank_id=bank_id,
@@ -815,7 +813,7 @@ class TestReflectFactTypeFiltering:
     async def test_observation_only_fact_types_skips_recall(self, memory: MemoryEngine, request_context):
         """When fact_types=['observation'], recall is never called."""
         bank_id = f"test-reflect-obsonly-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         result = await memory.reflect_async(
             bank_id=bank_id,

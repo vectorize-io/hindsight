@@ -110,7 +110,7 @@ def patch_delta_llm(monkeypatch):
 
 async def _make_bank(memory: MemoryEngine, request_context: RequestContext, prefix: str) -> str:
     bank_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     return bank_id
 
 

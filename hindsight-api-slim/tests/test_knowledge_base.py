@@ -1646,7 +1646,7 @@ class TestAuthorizationWriteDenied:
         )
         assert resp.status_code == 403, resp.text
         monkeypatch.setattr(memory, "_operation_validator", None)
-        assert await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None
+        assert await memory.get_bank_profile(bank_id, request_context=request_context) is None
 
 
 class TestAuthorizationSuccessHookCounts:

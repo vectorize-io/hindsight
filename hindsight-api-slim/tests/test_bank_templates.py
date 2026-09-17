@@ -898,7 +898,6 @@ class TestDefaultBankTemplateEnvVar:
         profile = await memory.get_bank_profile(
             bank_id,
             request_context=RequestContext(),
-            create_if_missing=False,
         )
         assert profile is None
 

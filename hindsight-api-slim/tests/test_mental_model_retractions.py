@@ -102,7 +102,7 @@ def test_prune_based_on_drops_named_ids_and_keeps_the_rest():
 
 
 async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> None:
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
 
 async def _insert_memory(memory: MemoryEngine, conn, bank_id: str, text: str) -> uuid.UUID:

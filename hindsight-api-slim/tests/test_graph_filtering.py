@@ -165,7 +165,7 @@ async def test_graph_document_filter_includes_observations_via_source_memories(
     bank_id = test_bank_id
     document_id = f"doc-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     fact_id = uuid.uuid4()
     observation_id = uuid.uuid4()
@@ -274,7 +274,7 @@ async def test_graph_q_filter_empty_results(api_client, test_bank_id):
 
 async def _seed_scoped_observations(memory, bank_id, request_context):
     """Seed observations under scopes [a], [b], [a,b] (x2) and the global scope."""
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     rows = [
         (uuid.uuid4(), "obs scope a", ["a"]),
         (uuid.uuid4(), "obs scope b", ["b"]),

@@ -110,7 +110,7 @@ async def test_multi_round_consolidation_refreshes_all_entity_models(
     memory: MemoryEngine, request_context, monkeypatch
 ):
     bank_id = f"mm3411-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     n_entities = 8
     tags = [f"entity:{i}" for i in range(n_entities)]
@@ -239,7 +239,7 @@ async def test_requeue_dedupe_merges_pending_refresh_tags(memory: MemoryEngine, 
     surviving op, not silently drop them — otherwise the models consolidated by the
     earlier rounds go unrefreshed once the survivor drains (#3411 concurrency guard)."""
     bank_id = f"mm3411dedupe-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     # WorkerTaskBackend so submit_async_consolidation only enqueues rows (no execution).
     original_backend = memory._task_backend
@@ -296,7 +296,7 @@ async def test_crash_mid_round_preserves_committed_batch_refresh_tags(
     models (#3411). Without the per-batch persistence, batch 1's tags would be gone and its
     model left stale."""
     bank_id = f"mm3411crash-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     tags = [f"entity:{i}" for i in range(4)]
 

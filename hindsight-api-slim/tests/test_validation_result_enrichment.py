@@ -242,7 +242,7 @@ class TestRecallContextContainsTagFields:
         bank_id = "test-recall-ctx-tags"
         ctx = RequestContext()
         # Recall 404s for a bank nobody created (#4442), so create it first.
-        await memory.get_bank_profile(bank_id, request_context=ctx)
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         await memory.recall_async(
             bank_id=bank_id,
@@ -264,7 +264,7 @@ class TestRecallContextContainsTagFields:
         bank_id = "test-recall-ctx-no-tags"
         ctx = RequestContext()
         # Recall 404s for a bank nobody created (#4442), so create it first.
-        await memory.get_bank_profile(bank_id, request_context=ctx)
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         await memory.recall_async(bank_id=bank_id, query="test", request_context=ctx)
 

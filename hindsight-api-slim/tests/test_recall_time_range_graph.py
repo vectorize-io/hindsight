@@ -179,7 +179,7 @@ async def _seed_neighbourhood(conn, engine, bank_id: str, *, fact_type: str) -> 
 async def world_graph(memory_no_llm_verify: MemoryEngine):
     engine = memory_no_llm_verify
     bank_id = f"test-tr-graph-world-{uuid.uuid4().hex[:8]}"
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
     pool = await engine._get_pool()
     async with pool.acquire() as conn:
         ids = await _seed_neighbourhood(conn, engine, bank_id, fact_type="world")
@@ -191,7 +191,7 @@ async def world_graph(memory_no_llm_verify: MemoryEngine):
 async def observation_graph(memory_no_llm_verify: MemoryEngine):
     engine = memory_no_llm_verify
     bank_id = f"test-tr-graph-obs-{uuid.uuid4().hex[:8]}"
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
     pool = await engine._get_pool()
     async with pool.acquire() as conn:
         ids = await _seed_neighbourhood(conn, engine, bank_id, fact_type="observation")
@@ -209,7 +209,7 @@ async def temporal_graph(memory_no_llm_verify: MemoryEngine):
     """
     engine = memory_no_llm_verify
     bank_id = f"test-tr-graph-temporal-{uuid.uuid4().hex[:8]}"
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
 
     embeddings = await embedding_utils.generate_embeddings_batch(
         engine.embeddings, [TEMPORAL_SEED_TEXT, TEMPORAL_NEIGHBOUR_TEXT]

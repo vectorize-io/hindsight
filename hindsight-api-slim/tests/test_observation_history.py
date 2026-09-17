@@ -43,7 +43,7 @@ class TestObservationHistory:
         clear_config_cache()
 
         bank_id = f"test-obs-hist-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         obs_id = uuid.uuid4()
         pool = await memory._get_pool()
@@ -77,7 +77,7 @@ class TestObservationHistory:
         reclaim history when an observation went away. clear_observations must now delete the
         history explicitly — otherwise rows accumulate on the default deployment forever."""
         bank_id = f"test-obs-hist-clear-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         obs_id = uuid.uuid4()
         pool = await memory._get_pool()
@@ -109,7 +109,7 @@ class TestObservationHistory:
         observation rows directly, bypassing the stale-observation sweep — so it must clean the
         history itself, or the snapshots outlive the observations they belonged to."""
         bank_id = f"test-obs-hist-type-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         obs_id = uuid.uuid4()
         pool = await memory._get_pool()
@@ -134,7 +134,7 @@ class TestObservationHistory:
 
     async def test_returns_none_for_missing_observation(self, memory: MemoryEngine, request_context: Any) -> None:
         bank_id = f"test-obs-hist-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         result = await memory.get_observation_history(bank_id, str(uuid.uuid4()), request_context=request_context)
         assert result is None
         await memory.delete_bank(bank_id, request_context=request_context)

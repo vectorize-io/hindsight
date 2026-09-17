@@ -83,7 +83,7 @@ async def test_list_banks_counts_via_store_for_non_sql_bank(memory, monkeypatch)
     monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
 
     try:
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Must not raise NameError; must reach the store's non-SQL count path.
         page = await memory.list_banks(search_query=bank_id, request_context=request_context)

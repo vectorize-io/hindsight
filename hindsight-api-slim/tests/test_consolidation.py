@@ -69,7 +69,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation runs automatically after
         await memory.retain_async(
@@ -100,7 +100,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-multi-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain first memory
         await memory.retain_async(
@@ -137,7 +137,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-empty-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Run consolidation without any memories
         result = await run_consolidation_job(
@@ -158,7 +158,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-timestamp-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation runs automatically
         await memory.retain_async(
@@ -204,7 +204,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-entities-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory with a named entity
         await memory.retain_async(
@@ -235,7 +235,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-recall-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation runs automatically
         await memory.retain_async(
@@ -273,7 +273,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-links-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation runs automatically
         await memory.retain_async(
@@ -339,7 +339,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-people-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Add facts about different people
         await memory.retain_async(
@@ -419,7 +419,7 @@ class TestConsolidationIntegration:
         bank_id = f"test-consolidation-contradict-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Add initial fact
         await memory.retain_async(
@@ -499,7 +499,7 @@ class TestConsolidationIntegration:
         memory = memory_real_llm
         bank_id = f"test-consolidation-count-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
             # Three near-identical facts — same information, different wording
             for content in [
@@ -549,7 +549,7 @@ class TestConsolidationDisabled:
         bank_id = f"test-consolidation-disabled-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Disable observations for this bank via bank config
         await memory._config_resolver.update_bank_config(
@@ -585,7 +585,7 @@ class TestRecallObservationFactType:
         bank_id = f"test-recall-obs-type-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation runs automatically
         await memory.retain_async(
@@ -621,7 +621,7 @@ class TestRecallObservationFactType:
         bank_id = f"test-recall-mixed-types-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain memories - consolidation runs automatically
         await memory.retain_async(
@@ -658,7 +658,7 @@ class TestRecallObservationFactType:
         bank_id = f"test-recall-obs-trace-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain memory - consolidation creates observation
         await memory.retain_async(
@@ -732,7 +732,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-same-scope-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain first memory with tags
         await self._retain_with_tags(memory, bank_id, "Alice likes coffee.", ["alice"], request_context)
@@ -789,7 +789,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-global-absorb-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain untagged (global) memory
         await memory.retain_async(
@@ -853,7 +853,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-cross-scope-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain Alice's scoped memory
         await self._retain_with_tags(
@@ -910,7 +910,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-new-scoped-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain tagged memory (no existing observations)
         await self._retain_with_tags(
@@ -949,7 +949,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-untagged-update-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain scoped memory
         await self._retain_with_tags(
@@ -991,7 +991,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-recall-filter-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain memories with different tags
         await self._retain_with_tags(memory, bank_id, "Alice works as a software engineer.", ["alice"], request_context)
@@ -1035,7 +1035,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-tag-multi-action-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create global observation
         await memory.retain_async(
@@ -1091,7 +1091,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-consolidation-dates-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a specific date in the past for testing
         past_date = datetime(2023, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
@@ -1173,7 +1173,7 @@ class TestConsolidationTagRouting:
         bank_id = f"test-consolidation-temporal-range-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Define dates: first memory is from June 2023, second is from January 2024
         early_start = datetime(2023, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
@@ -1304,7 +1304,7 @@ class TestObservationDrillDown:
         bank_id = f"test-obs-drilldown-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Store memories with specific details that get summarized in observation
         await memory.retain_async(
@@ -1369,7 +1369,7 @@ class TestObservationDrillDown:
         bank_id = f"test-obs-source-ids-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Store two related memories
         await memory.retain_async(
@@ -1446,7 +1446,7 @@ class TestHierarchicalRetrieval:
         bank_id = f"test-hierarchy-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation creates an observation
         await memory.retain_async(
@@ -1527,7 +1527,7 @@ class TestHierarchicalRetrieval:
         bank_id = f"test-hierarchy-fallback-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain a memory - consolidation creates an observation
         await memory.retain_async(
@@ -1580,7 +1580,7 @@ class TestHierarchicalRetrieval:
         bank_id = f"test-hierarchy-recall-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain some specific memories
         await memory.retain_async(
@@ -1644,7 +1644,7 @@ class TestMentalModelRefreshAfterConsolidation:
         bank_id = f"test-mm-refresh-trigger-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model with refresh_after_consolidation trigger enabled
         mental_model = await memory.create_mental_model(
@@ -1725,7 +1725,7 @@ class TestMentalModelRefreshAfterConsolidation:
         bank_id = f"test-mm-no-refresh-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Create a mental model (default trigger is refresh_after_consolidation: false)
         mental_model = await memory.create_mental_model(
@@ -1804,7 +1804,7 @@ class TestMentalModelRefreshAfterConsolidation:
         bank_id = f"test-graph-obs-{uuid.uuid4().hex[:8]}"
 
         # Create the bank
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Retain content that will create world facts with shared entities
         # This should create facts that are linked by shared entities
@@ -1920,7 +1920,7 @@ async def test_consolidation_with_observations_mission(memory: "MemoryEngine", r
         memory._config_resolver._global_config = config
 
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
                 content="Alice uses Python for data analysis and loves its simplicity.",
@@ -1958,7 +1958,7 @@ async def test_observation_scopes_explicit_multi_pass(memory: MemoryEngine, requ
     """
     bank_id = f"test-obs-scopes-explicit-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     # Retain a memory with two explicit observation scopes
     await memory.retain_batch_async(
@@ -2010,7 +2010,7 @@ async def test_observation_scopes_per_tag(memory: MemoryEngine, request_context)
     """
     bank_id = f"test-obs-scopes-pertag-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     await memory.retain_batch_async(
         bank_id=bank_id,
@@ -2055,7 +2055,7 @@ async def test_observation_scopes_combined(memory: MemoryEngine, request_context
     """
     bank_id = f"test-obs-scopes-combined-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     await memory.retain_batch_async(
         bank_id=bank_id,
@@ -2103,7 +2103,7 @@ async def test_observation_scopes_all_combinations(memory: MemoryEngine, request
     """
     bank_id = f"test-obs-scopes-allcombos-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     await memory.retain_batch_async(
         bank_id=bank_id,
@@ -2278,7 +2278,7 @@ class TestConsolidationSourceFactsConfig:
     async def test_consolidation_passes_source_facts_max_tokens_to_recall(self, memory: MemoryEngine, request_context):
         """consolidation_source_facts_max_tokens from config is forwarded to recall_async."""
         bank_id = f"test-sf-config-total-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         raw = _get_raw_config()
         fake_config = type(raw)(
@@ -2313,7 +2313,7 @@ class TestConsolidationSourceFactsConfig:
     ):
         """consolidation_source_facts_max_tokens_per_observation from config is forwarded to recall_async."""
         bank_id = f"test-sf-config-per-obs-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         raw = _get_raw_config()
         fake_config = type(raw)(
@@ -2587,7 +2587,7 @@ def test_max_observations_per_scope_default():
 async def test_count_observations_for_scope(memory: MemoryEngine, request_context):
     """Test _count_observations_for_scope counts observations filtered by tags."""
     bank_id = f"test-count-obs-scope-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     try:
         async with memory._pool.acquire() as conn:
@@ -2679,7 +2679,7 @@ def _make_mock_llm_one_obs_per_fact():
 async def test_max_observations_per_scope_limits_creates(memory: MemoryEngine, request_context):
     """Mock LLM tries to create 1 obs per fact; with limit=2, only 2 should exist after 5 facts."""
     bank_id = f"test-max-obs-limit-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     raw = _get_raw_config()
     fake_config = type(raw)(
@@ -2741,7 +2741,7 @@ async def test_max_observations_per_scope_zero_forbids_all_creates(memory: Memor
     like unlimited — the inverse of the documented ``0 = no new observations``.
     """
     bank_id = f"test-max-obs-zero-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     raw = _get_raw_config()
     fake_config = type(raw)(
@@ -2797,7 +2797,7 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
     from hindsight_api.engine.providers.mock_llm import MockLLM
 
     bank_id = f"test-max-obs-updates-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     raw = _get_raw_config()
     fake_config = type(raw)(
@@ -2891,7 +2891,7 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
 async def test_max_observations_per_scope_no_tags_skips_limit(memory: MemoryEngine, request_context):
     """With limit=1, memories with no tags should bypass the limit and create freely."""
     bank_id = f"test-max-obs-no-tags-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     raw = _get_raw_config()
     fake_config = type(raw)(
@@ -2941,7 +2941,7 @@ async def test_max_observations_per_scope_no_tags_skips_limit(memory: MemoryEngi
 async def test_max_observations_unlimited_default(memory: MemoryEngine, request_context):
     """With default config (-1), all creates go through."""
     bank_id = f"test-max-obs-unlimited-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     try:
         wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
@@ -2975,7 +2975,7 @@ async def test_max_observations_unlimited_default(memory: MemoryEngine, request_
 async def test_targeted_consolidation_filters_by_scopes(memory: MemoryEngine, request_context):
     """Consolidation with observation_scopes only processes memories matching those scopes."""
     bank_id = f"test-targeted-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
     original_llm = memory._consolidation_llm_config
@@ -3030,7 +3030,7 @@ async def test_targeted_consolidation_filters_by_scopes(memory: MemoryEngine, re
 async def test_targeted_consolidation_multiple_scopes(memory: MemoryEngine, request_context):
     """Consolidation with multiple observation_scopes matches memories in any scope."""
     bank_id = f"test-targeted-multi-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
     original_llm = memory._consolidation_llm_config
@@ -3065,7 +3065,7 @@ async def test_targeted_consolidation_multiple_scopes(memory: MemoryEngine, requ
 async def test_targeted_consolidation_no_scopes_processes_all(memory: MemoryEngine, request_context):
     """Consolidation without observation_scopes processes all unconsolidated memories (backward compat)."""
     bank_id = f"test-targeted-all-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
     original_llm = memory._consolidation_llm_config
@@ -3095,7 +3095,7 @@ async def test_targeted_consolidation_no_scopes_processes_all(memory: MemoryEngi
 async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, request_context):
     """Scope ["user:alice"] matches memories tagged ["user:alice", "team:eng"] (contains)."""
     bank_id = f"test-targeted-contains-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
     original_llm = memory._consolidation_llm_config
@@ -3126,7 +3126,7 @@ async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, r
 async def test_enable_auto_consolidation_flag(memory: MemoryEngine, request_context):
     """When enable_auto_consolidation is False, retain does not trigger consolidation."""
     bank_id = f"test-auto-consol-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     raw = _get_raw_config()
     fake_config = type(raw)(
@@ -3228,7 +3228,7 @@ async def test_create_observation_populates_search_vector_native(memory, request
         pytest.skip("Only applies to native text search backend")
 
     bank_id = f"test-search-vector-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     await memory.retain_async(
         bank_id=bank_id,

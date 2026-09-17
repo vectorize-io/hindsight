@@ -33,7 +33,7 @@ from tests.conftest import stub_refresh_has_sources
 async def bank_with_model(memory: MemoryEngine, request_context):
     """Bank with one mental model, unique per test for xdist safety."""
     bank_id = f"test-refresh-meta-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     mm = await memory.create_mental_model(
         bank_id=bank_id,
         name="Outcome Meta Model",
@@ -190,7 +190,7 @@ async def _refresh_operation_views(memory, bank_id, request_context) -> _Refresh
 async def delta_bank(memory: MemoryEngine, request_context):
     """Bank with one delta-mode mental model that already has a baseline document."""
     bank_id = f"test-refresh-outcome-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     mm = await memory.create_mental_model(
         bank_id=bank_id,
         name="Team Info",
@@ -222,7 +222,7 @@ async def test_preserved_and_rewritten_differ_only_by_outcome(memory: MemoryEngi
 
     for mode in ("delta", "full"):
         bank_id = f"test-refresh-outcome-{mode}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -513,7 +513,7 @@ _OUTCOME_CASES = [
 async def test_refresh_outcome_matrix(case: _OutcomeCase, memory: MemoryEngine, request_context, monkeypatch):
     """Each way a refresh can end reaches the operation record under its own name."""
     bank_id = f"test-outcome-{case.id.replace('_', '-')}-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     trigger: dict[str, Any] = {"mode": case.mode}
     if case.response_schema:
         trigger["response_schema"] = case.response_schema

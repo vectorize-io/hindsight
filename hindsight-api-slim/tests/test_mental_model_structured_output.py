@@ -69,7 +69,7 @@ class TestMentalModelStructuredOutput:
         """Full mode: structured output is parsed from the stored content, and reflect
         is not asked to do the extraction itself."""
         bank_id = f"test-mm-struct-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team",
@@ -104,7 +104,7 @@ class TestMentalModelStructuredOutput:
     ):
         """No trigger schema → no extraction call and no stored structured_output."""
         bank_id = f"test-mm-nostruct-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team",
@@ -134,7 +134,7 @@ class TestMentalModelStructuredOutput:
         """Delta mode: structured output is parsed from the merged document, NOT from
         reflect's partial (delta-only) answer."""
         bank_id = f"test-mm-delta-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Doc",
@@ -181,7 +181,7 @@ class TestMentalModelStructuredOutput:
         raises instead of silently persisting content with no structured output —
         and the prior content is preserved for retry."""
         bank_id = f"test-mm-failloud-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Doc",

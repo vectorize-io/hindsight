@@ -264,7 +264,7 @@ async def test_gating_ignores_config_permission_filter(memory, request_context):
             # audit_log_enabled deliberately absent: read-only for this user.
             return {"retain_chunk_size"}
 
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     # Store the opt-in with an allow-all resolver (the write is a separate
     # concern from gating), then swap in the restrictive extension.

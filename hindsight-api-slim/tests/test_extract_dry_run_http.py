@@ -48,7 +48,7 @@ async def api_client(memory):
 @pytest.mark.asyncio
 async def test_dry_run_extracts_without_persisting(api_client, memory):
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     before = await memory.list_memory_units(bank_id=bank_id, request_context=RequestContext())
 
@@ -84,7 +84,7 @@ async def test_dry_run_extracts_without_persisting(api_client, memory):
 @pytest.mark.asyncio
 async def test_dry_run_honors_free_form_entities_override(api_client, memory):
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     resp = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
@@ -109,7 +109,6 @@ async def test_dry_run_does_not_create_missing_bank(api_client, memory):
         await memory.get_bank_profile(
             bank_id=bank_id,
             request_context=request_context,
-            create_if_missing=False,
         )
         is None
     )
@@ -125,7 +124,6 @@ async def test_dry_run_does_not_create_missing_bank(api_client, memory):
         await memory.get_bank_profile(
             bank_id=bank_id,
             request_context=request_context,
-            create_if_missing=False,
         )
         is None
     )
@@ -137,7 +135,7 @@ async def test_dry_run_rejects_empty_content(api_client, memory):
     billable LLM extraction call runs — matching retain (RetainItem.content) and recall
     (RecallRequest.query), which already reject empty input."""
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     before = await memory.list_memory_units(bank_id=bank_id, request_context=RequestContext())
     for content in ("", "   ", "\n\t "):
@@ -156,7 +154,7 @@ async def test_dry_run_rejects_empty_content(api_client, memory):
 async def test_dry_run_disabled_returns_404(api_client, memory):
     """With HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=false the endpoint is removed (returns 404)."""
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     try:
         with patch.dict(os.environ, {"HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT": "false"}):
@@ -174,7 +172,7 @@ async def test_dry_run_disabled_returns_404(api_client, memory):
 @pytest.mark.asyncio
 async def test_dry_run_rejects_unknown_override(memory):
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     with pytest.raises(ValueError, match="Unsupported extraction override"):
         await memory.extract_dry_run(
             bank_id,
@@ -215,7 +213,7 @@ async def test_dry_run_honors_operation_precheck(api_client, memory):
     already wire. A validator that rejects the operation must short-circuit the request before any
     extraction runs — without the precheck dependency the route would proceed to a 200."""
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     previous = getattr(memory, "_operation_validator", None)
     memory._operation_validator = _DryRunRejectingValidator({})
@@ -236,7 +234,7 @@ async def test_dry_run_disabled_returns_404_even_with_validator(api_client, memo
     configured validator — the feature-flag gate is declared as a dependency before the precheck,
     so it preserves the original "disabled → 404" contract instead of leaking a 402/401/429."""
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     previous = getattr(memory, "_operation_validator", None)
     memory._operation_validator = _DryRunRejectingValidator({})
@@ -281,7 +279,7 @@ async def test_dry_run_applies_the_banks_default_strategy(api_client, memory):
     config directly and skipped strategies entirely, so it extracted under settings a
     real retain would not have used."""
     bank_id = f"dryrun-strategy-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     await memory.update_bank_config(
         bank_id=bank_id,
         updates={
@@ -299,7 +297,7 @@ async def test_dry_run_applies_the_banks_default_strategy(api_client, memory):
 @pytest.mark.asyncio
 async def test_dry_run_honors_a_named_strategy(api_client, memory):
     bank_id = f"dryrun-named-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     await memory.update_bank_config(
         bank_id=bank_id,
         updates={
@@ -326,7 +324,7 @@ async def test_dry_run_in_chunks_mode_returns_the_chunks_not_llm_facts(api_clien
     run does not go through. It called the model and showed extracted facts for a
     configuration that produces none."""
     bank_id = f"dryrun-chunks-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     await memory.update_bank_config(
         bank_id=bank_id,
         updates={"retain_extraction_mode": "chunks"},
@@ -349,7 +347,7 @@ async def test_dry_run_returns_the_chunks_it_extracted_from(api_client, memory):
     `retain_chunk_size` is a number with no visible effect — you can change it and see
     nothing, which is the opposite of what a tester is for."""
     bank_id = f"dryrun-chunks-md-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     await memory.update_bank_config(
         bank_id=bank_id, updates={"retain_chunk_size": 60}, request_context=RequestContext()
     )
@@ -369,7 +367,7 @@ async def test_each_fact_names_the_chunk_it_came_from(api_client, memory):
     """Derived from the per-chunk counts both extraction paths already return, so the
     real retain pipeline carries nothing extra for a preview's benefit."""
     bank_id = f"dryrun-attr-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     await memory.update_bank_config(
         bank_id=bank_id, updates={"retain_chunk_size": 60}, request_context=RequestContext()
     )

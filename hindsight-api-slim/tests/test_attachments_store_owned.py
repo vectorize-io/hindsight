@@ -455,7 +455,7 @@ async def _store_owned_bank(
     # bank keeps what `document_attachments.filename` holds for a SQL one.
     await _seed_document(store, bank_id, keep_text=True)
     # The store owns the facts, never the bank row, so create it the way a retain would.
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         await _record_attachments(

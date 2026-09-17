@@ -117,7 +117,7 @@ class TestCheckOpAlive:
     @pytest.mark.asyncio
     async def test_returns_true_when_op_exists(self, memory: MemoryEngine, request_context):
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -135,7 +135,7 @@ class TestCheckOpAlive:
     @pytest.mark.asyncio
     async def test_returns_false_when_op_deleted(self, memory: MemoryEngine, request_context):
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -154,7 +154,7 @@ class TestCheckOpAlive:
     @pytest.mark.asyncio
     async def test_returns_false_after_bank_cascade_delete(self, memory: MemoryEngine, request_context):
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -180,7 +180,7 @@ class TestCheckOpAlive:
         (issue #4131) — the API only flips the status, the task does the stopping.
         """
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -223,7 +223,7 @@ class TestMarkOperationGracefulOnMissingRow:
         died on its own, which is a different thing to retry.
         """
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -248,7 +248,7 @@ class TestMarkOperationGracefulOnMissingRow:
     @pytest.mark.asyncio
     async def test_mark_completed_does_not_overwrite_cancelled(self, memory: MemoryEngine, request_context):
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         op_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
@@ -297,7 +297,7 @@ class TestConsolidationCheckpoint:
 
         try:
             bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
             # Insert a few unconsolidated memories directly so we control the batch without LLM
             async with memory._pool.acquire() as conn:
@@ -347,7 +347,7 @@ class TestRetainCheckpoint:
         from hindsight_api.config import _get_raw_config
 
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Force sub-batch splitting by temporarily lowering the token threshold
         config = _get_raw_config()

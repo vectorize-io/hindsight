@@ -159,7 +159,7 @@ async def _count_surviving(conn, bank_id: str, memory_ids: list) -> int:
 
 
 async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: RequestContext):
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
 
 # ---------------------------------------------------------------------------

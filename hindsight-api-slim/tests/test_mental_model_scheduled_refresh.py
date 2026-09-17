@@ -30,7 +30,7 @@ def test_refresh_cron_and_auto_refresh_are_mutually_exclusive():
 
 async def _make_bank(memory: MemoryEngine, request_context) -> str:
     bank_id = f"mmcron-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     return bank_id
 
 

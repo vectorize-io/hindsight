@@ -441,7 +441,7 @@ class BenchmarkRunner:
         manifest = BankTemplateManifest.model_validate(raw)
 
         request_context = RequestContext()
-        await self.memory.get_bank_profile(bank_id, request_context=request_context)
+        await self.memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Apply bank config overrides
         if manifest.bank:

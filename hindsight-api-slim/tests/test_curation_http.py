@@ -36,7 +36,7 @@ async def api_client(memory):
 
 async def _insert_fact(memory: MemoryEngine, bank_id: str, text: str) -> str:
     """Insert one world fact with a real embedding; returns its id."""
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     emb = await embedding_processing.generate_embeddings_batch(memory.embeddings, [text])
     mem_id = uuid.uuid4()
     pool = await memory._get_pool()
@@ -124,7 +124,7 @@ async def test_patch_clears_occurred_dates_with_explicit_null(api_client, memory
 @pytest.mark.asyncio
 async def test_patch_not_found_returns_404(api_client, memory):
     bank_id = f"curation-http-404-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
     resp = await api_client.patch(
         f"/v1/default/banks/{bank_id}/memories/{uuid.uuid4()}",
         json={"state": "invalidated"},

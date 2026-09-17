@@ -43,14 +43,14 @@ async def test_list_banks_overlays_config_disposition_and_mission(memory):
     try:
         # Create the bank. Its legacy banks.disposition/banks.mission columns
         # keep their defaults (3/3/3 and "") — the real values live in config.
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Set disposition + mission via the *config* path (banks.config JSONB),
         # exactly the path that triggered the live bug.
         await memory._config_resolver.update_bank_config(bank_id, overrides, request_context)
 
         # Source of truth: the single-bank get path already overlays config.
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        profile = await memory.ensure_bank_profile(bank_id, request_context=request_context)
         assert profile["mission"] == overrides["reflect_mission"]
         assert profile["disposition"] == {"skepticism": 4, "literalism": 5, "empathy": 2}
 

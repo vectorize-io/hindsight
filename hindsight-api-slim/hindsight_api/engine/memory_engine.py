@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterat
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast
 
 import asyncpg
 from pydantic import ValidationError
@@ -6846,7 +6846,7 @@ class MemoryEngine(MemoryEngineInterface):
         not visible to the caller or the file does not exist — the handler maps
         both to 404 (indistinguishable on purpose, so keys can't be probed).
         """
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return None
         # The key must sit under this bank in the caller's own tenant: object
@@ -6946,7 +6946,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         if not attachment_ids:
             return {}
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
         backend = await self._get_backend()
@@ -6992,7 +6992,7 @@ class MemoryEngine(MemoryEngineInterface):
                 carried_texts or {},
                 carried_filenames or {},
             )
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
         backend = await self._get_backend()
@@ -7053,7 +7053,7 @@ class MemoryEngine(MemoryEngineInterface):
             any(True for _ in iter_placeholder_ids(texts[d] or "")) for d in document_ids
         ):
             return {}
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
         for document_id in document_ids:
@@ -7114,7 +7114,7 @@ class MemoryEngine(MemoryEngineInterface):
             }
             if not refs:
                 return {}
-            profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+            profile = await self.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 return {}
             backend = await self._get_backend()
@@ -7123,7 +7123,7 @@ class MemoryEngine(MemoryEngineInterface):
             return await _name_store_owned_attachments(
                 store, bank_id, resolved, {chunk_id: document_id for chunk_id, (document_id, _) in refs.items()}
             )
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
         backend = await self._get_backend()
@@ -7205,7 +7205,7 @@ class MemoryEngine(MemoryEngineInterface):
             }
             if not refs:
                 return {}
-            profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+            profile = await self.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 return {}
             backend = await self._get_backend()
@@ -7216,7 +7216,7 @@ class MemoryEngine(MemoryEngineInterface):
                 store, bank_id, resolved, {unit_id: document_id for unit_id, (document_id, _) in refs.items()}
             )
 
-        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
         wanted_units = list(dict.fromkeys(str(u) for u in unit_ids))
@@ -12418,9 +12418,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_profile: dict[str, Any] = {}
         directives: list[dict[str, Any]] = []
         if operation == "reflect":
-            bank_profile = (
-                await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
-            ) or {}
+            bank_profile = (await self.get_bank_profile(bank_id, request_context=request_context)) or {}
             # Untagged reflect: isolation_mode keeps tag-scoped directives out, which
             # matches what a reflect call with no tags would load.
             listed = await self.list_directives(
@@ -13398,7 +13396,7 @@ class MemoryEngine(MemoryEngineInterface):
         ``get_bank_profile`` before any query runs, so the queries below are
         scoped to the authenticated tenant's schema.
         """
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
 
         from .schema import _is_oracle  # noqa: PLC0415
@@ -13518,7 +13516,7 @@ class MemoryEngine(MemoryEngineInterface):
         Returns None when the bank does not exist (mapped to 404 by the HTTP
         layer). Auth/tenant resolution happen in ``get_bank_profile``.
         """
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
 
         now = datetime.now(timezone.utc)
@@ -13625,7 +13623,7 @@ class MemoryEngine(MemoryEngineInterface):
         """
         from .audit import AuditLogEntry, AuditLogListResponse
 
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
 
         where_clauses = ["bank_id = $1"]
@@ -13704,7 +13702,7 @@ class MemoryEngine(MemoryEngineInterface):
         """
         from .audit import AuditLogStatsBucket, AuditLogStatsResponse
 
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
 
         now = datetime.now(timezone.utc)
@@ -13765,53 +13763,67 @@ class MemoryEngine(MemoryEngineInterface):
 
     # ==================== bank profile Methods ====================
 
-    # Type-checker overloads: when create_if_missing is True (the default),
-    # this method always returns a profile dict — the type checker can rely
-    # on non-None for every existing caller. Only when create_if_missing is
-    # explicitly False does the return become Optional.
-    @overload
     async def get_bank_profile(
         self,
         bank_id: str,
         *,
         request_context: "RequestContext",
-        create_if_missing: Literal[True] = True,
-    ) -> dict[str, Any]: ...
-
-    @overload
-    async def get_bank_profile(
-        self,
-        bank_id: str,
-        *,
-        request_context: "RequestContext",
-        create_if_missing: Literal[False],
-    ) -> dict[str, Any] | None: ...
-
-    async def get_bank_profile(
-        self,
-        bank_id: str,
-        *,
-        request_context: "RequestContext",
-        create_if_missing: bool = True,
     ) -> dict[str, Any] | None:
-        """
-        Get bank profile (name, disposition + mission).
+        """Read a bank's profile (name, disposition + mission), or None if it does not exist.
+
+        Strictly read-only: a bank nobody created stays uncreated, and the caller
+        translates None into a 404. Callers that mean "make this bank exist" want
+        :meth:`ensure_bank_profile` — the two used to be one method behind a
+        ``create_if_missing`` flag, which made a ``get_`` call silently create banks.
 
         Args:
             bank_id: bank IDentifier
             request_context: Request context for authentication.
-            create_if_missing: If True (default), the bank is auto-created
-                with defaults when it does not exist. Pass False from read-
-                only callers (HTTP GET handlers, polling, etc.) so a missing
-                bank surfaces as None rather than being silently created.
-                The caller is then responsible for translating None to a
-                404 (or similar).
 
         Returns:
-            Dict with name, disposition traits, and mission, or None when
-            create_if_missing=False and the bank does not exist.
+            Dict with bank_id, name, disposition traits and mission, or None when
+            the bank does not exist.
         """
         await self._authenticate_tenant(request_context)
+        await self._authorize_bank_profile_read(bank_id, request_context)
+        return await self._get_bank_profile_authenticated(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+
+    async def ensure_bank_profile(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Return a bank's profile, creating the bank with defaults if it does not exist.
+
+        This is the write-ish half of the old ``get_bank_profile(create_if_missing=True)``:
+        it mirrors retain's lazy bank auto-create, so a caller that is about to write
+        (or a test that needs the bank to exist) gets a profile either way. Read-only
+        callers want :meth:`get_bank_profile`.
+
+        Args:
+            bank_id: bank IDentifier
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with bank_id, name, disposition traits and mission.
+        """
+        await self._authenticate_tenant(request_context)
+        await self._authorize_bank_profile_read(bank_id, request_context)
+        profile = await self._get_bank_profile_authenticated(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=True,
+        )
+        assert profile is not None  # create_if_missing=True never returns None
+        return profile
+
+    async def _authorize_bank_profile_read(self, bank_id: str, request_context: "RequestContext") -> None:
+        """Run the extension's bank-read authorization for a profile read."""
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
 
@@ -13819,11 +13831,6 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        return await self._get_bank_profile_authenticated(
-            bank_id,
-            request_context=request_context,
-            create_if_missing=create_if_missing,
-        )
 
     async def _get_bank_profile_authenticated(
         self,
@@ -14805,7 +14812,7 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
         # Get bank profile for agent identity
-        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+        profile = await self.ensure_bank_profile(bank_id, request_context=request_context)
 
         # NOTE: Mental models are NOT pre-loaded to keep the initial prompt small.
         # The agent can call lookup() to list available models if needed.

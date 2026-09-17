@@ -910,7 +910,7 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
     (the surrogate id is dropped on export; the target reassigns it)."""
     bank = _unique_bank("bank_mm_hist")
     try:
-        await memory.get_bank_profile(bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank, request_context=request_context)
         await memory.create_mental_model(
             bank,
             name="Work model",
@@ -949,7 +949,7 @@ async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
     target, so pages stay searchable after import (#3308, #3323)."""
     bank = _unique_bank("bank_kb")
     try:
-        await memory.get_bank_profile(bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank, request_context=request_context)
         root = await memory.create_knowledge_folder(bank, "Runbooks", managed=True, request_context=request_context)
         sub = await memory.create_knowledge_folder(
             bank, "Billing", parent_id=root["id"], request_context=request_context
@@ -1769,7 +1769,7 @@ async def test_bank_import_classifies_label_entities(memory, request_context):
     label_entity = "brief_bio:enjoys long walks on the beach"
     regular_entity = "Alice"
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
         await memory._config_resolver.update_bank_config(
             bank,
             {"entity_labels": [{"key": "brief_bio", "type": "text", "description": "one-line bio"}]},
@@ -2002,7 +2002,7 @@ async def test_purge_expired_export_archives_honours_the_batch_bound(memory, req
 
     bank = _unique_bank("export_purge_bound")
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
         backend = await memory._get_backend()
         # Fabricated rows rather than real exports: the purge counts rows carrying a
         # storage_key and swallows the blob delete, so no archive needs to exist for
@@ -2037,7 +2037,7 @@ async def test_download_route_rejects_unauthorized_keys(api_client, memory, requ
     """The download route only serves bank-scoped keys for banks the caller can see."""
     bank = _unique_bank("download_guard")
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
 
         # Non-"banks/"-prefixed key: not a downloadable resource.
         r = await api_client.get("/v1/default/files/download/etc/passwd")

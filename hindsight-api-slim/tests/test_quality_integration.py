@@ -35,7 +35,7 @@ class TestEndToEndPipeline:
         """
         bank_id = f"test-e2e-roundtrip-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
             for content in [
                 "Elena Vasquez is a senior data engineer at a fintech startup.",
@@ -79,7 +79,7 @@ class TestEndToEndPipeline:
         """Reflect must retrieve and state specific retained facts when asked directly."""
         bank_id = f"test-e2e-factual-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
                 content=("The project deadline is March 15th. The client is Acme Corp. The total budget is $250,000."),
@@ -108,7 +108,7 @@ class TestEndToEndPipeline:
         """Reflect asked about a topic absent from memory should acknowledge the gap."""
         bank_id = f"test-e2e-unknown-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             # Retain something completely unrelated to the query
             await memory.retain_async(
                 bank_id=bank_id,
@@ -177,7 +177,7 @@ class TestDispositionInfluence:
         bank_high = f"test-disposition-high-{uuid.uuid4().hex[:8]}"
         try:
             for bank_id, skepticism in [(bank_low, 1), (bank_high, 5)]:
-                await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+                await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
                 await memory.update_bank_disposition(
                     bank_id,
                     {"skepticism": skepticism, "literalism": 3, "empathy": 3},

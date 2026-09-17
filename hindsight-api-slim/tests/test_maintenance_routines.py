@@ -54,7 +54,7 @@ def test_repair_gate_installs_on_public_and_base_runs(target_schema, expected):
 
 async def _make_bank(memory: MemoryEngine, request_context, suffix: str) -> str:
     bank_id = f"maint-{suffix}-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     return bank_id
 
 

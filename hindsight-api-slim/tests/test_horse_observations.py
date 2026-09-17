@@ -172,7 +172,7 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
     memory = memory_real_llm
     bank_id = f"test-horses-{uuid.uuid4().hex[:8]}"
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     messages = [
         "I have a farm.",

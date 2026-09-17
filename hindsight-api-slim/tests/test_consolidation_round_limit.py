@@ -34,7 +34,7 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
     """When max_memories_per_round is set, consolidation processes at most that many memories
     and re-submits itself for the remaining backlog."""
     bank_id = f"test-round-limit-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     # Disable consolidation during retain so we build up a backlog
     fake_config_no_obs = _make_config(enable_observations=False)
@@ -103,7 +103,7 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
 async def test_unlimited_round_processes_all(memory: MemoryEngine, request_context):
     """When max_memories_per_round is 0 (unlimited), all memories are processed without re-queue."""
     bank_id = f"test-unlimited-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     # Disable consolidation during retain
     fake_config_no_obs = _make_config(enable_observations=False)

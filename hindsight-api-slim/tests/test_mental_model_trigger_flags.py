@@ -39,7 +39,7 @@ async def _refresh_with_trigger(
 ) -> dict[str, Any]:
     """Run one delta refresh and hand back everything worth asserting on."""
     bank_id = f"test-trigger-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     mm = await memory.create_mental_model(
         bank_id=bank_id,
         name="API Reference",
@@ -234,7 +234,7 @@ class TestTriggerRoundTrip:
 
     async def test_every_flag_survives_create(self, memory, request_context):
         bank_id = f"test-trigger-rt-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         trigger = {
             "mode": "delta",
             "refresh_after_consolidation": True,
@@ -280,7 +280,7 @@ class TestTriggerRoundTrip:
         goes through.
         """
         bank_id = f"test-trigger-patch-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -336,7 +336,7 @@ class TestTriggerRoundTrip:
         the API has to actually clear.
         """
         bank_id = f"test-trigger-replace-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",
@@ -364,7 +364,7 @@ class TestTriggerRoundTrip:
 
     async def test_patch_stating_both_refresh_triggers_is_rejected(self, memory, request_context):
         bank_id = f"test-trigger-excl-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="API Reference",

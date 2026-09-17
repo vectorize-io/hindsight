@@ -1760,7 +1760,7 @@ class TestDirectiveLeakageOnEmptyBank:
         bank_id = f"test-directive-leak-{uuid.uuid4().hex[:8]}"
         try:
             # Ensure bank exists (auto-creates it), but retain nothing.
-            await memory.get_bank_profile(bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
             await memory.create_directive(
                 bank_id=bank_id,

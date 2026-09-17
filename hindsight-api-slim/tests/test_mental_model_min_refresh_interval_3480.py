@@ -37,7 +37,7 @@ INTERVAL = 1800
 
 async def _make_bank(memory: MemoryEngine, request_context) -> str:
     bank_id = f"mminterval-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     return bank_id
 
 

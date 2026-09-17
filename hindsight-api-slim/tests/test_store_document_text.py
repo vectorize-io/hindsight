@@ -242,8 +242,8 @@ async def test_store_document_text_per_bank_override(memory, request_context):
 
     try:
         # Both banks exist; disable raw-text storage on off_bank only.
-        await memory.get_bank_profile(bank_id=off_bank, request_context=request_context)
-        await memory.get_bank_profile(bank_id=on_bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=off_bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=on_bank, request_context=request_context)
         await memory._config_resolver.update_bank_config(off_bank, {"store_document_text": False})
 
         for bank_id in (off_bank, on_bank):

@@ -25,7 +25,7 @@ async def _retain(memory: MemoryEngine, bank_id: str, content: str, request_cont
 async def test_fact_type_accepts_a_list(memory: MemoryEngine, request_context: RequestContext):
     """A list of fact types matches any of them — the source-fact selection callers want."""
     bank_id = f"test-lmu-facttypes-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         await _retain(memory, bank_id, "Alice deployed the release on Friday.", request_context)
 
@@ -57,7 +57,7 @@ async def test_fact_type_accepts_a_list(memory: MemoryEngine, request_context: R
 async def test_items_carry_updated_at_and_lineage(memory: MemoryEngine, request_context: RequestContext):
     """Each item carries its write watermark and (for observations) its sources."""
     bank_id = f"test-lmu-readmodel-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         await _retain(memory, bank_id, "Bob moved to Berlin in March.", request_context)
 
@@ -93,7 +93,7 @@ async def test_items_carry_updated_at_and_lineage(memory: MemoryEngine, request_
 async def test_entities_carry_their_kind(memory: MemoryEngine, request_context: RequestContext):
     """list_entities reports how each entity was classified."""
     bank_id = f"test-entities-kind-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         await _retain(memory, bank_id, "Carol works with Dave at Acme.", request_context)
 

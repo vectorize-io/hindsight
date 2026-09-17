@@ -22,7 +22,7 @@ async def three_banks(memory, request_context):
     prefix = f"pagebank{uuid.uuid4().hex[:8]}"
     bank_ids = [f"{prefix}_{i}" for i in range(3)]
     for bank_id in bank_ids:
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
     try:
         yield prefix, bank_ids
     finally:
@@ -87,7 +87,7 @@ async def test_search_matches_bank_name_case_insensitively(memory, request_conte
     bank_id = f"searchname{uuid.uuid4().hex[:8]}"
     display_name = f"Zeta {uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
         await memory.update_bank(bank_id, name=display_name, request_context=request_context)
 
         page = await memory.list_banks(search_query=display_name.upper(), request_context=request_context)
