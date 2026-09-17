@@ -1869,13 +1869,19 @@ jobs:
     env:
       HINDSIGHT_API_LLM_PROVIDER: vertexai
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      # flash, not flash-lite, for this job only. Every test here asserts what the
-      # model chose to do, and flash-lite is not reliable enough at the weakest of
-      # them to carry a gate: measured on this endpoint with the same prompt, it
-      # kept a Japanese input in Japanese 3 times out of 10 against flash's 10/10
-      # (test_retain_japanese_content, the largest single source of red runs here).
-      # The other jobs stay on flash-lite — they exercise plumbing, not judgement.
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash
+      # gemini-3.1-flash-lite for this job only. Every test here asserts what the
+      # model chose to do, and 2.5-flash-lite is not reliable enough at the weakest
+      # of them to carry a gate: measured on this endpoint with the same prompt it
+      # kept a Japanese input in Japanese 3 times out of 10, against 10/10 for
+      # 3.1-flash-lite (test_retain_japanese_content, the largest single source of
+      # red runs here). The other jobs stay on 2.5-flash-lite — they exercise
+      # plumbing, not judgement.
+      #
+      # REGION: 3.1 is not served from us-central1 for this project (plain 404,
+      # "not found or your project does not have access"); the global endpoint
+      # serves it. us-east5 404s too, so this line is load-bearing.
+      HINDSIGHT_API_LLM_MODEL: google/gemini-3.1-flash-lite
+      HINDSIGHT_API_LLM_VERTEXAI_REGION: global
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
       # key was already set here, so they sat skipped and the mental-model delta path —
