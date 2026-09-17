@@ -55,6 +55,10 @@ async def test_http_recall_zero_cap_accepts_a_long_query(api_client, monkeypatch
     # `get_config()` returns a read-only proxy; the cap lives on the dataclass behind it.
     monkeypatch.setattr(get_config()._config, "recall_max_query_tokens", 0)
 
+    # The bank has to exist: recall 404s for one that was never created (#4442/#4465),
+    # which landed alongside this test and would otherwise fail it for the wrong reason.
+    await api_client.put("/v1/default/banks/zero-cap-test", json={})
+
     response = await api_client.post(
         "/v1/default/banks/zero-cap-test/memories/recall",
         json={"query": "alpha beta gamma delta " * 500},
