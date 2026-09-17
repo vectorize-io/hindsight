@@ -31,7 +31,7 @@ def engine():
         skip_llm_verification=True,
     )
     eng._authenticate_tenant = AsyncMock()  # type: ignore[method-assign]
-    eng.get_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
+    eng.ensure_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
     eng.get_bank_freshness = AsyncMock(  # type: ignore[method-assign]
         return_value={"last_consolidated_at": None, "pending_consolidation": 0, "last_memory_write_at": None}
     )
