@@ -1049,6 +1049,13 @@ async def import_bank(
         if internal_id is not None:
             await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
+    # The bank row above bypasses the engine's create path, which is what gives a bank its storage
+    # in a store that owns one. Without it a bank restored with no documents has none, and the
+    # first read or delete of it fails rather than finding an empty bank. A no-op for Postgres.
+    from ..memories import get_memories
+
+    await get_memories().ensure_bank_storage(bank_id)
+
     # Only now does the bank row — and with it the archive's own config — exist, so
     # this is where the config the documents are replayed with has to come from.
     # Until #3236 the import ran on a config resolved before the restore, which
@@ -1306,6 +1313,11 @@ async def _import_one_document(
         retain_params=document.retain_params,
     )
 
+    from ..memories import get_memories
+
+    store = get_memories()
+    store_owned = store.store_owned_for(bank_id)
+
     # Phase 1 (entity resolution + semantic ANN) on its own connection, outside
     # the write transaction — mirrors the retain pipeline.
     entity_resolver.discard_pending_stats()
@@ -1393,7 +1405,7 @@ async def _import_one_document(
             # carry None for all three -> skipped here, leaving the
             # observation-driven marking in _import_observations as the only
             # (lossy) signal, exactly as before.
-            if result_unit_ids:
+            if result_unit_ids and not store_owned:
                 await _restore_fact_lifecycle(
                     conn,
                     bank_id,
@@ -1401,6 +1413,13 @@ async def _import_one_document(
                     retained_index_by_original,
                     result_unit_ids[0],
                 )
+
+    # A store that owns its memories keeps the lifecycle markers itself; the UPDATE above would
+    # match no rows. Outside the transaction, like every other store write.
+    if result_unit_ids and store_owned:
+        await _restore_fact_lifecycle_via_store(
+            store, bank_id, document.facts, retained_index_by_original, result_unit_ids[0]
+        )
 
     # Best-effort, and only after the acquire() block above has exited: this
     # takes its own connection, and on Oracle the write above is not committed
@@ -1474,6 +1493,35 @@ async def _restore_fact_lifecycle(
     )
 
 
+async def _restore_fact_lifecycle_via_store(
+    store: Any,
+    bank_id: str,
+    facts: list[TransferFact],
+    retained_index_by_original: list[int | None],
+    retained_unit_ids: list[str],
+) -> None:
+    """:func:`_restore_fact_lifecycle` for a bank whose memories live in the store.
+
+    The store stamps one marker value per call, so facts are grouped by the value they carry.
+    ``created_at`` is not restored: the store has no way to rewrite it, so an imported fact
+    reads as created at import time.
+    """
+    groups: dict[tuple[datetime, bool], list[str]] = {}
+    for original_index, fact in enumerate(facts):
+        retained_index = retained_index_by_original[original_index]
+        if retained_index is None:
+            continue
+        unit_id = retained_unit_ids[retained_index]
+        if fact.consolidated_at is not None:
+            groups.setdefault((fact.consolidated_at, False), []).append(unit_id)
+        elif fact.consolidation_failed_at is not None:
+            groups.setdefault((fact.consolidation_failed_at, True), []).append(unit_id)
+    for (when, failed), unit_ids in groups.items():
+        await store.mark_consolidated(
+            conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids, when=when, failed=failed
+        )
+
+
 async def _import_observations(
     *,
     backend: Any,
@@ -1532,6 +1580,12 @@ async def _import_observations(
         )
         for (obs, _sources), embedding in zip(resolved, embeddings)
     ]
+
+    from ..memories import get_memories
+
+    store = get_memories()
+    if store.store_owned_for(bank_id):
+        return await _import_observations_via_store(store, bank_id, resolved, processed, outcome)
 
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
@@ -1610,6 +1664,78 @@ async def _import_observations(
                 )
 
     outcome.imported = len(resolved)
+    return outcome
+
+
+async def _import_observations_via_store(
+    store: Any,
+    bank_id: str,
+    resolved: list[tuple[TransferObservation, list[str]]],
+    processed: list[ProcessedFact],
+    outcome: _ObservationOutcome,
+) -> _ObservationOutcome:
+    """The write half of :func:`_import_observations` for a bank whose memories live in the store.
+
+    The SQL half reads liveness from and writes sources into ``memory_units``, which is empty for
+    such a bank: every source would read as missing and every observation would be skipped. Here
+    the same liveness check asks the store, and each observation is written whole — sources and
+    proof count included — the way consolidation writes one.
+    """
+    from ..memories.base import FactRecord
+
+    all_sources = list(dict.fromkeys(s for _obs, sources in resolved for s in sources))
+    live = {
+        m.unit_id for m in await store.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=all_sources)
+    }
+    marked: set[str] = set()
+    for (obs, sources), fact in zip(resolved, processed):
+        missing = [s for s in sources if s not in live]
+        if missing:
+            logger.warning(
+                "[transfer] Skipping observation for bank %s: %d of %d source units are missing (%s)",
+                bank_id,
+                len(missing),
+                len(sources),
+                ", ".join(sorted(missing)),
+            )
+            outcome.skipped += 1
+            continue
+        observation_id = str(uuid.uuid4())
+        await store.upsert_observation(
+            conn=None,
+            bank_id=bank_id,
+            record=FactRecord(
+                unit_id=observation_id,
+                text=obs.text,
+                embedding=list(fact.embedding),
+                fact_type="observation",
+                tags=list(obs.tags),
+                proof_count=obs.proof_count,
+                observation_scopes=obs.observation_scopes,
+                source_memory_ids=list(sources),
+                event_date=obs.event_date,
+                occurred_start=obs.occurred_start,
+                occurred_end=obs.occurred_end,
+                mentioned_at=fact.mentioned_at,
+                created_at=obs.created_at,
+            ),
+        )
+        marked.update(sources)
+        outcome.imported += 1
+        if obs.source_id is not None:
+            outcome.remapped_unit_ids[obs.source_id] = observation_id
+
+    # Same rule as the SQL path's COALESCE: a source whose own consolidated marker came from the
+    # archive keeps it; only the ones with none are stamped now, so the consolidator skips them.
+    unmarked = [
+        m.unit_id
+        for m in await store.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=list(marked))
+        if m.consolidated_at is None
+    ]
+    if unmarked:
+        await store.mark_consolidated(
+            conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=unmarked, when=datetime.now(UTC)
+        )
     return outcome
 
 

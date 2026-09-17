@@ -2498,6 +2498,8 @@ async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory
 
 
 @pytest.mark.asyncio
+# Seeds the attachment link with a raw INSERT that needs the document's SQL row.
+@pytest.mark.memory_backend_incompatible
 async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
     """An attachment's bytes ride in the archive and land under the target's own key.
 
