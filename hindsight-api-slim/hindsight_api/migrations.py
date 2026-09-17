@@ -128,7 +128,14 @@ def _bootstrap_vector_extension_for_migrations(conn: Connection, vector_extensio
     conn.commit()
 
 
-def _vector_index_names(conn: Connection, schema_name: str, table_name: str, name_like: str | None = None) -> list[str]:
+def _vector_index_names(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    name_like: str | None = None,
+    *,
+    vector_access_methods_only: bool = True,
+) -> list[str]:
     """Names of the vector indexes on ``table_name.embedding``, from the catalog.
 
     Deliberately NOT ``pg_indexes``: that view renders every row through
@@ -152,10 +159,15 @@ def _vector_index_names(conn: Connection, schema_name: str, table_name: str, nam
             WHERE n.nspname = :schema
               AND t.relname = :table
               AND a.attname = 'embedding'
-              AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')
+              AND (NOT :vector_ams_only OR am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann'))
               AND (:name_like IS NULL OR i.relname LIKE :name_like)
         """),
-        {"schema": schema_name, "table": table_name, "name_like": name_like},
+        {
+            "schema": schema_name,
+            "table": table_name,
+            "name_like": name_like,
+            "vector_ams_only": vector_access_methods_only,
+        },
     ).fetchall()
     return [row[0] for row in rows]
 
@@ -169,7 +181,18 @@ def _drop_index(conn: Connection, schema_name: str, index_name: str) -> None:
 
 def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
     """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
-    for index_name in _vector_index_names(conn, schema_name, "memory_units", name_like="idx\\_mu\\_emb\\_%"):
+    # Matched by name and column, NOT by access method: this sweep exists to clear
+    # per-bank leftovers, and one whose access method drifted after a backend switch
+    # (or an INVALID build from an interrupted CREATE INDEX CONCURRENTLY) is exactly
+    # the kind that must go. The pg_indexes version this replaced did not filter on
+    # the method either.
+    for index_name in _vector_index_names(
+        conn,
+        schema_name,
+        "memory_units",
+        name_like="idx\\_mu\\_emb\\_%",
+        vector_access_methods_only=False,
+    ):
         _drop_index(conn, schema_name, index_name)
 
 
