@@ -183,6 +183,7 @@ class OpenAIResponsesLLM(LLMInterface):
         timeout: float | None = None,
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
+        native_named_tool_choice: bool = False,
         **kwargs: Any,
     ):
         """Initialize the Responses provider.
@@ -199,6 +200,9 @@ class OpenAIResponsesLLM(LLMInterface):
             extra_body: Extra body params merged into every request.
             default_headers: Custom headers passed to the OpenAI SDK client (for
                 operators routing through proxies / request-tracing middleware).
+            native_named_tool_choice: Whether the endpoint natively enforces a
+                named tool choice with the complete schema. False preserves
+                schema narrowing; true trusts the endpoint.
             **kwargs: Additional provider-specific parameters (e.g. ``openai_service_tier``).
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -212,6 +216,7 @@ class OpenAIResponsesLLM(LLMInterface):
         self._config_extra_body = extra_body or {}
         self.default_headers = default_headers
         self.timeout = timeout or get_config().llm_timeout
+        self._native_named_tool_choice = native_named_tool_choice
 
         # Manual retries (max_retries=0). Extract query params from base_url so an
         # Azure-style ``?api-version=`` is forwarded as a default query param.
@@ -554,13 +559,19 @@ class OpenAIResponsesLLM(LLMInterface):
         request_tool_choice: str | dict[str, Any] | None
         if tool_choice.mode is LLMToolChoiceMode.NAMED:
             forced_name = tool_choice.selected_function_name
-            filtered = [tool for tool in responses_tools if tool.get("name") == forced_name]
-            if len(filtered) != 1:
+            matching = [tool for tool in responses_tools if tool.get("name") == forced_name]
+            if len(matching) != 1:
                 raise ValueError(
                     f"Named tool_choice must reference exactly one declared tool; "
-                    f"found {len(filtered)} definitions for {forced_name!r}"
+                    f"found {len(matching)} definitions for {forced_name!r}"
                 )
-            responses_tools = filtered
+            # A named Responses tool_choice already constrains generation to this
+            # function on endpoints that implement the native contract. Keep the
+            # complete schema byte-stable there so forced turns can reuse the
+            # prompt prefix; compatible endpoints default to the conservative
+            # single-tool request shape.
+            if not self._native_named_tool_choice:
+                responses_tools = matching
             request_tool_choice = {"type": "function", "name": forced_name}
         elif tool_choice.mode is LLMToolChoiceMode.AUTO:
             request_tool_choice = None

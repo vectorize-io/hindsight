@@ -324,6 +324,7 @@ class LlamaCppLLM(LLMInterface):
         no_grammar: bool = False,
         extra_args: str | None = None,
         timeout: float | None = None,
+        native_named_tool_choice: bool = False,
         **kwargs: Any,
     ):
         super().__init__(
@@ -341,6 +342,7 @@ class LlamaCppLLM(LLMInterface):
         self._chat_format = chat_format
         self._no_grammar = no_grammar
         self._extra_args = extra_args
+        self._native_named_tool_choice = native_named_tool_choice
         self._server: LlamaCppServer | None = None
         self._delegate: Any = None  # OpenAICompatibleLLM, created after server starts
         self._initialized = False
@@ -403,6 +405,7 @@ class LlamaCppLLM(LLMInterface):
             reasoning_effort=self.reasoning_effort,
             extra_body=self._extra_body,
             timeout=self.timeout,
+            native_named_tool_choice=self._native_named_tool_choice,
         )
 
         self._initialized = True

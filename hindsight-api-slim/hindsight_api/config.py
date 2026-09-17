@@ -425,6 +425,10 @@ ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_
 ENV_REFLECT_LLM_REASONING_EFFORT = "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"
 ENV_REFLECT_LLM_EXTRA_BODY = "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"
 ENV_REFLECT_LLM_CACHE_AFFINITY = "HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY"
+# Reflect is the only operation that issues named tool choices. False keeps the
+# historical single-tool request; true trusts the configured endpoint to enforce
+# a native named choice while receiving the complete schema.
+ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE = "HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -2341,6 +2345,7 @@ class LLMMemberConfig:
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
     cache_affinity: str | None = None
+    native_named_tool_choice: bool | None = None
     codex_home: str | None = None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
@@ -2506,6 +2511,14 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
                 default_headers=json.loads(os.getenv(base + "DEFAULT_HEADERS", "null")),
                 cache_affinity=os.getenv(base + "CACHE_AFFINITY") or None,
+                native_named_tool_choice=(
+                    _parse_tristate_bool(
+                        base + "NATIVE_NAMED_TOOL_CHOICE",
+                        os.getenv(base + "NATIVE_NAMED_TOOL_CHOICE"),
+                    )
+                    if prefix == "REFLECT_"
+                    else None
+                ),
                 bedrock_service_tier=os.getenv(base + "BEDROCK_SERVICE_TIER") or None,
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
@@ -2992,6 +3005,7 @@ class HindsightConfig:
     reflect_llm_reasoning_effort: str | None
     reflect_llm_extra_body: dict | None
     reflect_llm_cache_affinity: str | None
+    reflect_llm_native_named_tool_choice: bool
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -4140,6 +4154,10 @@ class HindsightConfig:
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
             reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
             reflect_llm_cache_affinity=os.getenv(ENV_REFLECT_LLM_CACHE_AFFINITY) or None,
+            reflect_llm_native_named_tool_choice=_parse_boolean_env(
+                ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE,
+                False,
+            ),
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)

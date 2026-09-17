@@ -115,19 +115,52 @@ async def test_required_is_downgraded_for_declared_unsupported_provider(provider
 
 @pytest.mark.asyncio
 async def test_required_preserved_for_openai_endpoints():
-    """OpenAI endpoints retain the required-tool contract regardless of URL."""
+    """Named choice defaults to native OpenAI and narrows unknown endpoints."""
     for base_url in ("", "http://orchestration-service/v1/internal/hindsight"):
         sent = await _capture_call(_make_llm("openai", base_url), LLM_TOOL_CHOICE_REQUIRED)
         assert sent["tool_choice"] == "required"
 
-    custom_endpoint = _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")
+    native_endpoint = OpenAICompatibleLLM(
+        provider="openai",
+        api_key="sk-test",
+        base_url="",
+        model="qwen3",
+        native_named_tool_choice=True,
+    )
     for forced_name in ("recall", "done"):
         sent = await _capture_call(
-            custom_endpoint,
+            native_endpoint,
             LLMToolChoice.named(forced_name),
         )
-        assert sent["tool_choice"] == "required"
-        assert [tool["function"]["name"] for tool in sent["tools"]] == [forced_name]
+        assert sent["tool_choice"] == {"type": "function", "function": {"name": forced_name}}
+        assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall", "done"]
+
+    custom_endpoint = _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")
+    sent = await _capture_call(custom_endpoint, LLMToolChoice.named("recall"))
+    assert sent["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall"]
+
+    custom_endpoint = OpenAICompatibleLLM(
+        provider="openai",
+        api_key="sk-test",
+        base_url="http://orchestration-service/v1/internal/hindsight",
+        model="qwen3",
+        native_named_tool_choice=True,
+    )
+    sent = await _capture_call(custom_endpoint, LLMToolChoice.named("recall"))
+    assert sent["tool_choice"] == {"type": "function", "function": {"name": "recall"}}
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall", "done"]
+
+    native_disabled = OpenAICompatibleLLM(
+        provider="openai",
+        api_key="sk-test",
+        base_url="",
+        model="gpt-4o-mini",
+        native_named_tool_choice=False,
+    )
+    sent = await _capture_call(native_disabled, LLMToolChoice.named("recall"))
+    assert sent["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall"]
 
     with pytest.raises(ValueError, match="exactly one declared tool"):
         await custom_endpoint.call_with_tools(
@@ -153,6 +186,22 @@ async def test_required_preserved_for_cloud_provider():
     """Cloud providers (e.g. groq) honor ``required`` and keep it."""
     sent = await _capture_call(_make_llm("groq", ""), LLM_TOOL_CHOICE_REQUIRED)
     assert sent["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "base_url"),
+    [
+        ("groq", ""),
+        ("llamacpp", "http://localhost:8080/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+    ],
+)
+async def test_non_allowlisted_named_choice_keeps_required(provider: str, base_url: str):
+    """Narrowing must not weaken providers that enforce required tools."""
+    sent = await _capture_call(_make_llm(provider, base_url), LLMToolChoice.named("recall"))
+    assert sent["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -183,6 +232,43 @@ async def test_named_tool_choice_forced_call_survives_downgrade():
     assert sent["tools"][0]["function"]["name"] == "recall"
     # and the model returns the tool call rather than an empty array.
     assert [tc.name for tc in result.tool_calls] == ["recall"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "meta"])
+async def test_explicit_native_choice_overrides_compatibility_heuristics(provider: str):
+    """An operator capability declaration wins over model/provider guesses."""
+    llm = OpenAICompatibleLLM(
+        provider=provider,
+        api_key="sk-test",
+        base_url="https://gateway.example.com/v1",
+        model="deepseek-custom" if provider == "openai" else "muse-spark-1.3",
+        native_named_tool_choice=True,
+    )
+    sent = await _capture_call(llm, LLMToolChoice.named("recall"))
+    assert sent["tool_choice"] == {"type": "function", "function": {"name": "recall"}}
+    assert [tool["function"]["name"] for tool in sent["tools"]] == ["recall", "done"]
+
+
+def test_unset_named_choice_capability_preserves_schema_narrowing():
+    assert _make_llm("openai", "")._native_named_tool_choice is False
+
+
+def test_chat_provider_from_env_carries_custom_endpoint_capability(monkeypatch):
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import MemoryEngine
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://gateway.example.com/v1")
+    monkeypatch.setenv("HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE", "true")
+    clear_config_cache()
+
+    try:
+        llm = MemoryEngine(skip_llm_verification=True)._reflect_llm_config
+        assert llm._provider_impl._native_named_tool_choice is True
+    finally:
+        clear_config_cache()
 
 
 def test_drops_tool_choice_required_classification():

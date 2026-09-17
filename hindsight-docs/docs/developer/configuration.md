@@ -581,6 +581,7 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_BASE_URL` | Base URL for member `n`. | Provider default |
 | `HINDSIGHT_API_LLM_<n>_REASONING_EFFORT` | Reasoning effort for member `n`. | `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_LLM_<n>_EXTRA_BODY` / `_DEFAULT_HEADERS` | Per-member JSON overrides. | - |
+| `HINDSIGHT_API_REFLECT_LLM_<n>_NATIVE_NAMED_TOOL_CHOICE` | Per-member native named-tool capability for a Reflect chain. Use this when members implement different levels of the OpenAI tool-choice contract. | `HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE` |
 | `HINDSIGHT_API_LLM_<n>_BEDROCK_SERVICE_TIER` / `_GEMINI_SERVICE_TIER` | Per-member service tier. | - |
 | `HINDSIGHT_API_LLM_<n>_VERTEXAI_PROJECT_ID` / `_VERTEXAI_REGION` / `_VERTEXAI_SERVICE_ACCOUNT_KEY` | Per-member Vertex AI project, region, and service-account key path (for a `vertexai` member). Each falls back to the global `HINDSIGHT_API_LLM_VERTEXAI_*` when unset. | Global / `us-central1` / ADC |
 | `HINDSIGHT_API_LLM_<n>_CODEX_HOME` | Per-member Codex credentials directory — the directory holding the `auth.json` this member authenticates with (for an `openai-codex` member). Set it so two Codex members run as two independently authorized ChatGPT profiles; without it every member resolves the same store. Falls back to the global `HINDSIGHT_API_LLM_CODEX_HOME`, then `CODEX_HOME`, then `~/.codex`. | Global / `CODEX_HOME` / `~/.codex` |
@@ -720,6 +721,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` | Reasoning effort for reflect operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for reflect operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for reflect operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
+| `HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE` | Whether the Reflect Chat Completions or Responses endpoint strictly enforces a named `tool_choice`, allowing Hindsight to keep the complete tool schema stable across forced retrieval turns for prompt caching. `false` preserves the compatible single-tool schema. Set `true` only when the endpoint implements native named choice. | `false` |
 | `HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS` | Transport-level output cap (`max_completion_tokens`) for reflect's final synthesis call. Unset means uncapped: the model runs to a natural stop and the reflect/mental-model `max_tokens` governs *visible* length via a prompt directive plus a post-hoc rewrite, not by truncating the provider call. On thinking models the raw provider budget is consumed by reasoning tokens, so a hard cap here would cut pages off mid-word. Set an integer only to enforce a hard cost ceiling on the synthesis call. | Unset (uncapped) |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER` | LLM provider for observation consolidation | Falls back to `HINDSIGHT_API_LLM_PROVIDER` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY` | API key for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
@@ -733,6 +735,14 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT` | Reasoning effort for consolidation operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for consolidation operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for consolidation operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
+
+Setting `HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE=true` tells Hindsight to trust the configured endpoint on Reflect's forced retrieval turns. What that changes depends on the provider branch, and the flag is not the only route to the native behavior:
+
+- **Flag-controlled** — `openai`, `groq`, `ollama`, `ollama-cloud`, `lmstudio`, `minimax`, `deepseek`, `volcano`, `openrouter`, `requesty`, `zai`, `opencode-go`, `atlas`, `meta`, `fireworks`, `nous`, `llamacpp` and `xai-oauth` (all Chat Completions-compatible), plus `openai-responses`. `false` keeps the compatible single-tool request; `true` sends the complete tool schema together with a native named `tool_choice`.
+- **Already native, flag ignored** — `litellm`, `litellmrouter`, `bedrock`, `openai-codex` and `gemini`/`vertexai` send the complete schema with their own native named choice on every forced turn, so the flag changes nothing on them.
+- **Always narrowed, flag has no effect** — `claude-code` and `github-copilot` reduce a forced turn to the single named tool; the Claude Agent SDK and the Copilot harness expose no native named-choice parameter. Prefix stability on these lanes has to come from elsewhere.
+
+Compatibility is not implied by the provider label. Model services, individual models, and options such as thinking/tool modes may implement this contract differently, so verify the exact endpoint/model/configuration combination before enabling it. If the contract is incomplete, forced retrieval can fail, call a different tool, or return no tool call. In a multi-LLM chain, set the indexed member override separately for each endpoint whose behavior differs.
 
 :::tip When to Use Per-Operation Config
 - **Retain**: Use models with strong structured output (e.g., GPT-4o, Claude) for accurate fact extraction

@@ -38,7 +38,7 @@ TOOLS = [
 
 def _make_deepseek_llm(model: str = "deepseek-v4-flash") -> OpenAICompatibleLLM:
     return OpenAICompatibleLLM(
-        provider="openai",
+        provider="deepseek",
         api_key="sk-test",
         base_url="https://api.deepseek.com",
         model=model,

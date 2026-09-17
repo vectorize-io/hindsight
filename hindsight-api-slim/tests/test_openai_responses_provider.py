@@ -38,13 +38,14 @@ def _function_call(*, call_id, name, arguments):
     return types.SimpleNamespace(type="function_call", call_id=call_id, name=name, arguments=arguments)
 
 
-def _make_llm(model="gpt-5.6", reasoning_effort="high"):
+def _make_llm(model="gpt-5.6", reasoning_effort="high", **kwargs):
     return OpenAIResponsesLLM(
         provider="openai-responses",
         api_key="sk-test",
         base_url="",
         model=model,
         reasoning_effort=reasoning_effort,
+        **kwargs,
     )
 
 
@@ -117,6 +118,24 @@ def test_from_env_routes_to_openai_responses_llm(monkeypatch):
         assert llm.provider == "openai-responses"
         assert llm.model == "gpt-5.6"
         assert isinstance(llm._provider_impl, OpenAIResponsesLLM)
+        assert llm._provider_impl._native_named_tool_choice is False
+    finally:
+        clear_config_cache()
+
+
+def test_from_env_carries_custom_endpoint_capability(monkeypatch):
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import MemoryEngine
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "openai-responses")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://gateway.example.com/v1")
+    monkeypatch.setenv("HINDSIGHT_API_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE", "true")
+    clear_config_cache()
+
+    try:
+        llm = MemoryEngine(skip_llm_verification=True)._reflect_llm_config
+        assert llm._provider_impl._native_named_tool_choice is True
     finally:
         clear_config_cache()
 
@@ -247,7 +266,15 @@ _TOOLS = [
             "description": "search memory",
             "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": "finish",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -268,14 +295,7 @@ async def test_tool_path_sends_reasoning_and_tools_together():
 
     kwargs = create.call_args.kwargs
     assert kwargs["reasoning"] == {"effort": "high"}
-    assert kwargs["tools"] == [
-        {
-            "type": "function",
-            "name": "recall",
-            "description": "search memory",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-        }
-    ]
+    assert [tool["name"] for tool in kwargs["tools"]] == ["recall", "done"]
     assert result.tool_calls[0].name == "recall"
     assert result.tool_calls[0].arguments == {"query": "x"}
     assert result.tool_calls[0].id == "c1"
@@ -283,8 +303,8 @@ async def test_tool_path_sends_reasoning_and_tools_together():
 
 
 @pytest.mark.asyncio
-async def test_named_tool_choice_flattens_and_filters():
-    llm = _make_llm()
+async def test_named_tool_choice_keeps_complete_tools_schema():
+    llm = _make_llm(native_named_tool_choice=True)
     create = _mock_create(
         llm, _fake_response(output_text="", output=[_function_call(call_id="c1", name="recall", arguments="{}")])
     )
@@ -297,7 +317,34 @@ async def test_named_tool_choice_flattens_and_filters():
 
     kwargs = create.call_args.kwargs
     assert kwargs["tool_choice"] == {"type": "function", "name": "recall"}
-    assert len(kwargs["tools"]) == 1
+    assert [tool["name"] for tool in kwargs["tools"]] == ["recall", "done"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("native_named_tool_choice", "expected_tools"),
+    [(None, ["recall"]), (False, ["recall"]), (True, ["recall", "done"])],
+)
+async def test_custom_endpoint_controls_named_choice_schema(native_named_tool_choice, expected_tools):
+    llm = OpenAIResponsesLLM(
+        provider="openai-responses",
+        api_key="sk-test",
+        base_url="https://gateway.example.com/v1",
+        model="gpt-5.6",
+        native_named_tool_choice=native_named_tool_choice,
+    )
+    create = _mock_create(
+        llm, _fake_response(output_text="", output=[_function_call(call_id="c1", name="recall", arguments="{}")])
+    )
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "q"}],
+            tools=_TOOLS,
+            tool_choice=LLMToolChoice.named("recall"),
+        )
+
+    assert create.call_args.kwargs["tool_choice"] == {"type": "function", "name": "recall"}
+    assert [tool["name"] for tool in create.call_args.kwargs["tools"]] == expected_tools
 
 
 @pytest.mark.asyncio

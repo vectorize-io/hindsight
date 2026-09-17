@@ -300,11 +300,8 @@ class TestExpectedFixBehavior:
     @pytest.mark.asyncio
     async def test_fix_also_applies_to_openai_provider(self):
         """
-        The fix is generalized: all providers convert named tool_choice to
-        "required" + filtered tools.  OpenAI natively supports the dict format
-        too, so the behaviour is semantically identical either way. The real
-        OpenAI API (no base_url override) honours "required", so unlike the
-        self-hosted providers it is NOT downgraded.
+        OpenAI is allowlisted for native named tool_choice, so it keeps the full
+        schema while compatible providers remain on the conservative fallback.
         """
         from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
@@ -313,6 +310,7 @@ class TestExpectedFixBehavior:
             api_key="sk-test",
             base_url="",
             model="gpt-4o-mini",
+            native_named_tool_choice=True,
         )
 
         named_tool_choice = LLMToolChoice.named("search_mental_models")
@@ -329,7 +327,8 @@ class TestExpectedFixBehavior:
             )
 
         sent_kwargs = mock_create.call_args.kwargs
-        # Generalized fix applies to OpenAI too
-        assert sent_kwargs["tool_choice"] == "required"
-        assert len(sent_kwargs["tools"]) == 1
-        assert sent_kwargs["tools"][0]["function"]["name"] == "search_mental_models"
+        assert sent_kwargs["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "search_mental_models"},
+        }
+        assert len(sent_kwargs["tools"]) == len(REFLECT_TOOLS)

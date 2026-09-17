@@ -119,6 +119,27 @@ def test_parse_members_without_vertexai_fields_default_none(clean_llm_env):
     assert members[0].vertexai_region is None
     assert members[0].vertexai_service_account_key is None
     assert members[0].litellmrouter_config is None
+    assert members[0].native_named_tool_choice is None
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("true", True), ("0", False)])
+def test_parse_members_native_named_tool_choice(clean_llm_env, raw, expected):
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_PROVIDER", "openai")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_API_KEY", "sk-member")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_NATIVE_NAMED_TOOL_CHOICE", raw)
+
+    member = _parse_llm_members("REFLECT_")[0]
+
+    assert member.native_named_tool_choice is expected
+
+
+def test_parse_members_native_named_tool_choice_rejects_invalid_value(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_PROVIDER", "openai")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_API_KEY", "sk-member")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_NATIVE_NAMED_TOOL_CHOICE", "auto")
+
+    with pytest.raises(ValueError, match="NATIVE_NAMED_TOOL_CHOICE"):
+        _parse_llm_members("REFLECT_")
 
 
 def test_parse_members_vertexai_service_account_key(clean_llm_env):
@@ -367,6 +388,36 @@ def test_member_to_llm_passes_vertexai_project_and_region(clean_llm_env, monkeyp
     # Project/region flowed all the way to the Vertex AI SDK client.
     assert captured["project"] == "member-proj"
     assert captured["location"] == "europe-west1"
+
+
+@pytest.mark.parametrize(
+    ("global_value", "member_value", "expected"),
+    [(False, True, True), (True, False, False), (True, None, True)],
+)
+def test_member_to_llm_resolves_native_named_tool_choice(clean_llm_env, global_value, member_value, expected):
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    member = LLMMemberConfig(
+        provider="openai",
+        api_key="sk-member",
+        model="gpt-4o-mini",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        native_named_tool_choice=member_value,
+    )
+
+    provider = _member_to_llm(
+        member,
+        _empty_config(),
+        _NO_CALL_DEFAULTS,
+        global_value,
+    )
+
+    assert provider._provider_impl._native_named_tool_choice is expected
 
 
 def test_member_to_llm_passes_vertexai_service_account_key(clean_llm_env, monkeypatch):

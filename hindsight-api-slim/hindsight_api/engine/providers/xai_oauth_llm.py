@@ -375,6 +375,7 @@ class XaiOAuthLLM(LLMInterface):
         reasoning_effort: str | None = None,
         timeout: float | None = None,
         auth_manager: XaiOAuthManager | None = None,
+        native_named_tool_choice: bool = False,
         **kwargs: Any,
     ):
         """Initialize the provider.
@@ -392,6 +393,13 @@ class XaiOAuthLLM(LLMInterface):
         # Honour the engine-resolved per-operation timeout; fall back to the
         # same global default the OpenAI-compatible providers use.
         self.timeout = timeout if timeout is not None else get_config().llm_timeout
+
+        # Endpoint capability, not a provider-name guess: api.x.ai's Chat
+        # Completions documents ``{"type": "function", "function": {"name": ...}}``
+        # as forcing that tool, so a forced turn can keep the complete schema and
+        # hold the ``x-grok-conv-id``-pinned prefix byte-stable. Off keeps the
+        # conservative single-tool request.
+        self._native_named_tool_choice = native_named_tool_choice
 
         self._auth = auth_manager or XaiOAuthManager()
         self._client_lock = asyncio.Lock()
@@ -867,8 +875,12 @@ class XaiOAuthLLM(LLMInterface):
                     f"Named tool_choice must reference exactly one declared tool; "
                     f"found {len(filtered)} definitions for {forced_name!r}"
                 )
-            body["tools"] = filtered
-            body["tool_choice"] = LLMToolChoiceMode.REQUIRED.value
+            if self._native_named_tool_choice:
+                body["tools"] = tools
+                body["tool_choice"] = {"type": "function", "function": {"name": forced_name}}
+            else:
+                body["tools"] = filtered
+                body["tool_choice"] = LLMToolChoiceMode.REQUIRED.value
         else:
             body["tools"] = tools
             if tool_choice.mode is not LLMToolChoiceMode.AUTO:

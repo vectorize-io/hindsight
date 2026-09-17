@@ -192,6 +192,29 @@ def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
     assert config.llm_ollama_num_ctx is None
 
 
+@pytest.mark.parametrize(("raw", "expected"), [(None, False), ("true", True), ("0", False)])
+def test_native_named_tool_choice_config(monkeypatch, raw, expected):
+    from hindsight_api.config import ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE, HindsightConfig
+
+    if raw is None:
+        monkeypatch.delenv(ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE, raising=False)
+    else:
+        monkeypatch.setenv(ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    assert HindsightConfig.from_env().reflect_llm_native_named_tool_choice == expected
+
+
+@pytest.mark.parametrize("raw", ["auto", "yes"])
+def test_native_named_tool_choice_rejects_ambiguous_value(monkeypatch, raw):
+    from hindsight_api.config import ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE, HindsightConfig
+
+    monkeypatch.setenv(ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    with pytest.raises(ValueError, match=ENV_REFLECT_LLM_NATIVE_NAMED_TOOL_CHOICE):
+        HindsightConfig.from_env()
+
+
 def test_llm_ollama_num_ctx_keeps_direct_construction_default():
     """Direct HindsightConfig construction should not require the new field."""
     from dataclasses import fields

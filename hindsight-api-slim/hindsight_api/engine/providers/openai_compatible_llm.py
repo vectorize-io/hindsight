@@ -707,6 +707,7 @@ class OpenAICompatibleLLM(LLMInterface):
         default_headers: dict[str, str] | None = None,
         cache_affinity: str | None = None,
         ollama_num_ctx: int | None = None,
+        native_named_tool_choice: bool = False,
         **kwargs: Any,
     ):
         """
@@ -731,6 +732,9 @@ class OpenAICompatibleLLM(LLMInterface):
                 from the provider + base-URL host). See ``engine/cache_affinity.py``.
             ollama_num_ctx: Native Ollama context window override. None lets Ollama use
                 the model/server default.
+            native_named_tool_choice: Whether the endpoint natively enforces a
+                named tool choice with the complete schema. False preserves
+                schema narrowing; true trusts the endpoint.
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -834,6 +838,7 @@ class OpenAICompatibleLLM(LLMInterface):
         self._cache_affinity: CacheAffinityMode = resolve_cache_affinity(
             parse_cache_affinity(cache_affinity), self.provider, self.base_url
         )
+        self._native_named_tool_choice = native_named_tool_choice
 
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
         client_kwargs: dict[str, Any] = {
@@ -1504,17 +1509,21 @@ class OpenAICompatibleLLM(LLMInterface):
         """
         start_time = time.time()
 
-        request_tool_choice: str | None
+        uses_native_named_choice = tool_choice.mode is LLMToolChoiceMode.NAMED and self._native_named_tool_choice
+        request_tool_choice: str | dict[str, Any] | None
         if tool_choice.mode is LLMToolChoiceMode.NAMED:
             forced_name = tool_choice.selected_function_name
-            filtered = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
-            if len(filtered) != 1:
+            matching = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
+            if len(matching) != 1:
                 raise ValueError(
                     f"Named tool_choice must reference exactly one declared tool; "
-                    f"found {len(filtered)} definitions for {forced_name!r}"
+                    f"found {len(matching)} definitions for {forced_name!r}"
                 )
-            tools = filtered
-            request_tool_choice = LLMToolChoiceMode.REQUIRED.value
+            if self._native_named_tool_choice:
+                request_tool_choice = {"type": "function", "function": {"name": forced_name}}
+            else:
+                tools = matching
+                request_tool_choice = LLMToolChoiceMode.REQUIRED.value
         elif tool_choice.mode is LLMToolChoiceMode.AUTO:
             request_tool_choice = None
         else:
@@ -1523,7 +1532,11 @@ class OpenAICompatibleLLM(LLMInterface):
         # DeepSeek accepts tool calls but rejects explicit required/named
         # tool_choice values. The tools list has already been narrowed for
         # forced calls, so omitting tool_choice preserves the practical behavior.
-        if "deepseek" in self.model.lower() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+        if (
+            "deepseek" in self.model.lower()
+            and tool_choice.mode is not LLMToolChoiceMode.AUTO
+            and not uses_native_named_choice
+        ):
             request_tool_choice = None
 
         # Meta rejects any tool_choice other than "auto" outright (HTTP 400), so the
@@ -1533,7 +1546,11 @@ class OpenAICompatibleLLM(LLMInterface):
         # expressed this way and would become "auto"; no caller on this path uses it
         # (only the gemini / claude-code / github-copilot providers handle NONE), so
         # it is left rather than given an untested tools-stripping branch.
-        if self._rejects_non_auto_tool_choice() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+        if (
+            self._rejects_non_auto_tool_choice()
+            and tool_choice.mode is not LLMToolChoiceMode.AUTO
+            and not uses_native_named_choice
+        ):
             request_tool_choice = None
 
         # LM Studio and Ollama silently drop tool_choice="required", returning an

@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
+from hindsight_api.engine.llm_interface import LLMToolChoice
 from hindsight_api.engine.llm_trace import (
     LLMTraceContext,
     current_trace_context,
@@ -318,6 +319,7 @@ def _make_llm(
     model: str = "grok-4.5",
     reasoning_effort: str = "high",
     base_url: str = "",
+    native_named_tool_choice: bool = False,
 ) -> XaiOAuthLLM:
     store = tmp_path / "xai_oauth.json"
     _write_store(store, expires_in=expires_in)
@@ -331,6 +333,7 @@ def _make_llm(
         reasoning_effort=reasoning_effort,
         timeout=timeout,
         auth_manager=manager,
+        native_named_tool_choice=native_named_tool_choice,
     )
     llm._client = _FakeAsyncHttp(replies or [_ok_reply()])  # type: ignore[assignment]
     llm._refresh_http = http  # test handle, not used by the provider
@@ -1507,6 +1510,22 @@ def test_the_factory_builds_the_provider_and_threads_the_timeout(tmp_path, monke
     assert provider.supports_attempt_scoped_concurrency() is True
 
 
+def test_the_factory_threads_the_native_named_tool_choice_capability(tmp_path, monkeypatch):
+    monkeypatch.setenv(ENV_TOKEN_PATH, str(_write_store(tmp_path / "xai_oauth.json")))
+
+    provider = create_llm_provider(
+        provider="xai-oauth",
+        api_key="",
+        base_url="",
+        model="grok-4.5",
+        reasoning_effort="high",
+        native_named_tool_choice=True,
+    )
+
+    assert isinstance(provider, XaiOAuthLLM)
+    assert provider._native_named_tool_choice is True
+
+
 def test_the_provider_specific_base_url_override_wins(tmp_path, monkeypatch):
     monkeypatch.setenv(ENV_TOKEN_PATH, str(_write_store(tmp_path / "xai_oauth.json")))
     monkeypatch.setenv(ENV_BASE_URL, "https://example.invalid/v1/")
@@ -1594,6 +1613,60 @@ async def test_call_with_tools_returns_proposed_tool_calls(tmp_path, monkeypatch
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].arguments == {"q": "hi"}
     assert llm._client.calls[0]["json"]["tools"] == tools
+
+
+async def test_a_named_tool_choice_narrows_to_the_forced_tool_by_default(tmp_path, monkeypatch):
+    llm = _make_llm(tmp_path, monkeypatch)
+    tools = [
+        {"type": "function", "function": {"name": "recall", "parameters": {}}},
+        {"type": "function", "function": {"name": "expand", "parameters": {}}},
+    ]
+
+    await llm.call_with_tools(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=tools,
+        max_retries=0,
+        tool_choice=LLMToolChoice.named("recall"),
+    )
+
+    body = llm._client.calls[0]["json"]
+    assert body["tools"] == [tools[0]]
+    assert body["tool_choice"] == "required"
+
+
+async def test_native_named_tool_choice_keeps_the_schema_and_names_the_tool(tmp_path, monkeypatch):
+    llm = _make_llm(tmp_path, monkeypatch, native_named_tool_choice=True)
+    tools = [
+        {"type": "function", "function": {"name": "recall", "parameters": {}}},
+        {"type": "function", "function": {"name": "expand", "parameters": {}}},
+    ]
+
+    await llm.call_with_tools(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=tools,
+        max_retries=0,
+        tool_choice=LLMToolChoice.named("recall"),
+    )
+
+    body = llm._client.calls[0]["json"]
+    assert body["tools"] == tools
+    assert body["tool_choice"] == {"type": "function", "function": {"name": "recall"}}
+
+
+@pytest.mark.parametrize("native", [False, True])
+async def test_a_named_tool_choice_rejects_an_undeclared_tool_on_both_paths(tmp_path, monkeypatch, native):
+    llm = _make_llm(tmp_path, monkeypatch, native_named_tool_choice=native)
+    tools = [{"type": "function", "function": {"name": "recall", "parameters": {}}}]
+
+    with pytest.raises(ValueError, match="exactly one declared tool"):
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=tools,
+            max_retries=0,
+            tool_choice=LLMToolChoice.named("expand"),
+        )
+
+    assert llm._client.calls == []
 
 
 async def test_an_empty_completion_is_retried_then_fails(tmp_path, monkeypatch):
