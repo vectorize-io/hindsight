@@ -8448,9 +8448,7 @@ def _register_routes(app: FastAPI):
                     status_code=400,
                     detail="Nothing to export: set at least one of include_data, include_bank_config, include_history",
                 )
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
