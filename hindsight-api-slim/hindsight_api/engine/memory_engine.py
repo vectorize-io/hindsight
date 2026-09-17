@@ -7812,6 +7812,14 @@ class MemoryEngine(MemoryEngineInterface):
                 status_code=422,
             )
 
+        # 404 for a bank nobody created, like every other bank-scoped read (#4175, #4442).
+        # Recall was the one that still answered 200 with empty results — indistinguishable from a
+        # healthy empty bank — after paying the whole retrieval fan-out (dense + BM25 + temporal,
+        # plus one graph arm per fact type, each taking its own pool connection) to return nothing.
+        # Malformed arguments above stay 422, and the profile row is process-cached, so an existing
+        # bank pays no extra query.
+        await self._require_bank_exists(bank_id)
+
         # Validate operation if validator is configured
         if self._operation_validator:
             from hindsight_api.extensions import RecallContext

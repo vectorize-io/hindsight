@@ -280,6 +280,8 @@ class TestMemoryEngineValidation:
         memory = memory_with_validator
         bank_id = "test-recall-validation"
         ctx = RequestContext()
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.get_bank_profile(bank_id, request_context=ctx)
 
         # First recall should pass validation
         await memory.recall_async(bank_id, "test query", fact_type=["world"], request_context=ctx)
@@ -523,6 +525,8 @@ class TestOperationHooksParameters:
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-params"
         ctx = RequestContext(api_key="test-key")
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.get_bank_profile(bank_id, request_context=ctx)
         query = "test query"
         question_date = datetime(2024, 1, 15, tzinfo=timezone.utc)
 
@@ -566,6 +570,8 @@ class TestOperationHooksParameters:
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-post"
         ctx = RequestContext(api_key="test-key")
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.get_bank_profile(bank_id, request_context=ctx)
 
         result = await memory.recall_async(
             bank_id=bank_id,

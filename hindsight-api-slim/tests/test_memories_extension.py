@@ -1143,6 +1143,7 @@ async def _seed(store, bank_id, **fact_kwargs):
 async def test_engine_recall_routes_search_through_store(memory, request_context, restore_default_store):
     store = InMemoryMemories({})
     set_memories(store)
+    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     await memory.recall_async("seam-bank", "anything at all", request_context=request_context)
     assert "search" in store.calls  # the semantic/bm25 arm went through the interface, not SQL
 
@@ -1346,6 +1347,7 @@ async def test_recall_include_chunks_hydrates_body_from_store(memory, request_co
     set_memories(store)
     suffix = uuid.uuid4().hex[:8]
     bank_id = f"seam-chunks-{suffix}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
     chunk_id = f"chunk-{suffix}"
     fact_id = str(uuid.uuid4())
@@ -1413,6 +1415,7 @@ async def test_recall_include_source_facts_hydrates_from_store(memory, request_c
     store = InMemoryMemories({})
     set_memories(store)
     bank_id = f"seam-srcfacts-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     obs_id = str(uuid.uuid4())
     src_id = str(uuid.uuid4())
     src_text = "Alice deployed the hotfix on Tuesday afternoon"
@@ -1457,6 +1460,7 @@ async def test_recall_include_entities_hydrates_names_from_registry(
     store.carries_entity_ids_on_result = carries_ids_on_result
     set_memories(store)
     bank_id = f"seam-entities-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     fact_id = str(uuid.uuid4())
 
     pool = await memory._get_pool()
@@ -1504,6 +1508,7 @@ async def test_recall_include_entities_omits_entityless_unit(
     store.carries_entity_ids_on_result = carries_ids_on_result
     set_memories(store)
     bank_id = f"seam-entities-omit-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     with_entity_id = str(uuid.uuid4())
     without_entity_id = str(uuid.uuid4())
 
@@ -1595,6 +1600,7 @@ async def test_recall_all_enrichments_together_through_store(
     set_memories(store)
     suffix = uuid.uuid4().hex[:8]
     bank_id = f"seam-all-{suffix}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
     chunk_id = f"chunk-{suffix}"
     src_id = str(uuid.uuid4())
