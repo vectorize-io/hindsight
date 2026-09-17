@@ -190,7 +190,6 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
     async recall(req, timeoutMs) {
       const controller = new AbortController();
       const signal = controller.signal;
-      signal.throwIfAborted();
       let onAbort!: () => void;
       const cancelled = new Promise<never>((_, reject) => {
         onAbort = () => reject(signal.reason);
@@ -208,7 +207,11 @@ export function scopeClient(c: HindsightClient, bankId: string): BankScopedClien
       try {
         // A race alone only stopped the hook's wait. Forward cancellation to the
         // client too, so its HTTP request receives the deadline.
-        // Keep the race to bound the hook even if a transport ignores the signal.
+        //
+        // The race stays as a backstop for a transport that ignores the signal,
+        // which is not hypothetical: from client 0.10.x recall routes through
+        // `retryOnCapacity`, whose backoff sleeps in a plain setTimeout, so an
+        // abort during a 429/503 wait does not interrupt it. (#4445)
         const response = await Promise.race([
           c.recall(bankId, req.query, {
             maxTokens: req.maxTokens,

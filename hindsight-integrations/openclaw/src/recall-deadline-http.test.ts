@@ -26,7 +26,7 @@ function recall() {
   return hook({ rawMessage: "What was the project decision?" }, ctx);
 }
 function json(response: ServerResponse, body: unknown, status = 200) {
-  response.writeHead(status, { "Content-Type": "application/json", "Retry-After": "2" });
+  response.writeHead(status, { "Content-Type": "application/json" });
   response.end(JSON.stringify(body));
 }
 
@@ -67,6 +67,9 @@ beforeEach(async () => {
               dynamicBankId: false,
               autoRecall: true,
               autoRetain: false,
+              // 1000 is the floor: getPluginConfig drops anything lower, and the
+              // hook then falls back to the 10s default — which blows this test's
+              // budget rather than exercising the deadline.
               recallTimeoutMs: 1000,
               retainQueuePath: join(directory, "queue.jsonl"),
               logLevel: "error",

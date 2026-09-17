@@ -19,6 +19,10 @@ describe("bank-scoped recall cancellation", () => {
     const scoped = scopeClient({ recall } as unknown as HindsightClient, "test-bank");
     const pending = scoped.recall({ query: "question" }, 1000).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(1000);
+    // The caller classifies with `error instanceof DOMException && name === "TimeoutError"`
+    // (index.ts), so the class matters: a plain Error with the name reassigned would
+    // satisfy toMatchObject and turn every auto-recall timeout into a logged error.
+    expect(await pending).toBeInstanceOf(DOMException);
     expect(await pending).toMatchObject({ name: "TimeoutError" });
     expect(recall.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
