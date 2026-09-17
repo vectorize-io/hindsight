@@ -87,6 +87,8 @@ async def test_fact_counts_are_right_for_the_banks_on_the_page(memory, request_c
     """Counting facts moved out of the list query and into a per-page query (#4468): the
     banks actually returned must still carry their own count, on any page."""
     prefix, bank_ids = three_banks
+    # Facts are inserted directly rather than retained: the assertion is an exact count per
+    # bank, and how many facts a retain extracts is the LLM's business, not this test's.
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
         for index, bank_id in enumerate(bank_ids):
