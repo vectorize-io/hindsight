@@ -2502,7 +2502,12 @@ class MemoryEngine(MemoryEngineInterface):
         # (same object, so no extra provider, no extra verification), which is the
         # backwards-compatible path (issue #4463).
         if not config.has_mental_model_refresh_llm_override():
-            self._mental_model_refresh_llm_config = self._reflect_llm_config
+            # None, not an alias to the reflect config: callers reassign
+            # ``_reflect_llm_config`` after __init__ (tests swapping in a real
+            # provider, most of all), and an alias captured here would keep
+            # pointing at the provider built at construction time. The property
+            # below resolves it on every access instead.
+            self._mental_model_refresh_llm_override = None
         else:
             refresh_provider = config.mental_model_refresh_llm_provider or reflect_provider
             refresh_api_key = config.mental_model_refresh_llm_api_key or reflect_api_key
@@ -2560,7 +2565,7 @@ class MemoryEngine(MemoryEngineInterface):
                 vertexai_service_account_key=config.llm_vertexai_service_account_key,
                 **mental_model_refresh_call_defaults.as_kwargs(),
             )
-            self._mental_model_refresh_llm_config = _build_llm(
+            self._mental_model_refresh_llm_override = _build_llm(
                 _mental_model_refresh_base_llm,
                 config,
                 "mental_model_refresh_",
@@ -5482,10 +5487,10 @@ class MemoryEngine(MemoryEngineInterface):
             self._reflect_llm_config,
             self._consolidation_llm_config,
         ]
-        # Usually the reflect config itself; only a separate provider when the
-        # MENTAL_MODEL_REFRESH_LLM_* group is configured.
-        if not any(c is self._mental_model_refresh_llm_config for c in _to_clean):
-            _to_clean.append(self._mental_model_refresh_llm_config)
+        # Only a separate provider when the MENTAL_MODEL_REFRESH_LLM_* group is
+        # configured; otherwise the refresh shares reflect's, already in the list.
+        if self._mental_model_refresh_llm_override is not None:
+            _to_clean.append(self._mental_model_refresh_llm_override)
         for llm_config in _to_clean:
             try:
                 await llm_config.cleanup()
@@ -14814,6 +14819,17 @@ class MemoryEngine(MemoryEngineInterface):
         return {"banks": page, "total": total, "limit": limit, "offset": offset}
 
     # ==================== Reflect Methods ====================
+
+    @property
+    def _mental_model_refresh_llm_config(self) -> "LLMConfig | MultiLLMProvider":
+        """The LLM the automatic mental-model refresh runs on.
+
+        Resolved per access rather than stored: with no
+        MENTAL_MODEL_REFRESH_LLM_* override this *is* whatever
+        ``_reflect_llm_config`` currently holds, including a provider swapped in
+        after __init__ (issue #4463).
+        """
+        return self._mental_model_refresh_llm_override or self._reflect_llm_config
 
     def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":
         """Pick the LLM for a reflect-pipeline run: interactive, or background refresh.

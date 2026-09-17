@@ -42,6 +42,35 @@ def test_unset_reuses_the_reflect_config_object(engine_env):
     assert get_config().has_mental_model_refresh_llm_override() is False
 
 
+def test_unset_follows_a_reflect_config_swapped_in_after_init(engine_env):
+    """Regression: the refresh must track later writes to `_reflect_llm_config`.
+
+    Real-LLM eval fixtures build the engine, then replace `_reflect_llm_config`
+    with a live provider. An alias captured in __init__ kept serving the
+    construction-time mock, so those evals got 'mock response' back.
+    """
+    engine = engine_env()
+    swapped = object()
+
+    engine._reflect_llm_config = swapped
+
+    assert engine._mental_model_refresh_llm_config is swapped
+    assert engine._llm_for_reflect_operation("refresh_mental_model") is swapped
+
+
+def test_override_still_wins_over_a_later_reflect_swap(engine_env):
+    """The other direction: an explicit override is not clobbered by the swap."""
+    engine = engine_env(
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER="mock",
+        HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL="refresh-model",
+    )
+    configured = engine._mental_model_refresh_llm_config
+
+    engine._reflect_llm_config = object()
+
+    assert engine._mental_model_refresh_llm_config is configured
+
+
 def test_override_gives_the_refresh_its_own_model(engine_env):
     engine = engine_env(
         HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER="mock",
