@@ -1,10 +1,12 @@
 """Tests for EmbedManager interface."""
 
+import io
+import subprocess
 from unittest.mock import MagicMock, patch
 
 from hindsight_embed import get_embed_manager
 from hindsight_embed._http_probe import ProbeResponse
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _detach_popen_kwargs
 
 
 def _mock_sentence_transformers_present(monkeypatch):
@@ -684,3 +686,15 @@ def test_run_probe_still_reports_a_failed_command_as_none():
     import sys as _sys
 
     assert DaemonEmbedManager._run_probe([_sys.executable, "-c", "raise SystemExit(3)"]) is None
+
+
+def test_detach_popen_kwargs_pins_stdin():
+    """The daemon child must never inherit the caller's fd 0.
+
+    A caller can hold an fd 0 that is a socket opened with FD_CLOEXEC (e.g. a
+    TUI/gateway parent that wires its IPC channel onto fds 0-2). An inherited
+    fd 0 is closed by the kernel at exec, so the child would start with
+    ``sys.stdin = None`` and crash in ``_redirect_stdio_to_log()``.
+    """
+    kwargs = _detach_popen_kwargs(io.BytesIO())
+    assert kwargs.get("stdin") == subprocess.DEVNULL

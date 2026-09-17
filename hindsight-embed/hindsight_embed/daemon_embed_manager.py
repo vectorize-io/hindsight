@@ -146,7 +146,9 @@ def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
     """Cross-platform kwargs to spawn a subprocess detached from the caller.
 
     On POSIX, `start_new_session=True` calls setsid(2) so the child
-    survives the parent's terminal. On Windows there is no setsid: we use
+    survives the parent's terminal; `stdin` is pinned to /dev/null so the
+    child never inherits a caller fd 0 that may be CLOEXEC (closed at exec,
+    leaving ``sys.stdin = None``). On Windows there is no setsid: we use
     `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, which also means the
     child has no console, so stdin/stdout/stderr MUST be redirected or any
     write from the child crashes with "handle is invalid".
@@ -170,6 +172,7 @@ def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
         }
     return {
         "start_new_session": True,
+        "stdin": subprocess.DEVNULL,
         "stdout": log_handle,
         "stderr": log_handle,
     }
