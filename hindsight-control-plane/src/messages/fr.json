@@ -178,9 +178,9 @@
     "cloneFailed": "Échec du clonage de la banque",
     "cloneWhatToCopy": "Que copier",
     "cloneIncludeData": "Mémoires",
-    "cloneIncludeDataHint": "Documents, faits, observations, pièces jointes, l'archive de curation et le journal des opérations.",
+    "cloneIncludeDataHint": "Documents, faits, observations, pièces jointes, l'archive de curation, le journal des opérations, ainsi que les modèles mentaux et pages de connaissances qui en sont issus.",
     "cloneIncludeBankConfig": "Configuration de la banque",
-    "cloneIncludeBankConfigHint": "Surcharges de configuration, modèles mentaux et leur historique, pages de connaissances, directives et webhooks — la copie appellera les mêmes points de terminaison.",
+    "cloneIncludeBankConfigHint": "Surcharges de configuration, directives et webhooks — la copie appellera les mêmes points de terminaison.",
     "cloneIncludeHistory": "Historique",
     "cloneIncludeHistoryHint": "Journal d'audit et traces des requêtes LLM.",
     "cloneNothingSelected": "Choisissez au moins un élément à copier."

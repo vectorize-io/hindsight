@@ -178,9 +178,9 @@
     "cloneFailed": "Klonen der Bank fehlgeschlagen",
     "cloneWhatToCopy": "Was kopiert wird",
     "cloneIncludeData": "Erinnerungen",
-    "cloneIncludeDataHint": "Dokumente, Fakten, Beobachtungen, Anhänge, das Kurationsarchiv und das Operationsprotokoll.",
+    "cloneIncludeDataHint": "Dokumente, Fakten, Beobachtungen, Anhänge, das Kurationsarchiv, das Operationsprotokoll sowie die daraus synthetisierten mentalen Modelle und Wissensseiten.",
     "cloneIncludeBankConfig": "Bank-Konfiguration",
-    "cloneIncludeBankConfigHint": "Konfigurations-Overrides, mentale Modelle samt Verlauf, Wissensseiten, Direktiven und Webhooks – die Kopie ruft dieselben Webhook-Endpunkte auf.",
+    "cloneIncludeBankConfigHint": "Konfigurations-Overrides, Direktiven und Webhooks – die Kopie ruft dieselben Webhook-Endpunkte auf.",
     "cloneIncludeHistory": "Verlauf",
     "cloneIncludeHistoryHint": "Audit-Protokoll und LLM-Anfrage-Traces.",
     "cloneNothingSelected": "Wähle mindestens etwas zum Kopieren aus."

@@ -178,9 +178,9 @@
     "cloneFailed": "複製記憶庫失敗",
     "cloneWhatToCopy": "要複製啲咩",
     "cloneIncludeData": "記憶",
-    "cloneIncludeDataHint": "文件、事實、觀察、附件、整理封存同操作紀錄。",
+    "cloneIncludeDataHint": "文件、事實、觀察、附件、整理封存、操作紀錄，同埋由佢哋合成嘅心智模型同知識頁。",
     "cloneIncludeBankConfig": "記憶庫設定",
-    "cloneIncludeBankConfigHint": "設定覆寫、心智模型同佢哋嘅歷史、知識頁、指令同 Webhook — 副本會叫同一批 Webhook 端點。",
+    "cloneIncludeBankConfigHint": "設定覆寫、指令同 Webhook — 副本會叫同一批 Webhook 端點。",
     "cloneIncludeHistory": "歷史",
     "cloneIncludeHistoryHint": "稽核紀錄同 LLM 請求追蹤。",
     "cloneNothingSelected": "最少揀一樣嚟複製。"

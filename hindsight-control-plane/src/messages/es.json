@@ -178,9 +178,9 @@
     "cloneFailed": "No se pudo clonar el banco",
     "cloneWhatToCopy": "Qué copiar",
     "cloneIncludeData": "Memorias",
-    "cloneIncludeDataHint": "Documentos, hechos, observaciones, adjuntos, el archivo de curación y el registro de operaciones.",
+    "cloneIncludeDataHint": "Documentos, hechos, observaciones, adjuntos, el archivo de curación, el registro de operaciones y los modelos mentales y páginas de conocimiento sintetizados a partir de ellos.",
     "cloneIncludeBankConfig": "Configuración del banco",
-    "cloneIncludeBankConfigHint": "Anulaciones de configuración, modelos mentales y su historial, páginas de conocimiento, directivas y webhooks: la copia llamará a los mismos endpoints.",
+    "cloneIncludeBankConfigHint": "Anulaciones de configuración, directivas y webhooks: la copia llamará a los mismos endpoints.",
     "cloneIncludeHistory": "Historial",
     "cloneIncludeHistoryHint": "Registro de auditoría y trazas de peticiones al LLM.",
     "cloneNothingSelected": "Elige al menos un elemento para copiar."

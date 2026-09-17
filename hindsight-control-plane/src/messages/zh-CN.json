@@ -178,9 +178,9 @@
     "cloneFailed": "克隆记忆库失败",
     "cloneWhatToCopy": "复制哪些内容",
     "cloneIncludeData": "记忆",
-    "cloneIncludeDataHint": "文档、事实、观察、附件、整理归档和操作日志。",
+    "cloneIncludeDataHint": "文档、事实、观察、附件、整理归档、操作日志，以及由它们合成的心智模型和知识页。",
     "cloneIncludeBankConfig": "记忆库配置",
-    "cloneIncludeBankConfigHint": "配置覆盖、心智模型及其历史、知识页、指令和 Webhook——副本会调用相同的 Webhook 端点。",
+    "cloneIncludeBankConfigHint": "配置覆盖、指令和 Webhook——副本会调用相同的 Webhook 端点。",
     "cloneIncludeHistory": "历史",
     "cloneIncludeHistoryHint": "审计日志和 LLM 请求追踪。",
     "cloneNothingSelected": "请至少选择一项要复制的内容。"

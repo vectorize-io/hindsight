@@ -9510,7 +9510,7 @@ export type ExportBankTransferData = {
     /**
      * Include Bank Config
      *
-     * Carry bank config, mental models, directives
+     * Carry the bank's config overrides, directives and webhooks
      */
     include_bank_config?: boolean;
     /**
@@ -9594,7 +9594,7 @@ export type ImportBankTransferData = {
     /**
      * Include Bank Config
      *
-     * restore mode: carry bank config, mental models, directives (default true)
+     * restore mode: restore the bank's config overrides, directives and webhooks (default true)
      */
     include_bank_config?: boolean | null;
     /**
@@ -9650,13 +9650,13 @@ export type CloneBankData = {
     /**
      * Include Data
      *
-     * Copy the memories and everything backing them
+     * Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them
      */
     include_data?: boolean;
     /**
      * Include Bank Config
      *
-     * Copy bank config, mental models, directives and webhooks
+     * Copy the bank's config overrides, directives and webhooks
      */
     include_bank_config?: boolean;
     /**

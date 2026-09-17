@@ -50,20 +50,23 @@ class TransferScope:
     Three booleans rather than a component list, so a caller never has to know
     the table layout. The mapping, which the API documents verbatim:
 
-    ``data`` — everything backing the memories:
+    ``data`` — the memories and everything derived from them:
         documents, chunks, memory_units (replayed and re-embedded), consolidated
         observations, entities/links (rebuilt from the replay), attachments and
         their bytes, the curation archive (``invalidated_memory_units``), the
-        async operations log, and the graph/entity maintenance queues.
-    ``bank_config`` — the bank's own configuration and synthesized state:
-        the ``banks`` row (per-bank config overrides), mental models and their
-        refresh history, knowledge pages, directives and webhooks.
+        async operations log, the graph/entity maintenance queues, and the
+        knowledge the bank synthesized from all of it — mental models, their
+        refresh history, and the knowledge-page tree over them.
+    ``bank_config`` — how the bank is set up:
+        the ``banks`` row (per-bank config overrides), directives and webhooks.
     ``history`` — operational history: ``audit_log`` and ``llm_requests``.
 
-    Mental-model refresh history sits under ``bank_config``, not ``history``: it
-    is the state of a mental model rather than a log about it, and a migration
-    that dropped it by default would silently lose it (it is carried
-    unconditionally today).
+    Mental models and knowledge pages sit under ``data`` rather than
+    ``bank_config`` because they are a reading of the bank's facts, not a
+    setting: a mental model's ``based_on`` evidence cites memory units by id, so
+    carrying it without them would restore a synthesis whose grounding resolves
+    to nothing. Their refresh history follows them for the same reason, and is
+    not ``history``: it is the state of a mental model, not a log about it.
     """
 
     data: bool = True

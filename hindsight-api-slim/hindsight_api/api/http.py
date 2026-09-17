@@ -8406,11 +8406,15 @@ def _register_routes(app: FastAPI):
     #
     #   include_data        documents, facts, observations, entities and links,
     #                       attachments (bytes included), the curation archive,
-    #                       the operations log and the maintenance queues
-    #   include_bank_config the bank row (per-bank config), mental models and
-    #                       their refresh history, knowledge pages, directives,
-    #                       webhooks
+    #                       the operations log, the maintenance queues, and what
+    #                       the bank synthesized from all of it: mental models,
+    #                       their refresh history and the knowledge-page tree
+    #   include_bank_config the bank row (per-bank config), directives, webhooks
     #   include_history     audit_log and llm_requests
+    #
+    # Mental models and knowledge pages are data, not configuration: their
+    # evidence cites memory units by id, so they are only coherent alongside the
+    # facts they were derived from.
     #
     # The older endpoints stay, and keep their exact request and response shapes.
 
@@ -8422,7 +8426,8 @@ def _register_routes(app: FastAPI):
         description="Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the "
         "archive carries: include_data (documents, facts, observations, attachments and their bytes, the "
         "curation archive, the operations log and the maintenance queues), include_bank_config (bank config, "
-        "mental models and their history, knowledge pages, directives, webhooks) and include_history "
+        "mental models and their history, knowledge pages), include_bank_config (the bank's config "
+        "overrides, directives and webhooks) and include_history "
         "(audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with "
         "the target bank's model and re-resolves entities, so an archive moves between instances configured "
         "with different embedding models. Returns an operation_id; poll "
@@ -8436,7 +8441,9 @@ def _register_routes(app: FastAPI):
     async def api_bank_transfer_export(
         bank_id: str,
         include_data: bool = Query(default=True, description="Carry the memories and everything backing them"),
-        include_bank_config: bool = Query(default=True, description="Carry bank config, mental models, directives"),
+        include_bank_config: bool = Query(
+            default=True, description="Carry the bank's config overrides, directives and webhooks"
+        ),
         include_history: bool = Query(default=False, description="Carry audit_log and llm_requests"),
         document_id: list[str] | None = Query(default=None, description="Document id(s); omit for the whole bank"),
         request_context: RequestContext = Depends(get_request_context),
@@ -8533,7 +8540,8 @@ def _register_routes(app: FastAPI):
             default=None, description="restore mode: carry the memories and everything backing them (default true)"
         ),
         include_bank_config: bool | None = Query(
-            default=None, description="restore mode: carry bank config, mental models, directives (default true)"
+            default=None,
+            description="restore mode: restore the bank's config overrides, directives and webhooks (default true)",
         ),
         include_history: bool | None = Query(
             default=None, description="restore mode: carry audit_log and llm_requests (default false)"
@@ -8613,9 +8621,9 @@ def _register_routes(app: FastAPI):
         "This is the export and import above run back to back on this instance, so nothing is re-extracted "
         "and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. "
         "The same three flags choose what the clone inherits: include_data (documents, facts, observations, "
-        "attachments, the curation archive, the operations log), include_bank_config (bank config, mental "
-        "models and their history, knowledge pages, directives and **webhooks**) and include_history "
-        "(audit_log, llm_requests).\n\n"
+        "attachments, the curation archive, the operations log, and the mental models and knowledge pages "
+        "synthesized from them), include_bank_config (the bank's config overrides, directives and "
+        "**webhooks**) and include_history (audit_log, llm_requests).\n\n"
         "Note the webhooks: they travel with the bank's configuration, so a clone made with the default "
         "flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on "
         "the clone, when they point at a per-bank consumer.\n\n"
@@ -8630,9 +8638,13 @@ def _register_routes(app: FastAPI):
     async def api_clone_bank(
         bank_id: str,
         target_bank_id: str = Query(..., description="Bank to create; must not already exist"),
-        include_data: bool = Query(default=True, description="Copy the memories and everything backing them"),
+        include_data: bool = Query(
+            default=True,
+            description="Copy the memories, what backs them, and the mental models and knowledge pages "
+            "synthesized from them",
+        ),
         include_bank_config: bool = Query(
-            default=True, description="Copy bank config, mental models, directives and webhooks"
+            default=True, description="Copy the bank's config overrides, directives and webhooks"
         ),
         include_history: bool = Query(default=False, description="Copy audit_log and llm_requests"),
         request_context: RequestContext = Depends(get_request_context),

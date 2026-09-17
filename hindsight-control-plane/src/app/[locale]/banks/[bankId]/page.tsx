@@ -885,11 +885,12 @@ export default function BankPage() {
                     checked={flag.checked}
                     onCheckedChange={(checked) => flag.set(checked === true)}
                     disabled={isCloning}
+                    // The checkbox is 16px and the label line is 20px, so without
+                    // this the box rides above the text it belongs to.
+                    className="mt-0.5"
                   />
-                  <div className="space-y-1">
-                    <Label htmlFor={flag.id} className="font-normal">
-                      {flag.label}
-                    </Label>
+                  <div className="grid gap-1 leading-none">
+                    <Label htmlFor={flag.id}>{flag.label}</Label>
                     <p className="text-xs text-muted-foreground">{flag.hint}</p>
                   </div>
                 </div>

@@ -639,9 +639,11 @@ Move a bank — or just its documents — between banks and instances **without 
 
 | Flag | Default | What it carries |
 |------|---------|-----------------|
-| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, and the maintenance queues. |
-| `include_bank_config` | `true` | The bank's config overrides, mental models and their refresh history, knowledge pages, directives, and webhooks. |
+| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, the maintenance queues — and what the bank synthesized from all of it: mental models, their refresh history, and the knowledge-page tree over them. |
+| `include_bank_config` | `true` | How the bank is set up: its config overrides, directives, and webhooks. |
 | `include_history` | `false` | `audit_log` and `llm_requests`. |
+
+Mental models and knowledge pages count as **data**, not configuration. A mental model is a reading of the bank's facts and cites them by id in its `based_on` evidence, so carrying it without them would restore a synthesis whose grounding resolves to nothing. Their refresh history follows them for the same reason.
 
 Embeddings and database ids are never carried: facts are re-embedded with the *target* bank's model and entities are re-resolved against it, so an archive moves cleanly to an instance configured with a different embedding model, vector extension, or text-search backend.
 
@@ -703,8 +705,8 @@ curl -X POST -H "Authorization: Bearer $API_KEY" \
 | Query param | Default | Description |
 |-------------|---------|-------------|
 | `target_bank_id` | — | Required. The bank to create; it must not already exist. |
-| `include_data` | `true` | Copy the memories and everything backing them. |
-| `include_bank_config` | `true` | Copy bank config, mental models and their history, knowledge pages, directives and webhooks. |
+| `include_data` | `true` | Copy the memories, everything backing them, and the mental models and knowledge pages synthesized from them. |
+| `include_bank_config` | `true` | Copy the bank's config overrides, directives and webhooks. |
 | `include_history` | `false` | Copy `audit_log` and `llm_requests`. |
 
 The clone is independent from the moment it is made: later retains, consolidation and edits on either bank leave the other alone.

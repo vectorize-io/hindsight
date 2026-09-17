@@ -42,13 +42,13 @@ func (r ApiCloneBankRequest) TargetBankId(targetBankId string) ApiCloneBankReque
 	return r
 }
 
-// Copy the memories and everything backing them
+// Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them
 func (r ApiCloneBankRequest) IncludeData(includeData bool) ApiCloneBankRequest {
 	r.includeData = &includeData
 	return r
 }
 
-// Copy bank config, mental models, directives and webhooks
+// Copy the bank&#39;s config overrides, directives and webhooks
 func (r ApiCloneBankRequest) IncludeBankConfig(includeBankConfig bool) ApiCloneBankRequest {
 	r.includeBankConfig = &includeBankConfig
 	return r
@@ -74,7 +74,7 @@ CloneBank Clone a bank (async)
 
 Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.
 
-This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log), include_bank_config (bank config, mental models and their history, knowledge pages, directives and **webhooks**) and include_history (audit_log, llm_requests).
+This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).
 
 Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.
 
@@ -220,7 +220,7 @@ func (r ApiExportBankTransferRequest) IncludeData(includeData bool) ApiExportBan
 	return r
 }
 
-// Carry bank config, mental models, directives
+// Carry the bank&#39;s config overrides, directives and webhooks
 func (r ApiExportBankTransferRequest) IncludeBankConfig(includeBankConfig bool) ApiExportBankTransferRequest {
 	r.includeBankConfig = &includeBankConfig
 	return r
@@ -250,7 +250,7 @@ func (r ApiExportBankTransferRequest) Execute() (*BankTransferSubmitResponse, *h
 /*
 ExportBankTransfer Export a bank (async)
 
-Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages, directives, webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
+Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -426,7 +426,7 @@ func (r ApiImportBankTransferRequest) IncludeData(includeData bool) ApiImportBan
 	return r
 }
 
-// restore mode: carry bank config, mental models, directives (default true)
+// restore mode: restore the bank&#39;s config overrides, directives and webhooks (default true)
 func (r ApiImportBankTransferRequest) IncludeBankConfig(includeBankConfig bool) ApiImportBankTransferRequest {
 	r.includeBankConfig = &includeBankConfig
 	return r

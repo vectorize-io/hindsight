@@ -178,9 +178,9 @@
     "cloneFailed": "バンクの複製に失敗しました",
     "cloneWhatToCopy": "コピーする範囲",
     "cloneIncludeData": "記憶",
-    "cloneIncludeDataHint": "ドキュメント、事実、観察、添付ファイル、キュレーション履歴、操作ログ。",
+    "cloneIncludeDataHint": "ドキュメント、事実、観察、添付ファイル、キュレーション履歴、操作ログ、そしてそこから合成されたメンタルモデルとナレッジページ。",
     "cloneIncludeBankConfig": "バンク設定",
-    "cloneIncludeBankConfigHint": "設定の上書き、メンタルモデルとその履歴、ナレッジページ、ディレクティブ、Webhook。コピーも同じ Webhook エンドポイントを呼び出します。",
+    "cloneIncludeBankConfigHint": "設定の上書き、ディレクティブ、Webhook。コピーも同じ Webhook エンドポイントを呼び出します。",
     "cloneIncludeHistory": "履歴",
     "cloneIncludeHistoryHint": "監査ログと LLM リクエストのトレース。",
     "cloneNothingSelected": "コピーする対象を 1 つ以上選んでください。"

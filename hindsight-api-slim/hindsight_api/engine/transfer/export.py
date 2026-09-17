@@ -81,7 +81,16 @@ _REPLAYED_TABLES = frozenset(
 )
 # Carried verbatim as JSON rows (bank config + synthesized state). Embedding-bearing
 # rows have their vector stripped (see _DERIVED_COLUMNS) and are re-embedded on import.
-_BANK_ROW_TABLES = ("banks", "mental_models", "directives", "webhooks")
+#: How the bank is set up: its config overrides and the rules/endpoints it was
+#: given. Carried with ``bank_config``.
+_CONFIG_ROW_TABLES = ("banks", "directives", "webhooks")
+#: What the bank has *synthesized from its own memories* — mental models, and
+#: (as typed rows elsewhere) the knowledge-page tree over them. These are carried
+#: with ``data``, not with the configuration: a mental model is a reading of the
+#: bank's facts, and its ``based_on`` evidence points straight at them, so it
+#: belongs with the memories it was derived from rather than with the settings.
+_SYNTHESIZED_ROW_TABLES = ("mental_models",)
+_BANK_ROW_TABLES = (*_CONFIG_ROW_TABLES, *_SYNTHESIZED_ROW_TABLES)
 # Bank-scoped child-history carried verbatim. Unlike observations, mental models
 # keep their (id, bank_id) across export/import, so their refresh history can be
 # re-attached. The surrogate ``id`` is dropped on dump so the target reassigns it
@@ -478,11 +487,18 @@ async def export_bank(
 
     bank_rows: dict[str, list[dict]] = {}
     knowledge_pages: list[TransferKnowledgePage] = []
-    if scope.bank_config:
-        bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
+    if scope.data:
+        # Synthesized knowledge travels with the memories it was synthesized from:
+        # a mental model reads the bank's facts and cites them by id, and a
+        # knowledge page is a view over a mental model.
+        for table in _SYNTHESIZED_ROW_TABLES:
+            bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
         for table in CARRIED_HISTORY_TABLES:
             bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
         knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+    if scope.bank_config:
+        for table in _CONFIG_ROW_TABLES:
+            bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
 
     history_rows: dict[str, list[dict]] = {}
     if scope.history:
@@ -514,7 +530,7 @@ async def export_bank(
             zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
         # Typed knowledge-page tree (parent-first). Written even when empty so the
         # importer can distinguish "no pages" from a pre-tree archive.
-        if scope.bank_config:
+        if scope.data:
             zf.writestr(
                 "knowledge_pages.json",
                 "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"

@@ -178,9 +178,9 @@
     "cloneFailed": "Failed to clone bank",
     "cloneWhatToCopy": "What to copy",
     "cloneIncludeData": "Memories",
-    "cloneIncludeDataHint": "Documents, facts, observations, attachments, the curation archive and the operations log.",
+    "cloneIncludeDataHint": "Documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them.",
     "cloneIncludeBankConfig": "Bank configuration",
-    "cloneIncludeBankConfigHint": "Config overrides, mental models and their history, knowledge pages, directives and webhooks — the copy will call the same webhook endpoints.",
+    "cloneIncludeBankConfigHint": "Config overrides, directives and webhooks — the copy will call the same webhook endpoints.",
     "cloneIncludeHistory": "History",
     "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
     "cloneNothingSelected": "Choose at least one thing to copy."

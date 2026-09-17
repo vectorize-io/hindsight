@@ -1088,7 +1088,7 @@ async def import_bank(
 
     # Re-embed restored mental models off-connection (the source embedding was
     # stripped on export), so no DB connection is held across the embedding call.
-    mm_rows = parsed.bank_rows.get("mental_models", []) if restoring.bank_config else []
+    mm_rows = parsed.bank_rows.get("mental_models", []) if restoring.data else []
     mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, mm_rows)
 
     async with acquire_with_retry(backend) as conn:
@@ -1126,7 +1126,9 @@ async def import_bank(
                 bank_rows_json_encoding=bank_rows_json_encoding,
             )
 
-        if restoring.bank_config:
+            # Synthesized knowledge rides with the memories: the evidence remapped
+            # just above points at the facts the replay has now written, so these
+            # rows are only coherent alongside them.
             result.mental_models_imported = await _restore_rows(
                 conn,
                 "mental_models",
@@ -1151,6 +1153,8 @@ async def import_bank(
             result.knowledge_pages_indexed = await _index_restored_pages(
                 conn, bank_id, parsed.knowledge_pages, mm_embeddings
             )
+
+        if restoring.bank_config:
             result.directives_imported = await _restore_rows(
                 conn,
                 "directives",

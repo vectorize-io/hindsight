@@ -178,9 +178,9 @@
     "cloneFailed": "뱅크 복제에 실패했습니다",
     "cloneWhatToCopy": "복사할 항목",
     "cloneIncludeData": "기억",
-    "cloneIncludeDataHint": "문서, 사실, 관찰, 첨부 파일, 큐레이션 보관본, 작업 로그.",
+    "cloneIncludeDataHint": "문서, 사실, 관찰, 첨부 파일, 큐레이션 보관본, 작업 로그, 그리고 이들로부터 합성된 멘탈 모델과 지식 페이지.",
     "cloneIncludeBankConfig": "뱅크 설정",
-    "cloneIncludeBankConfigHint": "설정 재정의, 멘탈 모델과 그 기록, 지식 페이지, 디렉티브, 웹훅 — 복사본도 같은 웹훅 엔드포인트를 호출합니다.",
+    "cloneIncludeBankConfigHint": "설정 재정의, 디렉티브, 웹훅 — 복사본도 같은 웹훅 엔드포인트를 호출합니다.",
     "cloneIncludeHistory": "기록",
     "cloneIncludeHistoryHint": "감사 로그와 LLM 요청 추적.",
     "cloneNothingSelected": "복사할 항목을 하나 이상 선택하세요."

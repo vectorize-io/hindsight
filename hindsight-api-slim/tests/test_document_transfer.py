@@ -2426,17 +2426,22 @@ async def test_scope_exports_and_restores_only_what_was_asked_for(memory, reques
         with zipfile.ZipFile(io.BytesIO(data_archive)) as zf:
             data_names = set(zf.namelist())
         assert not any(n.startswith("documents/") for n in config_names)
-        assert "mental_models.json" in config_names
         assert any(n.startswith("documents/") for n in data_names)
-        assert "mental_models.json" not in data_names
+        # Mental models are a reading of the bank's facts, so they travel with the
+        # data rather than with the settings — a config-only archive carrying them
+        # would restore a synthesis whose evidence resolves to nothing.
+        assert "mental_models.json" in data_names
+        assert "mental_models.json" not in config_names
+        assert "directives.json" in config_names
+        assert "directives.json" not in data_names
 
         config_result = await memory.import_bank_async(config_archive, request_context, target_bank_id=config_only)
         assert config_result.documents_imported == 0
-        assert config_result.mental_models_imported == 1
+        assert config_result.mental_models_imported == 0
 
         data_result = await memory.import_bank_async(data_archive, request_context, target_bank_id=data_only)
         assert data_result.documents_imported == 1
-        assert data_result.mental_models_imported == 0
+        assert data_result.mental_models_imported == 1
         # The bank row came from this instance's defaults rather than the archive,
         # but it exists — the facts had to land somewhere.
         assert await memory.get_bank_profile(data_only, request_context=request_context) is not None
