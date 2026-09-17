@@ -1525,6 +1525,13 @@ class ReflectRequest(BaseModel):
         description="Exclude specific mental models by ID from the reflect loop.",
     )
 
+    @field_validator("query")
+    @classmethod
+    def validate_query_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("query must not be empty or whitespace-only")
+        return v
+
     @field_validator("fact_types")
     @classmethod
     def validate_reflect_fact_types(cls, v: list[str] | None) -> list[str] | None:

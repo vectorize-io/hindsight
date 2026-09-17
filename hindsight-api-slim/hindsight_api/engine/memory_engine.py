@@ -14826,6 +14826,11 @@ class MemoryEngine(MemoryEngineInterface):
         query = sanitize_text(query) or ""
         context = sanitize_text(context)
 
+        # Internal callers bypass HTTP request validation. Reject blank input
+        # before it can trigger provider retries, including after sanitization.
+        if not query.strip():
+            raise ValueError("query must not be empty or whitespace-only")
+
         # Use cached LLM config
         if self._reflect_llm_config is None:
             raise ValueError("Memory LLM API key not set. Set HINDSIGHT_API_LLM_API_KEY environment variable.")

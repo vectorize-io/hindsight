@@ -19,7 +19,7 @@ handed a blank.
 from __future__ import annotations
 
 import pytest
-from hindsight_client_api.exceptions import ServiceException
+from hindsight_client_api.exceptions import ApiException, ServiceException
 
 from hindsight_system_tests import reflect_loop
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -78,3 +78,13 @@ async def test_a_working_model_still_answers(client, llm, bank_with_facts):
     response = await client.areflect(bank_id=bank_with_facts, query=QUERY)
 
     assert response.text == "Alice lives in Berlin."
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\t\n", "\u00a0\u2003"])
+async def test_blank_query_is_rejected_without_llm_calls(client, llm, bank_id, query: str) -> None:
+    with pytest.raises(ApiException) as raised:
+        await client.areflect(bank_id=bank_id, query=query)
+
+    assert raised.value.status == 422
+    assert "query must not be empty or whitespace-only" in str(raised.value)
+    assert llm.calls == []
