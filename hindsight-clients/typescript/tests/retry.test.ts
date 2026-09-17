@@ -139,11 +139,12 @@ describe("retry cancellation", () => {
     const controller = new AbortController();
     const send = jest.fn(async () => res(status, "30"));
     const pending = retryOnCapacity(send, 3, () => 1, controller.signal);
+    // Attach the handler before yielding: the rejection lands during abort(), and an
+    // unhandled one fails the run.
     const settled = pending.catch((error: unknown) => error);
     await jest.advanceTimersByTimeAsync(0);
     expect(jest.getTimerCount()).toBe(1);
     controller.abort();
-    // Capture the reason after abort; attach a handler before yielding.
     expect(jest.getTimerCount()).toBe(0);
     expect(await settled).toBe(controller.signal.reason);
     await jest.advanceTimersByTimeAsync(60000);
