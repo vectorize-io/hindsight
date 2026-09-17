@@ -480,6 +480,85 @@ def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_nam
         conn.execute(text(f'DROP INDEX IF EXISTS "{schema_name}"."{index_name}"'))
 
 
+def _migrate_table_embedding_dimension(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    required_dimension: int,
+    vector_ext: str,
+    *,
+    indexed: bool = True,
+) -> None:
+    """
+    Migrate the embedding column of a single table to the required dimension.
+
+    - If dimensions match: no action needed
+    - If dimensions differ and table is empty: ALTER COLUMN to new dimension
+    - If dimensions differ and table has data: raise error with migration guidance
+
+    ``indexed=False`` keeps the column but with no vector index at all: any existing one is
+    dropped and none is created, so the pgvector 2000-dimension index limit does not apply.
+    """
+    current_dim = conn.execute(
+        text("""
+            SELECT atttypmod
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = :schema
+              AND c.relname = :table
+              AND a.attname = 'embedding'
+        """),
+        {"schema": schema_name, "table": table_name},
+    ).scalar()
+
+    if current_dim is None:
+        logger.debug(f"No embedding column found on {table_name}, skipping")
+        return
+
+    if not indexed:
+        # Also on the dimension-match path: the base migrations create this index, so a
+        # deployment that switches to a custom store still carries one until it is dropped here.
+        _drop_embedding_vector_indexes(conn, schema_name, table_name)
+        conn.commit()
+
+    if current_dim == required_dimension:
+        logger.debug(f"Embedding dimension OK for {table_name}: {current_dim}")
+        return
+
+    logger.info(
+        f"Embedding dimension mismatch on {table_name}: database has {current_dim}, model requires {required_dimension}"
+    )
+
+    row_count = conn.execute(
+        text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
+    ).scalar()
+
+    if row_count > 0:
+        raise RuntimeError(
+            f"Cannot change embedding dimension from {current_dim} to {required_dimension}: "
+            f"{table_name} table contains {row_count} rows with embeddings. "
+            f"To change dimensions, you must either:\n"
+            f"  1. Re-embed all data: DELETE FROM {schema_name}.{table_name}; then restart\n"
+            f"  2. Use a model with {current_dim}-dimensional embeddings"
+        )
+
+    logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
+
+    _drop_embedding_vector_indexes(conn, schema_name, table_name)
+    conn.execute(
+        text(f"ALTER TABLE {schema_name}.{table_name} ALTER COLUMN embedding TYPE vector({required_dimension})")
+    )
+    conn.commit()
+
+    if not indexed:
+        logger.info(f"Changed {table_name}.embedding dimension to {required_dimension} (no vector index)")
+        return
+
+    _create_embedding_vector_index(conn, schema_name, table_name, required_dimension, vector_ext, row_count)
+    logger.info(f"Successfully changed {table_name}.embedding dimension to {required_dimension}")
+
+
 def _has_embedding_vector_index(conn: Connection, schema_name: str, table_name: str) -> bool:
     return bool(_vector_index_names(conn, schema_name, table_name))
 
