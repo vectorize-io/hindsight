@@ -454,6 +454,12 @@ async def export_bank(
     after tenant auth). ``file_storage`` is needed only for attachment bytes; a
     bank with attachments exported without one raises rather than silently
     producing rows that point at blobs the archive does not carry.
+
+    This convenience form keeps ``conn`` for the whole call, including the
+    compression — fine for the admin CLI, which owns a connection of its own and
+    has no event loop to share. A server path wants
+    :func:`load_bank_export` and :func:`build_bank_archive` instead, so the
+    connection returns to the pool as soon as the reads are done.
     """
     payload = await load_bank_export(
         conn,

@@ -2861,6 +2861,40 @@ def test_archive_assembly_is_confined_to_threadable_builders():
     assert {"_build_archive_bytes", "_build_bank_archive_bytes"} <= builders
 
 
+def test_the_engine_never_compresses_inside_a_read_transaction():
+    """No archive is built while a transaction is open.
+
+    Splitting load from build only helps if the callers keep them apart: moving
+    the build back inside the `async with conn.transaction()` block would pin a
+    pooled connection for the whole compression again, and would look perfectly
+    reasonable in review — which is why this is asserted structurally rather than
+    left to the next reader to notice.
+    """
+    import ast
+    from pathlib import Path
+
+    from hindsight_api.engine import memory_engine
+
+    source = Path(memory_engine.__file__).read_text()
+    tree = ast.parse(source)
+
+    def builds_an_archive(node: ast.AST) -> bool:
+        return any(
+            isinstance(inner, ast.Call) and getattr(inner.func, "id", "") == "build_bank_archive"
+            for inner in ast.walk(node)
+        )
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        header = (ast.get_source_segment(source, node) or "").splitlines()[:1]
+        if header and ".transaction(" in header[0] and builds_an_archive(node):
+            offenders.append(f"line {node.lineno}: {header[0].strip()}")
+
+    assert offenders == [], f"archive built inside a transaction: {offenders}"
+
+
 @pytest.mark.asyncio
 async def test_bank_archive_builds_without_the_connection_that_read_it(memory, request_context):
     """The compression runs after the read transaction is closed.
