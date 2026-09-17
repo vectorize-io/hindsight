@@ -6,7 +6,7 @@ from urllib.parse import quote
 from .base import FileStorage
 from .postgresql import PostgreSQLFileStorage
 
-__all__ = ["FileStorage", "PostgreSQLFileStorage", "bank_storage_prefix", "create_file_storage"]
+__all__ = ["FileStorage", "PostgreSQLFileStorage", "bank_storage_prefix", "create_file_storage", "key_segment"]
 
 
 def bank_storage_prefix(bank_id: str) -> str:
@@ -19,10 +19,10 @@ def bank_storage_prefix(bank_id: str) -> str:
     """
     from ..memory_engine import get_current_schema
 
-    return f"tenants/{_key_segment(get_current_schema())}/banks/{_key_segment(bank_id)}/"
+    return f"tenants/{key_segment(get_current_schema())}/banks/{key_segment(bank_id)}/"
 
 
-def _key_segment(value: str) -> str:
+def key_segment(value: str) -> str:
     """Encode a name as exactly one key segment, injectively.
 
     Escaping rather than validating: bank ids are caller-chosen and already in use

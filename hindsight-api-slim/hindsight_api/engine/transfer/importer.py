@@ -379,7 +379,7 @@ class ParsedBankArchive:
     # table name -> rows (audit_log, llm_requests), present only with scope.history
     history_rows: dict[str, list[dict]] = field(default_factory=dict)
     # table name -> rows for the operational/curation tables carried with the data
-    # (async_operations, the maintenance queues, document_attachments,
+    # (async_operations, the maintenance queues,
     # invalidated_memory_units). Absent on pre-scope archives.
     data_rows: dict[str, list[dict]] = field(default_factory=dict)
     # Attachment rows paired with the archive entries holding their bytes.
@@ -425,7 +425,7 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
             if fname in names:
                 history_rows[table] = json.loads(zf.read(fname))
         data_rows: dict[str, list[dict]] = {}
-        for table in (*OPERATIONAL_TABLES, "document_attachments", "invalidated_memory_units"):
+        for table in (*OPERATIONAL_TABLES, "invalidated_memory_units"):
             fname = f"data/{table}.json"
             if fname in names:
                 data_rows[table] = json.loads(zf.read(fname))
@@ -753,13 +753,16 @@ async def _restore_attachments(
     attachments: list[TransferAttachment],
     blobs: dict[str, bytes],
     file_storage: Any,
+    document_id_map: dict[str, str],
 ) -> int:
     """Write attachment bytes into the target's file storage and record the rows.
 
-    The storage key is recomputed rather than carried: it encodes the tenant and
-    bank (``bank_storage_prefix``), so the source's key would point a renamed
-    clone — or a different tenant — at the source's blob, which bank deletion then
-    sweeps out from under it.
+    The storage key is recomputed rather than carried: it encodes the tenant, the
+    bank (``bank_storage_prefix``) and the owning document, so the source's key
+    would point a renamed clone — or a different tenant — at the source's blob,
+    which bank deletion then sweeps out from under it. ``document_id_map`` is what
+    an ``new-id`` import renamed each document to, so a copy lands under the
+    document the target actually wrote.
     """
     if not attachments:
         return 0
@@ -771,7 +774,8 @@ async def _restore_attachments(
 
     restored = 0
     for attachment in attachments:
-        key = attachment_storage_key(bank_id, attachment.attachment_hash)
+        document_id = document_id_map.get(attachment.document_id, attachment.document_id)
+        key = attachment_storage_key(bank_id, document_id, attachment.attachment_hash)
         await file_storage.store(
             file_data=blobs[attachment.entry],
             key=key,
@@ -780,17 +784,20 @@ async def _restore_attachments(
         await conn.execute(
             f"""
             INSERT INTO {fq_table("attachments")}
-                (bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, now()))
+                (bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind,
+                 filename, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, now()))
             ON CONFLICT DO NOTHING
             """,
             bank_id,
+            document_id,
             attachment.attachment_hash,
             attachment.short_id,
             attachment.media_type,
             attachment.byte_size,
             key,
             attachment.kind,
+            attachment.filename,
             attachment.created_at,
         )
         restored += 1
@@ -1098,20 +1105,11 @@ async def import_bank(
 
     async with acquire_with_retry(backend) as conn:
         if restoring.data:
-            # After the documents: document_attachments references them, and the
-            # queue/curation rows are keyed by units the replay has just written.
+            # After the documents: an attachment row names the document that owns
+            # it, and the queue/curation rows are keyed by units the replay has
+            # just written.
             result.attachments_imported = await _restore_attachments(
-                conn, bank_id, parsed.attachments, parsed.blobs, file_storage
-            )
-            document_attachments = [
-                {**row, "document_id": _remapped_document_id(row, document_id_map)}
-                for row in parsed.data_rows.get("document_attachments", [])
-            ]
-            await _restore_rows(
-                conn,
-                "document_attachments",
-                document_attachments,
-                bank_rows_json_encoding=bank_rows_json_encoding,
+                conn, bank_id, parsed.attachments, parsed.blobs, file_storage, document_id_map
             )
             operational = await _restore_operational_rows(
                 conn,

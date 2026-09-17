@@ -40,7 +40,7 @@ KNOWLEDGE_TABLES = ("knowledge_pages",)
 OPERATIONAL_TABLES = ("async_operations", "graph_maintenance_queue", "entity_maintenance_queue")
 # Attachment bytes live in file storage, not in a column, so the rows travel with
 # the blobs they point at (``blobs/``) rather than on their own.
-ATTACHMENT_TABLES = ("attachments", "document_attachments")
+ATTACHMENT_TABLES = ("attachments",)
 
 
 @dataclass(frozen=True)
@@ -101,11 +101,17 @@ class TransferAttachment(BaseModel):
     """
 
     bank_id: str
+    #: The document that owns it. An attachment belongs to one document, so a
+    #: bank carrying the same image in two documents exports two of these.
+    document_id: str
     attachment_hash: str
     short_id: str
     media_type: str
     byte_size: int
     kind: str = "image"
+    #: The name this document gave it, which belongs to the reference rather than
+    #: the bytes and so travels with the row.
+    filename: str | None = None
     created_at: datetime | None = None
     entry: str
 

@@ -7464,19 +7464,11 @@ def _register_routes(app: FastAPI):
             document = await app.state.memory.get_document(document_id, bank_id, request_context=request_context)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
-            # A store-owned bank's document carries its attachment names from the record just
-            # read; taken off so the payload is the same shape on either backend, and handed on so
-            # the engine does not read that record a second time.
-            stored_names = document.pop("attachment_filenames", None)
-            by_document = await app.state.memory.attachments_for_documents(
-                bank_id,
-                [document_id],
-                request_context,
-                # Used only for a store-owned bank, which has no document edge to read; a null
-                # text (full text not kept) makes the engine fall back to the chunk texts.
-                carried_texts={document_id: document.get("original_text")},
-                carried_filenames=None if stored_names is None else {document_id: stored_names},
-            )
+            # A store-owned bank's record carries its own copy of the attachment names; taken
+            # off so the payload is the same shape on either backend. The names below come from
+            # the attachment rows themselves, which carry them on every backend now.
+            document.pop("attachment_filenames", None)
+            by_document = await app.state.memory.attachments_for_documents(bank_id, [document_id], request_context)
             if by_document.get(document_id):
                 document["attachments"] = [_attachment_payload(bank_id, record) for record in by_document[document_id]]
             return document
@@ -9440,15 +9432,31 @@ def _register_routes(app: FastAPI):
                 )
                 for index, item in enumerate(request.items)
             ]
-            retained_attachments = [
-                attachment for canonical in canonical_contents for attachment in canonical.attachments
+            # The document each item's attachments belong to, decided here rather
+            # than inside the retain: an attachment is stored under its document's
+            # key, so the document needs an id before its bytes are written. The
+            # retain then uses the id chosen here instead of minting its own — the
+            # same thing the file-retain route does. Only an item that carries
+            # attachments needs one; the rest keep the behaviour they had.
+            item_document_ids = [
+                item.document_id or (f"retain_{uuid.uuid4()}" if canonical.attachments else None)
+                for item, canonical in zip(request.items, canonical_contents, strict=True)
             ]
-            if retained_attachments:
-                await app.state.memory.store_retain_attachments(bank_id, retained_attachments, request_context)
+            attachments_by_document: dict[str, list] = {}
+            for item_document_id, canonical in zip(item_document_ids, canonical_contents, strict=True):
+                if item_document_id and canonical.attachments:
+                    attachments_by_document.setdefault(item_document_id, []).extend(canonical.attachments)
+            # Short ids per document, for whatever this request actually wrote — what a
+            # refusal below has to take back out, as opposed to what the document already had.
+            ingress_attachments = await app.state.memory.store_retain_attachments(
+                bank_id, attachments_by_document, request_context
+            )
 
             # Group items by strategy
             strategy_groups: dict[str | None, list[dict]] = {}
-            for item, canonical in zip(request.items, canonical_contents, strict=True):
+            for item, canonical, item_document_id in zip(
+                request.items, canonical_contents, item_document_ids, strict=True
+            ):
                 effective = item.strategy
                 if effective not in strategy_groups:
                     strategy_groups[effective] = []
@@ -9479,8 +9487,8 @@ def _register_routes(app: FastAPI):
                     content_dict["context"] = item.context
                 if item.metadata:
                     content_dict["metadata"] = item.metadata
-                if item.document_id:
-                    content_dict["document_id"] = item.document_id
+                if item_document_id:
+                    content_dict["document_id"] = item_document_id
                 if item.entities:
                     content_dict["entities"] = [{"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities]
                     content_dict["resolve_entities"] = item.resolve_entities
@@ -9515,6 +9523,7 @@ def _register_routes(app: FastAPI):
                         strategy=group_strategy,
                         request_context=request_context,
                         operation_id=request.operation_id,
+                        ingress_attachments=ingress_attachments,
                     )
                     all_operation_ids.append(result["operation_id"])
                     total_items_count += result["items_count"]
@@ -9553,6 +9562,7 @@ def _register_routes(app: FastAPI):
                             strategy=group_strategy,
                             request_context=request_context,
                             return_usage=True,
+                            ingress_attachments=ingress_attachments,
                             outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
                                 bank_id=bank_id,
                                 operation_id=None,

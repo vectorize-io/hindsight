@@ -60,9 +60,6 @@ BACKUP_TABLES = [
     # the parent present, and the reversed TRUNCATE must clear the child first.
     "attachments",
     "documents",
-    # After both of its parents: document_attachments references documents (id, bank_id)
-    # and names a attachments row.
-    "document_attachments",
     "entities",
     "chunks",
     "memory_units",

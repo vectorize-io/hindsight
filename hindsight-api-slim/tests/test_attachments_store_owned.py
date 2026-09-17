@@ -195,6 +195,7 @@ class _AttachmentsOnlyConn:
             SHOT: ("h" * 64, "image/png", 10, "image"),
             DIAGRAM: ("d" * 64, "image/svg+xml", 20, "image"),
         }
+        # The name is on the row, per document: doc-1 named the screenshot, doc-2 did not.
         return [
             {
                 "attachment_hash": known[i][0],
@@ -203,7 +204,7 @@ class _AttachmentsOnlyConn:
                 "byte_size": known[i][2],
                 "storage_key": f"k/{i}",
                 "kind": known[i][3],
-                "filename": None,
+                "filename": SHOT_NAME if (i == SHOT and document_id == "doc-1") else None,
             }
             for i in ids
             if i in known
@@ -251,51 +252,64 @@ def _memories(store_owned: bool, names: "dict[str, dict[str, str]] | None" = Non
 # -- reclaim -----------------------------------------------------------------
 
 
-class _NoSqlConn:
-    """Fails on any statement: reclaim must not even ask which attachments look orphaned."""
+class _ReclaimEngine:
+    """Enough of the engine for the reclaim path; its file storage fails on any delete."""
 
-    async def fetch(self, *a, **k):
-        raise AssertionError("reclaim queried Postgres for a store-owned bank")
-
-    async def execute(self, *a, **k):
-        raise AssertionError("reclaim deleted attachment rows for a store-owned bank")
-
-
-class _NoFileDeletes:
-    """An engine stand-in whose file storage fails on any delete."""
+    _unreferenced_attachment_blobs = MemoryEngine._unreferenced_attachment_blobs
 
     class _Files:
         async def delete(self, key):
-            raise AssertionError(f"reclaim deleted the blob {key} for a store-owned bank")
+            raise AssertionError(f"reclaim deleted the blob {key}, which a row still names")
 
     _file_storage = _Files()
 
 
+class _ReclaimConn:
+    """Answers the two reads the reclaim makes, and records the delete."""
+
+    def __init__(self, keys: list[str], still_named: "list[str] | None" = None):
+        self._keys = keys
+        self._still_named = still_named or []
+        self.deleted: list[tuple] = []
+
+    async def fetch(self, sql, *args):
+        if "DISTINCT storage_key" in sql:
+            return [{"storage_key": key} for key in self._still_named]
+        return [{"storage_key": key} for key in self._keys]
+
+    async def execute(self, sql, *args):
+        self.deleted.append(args)
+
+
 @pytest.mark.asyncio
-async def test_reclaim_never_runs_for_a_store_owned_bank(monkeypatch):
-    """A store-owned bank has no complete set of document_attachments rows, so the "no edge
-    survives" test cannot tell an orphan from an attachment a store-held document still shows:
-    reclaiming would delete a shared image. It must leave every attachment in place."""
-    monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=True))
+async def test_reclaim_runs_for_a_store_owned_bank():
+    """#4462: an attachment belongs to its document, so this is the same on both backends.
 
-    assert await MemoryEngine._drop_orphaned_attachments(_NoFileDeletes(), _NoSqlConn(), "bank-1", [SHOT_HASH]) == []
+    It used to bail out here. A store-owned bank's documents are not SQL rows, so it had no
+    reference rows, and "no reference survives" could not tell an unreferenced attachment from
+    one a store-held document still shows -- which meant nothing ever reclaimed these banks'
+    attachments. Now the attachment row names its own document, and there is nothing to ask.
+    """
+    conn = _ReclaimConn([f"k/{SHOT}"])
+
+    orphans = await MemoryEngine._drop_orphaned_attachments(_ReclaimEngine(), conn, "bank-1", DOCUMENT_ID)
+
+    assert orphans == [f"k/{SHOT}"]
+    assert conn.deleted == [("bank-1", DOCUMENT_ID)], "the document's own rows, and only those"
 
 
 @pytest.mark.asyncio
-async def test_reclaim_still_checks_references_for_a_sql_bank(monkeypatch):
-    """The guard is scoped to store-owned banks: a SQL bank still runs the reference check."""
-    monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=False))
-    asked: list[list[str]] = []
+async def test_reclaim_keeps_a_blob_another_row_still_names():
+    """A bank retained before this rule shares one blob across its documents.
 
-    class _Conn:
-        async def fetch(self, sql, bank_id, hashes):
-            assert "document_attachments" in sql
-            asked.append(list(hashes))
-            return []  # still referenced: nothing to reclaim
+    The migration gives each document a row of its own but does not move the bytes, so the
+    surviving rows still name that key; freeing it with the first document would blank the
+    image in the others.
+    """
+    shared = f"legacy/{SHOT}"
+    conn = _ReclaimConn([shared], still_named=[shared])
 
-    assert await MemoryEngine._drop_orphaned_attachments(_NoFileDeletes(), _Conn(), "bank-1", [SHOT_HASH]) == []
-
-    assert asked == [[SHOT_HASH]]
+    assert await MemoryEngine._drop_orphaned_attachments(_ReclaimEngine(), conn, "bank-1", DOCUMENT_ID) == []
 
 
 @pytest.mark.asyncio
@@ -340,15 +354,15 @@ async def test_a_store_owned_bank_resolves_the_carried_ids_without_memory_units(
         UNIT_B: [DIAGRAM],
     }
     assert result[UNIT_A][0].media_type == "image/png"
-    # One read per document: the filename lives on the document edge.
+    # One read per document: the filename is on that document's own attachment row.
     assert len(conn.statements) == 2
-    # The names come off the store's document records -- per document, so the same bytes named
-    # in doc-1 stay unnamed in doc-2 -- in ONE batched read for the whole page.
+    # So the same bytes named in doc-1 stay unnamed in doc-2...
     assert {unit: [r.filename for r in records] for unit, records in result.items()} == {
         UNIT_A: [SHOT_NAME, None],
         UNIT_B: [None],
     }
-    assert store.record_reads == [["doc-1", "doc-2"]]
+    # ...and the store's document records are not read at all for them.
+    assert store.record_reads == []
 
 
 @pytest.mark.asyncio
@@ -461,6 +475,7 @@ async def _store_owned_bank(
         await _record_attachments(
             conn,
             bank_id,
+            DOCUMENT_ID,
             [
                 StoredAttachment(
                     attachment_hash=SHOT_HASH,
@@ -469,6 +484,7 @@ async def _store_owned_bank(
                     byte_size=68,
                     storage_key=f"attachments/{bank_id}/{SHOT}",
                     kind="image",
+                    filename=SHOT_NAME,
                 )
             ],
         )
@@ -496,7 +512,7 @@ def _assert_shot(attachments, bank_id: str) -> None:
     assert [a["id"] for a in attachments] == [SHOT]
     assert attachments[0]["media_type"] == "image/png"
     assert attachments[0]["url"] == f"/v1/default/banks/{bank_id}/attachments/{SHOT}"
-    # The name the retain gave it, read back off the store's document record.
+    # The name the retain gave it, read back off the document's own attachment row.
     assert attachments[0]["filename"] == SHOT_NAME
 
 
@@ -519,8 +535,9 @@ async def test_recall_returns_the_attachments_the_store_carried(
     assert by_id[UNIT_PLAIN].get("attachments") is None
     # The carrier stays internal: the payload is the same shape on either backend.
     assert all("attachment_ids" not in r for r in by_id.values())
-    # bounded-roundtrips: the names cost ONE batched record read for the whole response.
-    assert store.record_reads == [[DOCUMENT_ID]]
+    # The names ride on the attachment rows the lookup already reads, so the store's document
+    # records cost nothing at all.
+    assert store.record_reads == []
 
 
 @pytest.mark.asyncio
@@ -554,8 +571,8 @@ async def test_list_and_get_return_the_attachments_the_store_carried(
 
     listed = await api_client.get(f"/v1/default/banks/{bank_id}/memories/list")
     detail = await api_client.get(f"/v1/default/banks/{bank_id}/memories/{UNIT_A}")
-    # One batched record read per response.
-    assert store.record_reads == [[DOCUMENT_ID], [DOCUMENT_ID]]
+    # The names are on the attachment rows; no document record is read for them.
+    assert store.record_reads == []
 
     assert listed.status_code == 200, listed.text
     items = {m["id"]: m for m in listed.json()["items"]}
@@ -609,7 +626,8 @@ async def test_a_store_owned_chunk_resolves_from_the_carried_text(monkeypatch):
     )
 
     assert {chunk: [r.short_id for r in records] for chunk, records in result.items()} == {"c0": [SHOT]}
-    assert result["c0"][0].filename is None, "doc-1's record names nothing"
+    # The name comes off doc-1's own attachment row, not from the store.
+    assert result["c0"][0].filename == SHOT_NAME
 
 
 @pytest.mark.asyncio
@@ -630,7 +648,7 @@ async def test_a_store_owned_chunk_takes_its_documents_names(monkeypatch):
 
     assert [r.filename for r in result["c0"]] == [SHOT_NAME]
     assert [r.filename for r in result["c1"]] == [SHOT_NAME]
-    assert store.record_reads == [["doc-1"]], "one read however many chunks share the document"
+    assert store.record_reads == [], "the name is on the attachment row; the record is not read"
 
 
 async def _seed_document(store: _CarryingStore, bank_id: str, *, keep_text: bool) -> str:
@@ -653,11 +671,10 @@ async def test_document_and_chunk_reads_return_the_attachments_in_the_stored_tex
     bank_id, store = await _store_owned_bank(memory, request_context, answers_full_recall=True)
 
     document = await api_client.get(f"/v1/default/banks/{bank_id}/documents/{DOCUMENT_ID}")
-    # The route already holds the record it rendered, names included: no second read of it.
-    assert store.record_reads == []
     chunks = await api_client.get(f"/v1/default/banks/{bank_id}/documents/{DOCUMENT_ID}/chunks")
     chunk = await api_client.get(f"/v1/default/chunks/{build_chunk_id(bank_id, DOCUMENT_ID, 0)}")
-    assert store.record_reads == [[DOCUMENT_ID], [DOCUMENT_ID]]
+    # Every one of them takes its attachments, names included, off the attachment rows.
+    assert store.record_reads == []
 
     assert document.status_code == 200, document.text
     _assert_shot(document.json().get("attachments"), bank_id)
@@ -675,20 +692,20 @@ async def test_document_and_chunk_reads_return_the_attachments_in_the_stored_tex
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("keep_text", [True, False], ids=["full-text", "chunks-only"])
-async def test_the_retain_revisit_lookup_reads_the_stored_text(
+async def test_the_retain_revisit_lookup_reads_the_attachment_rows(
     memory, request_context, restore_default_store, keep_text
 ):
-    """The retain ingress asks which attachments a document already references, with no text in
-    hand, so that an edit re-sending its placeholders keeps them. For a store-owned bank the answer
-    comes from the stored text -- and from the chunk texts when the full text is not kept."""
+    """The retain ingress asks which attachments a document already carries, with no text in hand,
+    so that an edit re-sending its placeholders keeps them. The attachment row names its document,
+    so the answer is the same query on either backend -- and it does not depend on whether the
+    deployment keeps the document's full text."""
     bank_id, store = await _store_owned_bank(memory, request_context, answers_full_recall=True)
     await _seed_document(store, bank_id, keep_text=keep_text)
 
     existing = await memory.attachments_for_documents(bank_id, [DOCUMENT_ID, "never-retained"], request_context)
 
     assert {d: [r.short_id for r in records] for d, records in existing.items()} == {DOCUMENT_ID: [SHOT]}
-    # The names come off the record this lookup already read, not a second one: the retain route
-    # carries them onto the edit, which is what stops an edit from erasing them.
+    # The name rides on the same row, which is what stops an edit from erasing it.
     assert existing[DOCUMENT_ID][0].filename == SHOT_NAME
     assert store.record_reads == []
 

@@ -140,7 +140,8 @@ DOC_META_RETAIN_PARAMS = "retain_params"
 #: The names the caller gave this document's attachments, as a JSON object of short id ->
 #: filename. On the document rather than the fact because a filename describes the reference,
 #: not the bytes: the same image can be "diagram.png" in one document and "fig-2.png" in another.
-#: It is what `document_attachments.filename` holds for a bank whose documents live in SQL.
+#: The authority is `attachments.filename`, written at the ingress on every backend; this is the
+#: store's own copy, which the paths that replay stored text restate their names from.
 DOC_META_ATTACHMENT_FILENAMES = "attachment_filenames"
 #: Where the document's original upload lives in Hindsight's ``file_storage`` — the key
 #: ``documents.file_storage_key`` holds for a bank whose documents live in SQL. The upload's name

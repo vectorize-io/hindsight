@@ -2058,9 +2058,9 @@ async def _store_document_bodies(
     ``observation_scopes`` for such a bank. The store's metadata map is ``string -> string``, so
     the params are carried as one JSON value rather than flattened.
 
-    ``attachment_filenames`` rides the same map for the same reason: it is what
-    ``document_attachments.filename`` holds for a SQL bank, and that table needs a SQL
-    ``documents`` row this bank never has.
+    ``attachment_filenames`` rides the same map as the store's own copy of the names. The
+    authority is ``attachments.filename``, which every bank writes at the ingress; this is
+    what the paths that replay stored text (append, reprocess) restate from.
     """
     from ..memories import get_memories
     from ..memories.base import StoreWriteConflict, document_record_metadata

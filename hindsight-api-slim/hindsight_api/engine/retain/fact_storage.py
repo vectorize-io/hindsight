@@ -423,81 +423,54 @@ async def sync_document_attachments(
     text: str,
     filenames: dict[str, str] | None = None,
 ) -> None:
-    """Record which attachments this document references, derived from its text.
+    """Drop the attachment rows this document's text no longer justifies.
 
     Called on every document write, from the one place every write funnels
-    through. The edge is *derived*, never supplied: the canonical text is the
-    source of truth for which attachments a document carries, so a re-ingest, an
-    append or a delta re-extraction cannot leave this table disagreeing with it.
-    That is why the retain pipeline itself knows nothing about attachments.
+    through. Which attachments a document carries is *derived* from its canonical
+    text, never supplied, so a re-ingest, an append or a delta re-extraction
+    cannot leave behind a row the text stopped referencing. That is why the retain
+    pipeline itself knows nothing about attachments: the rows are written at the
+    API ingress, where the bytes arrive, and this only ever takes them away.
 
-    The rows exist for lifecycle and for the filename — a chunk's own text is
-    what recall resolves. They die with the document via the composite FK, so
-    after a delete a blob that no row in the bank still references can be
-    reclaimed.
+    The bytes are not deleted here. This runs inside the retain's transaction, and
+    a rollback would restore rows whose blobs are already gone; the caller
+    reclaims them afterwards (``_document_attachment_keys`` before the retain,
+    ``_reclaim_orphaned_attachments`` after it).
 
-    ``filenames`` maps short id to the name the caller gave that attachment *in
-    this document*. It lives here rather than on the blob because a filename
-    describes the reference, not the bytes: the same PDF can be "policy-v1.pdf"
-    in one document and "escalation-runbook.pdf" in another, and the blob row is
-    written once for the first of them. Absent (an append, a delta re-extraction,
-    a reprocess replaying stored text) the existing names are carried over, so a
-    write that does not restate them does not erase them.
+    ``filenames`` maps short id to the name the caller gave that attachment in
+    this write. A write that restates a name applies it; one that does not (an
+    append, a delta re-extraction, a reprocess replaying stored text) leaves the
+    row's existing name alone rather than blanking it.
     """
     from .attachment_content import iter_placeholder_ids
 
     referenced = sorted(set(iter_placeholder_ids(text or "")))
-
-    # Names already recorded for this document, so a write that does not restate
-    # them (append, delta re-extraction, reprocess from stored text) keeps them
-    # rather than blanking the column on the delete below.
-    existing = {
-        row["short_id"]: row["filename"]
-        for row in await conn.fetch(
-            f"""
-            SELECT ba.short_id, da.filename
-            FROM {fq_table("document_attachments")} da
-            JOIN {fq_table("attachments")} ba
-              ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
-            WHERE da.bank_id = $1 AND da.document_id = $2 AND da.filename IS NOT NULL
-            """,
+    if referenced:
+        await conn.execute(
+            f"DELETE FROM {fq_table('attachments')} "
+            f"WHERE bank_id = $1 AND document_id = $2 AND NOT (short_id = ANY($3::text[]))",
+            bank_id,
+            document_id,
+            referenced,
+        )
+    else:
+        await conn.execute(
+            f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1 AND document_id = $2",
             bank_id,
             document_id,
         )
-    }
-    resolved = {**existing, **(filenames or {})}
 
-    # Delete-then-insert rather than a diff: the set is tiny, and this way a
-    # document that lost an attachment on re-ingest cannot keep a stale row.
-    await conn.execute(
-        f"DELETE FROM {fq_table('document_attachments')} WHERE bank_id = $1 AND document_id = $2",
-        bank_id,
-        document_id,
-    )
-    if not referenced:
-        return
-    # The placeholder carries the short id; the row carries the full digest, so
-    # resolve through attachments rather than storing a second key shape. Done as
-    # a lookup and then an executemany rather than one INSERT..SELECT joined
-    # against `unnest`: pairing two arrays that way is Postgres-only, and the
-    # same statement has to run on Oracle. (`ON CONFLICT DO NOTHING` is fine —
-    # the Oracle layer rewrites it.)
-    pairs = await conn.fetch(
-        f"SELECT attachment_hash, short_id FROM {fq_table('attachments')} "
-        f"WHERE bank_id = $1 AND short_id = ANY($2::text[])",
-        bank_id,
-        referenced,
-    )
-    if not pairs:
-        return
-    await conn.executemany(
-        f"""
-        INSERT INTO {fq_table("document_attachments")} (bank_id, document_id, attachment_hash, filename)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (bank_id, document_id, attachment_hash) DO NOTHING
-        """,
-        [(bank_id, document_id, row["attachment_hash"], resolved.get(row["short_id"])) for row in pairs],
-    )
+    restated = [
+        (bank_id, document_id, short_id, name)
+        for short_id, name in (filenames or {}).items()
+        if short_id in set(referenced) and name
+    ]
+    if restated:
+        await conn.executemany(
+            f"UPDATE {fq_table('attachments')} SET filename = $4 "
+            f"WHERE bank_id = $1 AND document_id = $2 AND short_id = $3",
+            restated,
+        )
 
 
 def _normalize_scopes(value: list | str | None) -> list | str | None:

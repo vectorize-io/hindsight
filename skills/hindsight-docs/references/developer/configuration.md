@@ -1637,17 +1637,21 @@ host content on that origin.
 
 What happens to the bytes:
 
-- They are hashed (sha256) and stored **content-addressed**, so the same
-  attachment across many documents or re-ingests is stored once, and re-retaining
-  an unchanged document is a no-op.
+- They are hashed (sha256) and stored **content-addressed** under the document
+  that carries them, so the same bytes always have the same id, an attachment
+  repeated within one document is stored once, and re-retaining an unchanged
+  document is a no-op. Two *different* documents carrying the same attachment
+  hold a copy each — dedup across documents is deliberately given up, so that
+  deleting a document never has to ask whether another one still needs the bytes.
 - Storage goes through the same backend as uploaded files — `native`
   (PostgreSQL), `s3`, `gcs`, `azure`. See [File storage](#file-storage).
 - The document's stored text keeps a placeholder (`⟦hs-att:...⟧`) where the
   attachment sat, so chunking, idempotency, `update_mode=append` and
   re-extraction behave exactly as they do for text.
-- `document_attachments` records which documents reference which attachment,
-  derived from that text on every write. Deleting a document reclaims only the
-  blobs nothing else still references.
+- Which attachments a document carries is derived from that text on every write,
+  and each `attachments` row names its owning document. So deleting a document —
+  or re-retaining it without the attachment — reclaims exactly its own, the same
+  way on every backend, including a bank whose documents live in a memories store.
 - Every read surface returns the attachments alongside the text —
   `chunks[].attachments` and each memory's `attachments` on recall, plus
   get-document, get-chunk, get-memory and list-memories — each with a

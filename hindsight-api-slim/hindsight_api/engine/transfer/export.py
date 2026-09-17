@@ -541,7 +541,6 @@ async def load_bank_export(
             observations = await _load_observations(conn, bank_id, loaded.unit_index)
         exported_attachments = await _dump_attachments(conn, bank_id, file_storage)
         attachments, blobs = exported_attachments.rows, exported_attachments.blobs
-        data_rows["document_attachments"] = await _dump_bank_rows(conn, "document_attachments", bank_id)
         data_rows.update(await _dump_operational_rows(conn, bank_id))
         data_rows["invalidated_memory_units"] = await _dump_invalidated_units(conn, bank_id)
 
@@ -705,8 +704,9 @@ async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> _Expo
     alternative is an archive that looks complete and silently is not.
     """
     rows = await conn.fetch(
-        f"SELECT bank_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, created_at "
-        f"FROM {fq_table('attachments')} WHERE bank_id = $1 ORDER BY attachment_hash",
+        f"SELECT bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, "
+        f"filename, created_at "
+        f"FROM {fq_table('attachments')} WHERE bank_id = $1 ORDER BY document_id, attachment_hash",
         bank_id,
     )
     if not rows:
@@ -736,11 +736,13 @@ async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> _Expo
         attachments.append(
             TransferAttachment(
                 bank_id=row["bank_id"],
+                document_id=row["document_id"],
                 attachment_hash=row["attachment_hash"],
                 short_id=row["short_id"],
                 media_type=row["media_type"],
                 byte_size=row["byte_size"],
                 kind=row["kind"],
+                filename=row["filename"],
                 created_at=row["created_at"],
                 entry=entry,
             )

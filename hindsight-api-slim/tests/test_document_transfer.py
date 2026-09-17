@@ -2520,22 +2520,16 @@ async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
                 memory._file_storage,
                 conn,
                 source,
+                "doc-1",
                 [
                     RetainAttachment(
                         attachment_hash="a" * 64,
                         media_type="image/png",
                         data=payload,
                         block_index=0,
+                        filename="diagram.png",
                     )
                 ],
-            )
-            await conn.execute(
-                f"INSERT INTO {fq_table('document_attachments')} (bank_id, document_id, attachment_hash, filename) "
-                f"VALUES ($1, $2, $3, $4)",
-                source,
-                "doc-1",
-                stored[0].attachment_hash,
-                "diagram.png",
             )
             archive = await export_bank(conn, source, file_storage=memory._file_storage)
 
@@ -2544,14 +2538,16 @@ async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
 
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
-                f"SELECT storage_key, short_id, media_type FROM {fq_table('attachments')} WHERE bank_id = $1", target
-            )
-            linked = await conn.fetchval(
-                f"SELECT count(*) FROM {fq_table('document_attachments')} WHERE bank_id = $1", target
+                f"SELECT storage_key, short_id, media_type, document_id, filename "
+                f"FROM {fq_table('attachments')} WHERE bank_id = $1",
+                target,
             )
         assert row is not None
         assert row["storage_key"] != stored[0].storage_key
-        assert linked == 1
+        # The row carries its owning document and that document's name for it, so
+        # there is no separate edge table to carry across.
+        assert row["document_id"] == "doc-1"
+        assert row["filename"] == "diagram.png"
         assert bytes(await memory._file_storage.retrieve(row["storage_key"])) == payload
     finally:
         await memory.delete_bank(source, request_context=request_context)

@@ -2065,7 +2065,7 @@ async def _resolve_memory_attachments(
     """Resolve each memory's attachment ids, keyed by unit id; ``refs`` is unit id -> (document_id, ids).
 
     Where the ids came from — `memory_units` or the store's own rows — is the caller's
-    concern; this only reads the SQL ``attachments`` / ``document_attachments`` tables.
+    concern; this only reads the SQL ``attachments`` table.
     Resolved per document because the filename lives on the document edge, and a page
     of memories usually spans very few documents. A memory whose ids all fail to
     resolve (the blob was reclaimed) is omitted rather than mapped to an empty list.
@@ -2085,49 +2085,6 @@ async def _resolve_memory_attachments(
         if records:
             resolved[unit_id] = records
     return resolved
-
-
-async def _name_store_owned_attachments(
-    store,
-    bank_id: str,
-    resolved: "dict[str, list[StoredAttachment]]",
-    document_of: "Mapping[str, str | None]",
-    known: "Mapping[str, Mapping[str, str]] | None" = None,
-) -> "dict[str, list[StoredAttachment]]":
-    """Fill in ``filename`` on a store-owned bank's resolved attachments, from its document records.
-
-    The name belongs to the document edge. A SQL bank keeps it on ``document_attachments``, which a
-    store-owned bank cannot have (the edge's FK needs a SQL ``documents`` row), so the store keeps
-    it on the document record instead and this reads it back. ``document_of`` maps each key of
-    ``resolved`` to its document; ``known`` is document_id -> names for records the caller already
-    read, which are not asked for again.
-
-    At most ONE batched read per call, and none when nothing resolved -- so a response with no
-    attachments (the overwhelmingly common one) costs nothing extra. The store's name wins over a
-    SQL one: a bank migrated from SQL keeps its old ``document_attachments`` rows, which stop
-    following the document once the store owns it.
-    """
-    from dataclasses import replace
-
-    from .memories.base import document_attachment_filenames
-
-    if not resolved:
-        return resolved
-    names = {d: dict(n) for d, n in (known or {}).items()}
-    wanted = sorted({d for key in resolved if (d := document_of.get(key)) and d not in names})
-    if wanted:
-        records = await store.get_document_records(bank_id=bank_id, document_ids=wanted)
-        for document_id in wanted:
-            names[document_id] = document_attachment_filenames(records.get(document_id))
-    if not any(names.values()):
-        return resolved
-    return {
-        key: [
-            replace(record, filename=name) if (name := doc_names.get(record.short_id)) else record for record in records
-        ]
-        for key, records in resolved.items()
-        for doc_names in (names.get(document_of.get(key) or "") or {},)
-    }
 
 
 def _provider_default_base_url(provider: str | None) -> str:
@@ -5609,6 +5566,7 @@ class MemoryEngine(MemoryEngineInterface):
         outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
         strategy: str | None = None,
         fold_members: list[FoldMemberRef] | None = None,
+        ingress_attachments: "Mapping[str, Sequence[str]] | None" = None,
     ):
         """
         Store multiple content items as memory units in ONE batch operation.
@@ -5696,9 +5654,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # keep them out of the bank is to take them back out here.
                 # Nothing else would: reclaim is otherwise driven by document
                 # deletion, and a rejected retain never creates a document.
-                await self._discard_unreferenced_attachments(
-                    bank_id, [info.short_id for info in attachment_info], request_context
-                )
+                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
                 raise
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
@@ -5782,10 +5738,10 @@ class MemoryEngine(MemoryEngineInterface):
         explicit_doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
         has_shared_document = len(explicit_doc_ids) != len(set(explicit_doc_ids))
 
-        # The attachments these documents referenced before this retain rewrites them.
-        # One the new text drops loses its edge on the rewrite, and unless it is
-        # reclaimed afterwards its row and bytes outlive every reference to them.
-        previous_attachments = await self._document_attachment_hashes(bank_id, explicit_doc_ids)
+        # Where these documents' attachments are stored, before this retain rewrites
+        # them. One the new text drops loses its row on the rewrite, and unless the
+        # bytes are reclaimed afterwards they outlive every reference to them.
+        previous_attachments = await self._document_attachment_keys(bank_id, explicit_doc_ids)
 
         if not has_shared_document:
             # No document is shared, so distinct-document items may be packed and
@@ -7063,26 +7019,44 @@ class MemoryEngine(MemoryEngineInterface):
     async def _discard_unreferenced_attachments(
         self,
         bank_id: str,
-        short_ids: "Sequence[str]",
+        ingress_attachments: "Mapping[str, Sequence[str]] | None",
         request_context: "RequestContext",
     ) -> None:
-        """Delete attachments no document references — used when a retain is refused.
+        """Take back the attachments this request stored — used when a retain is refused.
 
-        Deliberately goes through the same reclaim the document-delete path uses,
-        so an attachment shared with a document that *was* retained survives: the
-        reclaim only drops a blob once no ``document_attachments`` row in the bank
-        still names its hash.
+        Deliberately scoped to what the ingress actually *wrote*, per document,
+        rather than to everything the refused text references. A retain that adds
+        a screenshot to a document that already carries one must not, on refusal,
+        take away the one the document already had.
         """
-        if not short_ids:
+        if not ingress_attachments:
             return
-        records = await self.resolve_attachments(bank_id, list(short_ids), request_context)
-        if not records:
-            return
+        await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
+        reclaimable: list[str] = []
         async with backend.acquire() as conn:
-            await self._reclaim_orphaned_attachments(
-                conn, bank_id, [record.attachment_hash for record in records.values()]
-            )
+            for document_id, short_ids in ingress_attachments.items():
+                wanted = list(dict.fromkeys(short_ids))
+                if not wanted:
+                    continue
+                rows = await conn.fetch(
+                    f"SELECT storage_key FROM {fq_table('attachments')} "
+                    f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
+                    bank_id,
+                    document_id,
+                    wanted,
+                )
+                if not rows:
+                    continue
+                await conn.execute(
+                    f"DELETE FROM {fq_table('attachments')} "
+                    f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
+                    bank_id,
+                    document_id,
+                    wanted,
+                )
+                reclaimable.extend(row["storage_key"] for row in rows)
+            await self._reclaim_orphaned_attachments(conn, bank_id, reclaimable)
 
     async def resolve_attachments(
         self,
@@ -7112,40 +7086,19 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         document_ids: "Sequence[str]",
         request_context: "RequestContext",
-        *,
-        carried_texts: "Mapping[str, str | None] | None" = None,
-        carried_filenames: "Mapping[str, Mapping[str, str]] | None" = None,
     ) -> "dict[str, list[StoredAttachment]]":
-        """The attachments each document references, keyed by document_id.
+        """The attachments each document carries, keyed by document_id.
 
-        Read from ``document_attachments`` rather than by re-parsing the document
-        body: that table is derived from the same text on every write, and joining
-        it avoids pulling whole documents back just to scan them for placeholders.
-
-        A store-owned bank has no SQL ``documents`` row, so no ``document_attachments``
-        row can exist for it (the edge's FK needs the document row). There the ids are
-        derived from the document's text instead: ``carried_texts`` (document_id -> the
-        text a caller already read from the store) when given, else the store's own
-        record, falling back to its chunk texts when the full text is not kept. The
-        filenames come from the store's document record; ``carried_filenames``
-        (document_id -> names) is for a caller that already holds that record.
+        One read on every backend. An attachment row names the document that owns
+        it and has no foreign key into SQL ``documents``, so a bank whose documents
+        live in a memories store is answered by the same query — and gets its
+        filenames back, which it could not while the name lived on an edge only a
+        SQL document could have.
         """
         from .retain.attachment_store import StoredAttachment
 
         if not document_ids:
             return {}
-        from .memories import get_memories
-
-        store = get_memories()
-        if store.store_owned_for(bank_id):
-            return await self._attachments_for_store_owned_documents(
-                store,
-                bank_id,
-                list(dict.fromkeys(document_ids)),
-                request_context,
-                carried_texts or {},
-                carried_filenames or {},
-            )
         profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
@@ -7153,13 +7106,11 @@ class MemoryEngine(MemoryEngineInterface):
         async with backend.acquire() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT da.document_id, ba.attachment_hash, ba.short_id, ba.media_type,
-                       ba.byte_size, ba.storage_key, ba.kind, da.filename
-                FROM {fq_table("document_attachments")} da
-                JOIN {fq_table("attachments")} ba
-                  ON ba.bank_id = da.bank_id AND ba.attachment_hash = da.attachment_hash
-                WHERE da.bank_id = $1 AND da.document_id = ANY($2::text[])
-                ORDER BY da.document_id, ba.created_at
+                SELECT document_id, attachment_hash, short_id, media_type,
+                       byte_size, storage_key, kind, filename
+                FROM {fq_table("attachments")}
+                WHERE bank_id = $1 AND document_id = ANY($2::text[])
+                ORDER BY document_id, created_at
                 """,
                 bank_id,
                 list(dict.fromkeys(document_ids)),
@@ -7178,58 +7129,6 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             )
         return grouped
-
-    async def _attachments_for_store_owned_documents(
-        self,
-        store,
-        bank_id: str,
-        document_ids: list[str],
-        request_context: "RequestContext",
-        carried_texts: "Mapping[str, str | None]",
-        carried_filenames: "Mapping[str, Mapping[str, str]]",
-    ) -> "dict[str, list[StoredAttachment]]":
-        """:meth:`attachments_for_documents` for a store-owned bank: ids derived from the text.
-
-        A carried text costs nothing to scan. A document without one is read from the store —
-        the retain-ingress revisit has no text in hand, and it only asks when the caller wrote
-        something placeholder-shaped. The record's ``original_text`` is null when a deployment
-        does not keep full text; its chunk texts still carry every placeholder, so they stand in.
-
-        A record read here also carries the document's attachment names, so it is not read twice.
-        """
-        from .memories.base import document_attachment_filenames
-        from .retain.attachment_content import iter_placeholder_ids
-
-        known_names = {d: carried_filenames[d] for d in document_ids if d in carried_filenames}
-
-        texts = {d: carried_texts.get(d) for d in document_ids}
-        if all(texts[d] is not None for d in document_ids) and not any(
-            any(True for _ in iter_placeholder_ids(texts[d] or "")) for d in document_ids
-        ):
-            return {}
-        profile = await self.get_bank_profile(bank_id, request_context=request_context)
-        if profile is None:
-            return {}
-        for document_id in document_ids:
-            if texts[document_id] is not None:
-                continue
-            record = await store.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
-            if record is None:
-                continue
-            known_names[document_id] = document_attachment_filenames(record)
-            text = record.get("original_text")
-            if text is None:
-                text = "\n".join(
-                    t or "" for t in (await store.list_chunk_texts(bank_id=bank_id, document_id=document_id) or [])
-                )
-            texts[document_id] = text
-        refs = {d: (d, ids) for d in document_ids if (ids := list(dict.fromkeys(iter_placeholder_ids(texts[d] or ""))))}
-        if not refs:
-            return {}
-        backend = await self._get_backend()
-        async with backend.acquire() as conn:
-            resolved = await _resolve_memory_attachments(conn, bank_id, refs)
-        return await _name_store_owned_attachments(store, bank_id, resolved, {d: d for d in refs}, known_names)
 
     async def attachments_for_chunks(
         self,
@@ -7273,10 +7172,7 @@ class MemoryEngine(MemoryEngineInterface):
                 return {}
             backend = await self._get_backend()
             async with backend.acquire() as conn:
-                resolved = await _resolve_memory_attachments(conn, bank_id, refs)
-            return await _name_store_owned_attachments(
-                store, bank_id, resolved, {chunk_id: document_id for chunk_id, (document_id, _) in refs.items()}
-            )
+                return await _resolve_memory_attachments(conn, bank_id, refs)
         profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
             return {}
@@ -7335,8 +7231,8 @@ class MemoryEngine(MemoryEngineInterface):
         For a store-owned bank they come back on the rows the store already returned
         — recall results and list/detail items — and the caller hands them in as
         ``carried``: unit id -> ``(document_id, attachment_ids)``. Either way only the
-        ids are resolved here, against the SQL ``attachments`` / ``document_attachments``
-        tables, which every bank writes and which carry no vector indexes.
+        ids are resolved here, against the SQL ``attachments`` table, which every bank
+        writes and which carries no vector indexes.
         """
         if not unit_ids:
             return {}
@@ -7364,11 +7260,7 @@ class MemoryEngine(MemoryEngineInterface):
                 return {}
             backend = await self._get_backend()
             async with backend.acquire() as conn:
-                resolved = await _resolve_memory_attachments(conn, bank_id, refs)
-            # One batched record read for the whole page, and only when something resolved.
-            return await _name_store_owned_attachments(
-                store, bank_id, resolved, {unit_id: document_id for unit_id, (document_id, _) in refs.items()}
-            )
+                return await _resolve_memory_attachments(conn, bank_id, refs)
 
         profile = await self.get_bank_profile(bank_id, request_context=request_context)
         if profile is None:
@@ -7424,14 +7316,15 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
-    async def _reclaim_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> None:
-        """Drop attachment rows and blobs no document in the bank references any more.
+    async def _reclaim_orphaned_attachments(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> None:
+        """Delete the blobs behind ``storage_keys`` that no attachment row names any more.
 
-        For a caller outside a transaction. Inside one, drop the rows with
-        :meth:`_drop_orphaned_attachments` and delete the blobs after the commit,
+        For a caller outside a transaction, once the rows that owned them are
+        gone. Inside one, collect the keys with
+        :meth:`_unreferenced_attachment_blobs` and delete them after the commit,
         or a rollback restores rows whose bytes are already gone.
         """
-        await self._delete_files_quietly(await self._drop_orphaned_attachments(conn, bank_id, attachment_hashes))
+        await self._delete_files_quietly(await self._unreferenced_attachment_blobs(conn, bank_id, storage_keys))
 
     async def _delete_files_quietly(self, keys: "Sequence[str]" = (), prefixes: "Sequence[str]" = ()) -> None:
         """Best-effort delete of stored files whose rows are already gone.
@@ -7451,67 +7344,70 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception:
                 logger.warning("Could not delete stored file %s; row is gone", key, exc_info=True)
 
-    async def _document_attachment_hashes(self, bank_id: str, document_ids: "Sequence[str]") -> list[str]:
-        """The attachments these documents currently reference, as candidates for a later reclaim."""
-        from .memories import get_memories
+    async def _document_attachment_keys(self, bank_id: str, document_ids: "Sequence[str]") -> list[str]:
+        """Where these documents' attachments are stored, as candidates for a later reclaim.
 
-        if not document_ids or get_memories().store_owned_for(bank_id):
+        Asked of ``attachments`` directly, which every bank writes — including one
+        whose documents live in a memories store, since the row names its document
+        and has no foreign key into SQL ``documents``. That is what makes the
+        reclaim the same on both backends.
+        """
+        if not document_ids:
             return []
         async with (await self._get_backend()).acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT DISTINCT attachment_hash FROM {fq_table('document_attachments')} "
+                f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
                 f"WHERE bank_id = $1 AND document_id = ANY($2::text[])",
                 bank_id,
                 list(dict.fromkeys(document_ids)),
             )
-        return [row["attachment_hash"] for row in rows]
+        return [row["storage_key"] for row in rows]
 
-    async def _drop_orphaned_attachments(self, conn, bank_id: str, attachment_hashes: "Sequence[str]") -> list[str]:
-        """Drop the attachment rows no document in the bank references; return their storage keys.
+    async def _drop_orphaned_attachments(self, conn, bank_id: str, document_id: str) -> list[str]:
+        """Delete one document's attachment rows; return the blobs nothing names any more.
 
-        Runs after a document's ``document_attachments`` rows have gone, so "is
-        anything still referencing this?" is simply whether a row survives.
-        Content-addressing is what makes the check necessary: one blob can back
-        ten documents, so a delete may reclaim nothing at all.
+        Unconditional, on every backend: an attachment belongs to its document, so
+        deleting the document deletes exactly its own attachments and never has to
+        ask whether some other document still needs them.
 
-        Never for a store-owned bank. The check above is only sound when every
-        document that references an attachment has a ``document_attachments``
-        row, and a store-owned bank's documents live in its memories store, where
-        no such row is written. With edges missing, "no row survives" does not
-        mean "unreferenced": a bank carried over from SQL keeps its old rows while
-        documents retained since have none, so deleting an old document would
-        reclaim an image a newer one still shows. Leaving the attachment in place
-        costs bytes; reclaiming it loses it. Reclaim for these banks needs a
-        reference source the store owns.
+        The blobs are a separate question only because of the banks that predate
+        this rule. An attachment retained since has a key of its own, so its row
+        is the last one naming it and it is always reclaimed; one carried over
+        from when a bank shared a single blob across its documents still shares
+        that key, and is freed when the last row naming it goes.
         """
-        if not attachment_hashes:
-            return []
-        from .memories import get_memories
-
-        if get_memories().store_owned_for(bank_id):
-            return []
-        orphans = await conn.fetch(
-            f"""
-            SELECT ba.attachment_hash, ba.storage_key
-            FROM {fq_table("attachments")} ba
-            WHERE ba.bank_id = $1
-              AND ba.attachment_hash = ANY($2::text[])
-              AND NOT EXISTS (
-                  SELECT 1 FROM {fq_table("document_attachments")} da
-                  WHERE da.bank_id = ba.bank_id AND da.attachment_hash = ba.attachment_hash
-              )
-            """,
+        keys = await conn.fetch(
+            f"SELECT storage_key FROM {fq_table('attachments')} WHERE bank_id = $1 AND document_id = $2",
             bank_id,
-            list(dict.fromkeys(attachment_hashes)),
+            document_id,
         )
-        if not orphans:
+        if not keys:
             return []
         await conn.execute(
-            f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1 AND attachment_hash = ANY($2::text[])",
+            f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1 AND document_id = $2",
             bank_id,
-            [row["attachment_hash"] for row in orphans],
+            document_id,
         )
-        return [row["storage_key"] for row in orphans]
+        return await self._unreferenced_attachment_blobs(conn, bank_id, [row["storage_key"] for row in keys])
+
+    async def _unreferenced_attachment_blobs(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> list[str]:
+        """Of these storage keys, the ones no ``attachments`` row in the bank still names.
+
+        Run after the rows that owned them are deleted. Only a bank retained
+        before an attachment belonged to its document has keys shared by more than
+        one row; for everything since, every key here is unreferenced.
+        """
+        if not storage_keys:
+            return []
+        wanted = list(dict.fromkeys(storage_keys))
+        rows = await conn.fetch(
+            f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
+            f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
+            bank_id,
+            wanted,
+        )
+        still_named = {row["storage_key"] for row in rows}
+        return [key for key in wanted if key not in still_named]
 
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured vision LLM cannot read.
@@ -7563,37 +7459,48 @@ class MemoryEngine(MemoryEngineInterface):
     async def store_retain_attachments(
         self,
         bank_id: str,
-        images: "Sequence[RetainAttachment]",
+        images_by_document: "Mapping[str, Sequence[RetainAttachment]]",
         request_context: "RequestContext",
-    ) -> "list[StoredAttachment]":
-        """Persist the images of a multimodal retain item, content-addressed.
+    ) -> dict[str, list[str]]:
+        """Persist a multimodal retain's images, each as its own document's.
 
         Called at the API ingress, before the retain itself is submitted. That
-        ordering is the point: the canonical content carries only placeholders, so
-        the raw bytes never reach an async operation's payload — a base64
-        screenshot would otherwise be inlined into the operations row and copied
-        again into every retry.
+        ordering is the point twice over: the canonical content carries only
+        placeholders, so the raw bytes never reach an async operation's payload —
+        a base64 screenshot would otherwise be inlined into the operations row and
+        copied again into every retry — and the document an attachment belongs to
+        must be decided before its bytes are written, since the document is part
+        of the key. The ingress picks that id and the retain uses it.
 
-        Both writes key on the content hash and are idempotent, so persisting
-        before the retain commits is safe. If the retain then fails, the blob is
-        simply reused by the next retain of the same image.
+        Both writes key on the document plus the content hash and are idempotent,
+        so persisting before the retain commits is safe. If the retain then fails,
+        the blob is simply reused by the next retain of the same document.
+
+        Returns the short ids this call actually wrote, per document — what a
+        refused retain has to take back out, as opposed to what the document
+        already held.
 
         The bank row is created first because ``attachments`` references it; the
         same thing ``import_documents_async`` does before stashing its archive.
         """
         from .retain.attachment_store import store_images
 
-        if not images:
-            return []
+        if not images_by_document:
+            return {}
 
         self._require_vision_capable_retain_llm()
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         await self._ensure_bank_exists(bank_id, request_context)
 
+        written: dict[str, list[str]] = {}
         async with backend.acquire() as conn:
             async with conn.transaction():
-                return await store_images(self._file_storage, conn, bank_id, images)
+                for document_id, images in images_by_document.items():
+                    stored = await store_images(self._file_storage, conn, bank_id, document_id, images)
+                    if stored:
+                        written[document_id] = [record.short_id for record in stored if record.newly_stored]
+        return written
 
     async def import_bank_async(
         self,
@@ -10166,16 +10073,6 @@ class MemoryEngine(MemoryEngineInterface):
                     await enqueue_relink_victims(conn, bank_id, unit_ids)
                     await enqueue_entity_prune_candidates(conn, bank_id, unit_ids)
 
-                # The attachments this document referenced, read BEFORE the delete
-                # cascades their document_attachments rows away. Whether each blob
-                # is still needed can only be answered afterwards, once those rows
-                # are gone — see _drop_orphaned_attachments below.
-                referenced_attachments = await conn.fetch(
-                    f"SELECT attachment_hash FROM {fq_table('document_attachments')} "
-                    f"WHERE bank_id = $1 AND document_id = $2",
-                    bank_id,
-                    document_id,
-                )
                 # The uploaded original a file retain kept, if any. Only this row
                 # knows its key, so it must be read before the row goes.
                 file_storage_key = await conn.fetchval(
@@ -10239,10 +10136,11 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Rows here, files after the commit below.
                 orphaned_files: list[str] = []
-                if deleted and referenced_attachments:
-                    orphaned_files = await self._drop_orphaned_attachments(
-                        conn, bank_id, [row["attachment_hash"] for row in referenced_attachments]
-                    )
+                if deleted:
+                    # The document's own attachments, on either backend: the rows
+                    # name their document, so nothing here depends on the document
+                    # itself being a SQL row.
+                    orphaned_files = await self._drop_orphaned_attachments(conn, bank_id, document_id)
                 if deleted and file_storage_key:
                     orphaned_files.append(file_storage_key)
 
@@ -11240,7 +11138,12 @@ class MemoryEngine(MemoryEngineInterface):
             prefix = bank_storage_prefix(bank_id)
             await self._delete_files_quietly(
                 legacy_files,
-                prefixes=[prefix] if delete_bank_profile else [f"{prefix}attachments/", f"{prefix}files/"],
+                prefixes=[prefix]
+                if delete_bank_profile
+                # `documents/` holds the per-document attachment copies; `attachments/`
+                # is where a bank retained before an attachment belonged to its
+                # document still keeps its shared blobs.
+                else [f"{prefix}documents/", f"{prefix}attachments/", f"{prefix}files/"],
             )
 
         # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
@@ -21571,6 +21474,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_tags: list[str] | None = None,
         strategy: str | None = None,
         operation_id: str | None = None,
+        ingress_attachments: "Mapping[str, Sequence[str]] | None" = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
@@ -21605,9 +21509,7 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception:
                 # Same reclaim as the synchronous path: the bytes were stored at
                 # ingress, so a refusal here is the only chance to take them back.
-                await self._discard_unreferenced_attachments(
-                    bank_id, [info.short_id for info in attachment_info], request_context
-                )
+                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
                 raise
             if result and result.contents is not None:
                 contents = result.contents
