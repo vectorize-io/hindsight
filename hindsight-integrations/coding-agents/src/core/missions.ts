@@ -289,6 +289,20 @@ export type PageOverride = false | { source_query?: string };
 export type PagesConfig = Record<string, PageOverride>;
 
 /**
+ * A page the USER defines, keyed by its name in `RawConfig.customPages` — as opposed to `pages`,
+ * which only reworks the taxonomy above:
+ *   source_query — the question the page answers (required)
+ *   tags         — which facts feed it, e.g. ["knowledge:decision"]. OPTIONAL: the page trigger
+ *                  matches tags with `all` (see PAGE_TAGS_MATCH), so no tags is no tag constraint
+ *                  rather than an empty page — it synthesizes from everything the bank holds.
+ */
+export interface CustomPage {
+  source_query: string;
+  tags?: string[];
+}
+export type CustomPagesConfig = Record<string, CustomPage>;
+
+/**
  * The seeded pages for one subject: the taxonomy above with `project` named in every query, minus
  * the ones `pages` disables and with its custom queries substituted.
  *
@@ -297,11 +311,15 @@ export type PagesConfig = Record<string, PageOverride>;
  * deepen run — which holds only while the caller's `project` is itself stable per bank (see
  * `bankProjectName`), and while `pages` itself is stable.
  *
- * `pageScopeRule` is appended to a CUSTOM query too. It is what stops the synthesizer presenting a
- * dependency's decisions as this project's own (#3476) — a failure mode someone rewording the
- * question is not thereby choosing to take on.
+ * `pageScopeRule` is appended to a CUSTOM query too — a page from `customPages` included. It is
+ * what stops the synthesizer presenting a dependency's decisions as this project's own (#3476), a
+ * failure mode someone rewording or adding a question is not thereby choosing to take on.
  */
-export function pagesFor(project: string, pages: PagesConfig = {}): KnowledgePage[] {
+export function pagesFor(
+  project: string,
+  pages: PagesConfig = {},
+  customPages: CustomPagesConfig = {}
+): KnowledgePage[] {
   const scope = pageScopeRule(project);
   // Matched case-insensitively on the same key `seedPages` matches live pages by, so a config
   // entry and the page it names can't disagree about which page that is.
@@ -313,6 +331,12 @@ export function pagesFor(project: string, pages: PagesConfig = {}): KnowledgePag
     const override = byName.get(page.name.toLowerCase());
     if (override === false) continue;
     out.push({ ...page, source_query: (override?.source_query || page.source_query) + scope });
+  }
+  // The user's own pages, seeded at the same root and treated exactly like a taxonomy page from
+  // here on: same scoping clause, same drift re-sync, same trigger. Appended last so a taxonomy
+  // page keeps its position, which is the order the seed log and the page roster read in.
+  for (const [name, page] of Object.entries(customPages)) {
+    out.push({ name: name.trim(), source_query: page.source_query + scope, tags: page.tags ?? [] });
   }
   return out;
 }

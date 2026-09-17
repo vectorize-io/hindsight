@@ -167,6 +167,38 @@ describe("HindsightClient knowledge-page reads", () => {
 });
 
 describe("HindsightClient.seedPages", () => {
+  it("creates a customPages page at the root, with its own tags and the standard page shape", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages(
+      buildPageTrigger(),
+      {},
+      {
+        "Security posture": {
+          source_query: "what are our security decisions?",
+          tags: ["knowledge:decision"],
+        },
+      }
+    );
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length + 1);
+    const custom = posts.find((p) => p.body.name === "Security posture")!;
+    expect(custom.body.source_query).toBe(
+      "what are our security decisions?" + pageScopeRule("repo-a")
+    );
+    expect(custom.body.tags).toEqual(["knowledge:decision"]);
+    // Same shape as a seeded page in every other respect — root, budget, refresh policy.
+    expect(custom.body.parent_id).toBeUndefined();
+    expect(custom.body.max_tokens).toBe(PAGE_MAX_TOKENS);
+    expect(custom.body.trigger.tags_match).toBe("all");
+  });
+
   it("honours the pages config: a disabled page is never created, a custom query is what is sent", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [

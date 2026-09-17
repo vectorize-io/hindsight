@@ -437,4 +437,39 @@ describe("pagesFor page configuration", () => {
       "Component map"
     );
   });
+
+  it("customPages are appended after the taxonomy, scoped, with their own tags", () => {
+    const pages = pagesFor(
+      "repo-a",
+      {},
+      {
+        "Security posture": {
+          source_query: "what are our security decisions?",
+          tags: ["knowledge:decision"],
+        },
+      }
+    );
+    expect(pages).toHaveLength(PAGE_NAMES.length + 1);
+    const custom = pages[pages.length - 1];
+    expect(custom.name).toBe("Security posture");
+    expect(custom.source_query).toBe("what are our security decisions?" + scope);
+    expect(custom.tags).toEqual(["knowledge:decision"]);
+  });
+
+  it("a custom page without tags gets none — `all` then puts no tag constraint on it", () => {
+    const pages = pagesFor("repo-a", {}, { Roadmap: { source_query: "where is this going?" } });
+    expect(pages.find((p) => p.name === "Roadmap")!.tags).toEqual([]);
+  });
+
+  it("disabling a taxonomy page and adding one of your own compose", () => {
+    const pages = pagesFor(
+      "repo-a",
+      { "Component map": false },
+      { Roadmap: { source_query: "where is this going?" } }
+    );
+    expect(pages.map((p) => p.name)).toEqual([
+      ...PAGE_NAMES.filter((n) => n !== "Component map"),
+      "Roadmap",
+    ]);
+  });
 });

@@ -23,6 +23,7 @@ import {
   type ObservationScopes,
 } from "./hindsight";
 import {
+  type CustomPagesConfig,
   DEFAULT_PAGE_TRIGGER_CRON,
   isHashedCron,
   PAGE_NAMES,
@@ -173,6 +174,23 @@ export interface RawConfig {
    *  File-only, like `recallOptions` — a nested object does not flatten into an env var. In a
    *  `banks.<id>` section it REPLACES the global map rather than merging into it. */
   pages?: PagesConfig;
+  /** Knowledge pages of your OWN, seeded alongside the taxonomy and keyed by the name they get:
+   *    "Security posture": {"source_query": "...", "tags": ["knowledge:decision"]}
+   *  `source_query` is the question the page answers. `tags` picks which facts feed it and is
+   *  optional — the trigger matches tags with `all`, so omitting them means no tag constraint and
+   *  the page synthesizes from everything the bank holds, rather than from nothing.
+   *
+   *  Deliberately a SEPARATE key from `pages`, not another shape inside it: `pages` rejects a name
+   *  that matches no seeded page, which is what turns a typo into a warning instead of silence. If
+   *  an unknown key there meant "create a page", `"Componnet map"` would quietly create an empty
+   *  second page instead of rewording the one that was meant.
+   *
+   *  These are re-synced like the seeded ones — the config is the source of truth for the query —
+   *  so rewording one here reaches the live page on the next session. A page you create yourself
+   *  in the control plane is a different thing entirely and is never touched.
+   *
+   *  File-only, and replaced (not merged) by a `banks.<id>` section, exactly like `pages`. */
+  customPages?: CustomPagesConfig;
   autoSeed?: boolean; // SessionStart: auto-seed a cold repo's bank from git history (default true)
   seedLimit?: number; // SessionStart auto-seed: most-recent-N-commits cap (default 300)
   codebaseSurvey?: boolean; // SessionStart: spawn a headless claude to survey a cold repo's structure (default true)
@@ -268,6 +286,7 @@ export interface Config {
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
   pages: PagesConfig;
+  customPages: CustomPagesConfig;
   autoSeed: boolean;
   seedLimit: number;
   codebaseSurvey: boolean;
@@ -362,6 +381,52 @@ function resolvePages(raw: RawConfig["pages"]): PagesConfig {
       `ignoring pages[${JSON.stringify(name)}]=${JSON.stringify(entry)} — ` +
         'expected false, or {"source_query": "<your question>"}'
     );
+  }
+  return out;
+}
+
+/**
+ * Validate `customPages` — the pages a user defines, as opposed to the taxonomy that `pages` reworks.
+ *
+ * A name colliding with a seeded page is refused rather than merged: the two keys mean different
+ * things (rework the plugin's page vs. create your own), and picking one for the user would be a
+ * guess. `tags` is optional and an absent one is not an empty page — see CustomPage.
+ */
+function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
+  // Widened deliberately, like resolvePages: a hand-edited JSON file says what is meant, not what
+  // is there.
+  const value: unknown = raw;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: CustomPagesConfig = {};
+  for (const [rawName, entry] of Object.entries(value as Record<string, unknown>)) {
+    const name = rawName.trim();
+    if (!name) continue;
+    if (PAGE_NAMES.some((known) => known.toLowerCase() === name.toLowerCase())) {
+      log.warn(
+        "config",
+        `ignoring customPages[${JSON.stringify(rawName)}] — that is a seeded page; ` +
+          "reword it under `pages` instead"
+      );
+      continue;
+    }
+    const query: unknown =
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? (entry as { source_query?: unknown }).source_query
+        : undefined;
+    if (typeof query !== "string" || !query.trim()) {
+      log.warn(
+        "config",
+        `ignoring customPages[${JSON.stringify(rawName)}]=${JSON.stringify(entry)} — ` +
+          'expected {"source_query": "<your question>"}'
+      );
+      continue;
+    }
+    const rawTags: unknown = (entry as { tags?: unknown }).tags;
+    // A stray number or nested object would reach the API as a tag and fail page creation.
+    const tags = Array.isArray(rawTags)
+      ? rawTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      : [];
+    out[name] = tags.length ? { source_query: query, tags } : { source_query: query };
   }
   return out;
 }
@@ -497,6 +562,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
     pages: resolvePages(raw.pages),
+    customPages: resolveCustomPages(raw.customPages),
     autoSeed: raw.autoSeed ?? true,
     seedLimit: raw.seedLimit || DEFAULT_SEED_LIMIT,
     codebaseSurvey: raw.codebaseSurvey ?? true,
@@ -573,7 +639,8 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * containers, CI, and secret managers that inject `HINDSIGHT_API_TOKEN` rather than writing a
  * credential to disk.
  *
- * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages) are deliberately
+ * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
+ * customPages) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */

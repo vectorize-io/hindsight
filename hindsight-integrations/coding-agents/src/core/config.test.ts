@@ -332,6 +332,40 @@ describe("environment fallback", () => {
     warn.mockRestore();
   });
 
+  it("customPages: source_query required, tags optional, seeded-page names refused", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    expect(resolveConfig({}).customPages).toEqual({});
+    expect(
+      resolveConfig({
+        customPages: {
+          "Security posture": { source_query: "what did we decide about auth?", tags: ["x"] },
+          Roadmap: { source_query: "where is this going?" },
+        },
+      }).customPages
+    ).toEqual({
+      "Security posture": { source_query: "what did we decide about auth?", tags: ["x"] },
+      Roadmap: { source_query: "where is this going?" },
+    });
+    expect(warn).not.toHaveBeenCalled();
+
+    // `pages` rewords a page the plugin owns, `customPages` creates one — choosing for the user
+    // would be a guess, so a seeded name here is refused rather than merged.
+    expect(
+      resolveConfig({ customPages: { "Core concepts": { source_query: "x" } } }).customPages
+    ).toEqual({});
+    expect(resolveConfig({ customPages: { Roadmap: { source_query: "  " } } }).customPages).toEqual(
+      {}
+    );
+    expect(resolveConfig({ customPages: { Roadmap: {} } as never }).customPages).toEqual({});
+    // A stray non-string tag would reach the API as a tag and fail page creation.
+    expect(
+      resolveConfig({ customPages: { Roadmap: { source_query: "q", tags: ["ok", 5] } } as never })
+        .customPages
+    ).toEqual({ Roadmap: { source_query: "q", tags: ["ok"] } });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("pages: a banks.<id> section replaces the global map rather than merging into it", () => {
     const base = resolveConfig({
       pages: { "Component map": false },

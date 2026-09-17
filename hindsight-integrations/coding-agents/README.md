@@ -538,6 +538,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `pageTriggerType`       | `"cron"`                             | when NEW knowledge pages refresh, i.e. what keeping them current costs — `"cron"` (default) on `pageTriggerCron` only and only when actually stale, `"auto-refresh"` after every consolidation that produced new material, `"manual"` never on their own. Auto-refresh is the most current and by far the most expensive: one synthesis per page per consolidation. Maps to the page's `trigger.refresh_cron`, or `trigger.refresh_after_consolidation` in the Hindsight API (`true` for auto-refresh, `false` for manual)                                                                                                                                                                                                                                                                                                                                                                                      |
 | `pageTriggerCron`       | `"H * * * *"`                        | schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. `"0 3 * * *"`. The default is hourly, each page on its own hashed minute. Sets the page's `trigger.refresh_cron`, which the API treats as mutually exclusive with `refresh_after_consolidation`; a scheduled refresh is skipped when nothing changed. Write a field as `H` to give each page its own value there — see **Spreading refreshes with `H`** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `pages`                 | every page                           | per-page configuration for the seeded knowledge pages, keyed by page name (case-insensitive): `false` skips a page entirely, `{"source_query": "..."}` seeds it with your question instead of the built-in one. Omitted, all five pages are seeded with their built-in queries. This is the supported way to own a page's wording — the plugin re-syncs a page whose live query differs from the one it is configured to have, so a query edited through the API or the control plane is replaced on the next session. A skipped page is **not deleted**: one already seeded keeps its content and stops being re-synced. The scoping clause is appended to your query too, so a reworded page cannot start reporting a dependency's decisions as this project's. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                             |
+| `customPages`           | —                                    | knowledge pages of your own, seeded alongside the five above and keyed by the name they get: `{"Security posture": {"source_query": "...", "tags": ["knowledge:decision"]}}`. `source_query` is required; `tags` picks which facts feed the page and is optional — omitted, the page draws on everything the bank holds. A separate setting from `pages` on purpose, so that an unknown name there stays a typo warning rather than quietly creating a page. File-only, and replaced (not merged) by a `banks.<id>` section                                                                                                                                                                                                                                                                                                                                                                                     |
 | `autoSeed`              | `true`                               | SessionStart: auto-seed a cold repo's bank from git history                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `seedLimit`             | `300`                                | auto-seed: most-recent-N-commits cap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `codebaseSurvey`        | `true`                               | SessionStart: headless survey of a cold repo's structure, run under the current harness's own CLI (claude/codex/antigravity/opencode), falling back to any available agent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -678,6 +679,41 @@ A name that matches no page above is ignored with a warning in the plugin log, s
 loudly instead of looking like it disabled something. Adding pages of your own is not what this
 setting is for: the agent's `hindsight_capture_initiative` tool already creates pages, one per
 initiative, each with its own query.
+
+#### Pages of your own — `customPages`
+
+`pages` only reworks the five above. To add a page, name it under `customPages`:
+
+```jsonc
+{
+  "customPages": {
+    "Security posture": {
+      "source_query": "What are this project's security decisions — authn, secrets handling, PII, dependency policy — and what do they constrain in new code?",
+      "tags": ["knowledge:decision"],
+    },
+    "Operational runbook": {
+      "source_query": "How does this project get deployed, monitored and rolled back? What has broken in production, and what fixed it?",
+    },
+  },
+}
+```
+
+`source_query` is required. `tags` is optional and picks which facts feed the page — one of the tier
+tags above, or any tag you stamp on your own writes with `retainTags`. Omit it and the page draws on
+everything the bank holds: a refresh matches tags with `all`, so no tags means no tag constraint,
+**not** an empty page.
+
+Your pages are seeded at the same root as the taxonomy, on the same refresh schedule, and re-synced
+from the config the same way — reword one here and the live page follows on the next session. They
+compose with `pages`, so trading two built-ins for one of your own is just both settings at once.
+
+**Why it is a separate setting.** `pages` refuses a name that matches no seeded page, and that is
+what makes a typo loud: if an unknown key there meant "create this page", `"Componnet map"` would
+quietly create an empty second page instead of rewording the one you meant. For the same reason,
+naming a seeded page under `customPages` is refused — reword it under `pages`.
+
+A page you create yourself in the control plane is a third thing again, and the plugin never touches
+it: the seed pass only visits the pages it is configured to own.
 
 ### A bank you shape yourself — `manageBankConfig`
 

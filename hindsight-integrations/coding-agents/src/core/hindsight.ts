@@ -9,6 +9,7 @@ import {
   type BankOverrides,
   buildPageTrigger,
   codingBankManifest,
+  type CustomPagesConfig,
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
   pagesFor,
@@ -459,6 +460,8 @@ export class HindsightClient {
       pageTrigger?: PageTrigger;
       /** Which pages to seed and with what query — see RawConfig.pages. */
       pages?: PagesConfig;
+      /** Pages of the user's own to seed alongside them — see RawConfig.customPages. */
+      customPages?: CustomPagesConfig;
       manage?: boolean;
     } = {}
   ): Promise<void> {
@@ -480,7 +483,7 @@ export class HindsightClient {
         this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
       }
     }
-    await this.seedPages(opts.pageTrigger, opts.pages);
+    await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
   }
 
   /**
@@ -739,12 +742,13 @@ export class HindsightClient {
    */
   async seedPages(
     pageTrigger: PageTrigger = buildPageTrigger(),
-    pagesConfig: PagesConfig = {}
+    pagesConfig: PagesConfig = {},
+    customPages: CustomPagesConfig = {}
   ): Promise<void> {
     // The bank id is the fallback subject, not a degraded one: for a bank no single repository
     // owns it is the only name that stays put across sessions, and under the default
     // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
-    const pages = pagesFor(this.project ?? this.bank, pagesConfig);
+    const pages = pagesFor(this.project ?? this.bank, pagesConfig, customPages);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
