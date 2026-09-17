@@ -443,127 +443,45 @@ def run_migrations(
         raise RuntimeError("Database migration failed") from e
 
 
-def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_name: str) -> None:
-    """Drop every vector index on ``table_name.embedding`` (HNSW, DiskANN, vchordrq, ScaNN)."""
-    # The EXCEPTION block handles 'could not open relation with OID' errors that
-    # occur when concurrent sessions drop schemas (e.g. pytest-xdist workers),
-    # invalidating pg_indexes OID references mid-cursor-iteration.
-    conn.execute(
-        text(f"""
-            DO $$
-            DECLARE idx_name TEXT;
-            BEGIN
-                FOR idx_name IN
-                    SELECT indexname FROM pg_indexes
-                    WHERE schemaname = '{schema_name}'
-                      AND tablename = '{table_name}'
-                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%' OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
-                      AND indexdef LIKE '%embedding%'
-                LOOP
-                    EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
-                END LOOP;
-            EXCEPTION WHEN internal_error THEN
-                -- Stale OID from concurrent schema drop; nothing to drop anyway
-                NULL;
-            END $$;
-        """)
-    )
+def _vector_index_names(conn: Connection, schema_name: str, table_name: str) -> list[str]:
+    """Names of the vector indexes on ``table_name.embedding``, from the catalog.
 
-
-def _migrate_table_embedding_dimension(
-    conn: Connection,
-    schema_name: str,
-    table_name: str,
-    required_dimension: int,
-    vector_ext: str,
-    *,
-    indexed: bool = True,
-) -> None:
+    Deliberately NOT ``pg_indexes``: that view renders every row through
+    ``pg_get_indexdef()``, which is evaluated for indexes outside the schema we
+    asked about. When a concurrent session drops a schema mid-scan — pytest-xdist
+    workers do exactly this — the render fails with "cache lookup failed for
+    attribute N of relation OID" (an internal_error) and takes the whole
+    statement with it. Resolving the relation first and reading ``pg_am`` keeps
+    the scan inside one table's own indexes, so an unrelated schema going away
+    cannot break it.
     """
-    Migrate the embedding column of a single table to the required dimension.
-
-    - If dimensions match: no action needed
-    - If dimensions differ and table is empty: ALTER COLUMN to new dimension
-    - If dimensions differ and table has data: raise error with migration guidance
-
-    ``indexed=False`` keeps the column but with no vector index at all: any existing one is
-    dropped and none is created, so the pgvector 2000-dimension index limit does not apply.
-    """
-    current_dim = conn.execute(
+    rows = conn.execute(
         text("""
-            SELECT atttypmod
-            FROM pg_attribute a
-            JOIN pg_class c ON a.attrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
+            SELECT i.relname
+            FROM pg_class t
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_index x ON x.indrelid = t.oid
+            JOIN pg_class i ON i.oid = x.indexrelid
+            JOIN pg_am am ON am.oid = i.relam
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(x.indkey)
             WHERE n.nspname = :schema
-              AND c.relname = :table
+              AND t.relname = :table
               AND a.attname = 'embedding'
+              AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')
         """),
         {"schema": schema_name, "table": table_name},
-    ).scalar()
+    ).fetchall()
+    return [row[0] for row in rows]
 
-    if current_dim is None:
-        logger.debug(f"No embedding column found on {table_name}, skipping")
-        return
 
-    if not indexed:
-        # Also on the dimension-match path: the base migrations create this index, so a
-        # deployment that switches to a custom store still carries one until it is dropped here.
-        _drop_embedding_vector_indexes(conn, schema_name, table_name)
-        conn.commit()
-
-    if current_dim == required_dimension:
-        logger.debug(f"Embedding dimension OK for {table_name}: {current_dim}")
-        return
-
-    logger.info(
-        f"Embedding dimension mismatch on {table_name}: database has {current_dim}, model requires {required_dimension}"
-    )
-
-    row_count = conn.execute(
-        text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
-    ).scalar()
-
-    if row_count > 0:
-        raise RuntimeError(
-            f"Cannot change embedding dimension from {current_dim} to {required_dimension}: "
-            f"{table_name} table contains {row_count} rows with embeddings. "
-            f"To change dimensions, you must either:\n"
-            f"  1. Re-embed all data: DELETE FROM {schema_name}.{table_name}; then restart\n"
-            f"  2. Use a model with {current_dim}-dimensional embeddings"
-        )
-
-    logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
-
-    _drop_embedding_vector_indexes(conn, schema_name, table_name)
-    conn.execute(
-        text(f"ALTER TABLE {schema_name}.{table_name} ALTER COLUMN embedding TYPE vector({required_dimension})")
-    )
-    conn.commit()
-
-    if not indexed:
-        logger.info(f"Changed {table_name}.embedding dimension to {required_dimension} (no vector index)")
-        return
-
-    _create_embedding_vector_index(conn, schema_name, table_name, required_dimension, vector_ext, row_count)
-    logger.info(f"Successfully changed {table_name}.embedding dimension to {required_dimension}")
+def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_name: str) -> None:
+    """Drop every vector index on ``table_name.embedding`` (HNSW, DiskANN, vchordrq, ScaNN)."""
+    for index_name in _vector_index_names(conn, schema_name, table_name):
+        conn.execute(text(f'DROP INDEX IF EXISTS "{schema_name}"."{index_name}"'))
 
 
 def _has_embedding_vector_index(conn: Connection, schema_name: str, table_name: str) -> bool:
-    return bool(
-        conn.execute(
-            text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM pg_indexes
-                    WHERE schemaname = :schema AND tablename = :table
-                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%'
-                           OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
-                      AND indexdef LIKE '%embedding%'
-                )
-            """),
-            {"schema": schema_name, "table": table_name},
-        ).scalar()
-    )
+    return bool(_vector_index_names(conn, schema_name, table_name))
 
 
 def _create_embedding_vector_index(
