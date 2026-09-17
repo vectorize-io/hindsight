@@ -13814,13 +13814,16 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         await self._authorize_bank_profile_read(bank_id, request_context)
-        profile = await self._get_bank_profile_authenticated(
-            bank_id,
-            request_context=request_context,
-            create_if_missing=True,
+        # The Optional in _get_bank_profile_authenticated's signature is for its read half only:
+        # on the create path it raises rather than returning None, so there is nothing to handle.
+        return cast(
+            dict[str, Any],
+            await self._get_bank_profile_authenticated(
+                bank_id,
+                request_context=request_context,
+                create_if_missing=True,
+            ),
         )
-        assert profile is not None  # create_if_missing=True never returns None
-        return profile
 
     async def _authorize_bank_profile_read(self, bank_id: str, request_context: "RequestContext") -> None:
         """Run the extension's bank-read authorization for a profile read."""

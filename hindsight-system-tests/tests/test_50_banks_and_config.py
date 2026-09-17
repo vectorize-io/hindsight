@@ -95,10 +95,18 @@ async def test_a_bank_that_does_not_exist_is_a_404_not_an_empty_answer(client):
     empty result turns a typo'd bank id into "you have no memories", which is the
     same shape as data loss and sends people looking for the wrong thing.
     """
-    from hindsight_client_api.exceptions import NotFoundException
+    from aiohttp import ClientResponseError
+    from hindsight_client_api.exceptions import ApiException, NotFoundException
 
     with pytest.raises(NotFoundException):
         await client.banks.get_bank_config("systest-no-such-bank")
+
+    # Recall is the one that matters most here: it is the read people call in a loop, and it
+    # used to run the whole retrieval fan-out and then answer 200 with an empty list (#4442).
+    # NotFoundException subclasses ApiException; arecall may surface aiohttp's error instead.
+    with pytest.raises((ApiException, ClientResponseError)) as recalled:
+        await client.arecall(bank_id="systest-no-such-bank", query="anything at all")
+    assert recalled.value.status == 404
 
 
 async def test_a_bank_id_over_the_byte_limit_is_refused_before_the_bank_exists(client):
