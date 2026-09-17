@@ -2739,7 +2739,10 @@ async def test_clone_refuses_a_target_that_would_be_overwritten(api_client, memo
     existing = _unique_bank("clone_guard_dst")
     try:
         await _retain(memory, source, "Milo tunes pianos.", request_context, "doc-1")
-        await memory.get_bank_profile(existing, request_context=request_context)
+        # ensure_, not get_: since #4465 a profile read never creates the bank, and this
+        # test needs the target to actually exist for the clone guard to have something
+        # to refuse.
+        await memory.ensure_bank_profile(existing, request_context=request_context)
 
         onto_existing = await api_client.post(
             f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": existing}
