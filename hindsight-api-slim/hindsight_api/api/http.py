@@ -5750,12 +5750,13 @@ def _register_routes(app: FastAPI):
 
         # Validate query length to prevent expensive operations on oversized queries
         max_query_tokens = get_config().recall_max_query_tokens
-        query_tokens = count_tokens(request.query)
-        if query_tokens > max_query_tokens:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {max_query_tokens}. Please shorten your query.",
-            )
+        if max_query_tokens > 0:  # 0 (or negative) disables the cap
+            query_tokens = count_tokens(request.query)
+            if query_tokens > max_query_tokens:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Query too long: {query_tokens} tokens exceeds maximum of {max_query_tokens}. Please shorten your query.",
+                )
 
         try:
             # Default to all fact types if not specified
