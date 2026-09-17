@@ -17,7 +17,7 @@ import zipfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db.ops_postgresql import pg_search_vector_expr
@@ -46,6 +46,11 @@ from .schema import (
     TransferObservation,
     TransferScope,
 )
+
+if TYPE_CHECKING:
+    # Type-only: the runtime import stays inside the functions that need it, because
+    # ``..memories`` imports back into the engine.
+    from ..memories.base import MemoriesExtension
 
 logger = logging.getLogger(__name__)
 
@@ -1494,7 +1499,7 @@ async def _restore_fact_lifecycle(
 
 
 async def _restore_fact_lifecycle_via_store(
-    store: Any,
+    store: MemoriesExtension,
     bank_id: str,
     facts: list[TransferFact],
     retained_index_by_original: list[int | None],
@@ -1668,7 +1673,7 @@ async def _import_observations(
 
 
 async def _import_observations_via_store(
-    store: Any,
+    store: MemoriesExtension,
     bank_id: str,
     resolved: list[tuple[TransferObservation, list[str]]],
     processed: list[ProcessedFact],
@@ -1684,9 +1689,10 @@ async def _import_observations_via_store(
     from ..memories.base import FactRecord
 
     all_sources = list(dict.fromkeys(s for _obs, sources in resolved for s in sources))
-    live = {
-        m.unit_id for m in await store.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=all_sources)
-    }
+    # Read once and reuse below: ``upsert_observation`` writes the observation, never its
+    # sources, so their ``consolidated_at`` is the same after the loop as it is here.
+    source_rows = await store.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=all_sources)
+    live = {m.unit_id for m in source_rows}
     marked: set[str] = set()
     for (obs, sources), fact in zip(resolved, processed):
         missing = [s for s in sources if s not in live]
@@ -1727,11 +1733,7 @@ async def _import_observations_via_store(
 
     # Same rule as the SQL path's COALESCE: a source whose own consolidated marker came from the
     # archive keeps it; only the ones with none are stamped now, so the consolidator skips them.
-    unmarked = [
-        m.unit_id
-        for m in await store.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=list(marked))
-        if m.consolidated_at is None
-    ]
+    unmarked = [m.unit_id for m in source_rows if m.unit_id in marked and m.consolidated_at is None]
     if unmarked:
         await store.mark_consolidated(
             conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=unmarked, when=datetime.now(UTC)
