@@ -2469,9 +2469,11 @@ async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory
             await conn.execute(
                 f"INSERT INTO {fq_table('async_operations')} "
                 f"(operation_id, bank_id, operation_type, status, task_payload) "
-                f"VALUES ($1, $2, 'retain', 'pending', '{{}}'::jsonb)",
+                f"VALUES ($1, $2, 'retain', 'pending', '{{}}'::jsonb), "
+                f"       ($3, $2, 'retain', 'completed', '{{}}'::jsonb)",
                 uuid.uuid4(),
                 source,
+                uuid.uuid4(),
             )
             archive = await export_bank(conn, source, file_storage=memory._file_storage)
 
@@ -2485,8 +2487,11 @@ async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory
                     target,
                 )
             ]
-        assert statuses, "the operations log was not carried"
-        assert "pending" not in statuses and "processing" not in statuses
+        # The finished work is the copy's history; the in-flight row belonged to
+        # the source and is not carried at all. Restoring it as cancelled was the
+        # first attempt, and it put a cancelled clone_bank row — the clone's own
+        # operation — in every copy.
+        assert statuses == ["completed"]
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)

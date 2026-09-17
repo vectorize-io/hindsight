@@ -848,7 +848,7 @@ The include flags apply here too, and can only narrow: they restore a subset of 
 
 In `restore` mode the operation is recorded against `{bank_id}` — the bank in the URL — because the target bank does not exist yet. Poll that bank's operations endpoint for status and the per-component counts.
 
-A restore carries the operations log as history, not as work: any operation still in flight when the bank was exported is restored as `cancelled`, so a copied bank never re-runs the original's queued retains or re-fires its webhooks.
+A restore carries the operations log as history, not as work: anything still in flight when the bank was exported is left behind, so a copied bank never re-runs the original's queued retains or re-fires its webhooks. In-flight work belongs to the bank that was exported — and a clone runs *inside* one such operation, so carrying them would put the clone's own unfinished record in the copy.
 
 ### Clone a bank
 
