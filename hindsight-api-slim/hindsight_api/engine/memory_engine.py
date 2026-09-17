@@ -705,14 +705,16 @@ def _build_llm(
     config: HindsightConfig,
     prefix: str,
     defaults: _LLMCallDefaults,
+    fallback_prefix: str = "",
 ) -> "LLMConfig | MultiLLMProvider":
     """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
 
     ``prefix`` is ``""`` (global) or ``"retain_"`` / ``"reflect_"`` /
-    ``"consolidation_"``. A per-op slot with no indexed members (or no strategy)
-    inherits the global chain, mirroring how per-op base config falls back to the
-    global LLM config. Returns ``base`` unchanged when no chain is configured
-    (byte-identical hot path).
+    ``"consolidation_"`` / ``"mental_model_refresh_"``. A per-op slot with no
+    indexed members (or no strategy) inherits the chain of ``fallback_prefix``
+    (the global one by default), mirroring how per-op base config falls back.
+    Returns ``base`` unchanged when no chain is configured (byte-identical hot
+    path).
 
     ``defaults`` are the operation's resolved request defaults, applied to every
     fallback member so the whole chain shares the operation's effective settings.
@@ -740,9 +742,9 @@ def _build_llm(
 
     if prefix:
         if not members:
-            members = config.llm_members
+            members = getattr(config, f"{fallback_prefix}llm_members")
         if strategy is None:
-            strategy = config.llm_strategy
+            strategy = getattr(config, f"{fallback_prefix}llm_strategy")
 
     if not strategy or not members:
         return base
@@ -2301,10 +2303,14 @@ class MemoryEngine(MemoryEngineInterface):
         # into the provider so the configured value actually governs the call (issue #2452);
         # previously these per-op fields were resolved into config but never reached the
         # provider, which silently used the global/method default.
-        def _op_defaults(prefix: str) -> _LLMCallDefaults:
+        def _op_defaults(prefix: str, fallback: _LLMCallDefaults | None = None) -> _LLMCallDefaults:
             def pick(field: str) -> Any:
                 per_op = getattr(config, f"{prefix}llm_{field}") if prefix else None
-                return per_op if per_op is not None else getattr(config, f"llm_{field}")
+                if per_op is not None:
+                    return per_op
+                # ``fallback`` is another operation's already-resolved defaults, for a
+                # group that inherits from a sibling rather than from the global one.
+                return getattr(fallback, field) if fallback is not None else getattr(config, f"llm_{field}")
 
             return _LLMCallDefaults(
                 timeout=pick("timeout"),
@@ -2317,6 +2323,7 @@ class MemoryEngine(MemoryEngineInterface):
         retain_call_defaults = _op_defaults("retain_")
         reflect_call_defaults = _op_defaults("reflect_")
         consolidation_call_defaults = _op_defaults("consolidation_")
+        mental_model_refresh_call_defaults = _op_defaults("mental_model_refresh_", fallback=reflect_call_defaults)
 
         # Initialize LLM configuration (default, used as fallback)
         _default_base_llm = LLMConfig(
@@ -2488,6 +2495,78 @@ class MemoryEngine(MemoryEngineInterface):
             **reflect_call_defaults.as_kwargs(),
         )
         self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults)
+
+        # Mental-model refresh LLM config - the automatic refresh runs the reflect
+        # pipeline in the background, where a human is not waiting and the job must
+        # not destabilise interactive latency. Unset means it *is* the reflect config
+        # (same object, so no extra provider, no extra verification), which is the
+        # backwards-compatible path (issue #4463).
+        if not config.has_mental_model_refresh_llm_override():
+            self._mental_model_refresh_llm_config = self._reflect_llm_config
+        else:
+            refresh_provider = config.mental_model_refresh_llm_provider or reflect_provider
+            refresh_api_key = config.mental_model_refresh_llm_api_key or reflect_api_key
+            refresh_model = config.mental_model_refresh_llm_model or reflect_model
+            refresh_base_url = config.mental_model_refresh_llm_base_url
+            # Only re-derive the provider default when this group picked its own
+            # provider; otherwise it keeps reflect's already-resolved base URL.
+            if refresh_base_url is None:
+                if config.mental_model_refresh_llm_provider is None:
+                    refresh_base_url = reflect_base_url
+                elif refresh_provider.lower() == "groq":
+                    refresh_base_url = "https://api.groq.com/openai/v1"
+                elif refresh_provider.lower() == "ollama":
+                    refresh_base_url = "http://localhost:11434/v1"
+                elif refresh_provider.lower() == "ollama-cloud":
+                    refresh_base_url = "https://ollama.com/v1"
+                else:
+                    refresh_base_url = ""
+
+            _mental_model_refresh_base_llm = LLMConfig(
+                provider=refresh_provider,
+                api_key=refresh_api_key,
+                base_url=refresh_base_url,
+                model=refresh_model,
+                reasoning_effort=(
+                    config.mental_model_refresh_llm_reasoning_effort
+                    or config.reflect_llm_reasoning_effort
+                    or config.llm_reasoning_effort
+                ),
+                extra_body=(
+                    config.mental_model_refresh_llm_extra_body or config.reflect_llm_extra_body or config.llm_extra_body
+                ),
+                default_headers=config.llm_default_headers,
+                cache_affinity=(
+                    config.mental_model_refresh_llm_cache_affinity
+                    or config.reflect_llm_cache_affinity
+                    or config.llm_cache_affinity
+                ),
+                ollama_num_ctx=config.llm_ollama_num_ctx,
+                litellmrouter_config=(
+                    config.mental_model_refresh_llm_litellmrouter_config
+                    or config.reflect_llm_litellmrouter_config
+                    or config.llm_litellmrouter_config
+                ),
+                bedrock_service_tier=config.llm_bedrock_service_tier,
+                structured_output_forced_tool=config.llm_structured_output_forced_tool,
+                gemini_service_tier=config.llm_gemini_service_tier,
+                groq_service_tier=config.llm_groq_service_tier,
+                openai_service_tier=config.llm_openai_service_tier,
+                gemini_safety_settings=_llm_gemini_safety_settings,
+                prompt_cache_enabled=config.llm_prompt_cache_enabled,
+                codex_home=config.llm_codex_home,
+                vertexai_project_id=config.llm_vertexai_project_id,
+                vertexai_region=config.llm_vertexai_region,
+                vertexai_service_account_key=config.llm_vertexai_service_account_key,
+                **mental_model_refresh_call_defaults.as_kwargs(),
+            )
+            self._mental_model_refresh_llm_config = _build_llm(
+                _mental_model_refresh_base_llm,
+                config,
+                "mental_model_refresh_",
+                mental_model_refresh_call_defaults,
+                fallback_prefix="reflect_",
+            )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -4926,44 +5005,22 @@ class MemoryEngine(MemoryEngineInterface):
             provider becomes available (e.g. after a quota reset).
             """
             if not self._skip_llm_verification:
-                configs_to_verify: list[tuple[str, LLMConfig | MultiLLMProvider]] = [("default", self._llm_config)]
-
-                # Verify retain config if different from default
-                retain_is_different = (
-                    self._retain_llm_config.provider != self._llm_config.provider
-                    or self._retain_llm_config.model != self._llm_config.model
-                )
-                if retain_is_different:
-                    configs_to_verify.append(("retain", self._retain_llm_config))
-
-                # Verify reflect config if different from default and retain
-                reflect_is_different = (
-                    self._reflect_llm_config.provider != self._llm_config.provider
-                    or self._reflect_llm_config.model != self._llm_config.model
-                ) and (
-                    self._reflect_llm_config.provider != self._retain_llm_config.provider
-                    or self._reflect_llm_config.model != self._retain_llm_config.model
-                )
-                if reflect_is_different:
-                    configs_to_verify.append(("reflect", self._reflect_llm_config))
-
-                # Verify consolidation config if different from all others
-                consolidation_is_different = (
-                    (
-                        self._consolidation_llm_config.provider != self._llm_config.provider
-                        or self._consolidation_llm_config.model != self._llm_config.model
-                    )
-                    and (
-                        self._consolidation_llm_config.provider != self._retain_llm_config.provider
-                        or self._consolidation_llm_config.model != self._retain_llm_config.model
-                    )
-                    and (
-                        self._consolidation_llm_config.provider != self._reflect_llm_config.provider
-                        or self._consolidation_llm_config.model != self._reflect_llm_config.model
-                    )
-                )
-                if consolidation_is_different:
-                    configs_to_verify.append(("consolidation", self._consolidation_llm_config))
+                # One probe per distinct provider/model: an operation whose config
+                # matches one already queued adds nothing.
+                configs_to_verify: list[tuple[str, LLMConfig | MultiLLMProvider]] = []
+                seen: set[tuple[str | None, str | None]] = set()
+                for config_name, llm_config in (
+                    ("default", self._llm_config),
+                    ("retain", self._retain_llm_config),
+                    ("reflect", self._reflect_llm_config),
+                    ("consolidation", self._consolidation_llm_config),
+                    ("mental model refresh", self._mental_model_refresh_llm_config),
+                ):
+                    key = (llm_config.provider, llm_config.model)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    configs_to_verify.append((config_name, llm_config))
 
                 for config_name, llm_config in configs_to_verify:
                     try:
@@ -5419,12 +5476,17 @@ class MemoryEngine(MemoryEngineInterface):
         self._initialized = False
 
         # Clean up LLM providers (e.g. stop llamacpp subprocess)
-        for llm_config in (
+        _to_clean = [
             self._llm_config,
             self._retain_llm_config,
             self._reflect_llm_config,
             self._consolidation_llm_config,
-        ):
+        ]
+        # Usually the reflect config itself; only a separate provider when the
+        # MENTAL_MODEL_REFRESH_LLM_* group is configured.
+        if not any(c is self._mental_model_refresh_llm_config for c in _to_clean):
+            _to_clean.append(self._mental_model_refresh_llm_config)
+        for llm_config in _to_clean:
             try:
                 await llm_config.cleanup()
             except Exception as e:
@@ -14753,6 +14815,17 @@ class MemoryEngine(MemoryEngineInterface):
 
     # ==================== Reflect Methods ====================
 
+    def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":
+        """Pick the LLM for a reflect-pipeline run: interactive, or background refresh.
+
+        The automatic mental-model refresh drives the same pipeline as interactive
+        reflect but wants the opposite tradeoff (issue #4463), so it gets its own
+        config. When MENTAL_MODEL_REFRESH_LLM_* is unset the two are the same object.
+        """
+        if operation_label.endswith("refresh_mental_model"):
+            return self._mental_model_refresh_llm_config
+        return self._reflect_llm_config
+
     @_bind_bank_id()
     async def reflect_async(
         self,
@@ -15069,7 +15142,7 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 agent_result = await asyncio.wait_for(
                     run_reflect_agent(
-                        llm_config=self._reflect_llm_config.with_config(
+                        llm_config=self._llm_for_reflect_operation(_operation_label).with_config(
                             resolved_reflect_config, bank_id=bank_id, operation=_operation_label
                         ),
                         bank_id=bank_id,
@@ -15913,6 +15986,10 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
+        # The mental-model-refresh group is deliberately absent: this list is the
+        # LlmHealthOperation enum on the public API, so adding it would change the
+        # OpenAPI schema and every generated client. Unset, it is the reflect config
+        # anyway, and a configured one is a server-level knob (issue #4463).
         per_operation_llm = [
             ("retain", self._retain_llm_config),
             ("consolidation", self._consolidation_llm_config),
@@ -17266,7 +17343,7 @@ class MemoryEngine(MemoryEngineInterface):
             nonlocal _op_llm_config
             if _op_llm_config is None:
                 resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-                _op_llm_config = self._reflect_llm_config.with_config(
+                _op_llm_config = self._mental_model_refresh_llm_config.with_config(
                     resolved_config,
                     bank_id=bank_id,
                     operation="mental_model_delta_ops",

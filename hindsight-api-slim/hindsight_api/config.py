@@ -228,6 +228,7 @@ ENV_LLM_STRATEGY = "HINDSIGHT_API_LLM_STRATEGY"
 ENV_RETAIN_LLM_STRATEGY = "HINDSIGHT_API_RETAIN_LLM_STRATEGY"
 ENV_REFLECT_LLM_STRATEGY = "HINDSIGHT_API_REFLECT_LLM_STRATEGY"
 ENV_CONSOLIDATION_LLM_STRATEGY = "HINDSIGHT_API_CONSOLIDATION_LLM_STRATEGY"
+ENV_MENTAL_MODEL_REFRESH_LLM_STRATEGY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_STRATEGY"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -439,6 +440,26 @@ ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LI
 ENV_CONSOLIDATION_LLM_REASONING_EFFORT = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
 ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 ENV_CONSOLIDATION_LLM_CACHE_AFFINITY = "HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY"
+
+# Automatic mental-model refresh runs the reflect pipeline in the background, so it
+# shares REFLECT_LLM_* by default. This group lets it diverge: on a single-GPU
+# self-hosted box the interactive reflect wants a thinking model while the background
+# refresh wants a fast no-think one that cannot blow the wall timeout or starve the
+# interactive stream (issue #4463). Every field falls back to its REFLECT_LLM_*
+# counterpart, which in turn falls back to the global LLM_*.
+ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER"
+ENV_MENTAL_MODEL_REFRESH_LLM_API_KEY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY"
+ENV_MENTAL_MODEL_REFRESH_LLM_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL"
+ENV_MENTAL_MODEL_REFRESH_LLM_BASE_URL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL"
+ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT"
+ENV_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES"
+ENV_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF"
+ENV_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF"
+ENV_MENTAL_MODEL_REFRESH_LLM_TIMEOUT = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT"
+ENV_MENTAL_MODEL_REFRESH_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_LITELLMROUTER_CONFIG"
+ENV_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT"
+ENV_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY"
+ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 # Provider-agnostic asymmetric prefixes: applied client-side by every provider that
@@ -2472,7 +2493,8 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
     """Parse indexed extra-LLM members for an operation env prefix.
 
     ``prefix`` is the operation segment in the env name: ``""`` (global),
-    ``"RETAIN_"``, ``"REFLECT_"`` or ``"CONSOLIDATION_"``. Members are read from
+    ``"RETAIN_"``, ``"REFLECT_"``, ``"CONSOLIDATION_"`` or
+    ``"MENTAL_MODEL_REFRESH_"``. Members are read from
     ``HINDSIGHT_API_{prefix}LLM_{n}_PROVIDER`` for n = 1, 2, ... and scanning
     stops at the first index whose ``_PROVIDER`` is unset (so indices must be
     contiguous from 1). ``MODEL`` defaults to the provider's default model.
@@ -3008,6 +3030,23 @@ class HindsightConfig:
     consolidation_llm_extra_body: dict | None
     consolidation_llm_cache_affinity: str | None
 
+    # Automatic mental-model refresh. Every field is None unless its own
+    # HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_* var is set; unset means the refresh
+    # runs on the reflect config (see MemoryEngine, issue #4463).
+    mental_model_refresh_llm_provider: str | None
+    mental_model_refresh_llm_api_key: str | None
+    mental_model_refresh_llm_model: str | None
+    mental_model_refresh_llm_base_url: str | None
+    mental_model_refresh_llm_max_concurrent: int | None
+    mental_model_refresh_llm_max_retries: int | None
+    mental_model_refresh_llm_initial_backoff: float | None
+    mental_model_refresh_llm_max_backoff: float | None
+    mental_model_refresh_llm_timeout: float | None
+    mental_model_refresh_llm_litellmrouter_config: dict | None
+    mental_model_refresh_llm_reasoning_effort: str | None
+    mental_model_refresh_llm_extra_body: dict | None
+    mental_model_refresh_llm_cache_affinity: str | None
+
     # Embeddings
     embeddings_provider: str
     # Provider-agnostic per-input token cap; None disables truncation.
@@ -3449,6 +3488,8 @@ class HindsightConfig:
     reflect_llm_strategy: LLMStrategyConfig | None = None
     consolidation_llm_members: list[LLMMemberConfig] = field(default_factory=list)
     consolidation_llm_strategy: LLMStrategyConfig | None = None
+    mental_model_refresh_llm_members: list[LLMMemberConfig] = field(default_factory=list)
+    mental_model_refresh_llm_strategy: LLMStrategyConfig | None = None
 
     # Reranker failover chain (static, server-level). Index 0 is the unindexed
     # reranker config above; these are the extra HINDSIGHT_API_RERANKER_<n>_*
@@ -3500,16 +3541,19 @@ class HindsightConfig:
         "vlm_api_key",
         "reflect_llm_api_key",
         "consolidation_llm_api_key",
+        "mental_model_refresh_llm_api_key",
         # LiteLLM Router chains — entries embed api_keys and base_urls
         "llm_litellmrouter_config",
         "retain_llm_litellmrouter_config",
         "reflect_llm_litellmrouter_config",
         "consolidation_llm_litellmrouter_config",
+        "mental_model_refresh_llm_litellmrouter_config",
         # Multi-LLM chains — members embed api_keys and base_urls
         "llm_members",
         "retain_llm_members",
         "reflect_llm_members",
         "consolidation_llm_members",
+        "mental_model_refresh_llm_members",
         # Reranker failover chain — members embed api_keys and base_urls
         "reranker_members",
         # Base URLs (could expose infrastructure)
@@ -3518,6 +3562,7 @@ class HindsightConfig:
         "vlm_base_url",
         "reflect_llm_base_url",
         "consolidation_llm_base_url",
+        "mental_model_refresh_llm_base_url",
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
@@ -4169,6 +4214,36 @@ class HindsightConfig:
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
             consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             consolidation_llm_cache_affinity=os.getenv(ENV_CONSOLIDATION_LLM_CACHE_AFFINITY) or None,
+            mental_model_refresh_llm_provider=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER) or None,
+            mental_model_refresh_llm_api_key=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_API_KEY) or None,
+            mental_model_refresh_llm_model=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MODEL)
+            or (
+                _get_default_model_for_provider(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER))
+                if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER)
+                else None
+            ),
+            mental_model_refresh_llm_base_url=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_BASE_URL) or None,
+            mental_model_refresh_llm_max_concurrent=int(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT))
+            if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT)
+            else None,
+            mental_model_refresh_llm_max_retries=int(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES))
+            if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES)
+            else None,
+            mental_model_refresh_llm_initial_backoff=float(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF))
+            if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF)
+            else None,
+            mental_model_refresh_llm_max_backoff=float(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF))
+            if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF)
+            else None,
+            mental_model_refresh_llm_timeout=float(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_TIMEOUT))
+            if os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_TIMEOUT)
+            else None,
+            mental_model_refresh_llm_litellmrouter_config=_parse_llm_router_config(
+                ENV_MENTAL_MODEL_REFRESH_LLM_LITELLMROUTER_CONFIG
+            ),
+            mental_model_refresh_llm_reasoning_effort=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT) or None,
+            mental_model_refresh_llm_extra_body=json.loads(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY, "null")),
+            mental_model_refresh_llm_cache_affinity=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY) or None,
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
@@ -4178,6 +4253,8 @@ class HindsightConfig:
             reflect_llm_strategy=_parse_llm_strategy(os.getenv(ENV_REFLECT_LLM_STRATEGY)),
             consolidation_llm_members=_parse_llm_members("CONSOLIDATION_"),
             consolidation_llm_strategy=_parse_llm_strategy(os.getenv(ENV_CONSOLIDATION_LLM_STRATEGY)),
+            mental_model_refresh_llm_members=_parse_llm_members("MENTAL_MODEL_REFRESH_"),
+            mental_model_refresh_llm_strategy=_parse_llm_strategy(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_STRATEGY)),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             # Generic name, falling back to the deprecated LiteLLM-SDK-specific alias.
@@ -5147,6 +5224,19 @@ class HindsightConfig:
         # Silence noisy third-party loggers
         logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 
+    def has_mental_model_refresh_llm_override(self) -> bool:
+        """True when any ``HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_*`` var is set.
+
+        False is the backwards-compatible path: the automatic refresh keeps running
+        on the reflect LLM — literally the same object, so nothing about it changes
+        (issue #4463).
+        """
+        return any(
+            getattr(self, f.name) not in (None, [], {})
+            for f in fields(self)
+            if f.name.startswith("mental_model_refresh_llm_")
+        )
+
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""
         logger.info(f"Database: {mask_network_location(self.database_url)} (schema: {self.database_schema})")
@@ -5167,6 +5257,10 @@ class HindsightConfig:
             consolidation_provider = self.consolidation_llm_provider or self.llm_provider
             consolidation_model = self.consolidation_llm_model or self.llm_model
             logger.info(f"LLM (consolidation): provider={consolidation_provider}, model={consolidation_model}")
+        if self.has_mental_model_refresh_llm_override():
+            refresh_provider = self.mental_model_refresh_llm_provider or self.reflect_llm_provider or self.llm_provider
+            refresh_model = self.mental_model_refresh_llm_model or self.reflect_llm_model or self.llm_model
+            logger.info(f"LLM (mental model refresh): provider={refresh_provider}, model={refresh_model}")
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
         logger.info(f"Reranker: provider={self.reranker_provider}")
         logger.info(f"Graph retriever: {self.graph_retriever}")

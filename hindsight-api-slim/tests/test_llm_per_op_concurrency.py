@@ -1,7 +1,8 @@
 """Tests for per-operation LLM concurrency caps.
 
 These tests exercise the dispatch logic in `llm_wrapper` that gates calls on
-per-operation semaphores when `HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION}_LLM_MAX_CONCURRENT`
+per-operation semaphores when
+`HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION,MENTAL_MODEL_REFRESH}_LLM_MAX_CONCURRENT`
 is set. They patch the module-level semaphore registry so they can run without
 needing to re-import the module with custom env vars.
 """
@@ -37,10 +38,13 @@ class TestScopeToOperation:
             ("reflect_structured", "reflect"),
             ("reflect_tool_call", "reflect"),
             ("consolidation", "consolidation"),
+            # The background mental-model refresh is its own bucket, not reflect's.
+            ("refresh_mental_model", "mental_model_refresh"),
+            ("dry_run_refresh_mental_model", "mental_model_refresh"),
+            ("mental_model_delta_ops", "mental_model_refresh"),
             # Out-of-bucket scopes — only the global cap applies.
             ("memory_think", None),
             ("bank_mission", None),
-            ("mental_model_delta_ops", None),
             ("verification", None),
             ("", None),
         ],

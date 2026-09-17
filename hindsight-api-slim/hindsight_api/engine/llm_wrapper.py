@@ -26,6 +26,7 @@ except ImportError:
 
 from ..config import (
     ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
+    ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT,
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
     _get_raw_config,
@@ -84,6 +85,11 @@ def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
         ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT, config.retain_llm_max_concurrent),
         ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT, config.reflect_llm_max_concurrent),
         ("consolidation", ENV_CONSOLIDATION_LLM_MAX_CONCURRENT, config.consolidation_llm_max_concurrent),
+        (
+            "mental_model_refresh",
+            ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT,
+            config.mental_model_refresh_llm_max_concurrent,
+        ),
     ):
         # None is "unset" (config maps an absent or empty value onto it); the env name is
         # carried alongside purely so the error names the knob the operator actually set.
@@ -97,14 +103,27 @@ def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
 
 _per_op_llm_semaphores: dict[str, CrossLoopSemaphore] = _build_per_op_semaphores()
 
+# Call scopes the automatic mental-model refresh makes: the reflect pass itself, its
+# dry run, and the structured delta/retraction ops that follow it.
+_MENTAL_MODEL_REFRESH_SCOPES = (
+    "refresh_mental_model",
+    "dry_run_refresh_mental_model",
+    "mental_model_delta_ops",
+)
+
 
 def _scope_to_operation(scope: str) -> str | None:
     """Map a call scope to its per-operation concurrency bucket.
 
     Returns None for scopes that don't belong to a tracked operation
-    (verification probes, bank_mission, memory_think, mental_model_delta_ops),
-    which then run under the global cap only.
+    (verification probes, bank_mission, memory_think), which then run under the
+    global cap only.
     """
+    # The background mental-model refresh, its dry run and its delta ops form one
+    # bucket, separate from interactive reflect: capping it is how an operator stops
+    # the background job from starving the interactive path (issue #4463).
+    if scope.startswith(_MENTAL_MODEL_REFRESH_SCOPES):
+        return "mental_model_refresh"
     if scope.startswith("retain"):
         return "retain"
     if scope.startswith("reflect"):

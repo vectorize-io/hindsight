@@ -638,7 +638,7 @@ Two further limits:
 - **`update_mode: "append"` routes on the metadata supplied with the append call**, not the stored document's. An append re-extracts the stored body together with the new text, so resupply the same metadata to keep it on the same member.
 - **Batch retain is not supported** with this mode. `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` submits every item of an operation as a single job to a single member, which cannot honour per-item routes, so the combination is rejected at startup.
 
-**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
+**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` / `MENTAL_MODEL_REFRESH` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain — except `MENTAL_MODEL_REFRESH`, which inherits the reflect chain.
 
 The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
 
@@ -733,10 +733,33 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT` | Reasoning effort for consolidation operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for consolidation operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for consolidation operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER` | LLM provider for the automatic mental-model refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_PROVIDER` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY` | API key for the refresh LLM | Falls back to `HINDSIGHT_API_REFLECT_LLM_API_KEY` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL` | Model for the automatic refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_MODEL` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL` | Base URL for the refresh LLM | Falls back to `HINDSIGHT_API_REFLECT_LLM_BASE_URL` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT` | Extra cap on concurrent refresh LLM requests, composed with the global cap. Unset → only the global cap applies. | Unset |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES` | Max retries for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF` | Initial backoff for refresh retries (seconds) | Falls back to `HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF` | Max backoff cap for refresh retries (seconds) | Falls back to `HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT` | Timeout for refresh requests (seconds). Nobody is waiting on a background refresh, so this is usually set much higher than the reflect timeout. | Falls back to `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT` | Reasoning effort for the automatic refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` |
+
+**Automatic mental-model refresh.** The background refresh that runs after consolidation
+drives the same agent as interactive reflect, so by default it uses the reflect LLM and
+nothing above needs setting. The `MENTAL_MODEL_REFRESH_LLM_*` group exists because the two
+want opposite tradeoffs on a single-GPU self-hosted box: interactive reflect favours a
+reasoning model (a human is waiting on the quality), while the background refresh favours
+a fast no-think model that cannot blow the wall timeout, cannot exceed the completion-token
+budget on a reasoning chain, and does not halve interactive decode speed by running
+alongside it. Every field falls back to its `REFLECT_LLM_*` counterpart, which in turn falls
+back to the global `LLM_*` — set none of them and behaviour is exactly as before.
 
 :::tip When to Use Per-Operation Config
 - **Retain**: Use models with strong structured output (e.g., GPT-4o, Claude) for accurate fact extraction
 - **Reflect**: Use faster/cheaper models (e.g., GPT-4o-mini, Groq) for reasoning and response generation
+- **Mental model refresh**: On shared/local hardware, point it at a no-think or cheaper hosted model so the background job cannot destabilise interactive reflect
 - **Recall**: Does not use LLM (pure retrieval), so no configuration needed
 :::
 
@@ -777,14 +800,18 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 ```
 
 :::note Per-operation concurrency composes with the global cap
-`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT`, and
-`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` add an extra cap that applies *on top of*
+`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT`,
+`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT`, and
+`HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT` add an extra cap that applies *on top of*
 `HINDSIGHT_API_LLM_MAX_CONCURRENT`. A retain call counts against both the retain cap and the
 global cap; a reflect call without a per-op cap is bounded only by the global cap.
 
 To reserve headroom for live chat/reflect on a rate-limited provider, cap retain and
 consolidation below the global value — e.g. global=4, retain=1, consolidation=1 leaves
-two slots that retain/consolidation cannot consume.
+two slots that retain/consolidation cannot consume. The mental-model refresh cap covers
+the background refresh, its dry run and its delta operations, and is separate from the
+reflect cap — capping it is how you stop the background job from starving interactive
+reflect on shared hardware.
 
 Unlike the per-operation timeout and retry/backoff knobs, the `*_LLM_MAX_CONCURRENT`
 caps are process-global semaphores read from the environment once at startup. They are
