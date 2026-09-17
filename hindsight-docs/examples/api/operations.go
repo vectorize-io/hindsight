@@ -23,6 +23,12 @@ func main() {
 
 	operationID := "550e8400-e29b-41d4-a716-446655440000"
 
+	// Make sure the bank exists: listing operations for a bank nobody created is a 404 (#4442).
+	// memory-banks.go runs before this file and deletes 'my-bank' in its cleanup, so this file
+	// cannot assume an earlier example left one behind.
+	client.BanksAPI.CreateOrUpdateBank(ctx, "my-bank").
+		CreateBankRequest(hindsight.CreateBankRequest{}).Execute()
+
 	// [docs:operations-list]
 	// List recent operations for a bank (default: 20 most recent).
 	recent, _, err := client.OperationsAPI.ListOperations(ctx, "my-bank").Execute()

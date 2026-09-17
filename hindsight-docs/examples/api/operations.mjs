@@ -13,6 +13,11 @@ const HINDSIGHT_URL = process.env.HINDSIGHT_API_URL || 'http://localhost:8888';
 const client = new HindsightClient({ baseUrl: HINDSIGHT_URL });
 const apiClient = createClient(createConfig({ baseUrl: HINDSIGHT_URL }));
 
+// Make sure the bank exists: listing operations for a bank nobody created is a 404 (#4442).
+// memory-banks.mjs runs before this file and deletes 'my-bank' in its cleanup, so this file
+// cannot assume an earlier example left one behind.
+await client.createBank('my-bank', {});
+
 // =============================================================================
 // Doc Examples
 // =============================================================================
