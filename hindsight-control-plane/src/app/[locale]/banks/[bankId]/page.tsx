@@ -156,9 +156,12 @@ export default function BankPage() {
   const [showResetConfigDialog, setShowResetConfigDialog] = useState(false);
   const [showCloneDialog, setShowCloneDialog] = useState(false);
   const [cloneTargetId, setCloneTargetId] = useState("");
-  // The copy carries the bank's configuration unless this is unticked. Webhooks
-  // ride along with it, which is why the dialog says so out loud.
-  const [cloneIncludeConfig, setCloneIncludeConfig] = useState(true);
+  // One checkbox per include_* flag the clone endpoint takes, with the same
+  // defaults, so what the dialog offers and what the API does are the same three
+  // choices rather than a UI-only summary of them.
+  const [cloneIncludeData, setCloneIncludeData] = useState(true);
+  const [cloneIncludeBankConfig, setCloneIncludeBankConfig] = useState(true);
+  const [cloneIncludeHistory, setCloneIncludeHistory] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
 
@@ -222,7 +225,9 @@ export default function BankPage() {
     setIsCloning(true);
     try {
       const { operation_id } = await client.cloneBank(bankId, target, {
-        includeBankConfig: cloneIncludeConfig,
+        includeData: cloneIncludeData,
+        includeBankConfig: cloneIncludeBankConfig,
+        includeHistory: cloneIncludeHistory,
       });
       toast.success(t("cloneStarted"));
 
@@ -351,7 +356,9 @@ export default function BankPage() {
                         <DropdownMenuItem
                           onClick={() => {
                             setCloneTargetId(bankId ? `${bankId}-copy` : "");
-                            setCloneIncludeConfig(true);
+                            setCloneIncludeData(true);
+                            setCloneIncludeBankConfig(true);
+                            setCloneIncludeHistory(false);
                             setShowCloneDialog(true);
                           }}
                           disabled={!cloneEnabled}
@@ -845,19 +852,53 @@ export default function BankPage() {
                 autoFocus
               />
             </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="clone-include-config"
-                checked={cloneIncludeConfig}
-                onCheckedChange={(checked) => setCloneIncludeConfig(checked === true)}
-                disabled={isCloning}
-              />
-              <div className="space-y-1">
-                <Label htmlFor="clone-include-config" className="font-normal">
-                  {t("cloneIncludeConfig")}
-                </Label>
-                <p className="text-xs text-muted-foreground">{t("cloneIncludeConfigHint")}</p>
-              </div>
+            <div className="space-y-3">
+              <p className="text-sm font-medium">{t("cloneWhatToCopy")}</p>
+              {(
+                [
+                  {
+                    id: "clone-include-data",
+                    label: t("cloneIncludeData"),
+                    hint: t("cloneIncludeDataHint"),
+                    checked: cloneIncludeData,
+                    set: setCloneIncludeData,
+                  },
+                  {
+                    id: "clone-include-bank-config",
+                    label: t("cloneIncludeBankConfig"),
+                    hint: t("cloneIncludeBankConfigHint"),
+                    checked: cloneIncludeBankConfig,
+                    set: setCloneIncludeBankConfig,
+                  },
+                  {
+                    id: "clone-include-history",
+                    label: t("cloneIncludeHistory"),
+                    hint: t("cloneIncludeHistoryHint"),
+                    checked: cloneIncludeHistory,
+                    set: setCloneIncludeHistory,
+                  },
+                ] as const
+              ).map((flag) => (
+                <div key={flag.id} className="flex items-start gap-2">
+                  <Checkbox
+                    id={flag.id}
+                    checked={flag.checked}
+                    onCheckedChange={(checked) => flag.set(checked === true)}
+                    disabled={isCloning}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor={flag.id} className="font-normal">
+                      {flag.label}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">{flag.hint}</p>
+                  </div>
+                </div>
+              ))}
+              {!cloneIncludeData && !cloneIncludeBankConfig && !cloneIncludeHistory && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {t("cloneNothingSelected")}
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -868,7 +909,14 @@ export default function BankPage() {
             >
               {tCommon("cancel")}
             </Button>
-            <Button onClick={handleCloneBank} disabled={isCloning || !cloneTargetId.trim()}>
+            <Button
+              onClick={handleCloneBank}
+              disabled={
+                isCloning ||
+                !cloneTargetId.trim() ||
+                (!cloneIncludeData && !cloneIncludeBankConfig && !cloneIncludeHistory)
+              }
+            >
               {isCloning && <Spinner size="sm" className="mr-2" />}
               {isCloning ? t("cloning") : t("cloneBank")}
             </Button>

@@ -172,12 +172,18 @@
     "cloneBankDescription": "Copia este banco para um novo. A cópia começa com as mesmas memórias e evolui de forma independente a partir daí.",
     "cloneTargetLabel": "ID do novo banco",
     "cloneTargetPlaceholder": "meu-banco-copia",
-    "cloneIncludeConfig": "Copiar configuração (modelos mentais, diretivas, webhooks)",
-    "cloneIncludeConfigHint": "Os webhooks fazem parte da configuração: a cópia chamará os mesmos endpoints.",
     "cloning": "Clonando…",
     "cloneStarted": "Clonagem iniciada",
     "cloneSucceeded": "Banco clonado em '{bankName}'",
-    "cloneFailed": "Falha ao clonar o banco"
+    "cloneFailed": "Falha ao clonar o banco",
+    "cloneWhatToCopy": "O que copiar",
+    "cloneIncludeData": "Memórias",
+    "cloneIncludeDataHint": "Documentos, fatos, observações, anexos, o arquivo de curadoria e o log de operações.",
+    "cloneIncludeBankConfig": "Configuração do banco",
+    "cloneIncludeBankConfigHint": "Sobrescritas de configuração, modelos mentais e seu histórico, páginas de conhecimento, diretivas e webhooks — a cópia chamará os mesmos endpoints.",
+    "cloneIncludeHistory": "Histórico",
+    "cloneIncludeHistoryHint": "Log de auditoria e rastros de requisições ao LLM.",
+    "cloneNothingSelected": "Escolha pelo menos um item para copiar."
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",

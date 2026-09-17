@@ -114,6 +114,22 @@ describe("ControlPlaneClient.cloneBank", () => {
     expect(JSON.parse(init.body as string)).toEqual({ target_bank_id: "source-bank-copy" });
   });
 
+  it("forwards all three scope flags, matching the endpoint's own three", async () => {
+    await client.cloneBank("source-bank", "copy", {
+      includeData: true,
+      includeBankConfig: false,
+      includeHistory: true,
+    });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      target_bank_id: "copy",
+      include_data: true,
+      include_bank_config: false,
+      include_history: true,
+    });
+  });
+
   it("omits scope flags that were not set, so the server's defaults decide", async () => {
     await client.cloneBank("source-bank", "copy", { includeBankConfig: false });
 

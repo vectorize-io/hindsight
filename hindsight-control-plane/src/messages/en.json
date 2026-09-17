@@ -172,12 +172,18 @@
     "cloneBankDescription": "Copies this bank into a new one. The copy starts with the same memories and evolves independently from then on.",
     "cloneTargetLabel": "New bank id",
     "cloneTargetPlaceholder": "my-bank-copy",
-    "cloneIncludeConfig": "Copy configuration (mental models, directives, webhooks)",
-    "cloneIncludeConfigHint": "Webhooks are part of the configuration, so the copy will call the same endpoints.",
     "cloning": "Cloning…",
     "cloneStarted": "Clone started",
     "cloneSucceeded": "Bank cloned into '{bankName}'",
-    "cloneFailed": "Failed to clone bank"
+    "cloneFailed": "Failed to clone bank",
+    "cloneWhatToCopy": "What to copy",
+    "cloneIncludeData": "Memories",
+    "cloneIncludeDataHint": "Documents, facts, observations, attachments, the curation archive and the operations log.",
+    "cloneIncludeBankConfig": "Bank configuration",
+    "cloneIncludeBankConfigHint": "Config overrides, mental models and their history, knowledge pages, directives and webhooks — the copy will call the same webhook endpoints.",
+    "cloneIncludeHistory": "History",
+    "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
+    "cloneNothingSelected": "Choose at least one thing to copy."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",

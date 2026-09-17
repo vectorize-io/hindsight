@@ -172,12 +172,18 @@
     "cloneBankDescription": "將目前的記憶庫複製成新的一個。副本從相同的記憶開始，之後各自獨立演進。",
     "cloneTargetLabel": "新記憶庫 ID",
     "cloneTargetPlaceholder": "my-bank-copy",
-    "cloneIncludeConfig": "一併複製設定（心智模型、指令、Webhook）",
-    "cloneIncludeConfigHint": "Webhook 屬於設定的一部分，副本會呼叫相同的端點。",
     "cloning": "複製中…",
     "cloneStarted": "已開始複製",
     "cloneSucceeded": "記憶庫已複製為「{bankName}」",
-    "cloneFailed": "複製記憶庫失敗"
+    "cloneFailed": "複製記憶庫失敗",
+    "cloneWhatToCopy": "複製哪些內容",
+    "cloneIncludeData": "記憶",
+    "cloneIncludeDataHint": "文件、事實、觀察、附件、整理封存與操作紀錄。",
+    "cloneIncludeBankConfig": "記憶庫設定",
+    "cloneIncludeBankConfigHint": "設定覆寫、心智模型及其歷史、知識頁、指令與 Webhook——副本會呼叫相同的 Webhook 端點。",
+    "cloneIncludeHistory": "歷史",
+    "cloneIncludeHistoryHint": "稽核紀錄與 LLM 請求追蹤。",
+    "cloneNothingSelected": "請至少選擇一項要複製的內容。"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",

@@ -172,12 +172,18 @@
     "cloneBankDescription": "Copie cette banque dans une nouvelle. La copie démarre avec les mêmes mémoires puis évolue indépendamment.",
     "cloneTargetLabel": "Identifiant de la nouvelle banque",
     "cloneTargetPlaceholder": "ma-banque-copie",
-    "cloneIncludeConfig": "Copier la configuration (modèles mentaux, directives, webhooks)",
-    "cloneIncludeConfigHint": "Les webhooks font partie de la configuration : la copie appellera les mêmes points de terminaison.",
     "cloning": "Clonage…",
     "cloneStarted": "Clonage lancé",
     "cloneSucceeded": "Banque clonée dans '{bankName}'",
-    "cloneFailed": "Échec du clonage de la banque"
+    "cloneFailed": "Échec du clonage de la banque",
+    "cloneWhatToCopy": "Que copier",
+    "cloneIncludeData": "Mémoires",
+    "cloneIncludeDataHint": "Documents, faits, observations, pièces jointes, l'archive de curation et le journal des opérations.",
+    "cloneIncludeBankConfig": "Configuration de la banque",
+    "cloneIncludeBankConfigHint": "Surcharges de configuration, modèles mentaux et leur historique, pages de connaissances, directives et webhooks — la copie appellera les mêmes points de terminaison.",
+    "cloneIncludeHistory": "Historique",
+    "cloneIncludeHistoryHint": "Journal d'audit et traces des requêtes LLM.",
+    "cloneNothingSelected": "Choisissez au moins un élément à copier."
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",

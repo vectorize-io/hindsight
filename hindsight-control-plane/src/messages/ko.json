@@ -172,12 +172,18 @@
     "cloneBankDescription": "이 뱅크를 새 뱅크로 복사합니다. 복사본은 같은 기억으로 시작하며 이후에는 독립적으로 변합니다.",
     "cloneTargetLabel": "새 뱅크 ID",
     "cloneTargetPlaceholder": "my-bank-copy",
-    "cloneIncludeConfig": "설정도 복사 (멘탈 모델, 디렉티브, 웹훅)",
-    "cloneIncludeConfigHint": "웹훅은 설정의 일부이므로 복사본도 같은 엔드포인트를 호출합니다.",
     "cloning": "복제 중…",
     "cloneStarted": "복제를 시작했습니다",
     "cloneSucceeded": "뱅크를 '{bankName}'(으)로 복제했습니다",
-    "cloneFailed": "뱅크 복제에 실패했습니다"
+    "cloneFailed": "뱅크 복제에 실패했습니다",
+    "cloneWhatToCopy": "복사할 항목",
+    "cloneIncludeData": "기억",
+    "cloneIncludeDataHint": "문서, 사실, 관찰, 첨부 파일, 큐레이션 보관본, 작업 로그.",
+    "cloneIncludeBankConfig": "뱅크 설정",
+    "cloneIncludeBankConfigHint": "설정 재정의, 멘탈 모델과 그 기록, 지식 페이지, 디렉티브, 웹훅 — 복사본도 같은 웹훅 엔드포인트를 호출합니다.",
+    "cloneIncludeHistory": "기록",
+    "cloneIncludeHistoryHint": "감사 로그와 LLM 요청 추적.",
+    "cloneNothingSelected": "복사할 항목을 하나 이상 선택하세요."
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",

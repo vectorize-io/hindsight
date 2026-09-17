@@ -172,12 +172,18 @@
     "cloneBankDescription": "把当前记忆库复制成一个新的。副本从相同的记忆开始，之后各自独立演进。",
     "cloneTargetLabel": "新记忆库 ID",
     "cloneTargetPlaceholder": "my-bank-copy",
-    "cloneIncludeConfig": "同时复制配置（心智模型、指令、Webhook）",
-    "cloneIncludeConfigHint": "Webhook 属于配置的一部分，副本会调用相同的端点。",
     "cloning": "克隆中…",
     "cloneStarted": "已开始克隆",
     "cloneSucceeded": "记忆库已克隆为“{bankName}”",
-    "cloneFailed": "克隆记忆库失败"
+    "cloneFailed": "克隆记忆库失败",
+    "cloneWhatToCopy": "复制哪些内容",
+    "cloneIncludeData": "记忆",
+    "cloneIncludeDataHint": "文档、事实、观察、附件、整理归档和操作日志。",
+    "cloneIncludeBankConfig": "记忆库配置",
+    "cloneIncludeBankConfigHint": "配置覆盖、心智模型及其历史、知识页、指令和 Webhook——副本会调用相同的 Webhook 端点。",
+    "cloneIncludeHistory": "历史",
+    "cloneIncludeHistoryHint": "审计日志和 LLM 请求追踪。",
+    "cloneNothingSelected": "请至少选择一项要复制的内容。"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
