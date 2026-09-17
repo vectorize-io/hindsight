@@ -251,8 +251,9 @@ export default function BankPage() {
       }
       toast.error(t("cloneFailed"));
     } catch {
-      // fetchApi already surfaced the server's message; this covers the rest.
-      toast.error(t("cloneFailed"));
+      // No toast here: the API client already showed one carrying the server's
+      // own message ("Target bank '…' already exists", …), which is more useful
+      // than a generic failure. A second one just stacks a red alert under it.
     } finally {
       setIsCloning(false);
     }

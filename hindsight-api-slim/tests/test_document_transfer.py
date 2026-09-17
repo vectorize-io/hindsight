@@ -2779,3 +2779,43 @@ async def test_clone_can_leave_the_configuration_behind(api_client, memory, requ
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_does_not_keep_the_source_default_name(api_client, memory, request_context):
+    """A bank's default name is its id, so a copy that kept it would read as the
+    source in every list that shows names — two entries, same name, different ids."""
+    source = _unique_bank("name_src")
+    target = _unique_bank("name_dst")
+    try:
+        await _retain(memory, source, "Otto tunes harpsichords.", request_context, "doc-1")
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+
+        profile = await memory.get_bank_profile(target, request_context=request_context)
+        assert profile is not None
+        assert profile["name"] == target
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_keeps_a_name_someone_chose(api_client, memory, request_context):
+    """The rename only follows the default. A name a user set is theirs, and a
+    clone that renamed it to a bank id would be losing information."""
+    source = _unique_bank("named_src")
+    target = _unique_bank("named_dst")
+    try:
+        await _retain(memory, source, "Pia restores clocks.", request_context, "doc-1")
+        await memory.update_bank(source, name="Pia's workshop", request_context=request_context)
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+
+        profile = await memory.get_bank_profile(target, request_context=request_context)
+        assert profile is not None
+        assert profile["name"] == "Pia's workshop"
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)

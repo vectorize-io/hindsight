@@ -1006,6 +1006,13 @@ async def import_bank(
     # child (mental_models, …) trips its bank_id foreign key. See #3270.
     for row in parsed.bank_rows.get("banks", []):
         row.pop("internal_id", None)
+        # A bank's default display name is its id (see create_bank_row_on_conn),
+        # so restoring under a new id would leave the copy showing the *source's*
+        # id as its name — two banks reading as the same one in any list that
+        # shows names. Follow the rename only when the name is that default: a
+        # name someone actually chose is theirs, and is kept.
+        if bank_id != source_bank_id and row.get("name") == source_bank_id:
+            row["name"] = bank_id
 
     async with acquire_with_retry(backend) as conn:
         # Refuse to import into an existing bank — this restores a whole bank, it

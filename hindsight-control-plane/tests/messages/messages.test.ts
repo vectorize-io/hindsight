@@ -76,6 +76,26 @@ describe("locale catalog parity", () => {
     }
   );
 
+  // In ICU MessageFormat a single quote before `{` opens a quoted literal, so
+  // "Bank cloned into '{bankName}'" renders the braces verbatim and the value
+  // never appears. It looks like a typo in the catalog and reads as a bug in the
+  // app — the toast shows {bankName} to the user — and nothing else catches it:
+  // parity compares key sets, and next-intl formats it without complaint.
+  it.each(locales)("%s quotes no placeholder out of existence", (locale) => {
+    const catalog = readCatalog(locale);
+    const swallowed: string[] = [];
+    for (const path of collectKeys(catalog)) {
+      const value = getLeaf(catalog, path);
+      if (typeof value === "string" && /'\{/.test(value)) {
+        swallowed.push(`${path}: ${value}`);
+      }
+    }
+    expect(
+      swallowed,
+      `ICU-escaped placeholders in ${locale}.json — drop the surrounding single quotes`
+    ).toEqual([]);
+  });
+
   it.each(locales)("%s has no empty string values", (locale) => {
     const catalog = readCatalog(locale);
     const empties: string[] = [];

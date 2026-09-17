@@ -120,7 +120,7 @@
     "clearObservationsWarning": "此操作會刪除所有已整合知識。下次執行整合時會重新產生觀察。",
     "clearing": "正在清除...",
     "bankDeleted": "記憶庫已刪除",
-    "bankDeletedDescription": "記憶庫 '{bankName}' 已永久刪除。",
+    "bankDeletedDescription": "記憶庫 {bankName} 已永久刪除。",
     "failedToDeleteBank": "未能刪除記憶庫",
     "observationsCleared": "觀察已清除",
     "observationsClearedDefault": "觀察已成功清除",
