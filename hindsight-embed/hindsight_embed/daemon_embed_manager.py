@@ -329,7 +329,7 @@ class DaemonEmbedManager(EmbedManager):
         """
         if platform.system() != "Windows":
             return None
-        candidates = []
+        candidates: list[Path] = []
         if preferred_dir is not None:
             candidates.append(preferred_dir / "pythonw.exe")
         candidates.append(Path(sys.executable).with_name("pythonw.exe"))
