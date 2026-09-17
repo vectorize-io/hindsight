@@ -65,6 +65,45 @@ async def test_the_disposition_reaches_the_reasoning_prompt(client, llm, bank_wi
     assert any("skeptic" in prompt.lower() for prompt in prompts), "disposition never reached the model"
 
 
+async def test_a_configured_disposition_arrives_as_an_instruction(client, llm, bank_with_facts):
+    """Numbers are metadata; the prompt has to say what the number means.
+
+    The test above is satisfied by the bare `Disposition: skepticism=5` line — the
+    word "skepticism" contains "skeptic" — and that is exactly the shape a weaker
+    model ignores, answering a skepticism=5 bank the way it answers a trusting one.
+    """
+    await client.acreate_bank(bank_id=bank_with_facts, disposition_skepticism=5)
+    reflect_loop(llm, answer=ANSWER)
+
+    await client.areflect(bank_id=bank_with_facts, query=QUERY)
+
+    prompts = llm.prompts_for("reflect")
+    assert any("critically examine" in prompt.lower() for prompt in prompts), (
+        "the disposition arrived as a number with nothing telling the model what to do with it"
+    )
+
+
+async def test_an_untouched_disposition_adds_no_instructions(client, llm, bank_with_facts):
+    """3/3/3 is what a bank that never configured the traits reports, and it must keep
+    the prompt it had before instructions existed — nobody pays for a feature they did
+    not turn on."""
+    await client.acreate_bank(
+        bank_id=bank_with_facts,
+        disposition_skepticism=3,
+        disposition_literalism=3,
+        disposition_empathy=3,
+    )
+    reflect_loop(llm, answer=ANSWER)
+
+    await client.areflect(bank_id=bank_with_facts, query=QUERY)
+
+    prompts = llm.prompts_for("reflect")
+    assert any("skepticism=3" in prompt for prompt in prompts), "the traits themselves still belong in the prompt"
+    assert not any("your disposition traits" in prompt.lower() for prompt in prompts), (
+        "a neutral disposition gained instructions it never asked for"
+    )
+
+
 async def test_opposite_dispositions_produce_different_prompts(client, llm, bank_with_facts):
     """The strongest deterministic statement available without judging output: the
     *instructions* differ. A disposition that reached the prompt as a constant
