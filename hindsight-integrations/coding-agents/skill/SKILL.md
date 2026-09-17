@@ -276,6 +276,88 @@ file is the source of truth for these pages: to give one a different schedule, c
 page. Only the fields this plugin states are touched — a page's `mode`, its excluded siblings and
 its minimum refresh interval are left exactly as they are.
 
+### Customize Knowledge Pages — `pages`
+
+Every repo gets the same five pages. They are a **taxonomy**, not a summary of your source: each one
+is synthesized from what the bank ingested — commit history and past conversations — and each is
+pinned to one knowledge tier, so a page draws only on the facts the extractor routed to it.
+
+| Page                           | What it answers                                                                                         | Tier tag                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `Component map`                | the main components/modules/subsystems, what each is responsible for, and how they depend on each other | `knowledge:component`    |
+| `Core concepts`                | the domain abstractions and key entities — the vocabulary a developer has to know                       | `knowledge:concept`      |
+| `Conventions and patterns`     | how THIS project does things: testing, error handling, naming, structure, how changes are made          | `knowledge:convention`   |
+| `Key decisions and rationale`  | the significant technical decisions and the durable "why we do it this way" behind them                 | `knowledge:decision`     |
+| `Initiatives and enhancements` | the major initiatives and features over time, linking out to each captured initiative's own page        | `knowledge:feature-work` |
+
+`pages` says which of them to seed and what each one asks. Keys are the page names above, matched
+ignoring case and surrounding spaces:
+
+```jsonc
+{
+  "pages": {
+    // don't seed this page at all
+    "Component map": false,
+    // seed it, but ask your question instead of the built-in one
+    "Key decisions and rationale": {
+      "source_query": "What did we decide about data retention, encryption and PII handling, and why? Prefer decisions that constrain what new code may do.",
+    },
+  },
+}
+```
+
+Omit `pages` entirely — the default — and all five are seeded with their built-in queries.
+
+**Fewer pages.** Each page costs one LLM synthesis per refresh, so a repo that only wants the
+architecture ones turns the rest off:
+
+```jsonc
+{
+  "pages": {
+    "Initiatives and enhancements": false,
+    "Conventions and patterns": false,
+    "Key decisions and rationale": false,
+  },
+}
+```
+
+**Per repo**, like every other field — usually where this belongs, since what a page should ask is a
+property of the project, not of your machine:
+
+```jsonc
+{
+  "banks": {
+    "coding-agent::payments-api": {
+      "pages": {
+        "Core concepts": {
+          "source_query": "What are the payment domain's entities — orders, ledgers, settlement states — and what does each mean in OUR model?",
+        },
+      },
+    },
+  },
+}
+```
+
+Four things worth knowing before you reach for it:
+
+- **This is the only durable way to reword a page.** Every session compares each seeded page against
+  the query it is configured to have and re-syncs the ones that differ, so a `source_query` edited
+  through the API or the control plane is replaced the next time an agent runs. Setting it here makes
+  your wording the configured one. When a re-sync does replace a query, the plugin now says which
+  page in the plugin log rather than doing it silently.
+- **Your query still gets the scoping clause.** The sentence that keeps a dependency's decisions off
+  your project's page is appended to a custom query too — a bank holds facts about the libraries and
+  services a repo merely uses, and without that clause a page will present them as yours.
+- **The tier tag stays the taxonomy's.** It selects which facts the synthesis reads; rewording the
+  question changes what is asked of those facts, not which ones are in scope.
+- **`false` does not delete anything.** A page already seeded keeps its content and simply stops
+  being re-synced — remove it in the control plane if you want it gone.
+
+A name that matches no page above is ignored with a warning in the plugin log, so a typo fails
+loudly instead of looking like it disabled something. Adding pages of your own is not what this
+setting is for: the agent's `hindsight_capture_initiative` tool already creates pages, one per
+initiative, each with its own query.
+
 ### A bank you shape yourself — `manageBankConfig`
 
 Pointed at a bank, this plugin gives it the shape its ingestion needs: retain strategies for the
