@@ -166,7 +166,18 @@
     "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}.",
     "knowledge": "Knowledge",
     "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
-    "pages": "Pages"
+    "pages": "Pages",
+    "cloneBank": "Clone Bank",
+    "cloneBankTitle": "Clone memory bank",
+    "cloneBankDescription": "Copies this bank into a new one. The copy starts with the same memories and evolves independently from then on.",
+    "cloneTargetLabel": "New bank id",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloneIncludeConfig": "Copy configuration (mental models, directives, webhooks)",
+    "cloneIncludeConfigHint": "Webhooks are part of the configuration, so the copy will call the same endpoints.",
+    "cloning": "Cloning…",
+    "cloneStarted": "Clone started",
+    "cloneSucceeded": "Bank cloned into '{bankName}'",
+    "cloneFailed": "Failed to clone bank"
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id is required",
         "missingRequestData": "Missing request data",
         "missingBankId": "Missing bank_id",
-        "fileRequired": "file is required"
+        "fileRequired": "file is required",
+        "targetBankIdRequired": "target_bank_id is required"
       },
       "generic": {
         "failed": "Failed",
@@ -1824,7 +1836,8 @@
         "update": "Failed to update bank",
         "delete": "Failed to delete bank",
         "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "importTemplate": "Failed to import bank template",
+        "clone": "Failed to clone bank"
       },
       "bankConfig": {
         "fetch": "Failed to fetch bank config",

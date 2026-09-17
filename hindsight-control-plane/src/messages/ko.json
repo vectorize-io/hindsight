@@ -166,7 +166,18 @@
     "memoryDefense": "메모리 방어",
     "knowledge": "지식",
     "knowledgeDescription": "이 기억 저장소에서 종합된 지식 페이지와 멘탈 모델입니다.",
-    "pages": "페이지"
+    "pages": "페이지",
+    "cloneBank": "뱅크 복제",
+    "cloneBankTitle": "메모리 뱅크 복제",
+    "cloneBankDescription": "이 뱅크를 새 뱅크로 복사합니다. 복사본은 같은 기억으로 시작하며 이후에는 독립적으로 변합니다.",
+    "cloneTargetLabel": "새 뱅크 ID",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloneIncludeConfig": "설정도 복사 (멘탈 모델, 디렉티브, 웹훅)",
+    "cloneIncludeConfigHint": "웹훅은 설정의 일부이므로 복사본도 같은 엔드포인트를 호출합니다.",
+    "cloning": "복제 중…",
+    "cloneStarted": "복제를 시작했습니다",
+    "cloneSucceeded": "뱅크를 '{bankName}'(으)로 복제했습니다",
+    "cloneFailed": "뱅크 복제에 실패했습니다"
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id는 필수입니다",
         "missingRequestData": "요청 데이터가 누락되었습니다",
         "missingBankId": "bank_id가 누락되었습니다",
-        "fileRequired": "파일이 필요합니다"
+        "fileRequired": "파일이 필요합니다",
+        "targetBankIdRequired": "target_bank_id는 필수입니다"
       },
       "generic": {
         "failed": "실패했습니다",
@@ -1824,7 +1836,8 @@
         "update": "메모리 뱅크를 업데이트하지 못했습니다",
         "delete": "메모리 뱅크를 삭제하지 못했습니다",
         "exportTemplate": "메모리 뱅크 템플릿을 내보내지 못했습니다",
-        "importTemplate": "메모리 뱅크 템플릿을 가져오지 못했습니다"
+        "importTemplate": "메모리 뱅크 템플릿을 가져오지 못했습니다",
+        "clone": "뱅크 복제에 실패했습니다"
       },
       "bankConfig": {
         "fetch": "뱅크 구성을 가져오지 못했습니다",

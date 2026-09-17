@@ -166,7 +166,18 @@
     "memoryDefense": "メモリ防御",
     "knowledge": "ナレッジ",
     "knowledgeDescription": "この記憶バンクから合成されたナレッジページとメンタルモデル。",
-    "pages": "ページ"
+    "pages": "ページ",
+    "cloneBank": "バンクを複製",
+    "cloneBankTitle": "メモリバンクを複製",
+    "cloneBankDescription": "このバンクを新しいバンクにコピーします。コピーは同じ記憶から始まり、以後は独立して変化します。",
+    "cloneTargetLabel": "新しいバンク ID",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloneIncludeConfig": "設定もコピー（メンタルモデル、ディレクティブ、Webhook）",
+    "cloneIncludeConfigHint": "Webhook は設定の一部です。コピーも同じエンドポイントを呼び出します。",
+    "cloning": "複製中…",
+    "cloneStarted": "複製を開始しました",
+    "cloneSucceeded": "バンクを '{bankName}' に複製しました",
+    "cloneFailed": "バンクの複製に失敗しました"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id は必須です",
         "missingRequestData": "リクエストデータが不足しています",
         "missingBankId": "bank_id がありません",
-        "fileRequired": "ファイルが必要です"
+        "fileRequired": "ファイルが必要です",
+        "targetBankIdRequired": "target_bank_id は必須です"
       },
       "generic": {
         "failed": "失敗しました",
@@ -1824,7 +1836,8 @@
         "update": "メモリバンクの更新に失敗しました",
         "delete": "メモリバンクの削除に失敗しました",
         "exportTemplate": "メモリバンクテンプレートのエクスポートに失敗しました",
-        "importTemplate": "メモリバンクテンプレートのインポートに失敗しました"
+        "importTemplate": "メモリバンクテンプレートのインポートに失敗しました",
+        "clone": "バンクの複製に失敗しました"
       },
       "bankConfig": {
         "fetch": "バンク設定の取得に失敗しました",

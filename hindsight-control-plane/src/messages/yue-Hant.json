@@ -166,7 +166,18 @@
     "memoryDefense": "記憶防護",
     "knowledge": "知識",
     "knowledgeDescription": "由呢個記憶庫嘅記憶綜合沉澱出嚟嘅知識頁同心智模型。",
-    "pages": "知識頁"
+    "pages": "知識頁",
+    "cloneBank": "複製記憶庫",
+    "cloneBankTitle": "複製記憶庫",
+    "cloneBankDescription": "將呢個記憶庫複製去一個新嘅。副本會由相同記憶開始，之後各自獨立發展。",
+    "cloneTargetLabel": "新記憶庫 ID",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloneIncludeConfig": "一併複製設定（心智模型、指令、Webhook）",
+    "cloneIncludeConfigHint": "Webhook 屬於設定嘅一部分，副本會叫同一批端點。",
+    "cloning": "複製緊…",
+    "cloneStarted": "已開始複製",
+    "cloneSucceeded": "記憶庫已複製為「{bankName}」",
+    "cloneFailed": "複製記憶庫失敗"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "必須提供 operation_id",
         "missingRequestData": "缺少請求資料",
         "missingBankId": "缺少 bank_id",
-        "fileRequired": "需要檔案"
+        "fileRequired": "需要檔案",
+        "targetBankIdRequired": "必須提供 target_bank_id"
       },
       "generic": {
         "failed": "失敗",
@@ -1824,7 +1836,8 @@
         "update": "未能更新記憶庫",
         "delete": "未能刪除記憶庫",
         "exportTemplate": "未能匯出記憶庫範本",
-        "importTemplate": "未能匯入記憶庫範本"
+        "importTemplate": "未能匯入記憶庫範本",
+        "clone": "複製記憶庫失敗"
       },
       "bankConfig": {
         "fetch": "未能載入記憶庫設定",

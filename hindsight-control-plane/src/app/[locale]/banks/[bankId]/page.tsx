@@ -45,7 +45,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Download, Trash2, MoreVertical, Pencil, RotateCcw, Activity } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Brain,
+  Copy,
+  Download,
+  Trash2,
+  MoreVertical,
+  Pencil,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 
@@ -84,6 +104,10 @@ export default function BankPage() {
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
   const llmHealthEnabled = features?.bank_llm_health ?? false;
+  // A clone is an export and an import back to back, so it needs both halves
+  // enabled server-side — the endpoint answers 404 otherwise.
+  const cloneEnabled =
+    (features?.document_export_api ?? false) && (features?.document_import_api ?? false);
 
   // `audit_log_enabled` and `enable_observations` are hierarchical
   // (env -> tenant -> bank): a bank can opt in even when the deployment default
@@ -130,6 +154,12 @@ export default function BankPage() {
   const [isConsolidating, setIsConsolidating] = useState(false);
   const [isRecoveringConsolidation, setIsRecoveringConsolidation] = useState(false);
   const [showResetConfigDialog, setShowResetConfigDialog] = useState(false);
+  const [showCloneDialog, setShowCloneDialog] = useState(false);
+  const [cloneTargetId, setCloneTargetId] = useState("");
+  // The copy carries the bank's configuration unless this is unticked. Webhooks
+  // ride along with it, which is why the dialog says so out loud.
+  const [cloneIncludeConfig, setCloneIncludeConfig] = useState(true);
+  const [isCloning, setIsCloning] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
 
   const handleTabChange = (tab: NavItem) => {
@@ -183,6 +213,43 @@ export default function BankPage() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsClearingObservations(false);
+    }
+  };
+
+  const handleCloneBank = async () => {
+    const target = cloneTargetId.trim();
+    if (!bankId || !target) return;
+    setIsCloning(true);
+    try {
+      const { operation_id } = await client.cloneBank(bankId, target, {
+        includeBankConfig: cloneIncludeConfig,
+      });
+      toast.success(t("cloneStarted"));
+
+      // The clone runs in the background: re-embedding every fact takes as long
+      // as the bank is big, so the dialog waits on the operation rather than
+      // dropping the user on a bank that is still filling up.
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const op = await client.getOperationStatus(bankId, operation_id);
+        if (op.status === "completed") {
+          toast.success(t("cloneSucceeded", { bankName: target }));
+          setShowCloneDialog(false);
+          router.push(bankRoute(target, "?view=profile"));
+          return;
+        }
+        if (op.status === "failed") {
+          toast.error(op.error_message || t("cloneFailed"));
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      toast.error(t("cloneFailed"));
+    } catch {
+      // fetchApi already surfaced the server's message; this covers the rest.
+      toast.error(t("cloneFailed"));
+    } finally {
+      setIsCloning(false);
     }
   };
 
@@ -280,6 +347,25 @@ export default function BankPage() {
                         >
                           <Download className="w-4 h-4 mr-2" />
                           {t("exportTemplate")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setCloneTargetId(bankId ? `${bankId}-copy` : "");
+                            setCloneIncludeConfig(true);
+                            setShowCloneDialog(true);
+                          }}
+                          disabled={!cloneEnabled}
+                          title={
+                            !cloneEnabled
+                              ? "Cloning needs the document export and import APIs enabled"
+                              : undefined
+                          }
+                        >
+                          <Copy className="w-4 h-4 mr-2" />
+                          {t("cloneBank")}
+                          {!cloneEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
                         </DropdownMenuItem>
                         {llmHealthEnabled && (
                           <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
@@ -740,6 +826,56 @@ export default function BankPage() {
       {/* Dry-run extraction */}
 
       {/* Delete Bank Confirmation Dialog */}
+      {/* Clone bank */}
+      <Dialog open={showCloneDialog} onOpenChange={setShowCloneDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("cloneBankTitle")}</DialogTitle>
+            <DialogDescription>{t("cloneBankDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="clone-target-id">{t("cloneTargetLabel")}</Label>
+              <Input
+                id="clone-target-id"
+                value={cloneTargetId}
+                onChange={(e) => setCloneTargetId(e.target.value)}
+                placeholder={t("cloneTargetPlaceholder")}
+                disabled={isCloning}
+                autoFocus
+              />
+            </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="clone-include-config"
+                checked={cloneIncludeConfig}
+                onCheckedChange={(checked) => setCloneIncludeConfig(checked === true)}
+                disabled={isCloning}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="clone-include-config" className="font-normal">
+                  {t("cloneIncludeConfig")}
+                </Label>
+                <p className="text-xs text-muted-foreground">{t("cloneIncludeConfigHint")}</p>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowCloneDialog(false)}
+              disabled={isCloning}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button onClick={handleCloneBank} disabled={isCloning || !cloneTargetId.trim()}>
+              {isCloning && <Spinner size="sm" className="mr-2" />}
+              {isCloning ? t("cloning") : t("cloneBank")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

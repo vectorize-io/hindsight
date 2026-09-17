@@ -166,7 +166,18 @@
     "memoryDefense": "Defesa da memória",
     "knowledge": "Conhecimento",
     "knowledgeDescription": "Páginas e modelos mentais sintetizados a partir das memórias deste banco.",
-    "pages": "Páginas"
+    "pages": "Páginas",
+    "cloneBank": "Clonar banco",
+    "cloneBankTitle": "Clonar banco de memória",
+    "cloneBankDescription": "Copia este banco para um novo. A cópia começa com as mesmas memórias e evolui de forma independente a partir daí.",
+    "cloneTargetLabel": "ID do novo banco",
+    "cloneTargetPlaceholder": "meu-banco-copia",
+    "cloneIncludeConfig": "Copiar configuração (modelos mentais, diretivas, webhooks)",
+    "cloneIncludeConfigHint": "Os webhooks fazem parte da configuração: a cópia chamará os mesmos endpoints.",
+    "cloning": "Clonando…",
+    "cloneStarted": "Clonagem iniciada",
+    "cloneSucceeded": "Banco clonado em '{bankName}'",
+    "cloneFailed": "Falha ao clonar o banco"
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id é obrigatório",
         "missingRequestData": "Dados da solicitação ausentes",
         "missingBankId": "bank_id ausente",
-        "fileRequired": "É necessário um arquivo"
+        "fileRequired": "É necessário um arquivo",
+        "targetBankIdRequired": "target_bank_id é obrigatório"
       },
       "generic": {
         "failed": "Falha",
@@ -1824,7 +1836,8 @@
         "update": "Falha ao atualizar banco de memória",
         "delete": "Falha ao excluir banco de memória",
         "exportTemplate": "Falha ao exportar modelo do banco de memória",
-        "importTemplate": "Falha ao importar modelo do banco de memória"
+        "importTemplate": "Falha ao importar modelo do banco de memória",
+        "clone": "Falha ao clonar o banco"
       },
       "bankConfig": {
         "fetch": "Falha ao buscar configuração do banco",

@@ -166,7 +166,18 @@
     "memoryDefense": "记忆防护",
     "knowledge": "知识",
     "knowledgeDescription": "由该记忆库的记忆综合沉淀出的知识页与心智模型。",
-    "pages": "知识页"
+    "pages": "知识页",
+    "cloneBank": "克隆记忆库",
+    "cloneBankTitle": "克隆记忆库",
+    "cloneBankDescription": "把当前记忆库复制成一个新的。副本从相同的记忆开始，之后各自独立演进。",
+    "cloneTargetLabel": "新记忆库 ID",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloneIncludeConfig": "同时复制配置（心智模型、指令、Webhook）",
+    "cloneIncludeConfigHint": "Webhook 属于配置的一部分，副本会调用相同的端点。",
+    "cloning": "克隆中…",
+    "cloneStarted": "已开始克隆",
+    "cloneSucceeded": "记忆库已克隆为“{bankName}”",
+    "cloneFailed": "克隆记忆库失败"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id 为必填项",
         "missingRequestData": "缺少请求数据",
         "missingBankId": "缺少 bank_id",
-        "fileRequired": "需要文件"
+        "fileRequired": "需要文件",
+        "targetBankIdRequired": "必须提供 target_bank_id"
       },
       "generic": {
         "failed": "失败",
@@ -1824,7 +1836,8 @@
         "update": "更新记忆库失败",
         "delete": "删除记忆库失败",
         "exportTemplate": "导出记忆库模板失败",
-        "importTemplate": "导入记忆库模板失败"
+        "importTemplate": "导入记忆库模板失败",
+        "clone": "克隆记忆库失败"
       },
       "bankConfig": {
         "fetch": "获取记忆库配置失败",

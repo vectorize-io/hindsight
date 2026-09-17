@@ -166,7 +166,18 @@
     "memoryDefense": "Défense de la mémoire",
     "knowledge": "Connaissances",
     "knowledgeDescription": "Pages et modèles mentaux synthétisés à partir des mémoires de cette banque.",
-    "pages": "Pages"
+    "pages": "Pages",
+    "cloneBank": "Cloner la banque",
+    "cloneBankTitle": "Cloner la banque de mémoire",
+    "cloneBankDescription": "Copie cette banque dans une nouvelle. La copie démarre avec les mêmes mémoires puis évolue indépendamment.",
+    "cloneTargetLabel": "Identifiant de la nouvelle banque",
+    "cloneTargetPlaceholder": "ma-banque-copie",
+    "cloneIncludeConfig": "Copier la configuration (modèles mentaux, directives, webhooks)",
+    "cloneIncludeConfigHint": "Les webhooks font partie de la configuration : la copie appellera les mêmes points de terminaison.",
+    "cloning": "Clonage…",
+    "cloneStarted": "Clonage lancé",
+    "cloneSucceeded": "Banque clonée dans '{bankName}'",
+    "cloneFailed": "Échec du clonage de la banque"
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id est obligatoire",
         "missingRequestData": "Données de requête manquantes",
         "missingBankId": "bank_id manquant",
-        "fileRequired": "Un fichier est requis"
+        "fileRequired": "Un fichier est requis",
+        "targetBankIdRequired": "target_bank_id est obligatoire"
       },
       "generic": {
         "failed": "Échec",
@@ -1824,7 +1836,8 @@
         "update": "Impossible de mettre à jour la banque de mémoire",
         "delete": "Impossible de supprimer la banque de mémoire",
         "exportTemplate": "Impossible d'exporter le modèle de banque de mémoire",
-        "importTemplate": "Impossible d'importer le modèle de banque de mémoire"
+        "importTemplate": "Impossible d'importer le modèle de banque de mémoire",
+        "clone": "Échec du clonage de la banque"
       },
       "bankConfig": {
         "fetch": "Impossible de récupérer la configuration de la banque",

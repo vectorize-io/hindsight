@@ -166,7 +166,18 @@
     "memoryDefense": "Speicherschutz",
     "knowledge": "Wissen",
     "knowledgeDescription": "Wissensseiten und mentale Modelle, synthetisiert aus den Erinnerungen dieser Bank.",
-    "pages": "Seiten"
+    "pages": "Seiten",
+    "cloneBank": "Bank klonen",
+    "cloneBankTitle": "Speicherbank klonen",
+    "cloneBankDescription": "Kopiert diese Bank in eine neue. Die Kopie startet mit denselben Erinnerungen und entwickelt sich danach unabhängig weiter.",
+    "cloneTargetLabel": "Neue Bank-ID",
+    "cloneTargetPlaceholder": "meine-bank-kopie",
+    "cloneIncludeConfig": "Konfiguration kopieren (Mentale Modelle, Direktiven, Webhooks)",
+    "cloneIncludeConfigHint": "Webhooks gehören zur Konfiguration – die Kopie ruft dieselben Endpunkte auf.",
+    "cloning": "Wird geklont …",
+    "cloneStarted": "Klonen gestartet",
+    "cloneSucceeded": "Bank nach '{bankName}' geklont",
+    "cloneFailed": "Klonen der Bank fehlgeschlagen"
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -1811,7 +1822,8 @@
         "operationIdRequired": "operation_id ist erforderlich",
         "missingRequestData": "Anfragedaten fehlen",
         "missingBankId": "bank_id fehlt",
-        "fileRequired": "Eine Datei ist erforderlich"
+        "fileRequired": "Eine Datei ist erforderlich",
+        "targetBankIdRequired": "target_bank_id ist erforderlich"
       },
       "generic": {
         "failed": "Fehlgeschlagen",
@@ -1824,7 +1836,8 @@
         "update": "Speicherbank konnte nicht aktualisiert werden",
         "delete": "Speicherbank konnte nicht gelöscht werden",
         "exportTemplate": "Vorlage der Speicherbank konnte nicht exportiert werden",
-        "importTemplate": "Vorlage der Speicherbank konnte nicht importiert werden"
+        "importTemplate": "Vorlage der Speicherbank konnte nicht importiert werden",
+        "clone": "Klonen der Bank fehlgeschlagen"
       },
       "bankConfig": {
         "fetch": "Bankkonfiguration konnte nicht abgerufen werden",
