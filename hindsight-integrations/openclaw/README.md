@@ -155,7 +155,8 @@ Details worth knowing:
 - **Mapped names are used verbatim.** `bankIdPrefix` is not applied, because you named the bank yourself.
 - **Retain, recall and the knowledge tools all follow the map** — they resolve the bank through the same path.
 - **Bank defaults still apply.** A mapped bank is stamped with the configured missions, extraction mode, entity labels and so on when it is first used, exactly like a derived bank.
-- **Mapped agents skip the identity guard.** With user-scoped banking, a session whose sender cannot be resolved is normally skipped rather than routed to a shared bank. A mapped agent's bank does not depend on the sender, so those sessions are retained as intended.
+- **Agent ids match exactly** — the lookup is case-sensitive and not fuzzy, so `Inbound` is not `inbound`. Keys are trimmed, values too.
+- **Mapped agents are exempt from the sender/surface skips.** A session whose sender cannot be resolved, or whose dispatch surface differs from the session's provider, is normally skipped rather than routed into a bank keyed by the wrong thing. A mapped agent's bank depends on neither, so those sessions are retained as intended. Operational sessions (`cron`, `heartbeat`, `subagent`, `temp:`) are still skipped for mapped agents, exactly as before.
 - **Entries with a blank or non-string bank are ignored** (and logged), rather than routing an agent to a bank named `""`.
 
 ### Per-user dynamic bank defaults

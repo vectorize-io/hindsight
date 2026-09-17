@@ -681,12 +681,15 @@ export function normalizeAgentBankMap(input: unknown): Record<string, string> | 
   const normalized: Record<string, string> = {};
   const dropped: string[] = [];
   for (const [agentId, bankId] of Object.entries(input as Record<string, unknown>)) {
+    const trimmedAgentId = agentId.trim();
     const trimmedBank = typeof bankId === "string" ? bankId.trim() : "";
-    if (!agentId.trim() || !trimmedBank) {
+    if (!trimmedAgentId || !trimmedBank) {
       dropped.push(agentId);
       continue;
     }
-    normalized[agentId] = trimmedBank;
+    // Key on the trimmed id. Storing the raw key would keep an entry that can
+    // never match a resolved agent id — inert rather than wrong, and silent.
+    normalized[trimmedAgentId] = trimmedBank;
   }
 
   // Silently dropped config keys have bitten this plugin before (#1443), so say so.
@@ -718,7 +721,17 @@ function mappedBankIdForAgent(
   const agentId =
     resolvedCtx?.agentId ||
     (resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey).agentId : undefined);
-  return agentId ? map[agentId] : undefined;
+  // Object.hasOwn, not a plain lookup: an agent literally called "toString" or
+  // "constructor" would otherwise inherit a function from the prototype, which is
+  // truthy and is not a bank id.
+  if (!agentId || !Object.hasOwn(map, agentId)) return undefined;
+
+  // Re-check the value instead of trusting the caller to have normalised it: the
+  // backfill CLI builds its PluginConfig straight from openclaw.json and never
+  // passes through normalizeAgentBankMap, so it would otherwise back-fill into a
+  // differently-trimmed bank than the live gateway writes to.
+  const mapped = map[agentId];
+  return typeof mapped === "string" && mapped.trim().length > 0 ? mapped.trim() : undefined;
 }
 
 function getDefaultBankId(pluginConfig: PluginConfig): string {
@@ -1365,13 +1378,20 @@ export function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions)
     options.pluginConfig?.dynamicBankId === false &&
     typeof options.pluginConfig?.bankId === "string" &&
     options.pluginConfig.bankId.length > 0;
+  // A mapped agent is pinned the same way a static bank is: its bank comes from
+  // the map, not from the dispatch surface, so a surface mismatch cannot route
+  // the turn into the wrong bank and must not skip it. (#3890)
+  const mappedBanking =
+    options.pluginConfig !== undefined &&
+    mappedBankIdForAgent(resolvedCtx ?? effectiveCtx, options.pluginConfig) !== undefined;
 
   if (
     sessionProvider &&
     options.dispatchChannel &&
     sessionProvider !== options.dispatchChannel &&
     bankRoutingDependsOnSurface &&
-    !staticBanking
+    !staticBanking &&
+    !mappedBanking
   ) {
     const skipReason = finalSkipReason(
       `dispatch surface ${options.dispatchChannel} does not match session provider ${sessionProvider}`

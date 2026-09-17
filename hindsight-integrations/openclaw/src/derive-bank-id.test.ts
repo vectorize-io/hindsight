@@ -210,4 +210,26 @@ describe("deriveBankId with agentBankMap", () => {
     };
     expect(deriveBankId(undefined, config)).toBe("openclaw");
   });
+
+  it("does not inherit bank ids from the prototype chain", () => {
+    // An agent literally called "toString" must not pick up Object.prototype's
+    // method, which is truthy and is not a bank id.
+    const config: PluginConfig = { dynamicBankId: true, agentBankMap: {} };
+    const ctxNamedLikeAPrototypeKey: PluginHookAgentContext = {
+      agentId: "toString",
+      channelId: "channel-456",
+      senderId: "user-789",
+    };
+    expect(deriveBankId(ctxNamedLikeAPrototypeKey, config)).toBe("toString::channel-456::user-789");
+  });
+
+  it("ignores a mapped value that is not a usable string", () => {
+    // The backfill CLI builds its config straight from openclaw.json, without
+    // normalizeAgentBankMap, so the lookup itself has to reject this.
+    const config = {
+      dynamicBankId: true,
+      agentBankMap: { inbound: 42 },
+    } as unknown as PluginConfig;
+    expect(deriveBankId(ctx, config)).toBe("inbound::channel-456::user-789");
+  });
 });

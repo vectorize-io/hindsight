@@ -219,7 +219,7 @@ Those two modes are all-or-nothing. When you run several agents in one gateway a
 
 The `inbound` and `outbound` agents share the `ps-technology` bank, `limpieza` writes to `ps-limpieza`, and any agent not listed keeps the bank it would otherwise derive. The map is checked before both static and dynamic derivation, so it also takes precedence over a configured `bankId`.
 
-Mapped bank names are used exactly as written — `bankIdPrefix` is not applied to them. Mapped banks still receive your configured bank defaults on first use, and auto-recall, auto-retain and the knowledge tools all resolve the same mapped bank.
+Agent ids are matched exactly (case-sensitive), and mapped bank names are used exactly as written — `bankIdPrefix` is not applied to them. Mapped banks still receive your configured bank defaults on first use, and auto-recall, auto-retain and the knowledge tools all resolve the same mapped bank.
 
 ### Per-user bank defaults
 

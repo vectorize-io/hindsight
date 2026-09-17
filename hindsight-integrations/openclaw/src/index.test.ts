@@ -1641,6 +1641,57 @@ describe("resolveAndCacheIdentity dispatch-surface gate (#1541)", () => {
 
     expect(skipReason).toBeUndefined();
   });
+
+  // A mapped agent is pinned like a static bank: the surface cannot route its
+  // turn into the wrong bank, so the mismatch must not skip it. The skip is
+  // cached as final, so getting this wrong loses the session for the whole
+  // process. (#3890)
+  it("does not skip a mapped agent whose dispatch surface differs", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:inbound:telegram:direct:user-3890",
+      ctx: {
+        sessionKey: "agent:inbound:telegram:direct:user-3890",
+        agentId: "inbound",
+        senderId: "user-3890",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+    });
+
+    expect(skipReason).toBeUndefined();
+  });
+
+  it("still skips an unmapped agent on the same mismatch", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:stranger:telegram:direct:user-3890b",
+      ctx: {
+        sessionKey: "agent:stranger:telegram:direct:user-3890b",
+        agentId: "stranger",
+        senderId: "user-3890b",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+    });
+
+    expect(skipReason).toEqual({
+      kind: "final",
+      detail: "dispatch surface webchat does not match session provider telegram",
+    });
+  });
+
+  it("still skips operational sessions for a mapped agent", () => {
+    // The map widens allowCliSessions; cron/heartbeat/subagent and temp:
+    // sessions return before that is consulted and must stay skipped.
+    for (const sessionKey of ["agent:inbound:cron:job-1", "temp:inbound:scratch"]) {
+      const { skipReason } = resolveAndCacheIdentity({
+        sessionKey,
+        ctx: { sessionKey, agentId: "inbound" },
+        pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+      });
+
+      expect(skipReason?.kind).toBe("final");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2212,6 +2263,14 @@ describe("normalizeAgentBankMap", () => {
     expect(normalizeAgentBankMap(null)).toBeUndefined();
     expect(normalizeAgentBankMap("inbound=ps-technology")).toBeUndefined();
     expect(normalizeAgentBankMap([["inbound", "ps-technology"]])).toBeUndefined();
+  });
+
+  it("trims the agent id too, so a padded key is not silently inert", () => {
+    // Keying on the raw " inbound" would keep an entry that can never match a
+    // resolved agent id — and it would not show up in the dropped-entry warning.
+    expect(normalizeAgentBankMap({ " inbound ": "ps-technology" })).toEqual({
+      inbound: "ps-technology",
+    });
   });
 });
 
