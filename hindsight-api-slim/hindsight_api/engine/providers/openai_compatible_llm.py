@@ -1531,7 +1531,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # narrowed to a single tool above, so the call stays practically forced under
         # auto — the same reasoning as the DeepSeek branch. NOTE: "none" cannot be
         # expressed this way and would become "auto"; no caller on this path uses it
-        # (only the gemini / claude-code / github-copilot providers handle NONE), so
+        # (only the gemini / claude-code / cursor / github-copilot providers handle NONE), so
         # it is left rather than given an untested tools-stripping branch.
         if self._rejects_non_auto_tool_choice() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
             request_tool_choice = None

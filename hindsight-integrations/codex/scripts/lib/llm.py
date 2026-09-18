@@ -23,11 +23,12 @@ PROVIDER_DETECTION = [
     {"name": "ollama", "key_env": ""},
     {"name": "openai-codex", "key_env": ""},
     {"name": "claude-code", "key_env": ""},
+    {"name": "cursor", "key_env": ""},
     {"name": "github-copilot", "key_env": ""},
 ]
 
 # Providers that don't require an API key
-NO_KEY_REQUIRED = {"ollama", "openai-codex", "claude-code", "github-copilot"}
+NO_KEY_REQUIRED = {"ollama", "openai-codex", "claude-code", "cursor", "github-copilot"}
 
 
 def _find_provider(name):

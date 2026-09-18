@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -35,12 +36,15 @@ from hindsight_api.engine.llm_interface import (
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import (
+    LLMCallResult,
+    LLMToolCall,
+    LLMToolCallResult,
+    TokenUsage,
+)
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
-
-from ..response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +53,52 @@ logger = logging.getLogger(__name__)
 #: unambiguous ``cursor-agent`` wins when both exist.
 _BINARY_CANDIDATES = ("cursor-agent", "agent")
 
-#: An empty scratch directory used as the agent's workspace. ``cursor-agent`` is
-#: workspace-shaped — it will read files around its cwd — and Hindsight's calls
-#: are pure text completions, so pointing it at an empty directory keeps the
-#: server's own files out of every prompt.
-_workspace: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class _CursorDirs:
+    """The per-process scratch directories the spawned CLI is confined to."""
+
+    workspace: str
+    config_dir: str
 
 
-def _get_workspace() -> str:
-    global _workspace
-    if _workspace is None:
-        _workspace = tempfile.mkdtemp(prefix="hindsight-cursor-")
-    return _workspace
+#: Two throwaway directories, created once per process and reused by every call.
+#:
+#: ``workspace`` is the agent's cwd. ``cursor-agent`` is workspace-shaped — it reads
+#: files around its working directory — and Hindsight's calls are pure text
+#: completions, so an empty directory keeps the server's own files out of prompts.
+#:
+#: ``config_dir`` is ``CURSOR_CONFIG_DIR``, the same isolation ``claude_code_llm.py``
+#: gets from ``CLAUDE_CONFIG_DIR``. Without it the CLI writes a session transcript
+#: into the operator's ``~/.cursor/chats`` for every extraction, consolidation and
+#: reflect turn, and reads that config tree — which on a machine with the
+#: `hindsight-cursor-cli` integration installed carries a global ``hooks.json``
+#: pointing ``beforeSubmitPrompt``/``stop`` at Hindsight's own recall and retain.
+#: Headless ``-p`` mode does not run those hooks on the CLI version tested here
+#: (2026.09.15 — verified: neither a user-level nor a project-level marker hook
+#: fires), so the recursive-retain loop of issue #1751 does not reproduce today.
+#: We isolate anyway: the session-store pollution is real and observed, and if a
+#: later CLI starts honouring hooks headlessly this is exactly the loop that bit
+#: the Claude Code provider. Auth is unaffected — it resolves from the OS
+#: credential store, not the config directory (verified against a logged-in CLI
+#: with ``CURSOR_CONFIG_DIR`` pointed at an empty temp dir).
+#:
+#: Guarded by a plain lock because the accessor is reachable from more than one
+#: event loop; the critical section does no I/O beyond ``mkdtemp`` and never awaits.
+_dirs_lock = threading.Lock()
+_dirs: _CursorDirs | None = None
+
+
+def _get_dirs() -> _CursorDirs:
+    global _dirs
+    with _dirs_lock:
+        if _dirs is None:
+            _dirs = _CursorDirs(
+                workspace=tempfile.mkdtemp(prefix="hindsight-cursor-ws-"),
+                config_dir=tempfile.mkdtemp(prefix="hindsight-cursor-cfg-"),
+            )
+            logger.debug(f"Cursor: isolated workspace={_dirs.workspace} CURSOR_CONFIG_DIR={_dirs.config_dir}")
+        return _dirs
 
 
 def _resolve_binary() -> str:
@@ -183,16 +221,26 @@ class CursorLLM(LLMInterface):
 
     async def _run(self, prompt: str, scope: str) -> _CliTurn:
         """Run one headless agent turn."""
+        # --mode ask is Cursor's read-only Q&A mode: no edits, no shell. That is the
+        # only tool restriction the CLI offers (there is no --tools/--max-turns), so
+        # it carries the weight claude_code_llm.py spreads over tools=[] and
+        # max_turns=1 — Hindsight's prompts contain arbitrary retained text, and
+        # --trust suppresses the approval prompt that would otherwise gate an edit.
         args = [self._binary, "-p", "--output-format", "json", "--trust", "--mode", "ask"]
         if self.model:
             args += ["--model", self.model]
-        if self.api_key:
-            args += ["--api-key", self.api_key]
 
-        env = {**os.environ, "NO_COLOR": "1"}
+        dirs = _get_dirs()
+        # The key goes in the environment, never in argv: every local user can read
+        # another process's command line out of `ps`, and the CLI reads CURSOR_API_KEY
+        # itself, so --api-key would leak the credential for no benefit.
+        env = {**os.environ, "NO_COLOR": "1", "CURSOR_CONFIG_DIR": dirs.config_dir}
+        if self.api_key:
+            env["CURSOR_API_KEY"] = self.api_key
+
         proc = await asyncio.create_subprocess_exec(
             *args,
-            cwd=_get_workspace(),
+            cwd=dirs.workspace,
             env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -408,6 +456,7 @@ class CursorLLM(LLMInterface):
                     set_stage(f"llm.cursor.tools.attempt={attempt + 1}/{max_retries + 1}")
                     turn = await self._run(prompt, scope)
                 text, in_tok, out_tok = turn.text, turn.input_tokens, turn.output_tokens
+                stash_response_usage(LLMResponseUsage(input_tokens=in_tok, output_tokens=out_tok))
 
                 tool_calls: list[LLMToolCall] = []
                 content: str | None = text or None
