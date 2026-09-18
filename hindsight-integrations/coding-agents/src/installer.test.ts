@@ -59,14 +59,32 @@ function writeJsonAt(path: string, value: unknown): void {
 
 // configureServer honors HINDSIGHT_CONFIG — a developer shell exporting it must not leak the
 // suite's --server writes into their real config file ("" is falsy → the per-test home is used).
+//
+// DSH_HOME leaks the same way, and more sharply: `dshHome()` is `process.env.DSH_HOME ||
+// join(c.home, ".dsh")`, so the roster tests that install the dsh entrypoint into a temp `ctx.home`
+// write the DEVELOPER'S own home patch whenever their shell exports it — and the row they leave
+// behind points at a temp dir this suite then deletes, i.e. a dsh that no longer boots. Unset for
+// the whole FILE, not just the dsh block: the loops that leak live outside that block, and the
+// reader in core/history.ts honors DSH_HOME too.
 beforeEach(() => {
   vi.stubEnv("HINDSIGHT_CONFIG", "");
+  vi.stubEnv("DSH_HOME", "");
+  delete process.env.DSH_HOME;
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
   while (homes.length) rmSync(homes.pop()!, { recursive: true, force: true });
   vi.clearAllMocks();
+});
+
+// The env guards above are load-bearing rather than hygiene, and dropping one is silent on CI: the
+// leak they prevent only shows up on a machine whose shell exports the variable. This is what
+// notices.
+describe("env isolation", () => {
+  it("unsets DSH_HOME, so no test can write a real dsh home patch", () => {
+    expect(process.env.DSH_HOME).toBeUndefined();
+  });
 });
 
 describe("claude-code installer", () => {
@@ -689,11 +707,6 @@ describe("cline-cli installer", () => {
 describe("dsh installer", () => {
   const patchPath = (ctx: InstallCtx) => join(ctx.home, ".dsh", "cordis.patch.yml");
 
-  // The harness home is env-driven; pin it to the test home so a developer's real $DSH_HOME
-  // (or a CI runner's) can never be the thing this suite writes to.
-  beforeEach(() => vi.stubEnv("DSH_HOME", ""));
-  afterEach(() => vi.unstubAllEnvs());
-
   it("registers the plugin as a file:// row in the home patch layer", () => {
     const ctx = makeCtx();
     expect(run(["install", "dsh"], ctx)).toBe(0);
@@ -722,6 +735,34 @@ describe("dsh installer", () => {
     // dsh REQUIRES this file to parse to a top-level array and fails BOOT otherwise, so an
     // emptied file must still be `[]`.
     expect(readFileSync(patchPath(ctx), "utf8").trim()).toBe("[]");
+  });
+
+  it("survives install -> uninstall -> install without writing two YAML documents", () => {
+    const ctx = makeCtx();
+    run(["install", "dsh"], ctx);
+    run(["uninstall", "dsh"], ctx);
+    run(["install", "dsh"], ctx);
+    const patch = readFileSync(patchPath(ctx), "utf8");
+    // The previous version carried the `[]` placeholder uninstall leaves behind into `others`,
+    // which is truthy, so it emitted `[]` AND our block — two top-level documents. dsh parses this
+    // file as a top-level array, refuses that, and then fails BOOT for EVERY profile.
+    expect(patch).not.toContain("[]");
+    // Nothing precedes our block: the file opens on our marker, not on a stray `[]` document.
+    expect(patch.trim().startsWith("# HINDSIGHT_CODING_AGENTS_DSH_START")).toBe(true);
+    expect(patch.match(/- id: hindsight/g)).toHaveLength(1);
+  });
+
+  it("repairs a home layer an earlier version already corrupted with a leading `[]`", () => {
+    const ctx = makeCtx();
+    run(["install", "dsh"], ctx);
+    // Byte-for-byte the state that install-after-uninstall used to leave on disk.
+    writeFileSync(patchPath(ctx), `[]\n\n${readFileSync(patchPath(ctx), "utf8")}`);
+    run(["install", "dsh"], ctx);
+    const patch = readFileSync(patchPath(ctx), "utf8");
+    // A re-install is the documented repair for a moved package, so it has to heal this too —
+    // otherwise the machine stays unbootable with no way out but hand-editing the file.
+    expect(patch).not.toContain("[]");
+    expect(patch.match(/- id: hindsight/g)).toHaveLength(1);
   });
 
   it("uninstall keeps the user's own patches", () => {
