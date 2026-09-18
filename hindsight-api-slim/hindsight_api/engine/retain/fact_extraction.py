@@ -260,22 +260,21 @@ class FactCausalRelation(BaseModel):
 # legal answer. The keys stay required (see each model's `json_schema_extra`); only
 # the values may be null. Downstream, `get_value` already collapses null / "" /
 # "N/A" to None, so "N/A" from an older prompt or a model that prefers it still works.
+#
+# These stay as close to the original wording as the change allows: only the "'N/A'
+# if …" placeholder instruction becomes "null if …". A first version rewrote them
+# into "explicitly stated for THIS fact … never invent a motive", which reads like a
+# harmless tightening and is not one — `why` stopped absorbing the request behind an
+# agent's action, so "the user asked me to refactor X" came back as its own separate
+# `world` fact and flipped the experience/world balance in
+# test_fact_extraction_agent_experience. The schema change is the fix; the prompt is
+# not the place to relitigate what these fields mean.
 _WHEN_DESCRIPTION = (
-    "Date/time explicitly stated for THIS fact. Use null if the text does not state one — "
-    "never infer it from a date mentioned elsewhere in the input."
+    "When it happened. null if unknown. Never infer it from a date the text states about something else."
 )
-_WHERE_DESCRIPTION = (
-    "Location explicitly stated for THIS fact. Use null if the text does not state one — "
-    "never borrow a location mentioned elsewhere."
-)
-_WHO_DESCRIPTION = (
-    "People/organizations explicitly involved in THIS fact, with relationships. "
-    "Use null if the text names none — never borrow a name mentioned elsewhere."
-)
-_WHY_DESCRIPTION = (
-    "Rationale/significance explicitly stated for THIS fact. Use null if the text gives none "
-    "or it is obvious — never invent a motive."
-)
+_WHERE_DESCRIPTION = "Location if relevant. null if none."
+_WHO_DESCRIPTION = "People involved with relationships. null if general."
+_WHY_DESCRIPTION = "Context/significance if important. null if obvious."
 
 
 class ExtractedFact(BaseModel):
@@ -403,11 +402,11 @@ class ExtractedFactVerbose(BaseModel):
 
     when: str | None = Field(
         default=None,
-        description="WHEN it happened - ALWAYS include temporal information stated for THIS fact. "
+        description="WHEN it happened - ALWAYS include temporal information if mentioned. "
         "Include: specific dates, times, durations, relative time references. "
         "Examples: 'on June 15th, 2024 at 3pm', 'last weekend', 'for the past 3 years', 'every morning at 6am'. "
-        "Use null if the text states no time for THIS fact - never infer one from a date mentioned "
-        "elsewhere in the input. Prefer converting to absolute dates when possible.",
+        "Use null ONLY if absolutely no temporal context exists, and never infer a time from a date the "
+        "text states about something else. Prefer converting to absolute dates when possible.",
     )
 
     where: str | None = Field(
@@ -415,8 +414,7 @@ class ExtractedFactVerbose(BaseModel):
         description="WHERE it happened or is about - SPECIFIC locations, places, areas, regions if applicable. "
         "Include: cities, neighborhoods, venues, buildings, countries, specific addresses when mentioned. "
         "Examples: 'downtown San Francisco at a rooftop garden venue', 'at the user's home in Brooklyn', 'online via Zoom', 'Paris, France'. "
-        "Use null if the fact is location-agnostic or the text states no location for it - never borrow "
-        "a location mentioned elsewhere.",
+        "Use null ONLY if absolutely no location context exists or if the fact is completely location-agnostic.",
     )
 
     who: str | None = Field(
@@ -427,7 +425,7 @@ class ExtractedFactVerbose(BaseModel):
         "BE DETAILED about relationships and roles. "
         "Example: 'Emily (user's college roommate from Stanford, now works at Google), Sarah (Emily's partner of 5 years, software engineer)' "
         "NOT: 'my friend' or 'Emily and Sarah'. "
-        "Use null if the text names nobody for THIS fact - never borrow a name mentioned elsewhere.",
+        "Use null if the text names nobody.",
     )
 
     why: str | None = Field(
@@ -439,7 +437,7 @@ class ExtractedFactVerbose(BaseModel):
         "Example (world): 'The user felt thrilled and inspired, has always dreamed of an outdoor ceremony, mentioned wanting a similar garden venue, was particularly moved by the intimate atmosphere and personal vows' "
         "Example (assistant): 'User asked how to fix slow API performance with 1000+ concurrent users, expected 70-80% reduction in database load' "
         "NOT: 'User liked it' or 'To help user'. "
-        "Use null if the text gives no rationale for THIS fact - never invent a motive.",
+        "Use null if the text gives no rationale.",
     )
 
     fact_kind: str = Field(
@@ -502,10 +500,14 @@ class ExtractedFactNoCausal(BaseModel):
 
     # Same fields as ExtractedFact but without causal_relations
     what: str = Field(description="WHAT happened - COMPLETE, DETAILED description with ALL specifics.")
-    when: str | None = Field(default=None, description=_WHEN_DESCRIPTION)
-    where: str | None = Field(default=None, description=_WHERE_DESCRIPTION)
-    who: str | None = Field(default=None, description=_WHO_DESCRIPTION)
-    why: str | None = Field(default=None, description=_WHY_DESCRIPTION)
+    # This model's own wording, kept verbatim — it never named a placeholder, so
+    # nullability is carried by the type alone and nothing about the prompt changes.
+    when: str | None = Field(default=None, description="WHEN it happened - include temporal information if mentioned.")
+    where: str | None = Field(default=None, description="WHERE it happened - SPECIFIC locations if applicable.")
+    who: str | None = Field(default=None, description="WHO is involved - ALL people/entities with relationships.")
+    why: str | None = Field(
+        default=None, description="WHY it matters - emotional, contextual, and motivational details."
+    )
 
     fact_kind: str = Field(
         default="conversation",
@@ -1089,8 +1091,8 @@ FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
 1. "what": Core fact - concise but complete (1-2 sentences max)
-2. "when": Temporal info stated for THIS fact. null if none. Use day name when known.
-3. "where": Location stated for THIS fact. null if none.
+2. "when": Temporal info if mentioned. null if none. Use day name when known.
+3. "where": Location if relevant. null if none.
 4. "who": People involved with relationships. null if just general info.
 5. "why": Context/significance ONLY if important. null if obvious.
 

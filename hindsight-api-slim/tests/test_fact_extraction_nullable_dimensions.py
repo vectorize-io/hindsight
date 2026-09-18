@@ -104,11 +104,15 @@ def test_descriptions_stop_asking_for_the_n_a_placeholder(mode, causal):
     Leaving "write 'N/A'" in them re-creates the same pressure the nullable type
     removes: a model told to write a placeholder string still has to write a
     string, and "N/A" competes with the nearby date for that slot.
+
+    Only the placeholder is asserted, not that the description says "null".
+    Descriptions that never named a placeholder are left exactly as they were and
+    let the schema carry nullability — rewriting them is what broke the
+    experience/world balance in test_fact_extraction_agent_experience once
+    already, so this test must not push anyone back toward that.
     """
     model = _fact_model(mode, causal)
 
     for field in DESCRIPTIVE_FIELDS:
         description = (model.model_fields[field].description or "") if field in model.model_fields else ""
         assert "N/A" not in description, f"{field} still tells the model to write 'N/A'"
-        if description:
-            assert "null" in description
