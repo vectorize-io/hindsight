@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { resolveDateRangePreset } from "@/lib/date-range-preset";
+import { resolveCustomRange, resolveDateRangePreset } from "@/lib/date-range-preset";
 
 /**
  * The presets are what three list views send as `start_date`, so the two things
@@ -37,5 +37,55 @@ describe("resolveDateRangePreset", () => {
     const before = now.toISOString();
     resolveDateRangePreset("30d", now);
     expect(now.toISOString()).toBe(before);
+  });
+
+  it("leaves the custom preset's bounds to its own inputs", () => {
+    expect(resolveDateRangePreset("custom", now)).toEqual({});
+  });
+});
+
+describe("resolveCustomRange", () => {
+  it("sends nothing while both ends are blank", () => {
+    expect(resolveCustomRange("", "")).toEqual({ bounds: {}, reversed: false });
+  });
+
+  it("accepts either end alone — the endpoints take one bound", () => {
+    expect(resolveCustomRange("2026-03-01T00:00", "").bounds.end_date).toBeUndefined();
+    expect(resolveCustomRange("2026-03-01T00:00", "").bounds.start_date).toBeDefined();
+    expect(resolveCustomRange("", "2026-03-01T00:00").bounds.start_date).toBeUndefined();
+    expect(resolveCustomRange("", "2026-03-01T00:00").bounds.end_date).toBeDefined();
+  });
+
+  it("reads the typed time as local, not as UTC", () => {
+    // `datetime-local` carries no offset. Going through Date is what makes
+    // "09:00" mean the user's 09:00; asserting against the same conversion
+    // keeps the test true in any timezone CI runs in.
+    const { bounds } = resolveCustomRange("2026-03-01T09:00", "");
+    expect(bounds.start_date).toBe(new Date("2026-03-01T09:00").toISOString());
+  });
+
+  it("rejects a reversed range and sends no bounds", () => {
+    const state = resolveCustomRange("2026-03-10T00:00", "2026-03-01T00:00");
+    expect(state.reversed).toBe(true);
+    expect(state.bounds).toEqual({});
+  });
+
+  // The input hands back a half-finished value while it is being typed. Some of
+  // those parse (a bare "2027" is a valid ISO prefix) and some do not, and it was
+  // the second kind that mattered: `new Date(x).toISOString()` raises RangeError
+  // on an Invalid Date, which took the whole documents page down on the first
+  // keystroke into the field.
+  it.each(["2027-01-01T", "not-a-date", "99999-13-45T99:99"])(
+    "treats the unparseable value %s as no bound instead of throwing",
+    (partial) => {
+      expect(() => resolveCustomRange(partial, "")).not.toThrow();
+      expect(resolveCustomRange(partial, "").bounds).toEqual({});
+    }
+  );
+
+  it("rejects a zero-length range — the end is exclusive, so it can match nothing", () => {
+    const state = resolveCustomRange("2026-03-10T00:00", "2026-03-10T00:00");
+    expect(state.reversed).toBe(true);
+    expect(state.bounds).toEqual({});
   });
 });

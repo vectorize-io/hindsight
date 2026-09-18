@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { toast } from "sonner";
 import { client, DocumentTimeField, LLMRequestEntry } from "@/lib/api";
-import { DateRangePreset, resolveDateRangePreset } from "@/lib/date-range-preset";
+import {
+  DateRangePreset,
+  resolveCustomRange,
+  resolveDateRangePreset,
+} from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
@@ -752,6 +756,9 @@ export function DocumentsView() {
   // axis Select below.
   const [dateRange, setDateRange] = useState<DateRangePreset>("all");
   const [timeField, setTimeField] = useState<DocumentTimeField>("updated_at");
+  // Explicit bounds for dateRange === "custom", as `datetime-local` strings.
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [total, setTotal] = useState(0);
 
   // Document transfer (export/import) state
@@ -814,7 +821,11 @@ export function DocumentsView() {
       setLoading(true);
       try {
         const pageOffset = (page - 1) * ITEMS_PER_PAGE;
-        const window = resolveDateRangePreset(dateRange);
+        const window =
+          dateRange === "custom"
+            ? resolveCustomRange(customFrom, customTo).bounds
+            : resolveDateRangePreset(dateRange);
+        const hasWindow = Boolean(window.start_date || window.end_date);
         const data: any = await client.listDocuments({
           bank_id: currentBank,
           q: searchQuery,
@@ -822,7 +833,7 @@ export function DocumentsView() {
           tags_match: tagsMatch === "all" ? "all_strict" : "any_strict",
           // Send the axis only with a window: on its own it would re-sort the
           // list for no visible reason.
-          time_field: window.start_date ? timeField : undefined,
+          time_field: hasWindow ? timeField : undefined,
           start_date: window.start_date,
           end_date: window.end_date,
           limit: ITEMS_PER_PAGE,
@@ -838,7 +849,7 @@ export function DocumentsView() {
         setLastRefreshedAt(Date.now());
       }
     },
-    [currentBank, searchQuery, selectedTags, tagsMatch, dateRange, timeField]
+    [currentBank, searchQuery, selectedTags, tagsMatch, dateRange, timeField, customFrom, customTo]
   );
 
   // Pull in-flight/failed file uploads straight from the server's
@@ -937,6 +948,8 @@ export function DocumentsView() {
       });
   }, [documents, pendingUploads, searchQuery, selectedTags]);
 
+  const customRange = resolveCustomRange(customFrom, customTo);
+
   const hasActiveFilters =
     searchQuery.trim().length > 0 || selectedTags.length > 0 || dateRange !== "all";
 
@@ -947,6 +960,8 @@ export function DocumentsView() {
     // re-sorting a list the user thinks they have unfiltered.
     setDateRange("all");
     setTimeField("updated_at");
+    setCustomFrom("");
+    setCustomTo("");
   };
 
   // Clicking a tag chip in the table toggles it in the filter.
@@ -1539,8 +1554,33 @@ export function DocumentsView() {
             <SelectItem value="1d">{t("dateRangeLast24Hours")}</SelectItem>
             <SelectItem value="7d">{t("dateRangeLast7Days")}</SelectItem>
             <SelectItem value="30d">{t("dateRangeLast30Days")}</SelectItem>
+            <SelectItem value="custom">{t("dateRangeCustom")}</SelectItem>
           </SelectContent>
         </Select>
+        {dateRange === "custom" && (
+          <div className="flex items-center gap-2">
+            <Input
+              type="datetime-local"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              aria-label={t("dateRangeFrom")}
+              className="h-9 w-[200px]"
+            />
+            <span className="text-xs text-muted-foreground">{t("dateRangeTo")}</span>
+            <Input
+              type="datetime-local"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              aria-label={t("dateRangeTo")}
+              className="h-9 w-[200px]"
+            />
+            {/* A reversed range sends no bounds at all, so without this the list
+                would quietly show everything and look like the filter was ignored. */}
+            {customRange.reversed && (
+              <span className="text-xs text-destructive">{t("dateRangeReversed")}</span>
+            )}
+          </div>
+        )}
         {/* The axis appears only alongside a window: with no range it changes
             nothing a user can see, and the server drops documents that carry no
             value on it. */}

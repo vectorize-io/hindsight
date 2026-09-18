@@ -11,17 +11,68 @@
  * `start_date`/`end_date` expects. Only the lower bound is set: these presets
  * all mean "since then", never a closed range.
  */
-export type DateRangePreset = "all" | "1h" | "1d" | "7d" | "30d";
+export type DateRangePreset = "all" | "1h" | "1d" | "7d" | "30d" | "custom";
 
-export const DATE_RANGE_PRESETS: DateRangePreset[] = ["all", "1h", "1d", "7d", "30d"];
+export const DATE_RANGE_PRESETS: DateRangePreset[] = ["all", "1h", "1d", "7d", "30d", "custom"];
 
 export interface DateRangeBounds {
   start_date?: string;
   end_date?: string;
 }
 
+export interface CustomRangeState {
+  /** The bounds to send. Empty while the range is unusable, or when both ends are blank. */
+  bounds: DateRangeBounds;
+  /** Both ends are set and the end precedes the start — nothing is sent. */
+  reversed: boolean;
+}
+
+/**
+ * Resolve an explicit from/to pair, as typed into two `datetime-local` inputs.
+ *
+ * Either end alone is a valid filter here — the presets are one-sided too, and
+ * the endpoints accept one bound — so unlike `resolveTemporalWindow` (which
+ * backs recall's window and needs a closed range) this does not demand both.
+ *
+ * `datetime-local` has no offset, and the API reads an offset-less datetime as
+ * UTC. A value typed into that input is a LOCAL wall-clock time, so converting
+ * through `Date` is what makes "from 09:00" mean the user's 09:00 rather than
+ * 09:00 UTC. `new Date("YYYY-MM-DDTHH:mm")` parses as local; `toISOString()`
+ * then carries the correct instant with an offset.
+ */
+export function resolveCustomRange(from: string, to: string): CustomRangeState {
+  // Compared as raw strings: `datetime-local` is zero-padded `YYYY-MM-DDTHH:mm`,
+  // so lexicographic order is chronological order and no parsing is needed.
+  if (from && to && to <= from) return { bounds: {}, reversed: true };
+
+  const bounds: DateRangeBounds = {};
+  const start = toIsoOrNull(from);
+  const end = toIsoOrNull(to);
+  if (start) bounds.start_date = start;
+  if (end) bounds.end_date = end;
+  return { bounds, reversed: false };
+}
+
+/**
+ * A `datetime-local` value that is not yet a complete instant, as ISO — or null.
+ *
+ * Mid-typing the input hands back half a value (a year with no month, say), and
+ * `new Date()` of that is an Invalid Date whose `toISOString()` THROWS
+ * `RangeError` rather than returning anything. Unguarded, that took the whole
+ * documents page down on the first keystroke. An incomplete value is simply not
+ * a bound yet, so it contributes nothing and the list stays unfiltered until the
+ * user finishes typing.
+ */
+function toIsoOrNull(value: string): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export function resolveDateRangePreset(range: string, now: Date = new Date()): DateRangeBounds {
   if (range === "all") return {};
+  // "custom" carries its bounds in its own inputs, not in the preset.
+  if (range === "custom") return {};
 
   const start = new Date(now);
   if (range === "1h") start.setHours(now.getHours() - 1);

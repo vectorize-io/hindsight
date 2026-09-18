@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "按时间筛选",
     "timeFieldAriaLabel": "时间轴",
     "timeFieldUpdated": "最后更新",
-    "timeFieldCreated": "首次添加"
+    "timeFieldCreated": "首次添加",
+    "dateRangeCustom": "自定义范围",
+    "dateRangeFrom": "从",
+    "dateRangeTo": "至",
+    "dateRangeReversed": "结束时间必须晚于开始时间"
   },
   "entitiesView": {
     "viewRelations": "关系",

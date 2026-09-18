@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "按時間篩選",
     "timeFieldAriaLabel": "時間軸",
     "timeFieldUpdated": "最後更新",
-    "timeFieldCreated": "首次加入"
+    "timeFieldCreated": "首次加入",
+    "dateRangeCustom": "自訂範圍",
+    "dateRangeFrom": "由",
+    "dateRangeTo": "至",
+    "dateRangeReversed": "結束時間必須喺開始之後"
   },
   "entitiesView": {
     "viewRelations": "關係",

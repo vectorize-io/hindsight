@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "Filtrer par date",
     "timeFieldAriaLabel": "Axe temporel",
     "timeFieldUpdated": "Dernière mise à jour",
-    "timeFieldCreated": "Date d'ajout"
+    "timeFieldCreated": "Date d'ajout",
+    "dateRangeCustom": "Période personnalisée",
+    "dateRangeFrom": "Du",
+    "dateRangeTo": "Au",
+    "dateRangeReversed": "La fin doit suivre le début"
   },
   "entitiesView": {
     "viewRelations": "Relations",

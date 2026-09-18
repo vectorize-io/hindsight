@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "期間で絞り込み",
     "timeFieldAriaLabel": "時間軸",
     "timeFieldUpdated": "最終更新",
-    "timeFieldCreated": "追加日時"
+    "timeFieldCreated": "追加日時",
+    "dateRangeCustom": "カスタム期間",
+    "dateRangeFrom": "開始",
+    "dateRangeTo": "終了",
+    "dateRangeReversed": "終了は開始より後にしてください"
   },
   "entitiesView": {
     "viewRelations": "関係",

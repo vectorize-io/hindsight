@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "Nach Zeit filtern",
     "timeFieldAriaLabel": "Zeitachse",
     "timeFieldUpdated": "Zuletzt aktualisiert",
-    "timeFieldCreated": "Zuerst hinzugefügt"
+    "timeFieldCreated": "Zuerst hinzugefügt",
+    "dateRangeCustom": "Benutzerdefiniert",
+    "dateRangeFrom": "Von",
+    "dateRangeTo": "Bis",
+    "dateRangeReversed": "Ende muss nach dem Start liegen"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",

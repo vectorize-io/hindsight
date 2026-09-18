@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "Filtrar por tempo",
     "timeFieldAriaLabel": "Eixo de tempo",
     "timeFieldUpdated": "Última atualização",
-    "timeFieldCreated": "Data de criação"
+    "timeFieldCreated": "Data de criação",
+    "dateRangeCustom": "Intervalo personalizado",
+    "dateRangeFrom": "De",
+    "dateRangeTo": "Até",
+    "dateRangeReversed": "O fim deve ser posterior ao início"
   },
   "entitiesView": {
     "viewRelations": "Relações",

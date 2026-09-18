@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "기간으로 필터",
     "timeFieldAriaLabel": "시간 기준",
     "timeFieldUpdated": "마지막 업데이트",
-    "timeFieldCreated": "추가된 시점"
+    "timeFieldCreated": "추가된 시점",
+    "dateRangeCustom": "사용자 지정 기간",
+    "dateRangeFrom": "시작",
+    "dateRangeTo": "종료",
+    "dateRangeReversed": "종료는 시작보다 뒤여야 합니다"
   },
   "entitiesView": {
     "viewRelations": "관계",

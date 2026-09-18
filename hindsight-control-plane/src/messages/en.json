@@ -840,7 +840,11 @@
     "dateRangeAriaLabel": "Filter by time",
     "timeFieldAriaLabel": "Time axis",
     "timeFieldUpdated": "Last updated",
-    "timeFieldCreated": "First added"
+    "timeFieldCreated": "First added",
+    "dateRangeCustom": "Custom range",
+    "dateRangeFrom": "From",
+    "dateRangeTo": "To",
+    "dateRangeReversed": "End must be after start"
   },
   "entitiesView": {
     "viewRelations": "Relations",
