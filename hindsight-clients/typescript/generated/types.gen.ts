@@ -589,6 +589,12 @@ export type BankTemplateConfig = {
    */
   retain_chunk_batch_size?: number | null;
   /**
+   * Retain Optional Fact Dimensions
+   *
+   * Let a fact leave when/where/who/why empty instead of writing 'N/A'
+   */
+  retain_optional_fact_dimensions?: boolean | null;
+  /**
    * Retain Max Attachments Per Chunk
    *
    * Hard cap on inline images in a single extraction chunk

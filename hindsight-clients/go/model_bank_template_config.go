@@ -39,6 +39,7 @@ type BankTemplateConfig struct {
 	RetainDefaultStrategy NullableString `json:"retain_default_strategy,omitempty"`
 	RetainStrategies map[string]interface{} `json:"retain_strategies,omitempty"`
 	RetainChunkBatchSize NullableInt32 `json:"retain_chunk_batch_size,omitempty"`
+	RetainOptionalFactDimensions NullableBool `json:"retain_optional_fact_dimensions,omitempty"`
 	RetainMaxAttachmentsPerChunk NullableInt32 `json:"retain_max_attachments_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
 	ConsolidationLlmBatchSize NullableInt32 `json:"consolidation_llm_batch_size,omitempty"`
@@ -907,6 +908,48 @@ func (o *BankTemplateConfig) SetRetainChunkBatchSizeNil() {
 // UnsetRetainChunkBatchSize ensures that no value is present for RetainChunkBatchSize, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRetainChunkBatchSize() {
 	o.RetainChunkBatchSize.Unset()
+}
+
+// GetRetainOptionalFactDimensions returns the RetainOptionalFactDimensions field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRetainOptionalFactDimensions() bool {
+	if o == nil || IsNil(o.RetainOptionalFactDimensions.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RetainOptionalFactDimensions.Get()
+}
+
+// GetRetainOptionalFactDimensionsOk returns a tuple with the RetainOptionalFactDimensions field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRetainOptionalFactDimensionsOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainOptionalFactDimensions.Get(), o.RetainOptionalFactDimensions.IsSet()
+}
+
+// HasRetainOptionalFactDimensions returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRetainOptionalFactDimensions() bool {
+	if o != nil && o.RetainOptionalFactDimensions.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainOptionalFactDimensions gets a reference to the given NullableBool and assigns it to the RetainOptionalFactDimensions field.
+func (o *BankTemplateConfig) SetRetainOptionalFactDimensions(v bool) {
+	o.RetainOptionalFactDimensions.Set(&v)
+}
+// SetRetainOptionalFactDimensionsNil sets the value for RetainOptionalFactDimensions to be an explicit nil
+func (o *BankTemplateConfig) SetRetainOptionalFactDimensionsNil() {
+	o.RetainOptionalFactDimensions.Set(nil)
+}
+
+// UnsetRetainOptionalFactDimensions ensures that no value is present for RetainOptionalFactDimensions, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRetainOptionalFactDimensions() {
+	o.RetainOptionalFactDimensions.Unset()
 }
 
 // GetRetainMaxAttachmentsPerChunk returns the RetainMaxAttachmentsPerChunk field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2151,6 +2194,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainChunkBatchSize.IsSet() {
 		toSerialize["retain_chunk_batch_size"] = o.RetainChunkBatchSize.Get()
+	}
+	if o.RetainOptionalFactDimensions.IsSet() {
+		toSerialize["retain_optional_fact_dimensions"] = o.RetainOptionalFactDimensions.Get()
 	}
 	if o.RetainMaxAttachmentsPerChunk.IsSet() {
 		toSerialize["retain_max_attachments_per_chunk"] = o.RetainMaxAttachmentsPerChunk.Get()

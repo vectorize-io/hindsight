@@ -8472,6 +8472,18 @@
             "title": "Retain Chunk Batch Size",
             "description": "Max chunks per streaming batch (0 disables batching)"
           },
+          "retain_optional_fact_dimensions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Optional Fact Dimensions",
+            "description": "Let a fact leave when/where/who/why empty instead of writing 'N/A'"
+          },
           "retain_max_attachments_per_chunk": {
             "anyOf": [
               {

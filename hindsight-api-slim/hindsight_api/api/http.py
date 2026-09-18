@@ -3586,6 +3586,10 @@ class BankTemplateConfig(BaseModel):
     retain_chunk_batch_size: int | None = Field(
         default=None, description="Max chunks per streaming batch (0 disables batching)"
     )
+    retain_optional_fact_dimensions: bool | None = Field(
+        default=None,
+        description="Let a fact leave when/where/who/why empty instead of writing 'N/A'",
+    )
     retain_max_attachments_per_chunk: int | None = Field(
         default=None, description="Hard cap on inline images in a single extraction chunk"
     )

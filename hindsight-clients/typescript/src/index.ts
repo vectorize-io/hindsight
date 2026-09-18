@@ -887,6 +887,13 @@ export class HindsightClient {
       retainStrategies?: Record<string, unknown>;
       /** Number of chunks per sub-batch in chunks extraction mode. */
       retainChunkBatchSize?: number;
+      /**
+       * Let a fact leave when/where/who/why empty instead of writing "N/A". Off by
+       * default; worth enabling for a small self-hosted model under strict structured
+       * output, where a fact with no date of its own still has to emit some string and
+       * tends to borrow one the text stated about another subject.
+       */
+      retainOptionalFactDimensions?: boolean;
       /** Persist the original document text alongside extracted facts. */
       storeDocumentText?: boolean;
       /** Cap on observations retained per scope (-1 for unlimited). */
@@ -984,6 +991,8 @@ export class HindsightClient {
       updates.retain_strategies = options.retainStrategies;
     if (options.retainChunkBatchSize !== undefined)
       updates.retain_chunk_batch_size = options.retainChunkBatchSize;
+    if (options.retainOptionalFactDimensions !== undefined)
+      updates.retain_optional_fact_dimensions = options.retainOptionalFactDimensions;
     if (options.storeDocumentText !== undefined)
       updates.store_document_text = options.storeDocumentText;
     if (options.maxObservationsPerScope !== undefined)
