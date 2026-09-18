@@ -15,6 +15,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "llamacpp",
         "openai-codex",
         "claude-code",
+        "cursor",
         "github-copilot",
         "mock",
         "none",

@@ -531,6 +531,7 @@ def create_llm_provider(
         AnthropicLLM,
         ClaudeCodeLLM,
         CodexLLM,
+        CursorLLM,
         FireworksLLM,
         GeminiLLM,
         GitHubCopilotLLM,
@@ -560,6 +561,16 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
             codex_home=codex_home,
+            timeout=timeout,
+        )
+
+    elif provider_lower == "cursor":
+        return CursorLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
             timeout=timeout,
         )
 
@@ -963,6 +974,7 @@ class LLMProvider:
             "vertexai",
             "openai-codex",
             "claude-code",
+            "cursor",
             "github-copilot",
             "mock",
             "none",

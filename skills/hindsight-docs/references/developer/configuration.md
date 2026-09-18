@@ -268,7 +268,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `cursor`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -277,9 +277,9 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_INITIAL_BACKOFF` | Initial retry backoff in seconds (exponential backoff) | `1.0` |
 | `HINDSIGHT_API_LLM_MAX_BACKOFF` | Max retry backoff cap in seconds | `60.0` |
 | `HINDSIGHT_API_LLM_TIMEOUT` | LLM request timeout in seconds. Honoured by every provider as a **total** deadline for one request, including the time spent reading a streamed response — a backend that keeps sending bytes is cut off at the deadline rather than read indefinitely. Raise it if your provider is legitimately slow; the per-operation variables below override it. | `120` |
-| `HINDSIGHT_API_LLM_CONNECT_TIMEOUT` | Ceiling on the **connect** phase (TCP + TLS handshake) of an LLM request, in seconds. The read, write and pool phases keep the full `HINDSIGHT_API_LLM_TIMEOUT` budget; capping connect separately means an unreachable or wedged endpoint fails in seconds instead of consuming the whole request timeout. Effective value is the smaller of this and the request timeout. Set to `0` to disable the cap and use one value across all four phases. Applies to every provider whose HTTP client Hindsight constructs (all OpenAI-compatible backends, `openai-responses`, `anthropic`, `openai-codex`, `xai-oauth`, `fireworks`, `nous`, `llamacpp`); `litellm`/`litellmrouter` and `gemini`/`vertexai` own their transports and take a single total deadline instead, and `claude-code`/`github-copilot` drive a CLI rather than a socket. | `10` |
+| `HINDSIGHT_API_LLM_CONNECT_TIMEOUT` | Ceiling on the **connect** phase (TCP + TLS handshake) of an LLM request, in seconds. The read, write and pool phases keep the full `HINDSIGHT_API_LLM_TIMEOUT` budget; capping connect separately means an unreachable or wedged endpoint fails in seconds instead of consuming the whole request timeout. Effective value is the smaller of this and the request timeout. Set to `0` to disable the cap and use one value across all four phases. Applies to every provider whose HTTP client Hindsight constructs (all OpenAI-compatible backends, `openai-responses`, `anthropic`, `openai-codex`, `xai-oauth`, `fireworks`, `nous`, `llamacpp`); `litellm`/`litellmrouter` and `gemini`/`vertexai` own their transports and take a single total deadline instead, and `claude-code`/`cursor`/`github-copilot` drive a CLI rather than a socket. | `10` |
 | `HINDSIGHT_API_LLM_HTTP_LOG_LEVEL` | Log level for the `httpx` and `httpcore` loggers. Set to `DEBUG` to trace each LLM request through its transport phases (`connect_tcp`, `send_request_headers`, `receive_response_headers`) — the way to tell a request that stalled before it was ever sent from one that was sent and never answered. Verbose; for diagnosis only. | `WARNING` |
-| `HINDSIGHT_API_LLM_REASONING_EFFORT` | Reasoning effort for providers/models that support it (for example `none`, `low`, `medium`, `high`, `xhigh`). Set it and the value is sent as given, whatever your model is called — which is how you control thinking-token volume on a self-hosted reasoning model (vLLM, Ollama, llama.cpp, TGI), where `none` is often the only value that removes the thinking block. Leave it unset and no reasoning parameter is sent at all, so each model runs at its own default effort. Honoured by `openai` and every OpenAI-compatible provider, `openai-responses`, `openai-codex`, `xai`, `llamacpp`, and `litellm`/`litellmrouter` (which translate it per target provider). The native `gemini`/`vertexai`, `anthropic` and `claude-code` providers have no reasoning-effort control and log a warning at startup if you set one — reach those models through `litellm` to apply it. | Unset (model's own default) |
+| `HINDSIGHT_API_LLM_REASONING_EFFORT` | Reasoning effort for providers/models that support it (for example `none`, `low`, `medium`, `high`, `xhigh`). Set it and the value is sent as given, whatever your model is called — which is how you control thinking-token volume on a self-hosted reasoning model (vLLM, Ollama, llama.cpp, TGI), where `none` is often the only value that removes the thinking block. Leave it unset and no reasoning parameter is sent at all, so each model runs at its own default effort. Honoured by `openai` and every OpenAI-compatible provider, `openai-responses`, `openai-codex`, `xai`, `llamacpp`, and `litellm`/`litellmrouter` (which translate it per target provider). The native `gemini`/`vertexai`, `anthropic`, `claude-code` and `cursor` providers have no reasoning-effort control and log a warning at startup if you set one — reach those models through `litellm` to apply it. | Unset (model's own default) |
 | `HINDSIGHT_API_LLM_TEMPERATURE` | Global override for the sampling temperature of internal LLM calls. Set a number in `[0.0, 2.0]`, or `none` (also `default`/`off`/empty) to **omit** the temperature parameter entirely — required for models that reject explicit temperatures, e.g. Azure `gpt-5.5`, which only accepts its default value. Per-operation variables below override this. | Per-operation defaults |
 | `HINDSIGHT_API_LLM_TEMPERATURE_VERIFICATION` | Temperature for the startup connection check. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_RETAIN` | Temperature for fact extraction during retain. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.1` |
@@ -420,6 +420,20 @@ export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 export HINDSIGHT_API_LLM_PROVIDER=claude-code
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
 # No API key needed - uses claude auth login credentials
+
+# Cursor (Cursor subscription - drives the cursor-agent CLI in headless mode)
+export HINDSIGHT_API_LLM_PROVIDER=cursor
+export HINDSIGHT_API_LLM_MODEL=auto   # or any id from `cursor-agent --list-models`
+# No API key needed - uses `cursor-agent login` credentials.
+# Set HINDSIGHT_API_LLM_API_KEY (or CURSOR_API_KEY) to authenticate with a key instead.
+# An agent CLI turn takes 15-30s, well past the 30s reflect default, so raise the
+# timeouts or reflect burns its first iteration on a timeout retry.
+export HINDSIGHT_API_LLM_TIMEOUT=300
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=180
+# The CLI exposes no response-format or tool-definition flags, so Hindsight emulates
+# structured output and tool calling through the prompt and parses the JSON back. That
+# is less reliable than a native schema: prefer a stronger named model over `auto` for
+# reflect, which is the operation that leans hardest on tool calls.
 
 # Volcano Engine (ByteDance - OpenAI-compatible)
 export HINDSIGHT_API_LLM_PROVIDER=volcano

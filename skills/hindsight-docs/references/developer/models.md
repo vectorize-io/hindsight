@@ -40,6 +40,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Requesty
 - OpenAI Codex
 - Claude Code
+- Cursor
 - GitHub Copilot
 - AWS Bedrock
 - Fireworks AI
@@ -124,6 +125,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Requesty (`requesty`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
+| Cursor (`cursor`) | — | — |
 | GitHub Copilot (`github-copilot`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
@@ -192,6 +194,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `requesty` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
+| `cursor` | `auto` |
 | `github-copilot` | `gpt-5.6-terra` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
@@ -326,6 +329,13 @@ export HINDSIGHT_API_LLM_TIMEOUT=300
 export HINDSIGHT_API_LLM_PROVIDER=nous
 export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # any Nous-hosted slug
 # No API key needed — reads a rotating JWT from ~/.hermes/auth.json (see "Nous Portal Setup" below)
+
+# Cursor subscription via the cursor-agent CLI (no API key — uses `cursor-agent login`)
+export HINDSIGHT_API_LLM_PROVIDER=cursor
+export HINDSIGHT_API_LLM_MODEL=auto  # or any id from `cursor-agent --list-models`
+# An agent CLI turn takes 15-30s — raise the timeouts (see "Cursor Setup" below)
+export HINDSIGHT_API_LLM_TIMEOUT=300
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=180
 
 # SuperGrok subscription via device-code OAuth (no API key; the subscription lane, not
 # xAI API support — for an api.x.ai API key use `openai` with a base URL instead)
@@ -657,6 +667,73 @@ You can use any model supported by Claude Code CLI.
 - Credentials managed securely by Claude Code
 - Usage billed to your Claude subscription (not separate API costs)
 - For personal development use only (see Claude Terms of Service)
+
+---
+
+### Cursor Setup (Cursor subscription)
+
+Serve Hindsight's extraction, consolidation and reflection calls from a **Cursor
+subscription**, by driving the `cursor-agent` CLI in its headless print mode. No API key
+and no second per-token billing relationship.
+
+This is the opposite direction from the [Cursor integration](../sdks/integrations/cursor.md),
+which makes Cursor a *client* of Hindsight. Here Cursor is the model backend Hindsight calls.
+
+**Prerequisites:**
+- An active Cursor subscription (a free plan works, but only with `auto` — see below)
+- `cursor-agent` installed and signed in under the same OS user that runs Hindsight
+
+**Setup Steps:**
+
+1. **Install the CLI:**
+   ```bash
+   curl https://cursor.com/install -fsS | bash
+   ```
+
+2. **Log in:**
+   ```bash
+   cursor-agent login
+   ```
+
+3. **Verify:**
+   ```bash
+   cursor-agent --version
+   cursor-agent --list-models
+   ```
+
+4. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=cursor
+   export HINDSIGHT_API_LLM_MODEL=auto
+   # An agent CLI turn takes 15-30s, well past the 30s reflect default.
+   export HINDSIGHT_API_LLM_TIMEOUT=300
+   export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=180
+   # No API key needed. To authenticate with a key instead:
+   # export HINDSIGHT_API_LLM_API_KEY=...   # or CURSOR_API_KEY
+   ```
+
+**Important notes:**
+
+- **Raise the timeouts.** Each call spawns a `cursor-agent` turn, which takes 15-30s
+  against `auto` — slower than a chat-completions request and past the 30s
+  `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` default. Left at the default, reflect spends its
+  first iteration on timeout retries before recovering.
+- **Structured output and tool calling are prompt-level emulations.** The CLI exposes no
+  `response_format`, JSON-schema, temperature or tool-definition flag — only
+  `--output-format text|json|stream-json`, which describes the envelope. Hindsight puts
+  the schema (or the tool list) in the prompt and parses the model's JSON back out,
+  retrying on a parse failure. That is less reliable than a native schema, so prefer a
+  strong named model over `auto` for reflect, the operation that leans hardest on tools.
+- **Free plans are limited to `auto`.** A named `--model` returns
+  `Named models unavailable Free plans can only use Auto`. Paid plans can use any id from
+  `cursor-agent --list-models`.
+- **Calls run in an empty scratch workspace.** `cursor-agent` is workspace-shaped and will
+  read files around its working directory; Hindsight points it at an empty temp directory
+  and runs it in read-only `--mode ask`, so the server's own files never reach a prompt.
+- Usage counts against your Cursor subscription.
+- Reasoning effort is not supported — the CLI has no such flag, and Hindsight warns once
+  at startup if `HINDSIGHT_API_LLM_REASONING_EFFORT` is set.
+- Embeddings and reranking continue to use Hindsight's separately configured providers.
 
 ---
 

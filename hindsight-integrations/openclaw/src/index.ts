@@ -1742,6 +1742,7 @@ const NO_KEY_REQUIRED_PROVIDERS = new Set([
   "ollama",
   "openai-codex",
   "claude-code",
+  "cursor",
   "github-copilot",
 ]);
 
