@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk";
 import manifest from "../src/manifest.js";
 import plugin from "../src/worker.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS, HindsightClient } from "../src/client.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
@@ -473,7 +474,7 @@ describe("hindsight_recall tool", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns cached memories from run start without additional API call", async () => {
+  it("returns cached memories from run start without additional API call for the same query", async () => {
     const harness = buildHarness();
     await setupPlugin(harness);
     const issue = await seedIssue(harness, {
@@ -494,7 +495,7 @@ describe("hindsight_recall tool", () => {
     const callsBefore = (vi.mocked(fetch) as ReturnType<typeof vi.fn>).mock.calls.length;
     const result = await harness.executeTool(
       "hindsight_recall",
-      { query: "preferences" },
+      { query: "Update UI" },
       { agentId: "ag-1", runId: "run-1", companyId: "co-1", projectId: "proj-1" }
     );
 
@@ -502,6 +503,42 @@ describe("hindsight_recall tool", () => {
     const callsAfter = (vi.mocked(fetch) as ReturnType<typeof vi.fn>).mock.calls.length;
     // No new recall call — returned from cache
     expect(callsAfter).toBe(callsBefore);
+  });
+
+  it("performs a live recall when the query differs from the run-start query", async () => {
+    const harness = buildHarness();
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Update UI",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch([{ url: /recall/, body: { results: [{ text: "User prefers dark mode" }] } }])
+    );
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    const liveFetch = mockFetch([
+      { url: /recall/, body: { results: [{ text: "Hosting decision is still open" }] } },
+    ]);
+    vi.stubGlobal("fetch", liveFetch);
+
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "hosting decision" },
+      { agentId: "ag-1", runId: "run-1", companyId: "co-1", projectId: "proj-1" }
+    );
+
+    expect((result as { content: string }).content).toContain("Hosting decision");
+    expect((result as { content: string }).content).not.toContain("dark mode");
+    const recallCall = liveFetch.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    const body = JSON.parse(recallCall?.[1]?.body as string) as { query: string };
+    expect(body.query).toBe("hosting decision");
   });
 
   it("falls back to live recall when no cached state", async () => {
@@ -519,6 +556,58 @@ describe("hindsight_recall tool", () => {
     );
 
     expect((result as { content: string }).content).toContain("Python specialist");
+  });
+
+  it("aborts the request after requestTimeoutMs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError"))
+            );
+          })
+      )
+    );
+    const harness = buildHarness({ ...DEFAULT_CONFIG, requestTimeoutMs: 50 });
+    await setupPlugin(harness);
+
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "anything" },
+      { agentId: "ag-1", runId: "run-3", companyId: "co-1", projectId: "proj-1" }
+    );
+
+    expect((result as { content: string }).content).toContain("Memory recall failed");
+  });
+});
+
+describe("HindsightClient timeout", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function timeoutUsed(timeoutMs?: number): Promise<number | undefined> {
+    vi.stubGlobal("fetch", mockFetch([{ url: /recall/, body: { results: [] } }]));
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    await new HindsightClient("http://localhost:8888", undefined, timeoutMs).recall("b", "q");
+    return spy.mock.calls[0]?.[1];
+  }
+
+  it("defaults to 15s", async () => {
+    expect(await timeoutUsed()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it("uses a custom timeout", async () => {
+    expect(await timeoutUsed(45_000)).toBe(45_000);
+  });
+
+  it("ignores invalid timeouts", async () => {
+    expect(await timeoutUsed(0)).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(await timeoutUsed(Number.NaN)).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
   });
 });
 
