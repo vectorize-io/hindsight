@@ -177,6 +177,8 @@ Mental models can be configured to **automatically refresh** when observations a
 | `include_chunks` | bool \| null | null | Override whether the refresh's internal recall returns raw chunk text. `null` uses the bank/global `recall_include_chunks` default. |
 | `recall_max_tokens` | int \| null | null | Override the token budget for facts retrieved during refresh. `null` uses the bank/global default. |
 | `recall_chunks_max_tokens` | int \| null | null | Override the token budget for raw chunks retrieved during refresh. `null` uses the bank/global default. |
+| `reflect_search_observations_max_tokens` | int \| null | null | Override the token budget for the refresh's `search_observations` calls. A smaller budget drops the lowest-ranked observations and shrinks the reflect context. `null` uses the bank's `reflect_default_options`, then the shipped 5000. |
+| `reflect_search_observations_include_entities` | bool \| null | null | Override whether `search_observations` attaches resolved entity names, which can be more than half the tool payload. `null` uses the bank's `reflect_default_options`, then enabled. |
 | `response_schema` | object \| null | null | JSON Schema for structured output. When set, each refresh also stores a `structured_output` alongside the markdown content. See [Structured Output](#structured-output) below. |
 | `keep_trace` | bool | false | Record how each refresh reached its result under `reflect_response.trace`. See [Troubleshoot a Refresh](#troubleshoot-a-refresh). |
 

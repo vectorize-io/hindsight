@@ -2761,6 +2761,7 @@ class Hindsight:
         consolidation_max_memories_per_round: int | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,
+        reflect_default_options: dict[str, Any] | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -2824,6 +2825,7 @@ class Hindsight:
                 consolidation_max_memories_per_round=consolidation_max_memories_per_round,
                 mental_model_min_refresh_interval_seconds=mental_model_min_refresh_interval_seconds,
                 knowledge_page_default_trigger=knowledge_page_default_trigger,
+                reflect_default_options=reflect_default_options,
                 enable_text_search=enable_text_search,
                 enable_temporal_retrieval=enable_temporal_retrieval,
                 enable_graph_retrieval=enable_graph_retrieval,
@@ -2884,6 +2886,7 @@ class Hindsight:
         consolidation_max_memories_per_round: int | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,
+        reflect_default_options: dict[str, Any] | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -2953,6 +2956,10 @@ class Hindsight:
             consolidation_llm_parallelism: Concurrent LLM calls during consolidation.
             consolidation_max_memories_per_round: Memories consolidated per round.
             mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
+            reflect_default_options: Default reflect options for this bank, applied whenever a
+                reflect request (or a mental model's trigger) leaves the option unset:
+                reflect_search_observations_max_tokens and
+                reflect_search_observations_include_entities.
             knowledge_page_default_trigger: Trigger fields merged over the built-in default for new
                 knowledge pages, e.g. {"refresh_cron": "0 * * * *"}.
             enable_observations: Toggle automatic observation consolidation after retain().
@@ -3017,6 +3024,7 @@ class Hindsight:
                 "consolidation_max_memories_per_round": consolidation_max_memories_per_round,
                 "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
                 "knowledge_page_default_trigger": knowledge_page_default_trigger,
+                "reflect_default_options": reflect_default_options,
                 "enable_text_search": enable_text_search,
                 "enable_temporal_retrieval": enable_temporal_retrieval,
                 "enable_graph_retrieval": enable_graph_retrieval,

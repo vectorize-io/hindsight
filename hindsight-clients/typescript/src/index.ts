@@ -928,6 +928,8 @@ export class HindsightClient {
       mentalModelMinRefreshIntervalSeconds?: number;
       /** Trigger fields merged over the built-in default for new knowledge pages. */
       knowledgePageDefaultTrigger?: Record<string, unknown>;
+      /** Default reflect options for this bank, applied whenever a reflect request (or a mental model's trigger) leaves the option unset: reflect_search_observations_max_tokens, reflect_search_observations_include_entities. */
+      reflectDefaultOptions?: Record<string, unknown>;
       /** Token budget for source facts during reflect. -1 disables. */
       reflectSourceFactsMaxTokens?: number;
       /** Token budget for facts returned by recall. */
@@ -1027,6 +1029,8 @@ export class HindsightClient {
         options.mentalModelMinRefreshIntervalSeconds;
     if (options.knowledgePageDefaultTrigger !== undefined)
       updates.knowledge_page_default_trigger = options.knowledgePageDefaultTrigger;
+    if (options.reflectDefaultOptions !== undefined)
+      updates.reflect_default_options = options.reflectDefaultOptions;
     if (options.reflectSourceFactsMaxTokens !== undefined)
       updates.reflect_source_facts_max_tokens = options.reflectSourceFactsMaxTokens;
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;

@@ -171,6 +171,8 @@ include = "Flattened into --include-facts and related flags."
 response_schema = "Exposed as --schema (path to a JSON schema file)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs, and control plane, not the end-user CLI yet."
+reflect_search_observations_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
+reflect_search_observations_include_entities = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."

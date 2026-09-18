@@ -458,6 +458,10 @@ pub fn reflect(
         fact_types: mapped_fact_types,
         exclude_mental_models,
         exclude_mental_model_ids,
+        // Per-call overrides of the bank's reflect_default_options. The CLI does not
+        // expose them (operators set them once per bank), so the bank default applies.
+        reflect_search_observations_max_tokens: None,
+        reflect_search_observations_include_entities: None,
     };
 
     let response = client.reflect(agent_id, &request, verbose);
