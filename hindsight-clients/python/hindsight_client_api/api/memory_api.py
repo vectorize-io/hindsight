@@ -2240,6 +2240,9 @@ class MemoryApi:
         entity_id: Optional[StrictStr] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -2258,7 +2261,7 @@ class MemoryApi:
     ) -> ListMemoryUnitsResponse:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2278,6 +2281,12 @@ class MemoryApi:
         :type tags: List[str]
         :param tags_match:
         :type tags_match: str
+        :param time_field: Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2316,6 +2325,9 @@ class MemoryApi:
             entity_id=entity_id,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2353,6 +2365,9 @@ class MemoryApi:
         entity_id: Optional[StrictStr] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -2371,7 +2386,7 @@ class MemoryApi:
     ) -> ApiResponse[ListMemoryUnitsResponse]:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2391,6 +2406,12 @@ class MemoryApi:
         :type tags: List[str]
         :param tags_match:
         :type tags_match: str
+        :param time_field: Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2429,6 +2450,9 @@ class MemoryApi:
             entity_id=entity_id,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2466,6 +2490,9 @@ class MemoryApi:
         entity_id: Optional[StrictStr] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -2484,7 +2511,7 @@ class MemoryApi:
     ) -> RESTResponseType:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2504,6 +2531,12 @@ class MemoryApi:
         :type tags: List[str]
         :param tags_match:
         :type tags_match: str
+        :param time_field: Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2542,6 +2575,9 @@ class MemoryApi:
             entity_id=entity_id,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2574,6 +2610,9 @@ class MemoryApi:
         entity_id,
         tags,
         tags_match,
+        time_field,
+        start_date,
+        end_date,
         limit,
         offset,
         authorization,
@@ -2633,6 +2672,18 @@ class MemoryApi:
         if tags_match is not None:
             
             _query_params.append(('tags_match', tags_match))
+            
+        if time_field is not None:
+            
+            _query_params.append(('time_field', time_field))
+            
+        if start_date is not None:
+            
+            _query_params.append(('start_date', start_date))
+            
+        if end_date is not None:
+            
+            _query_params.append(('end_date', end_date))
             
         if limit is not None:
             

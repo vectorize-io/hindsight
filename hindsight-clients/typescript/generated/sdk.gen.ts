@@ -385,7 +385,7 @@ export const getGraph = <ThrowOnError extends boolean = false>(
 /**
  * List memory units
  *
- * List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+ * List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
  */
 export const listMemories = <ThrowOnError extends boolean = false>(
   options: Options<ListMemoriesData, ThrowOnError>
@@ -985,7 +985,7 @@ export const updateDirective = <ThrowOnError extends boolean = false>(
 /**
  * List documents
  *
- * List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.
+ * List documents with pagination, optional search, and an optional time window. Most recently written first (`updated_at` descending) unless `time_field` selects another axis. Documents are the source content from which memory units are extracted.
  */
 export const listDocuments = <ThrowOnError extends boolean = false>(
   options: Options<ListDocumentsData, ThrowOnError>

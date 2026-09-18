@@ -346,6 +346,9 @@ class MemoryEngineInterface(ABC):
         search_query: str | None = None,
         entity_id: str | None = None,
         created_before: datetime | None = None,
+        time_field: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -360,6 +363,11 @@ class MemoryEngineInterface(ABC):
             search_query: Full-text search query.
             entity_id: Filter to memory units linked to this entity ID.
             created_before: Keep units with ``created_at`` before this instant.
+            time_field: Time axis to filter and order by (see
+                :mod:`hindsight_api.engine.time_filter`). Units with no value on
+                that axis are excluded.
+            start_date: Inclusive lower bound on ``time_field``.
+            end_date: Exclusive upper bound on ``time_field``.
             limit: Maximum results.
             offset: Pagination offset.
             request_context: Request context for authentication.
@@ -404,6 +412,9 @@ class MemoryEngineInterface(ABC):
         search_query: str | None = None,
         tags: list[str] | None = None,
         tags_match: "TagsMatch" = "any_strict",
+        time_field: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -416,6 +427,10 @@ class MemoryEngineInterface(ABC):
             search_query: Case-insensitive substring filter on document ID.
             tags: Filter by tags.
             tags_match: How to match tags (any, all, any_strict, all_strict).
+            time_field: Time axis to filter and order by — ``created_at`` or
+                ``updated_at`` (see :mod:`hindsight_api.engine.time_filter`).
+            start_date: Inclusive lower bound on ``time_field``.
+            end_date: Exclusive upper bound on ``time_field``.
             limit: Maximum results.
             offset: Pagination offset.
             request_context: Request context for authentication.

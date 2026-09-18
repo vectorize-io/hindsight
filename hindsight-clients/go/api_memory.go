@@ -1007,6 +1007,9 @@ type ApiListMemoriesRequest struct {
 	entityId *string
 	tags *[]string
 	tagsMatch *string
+	timeField *string
+	startDate *string
+	endDate *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -1052,6 +1055,24 @@ func (r ApiListMemoriesRequest) TagsMatch(tagsMatch string) ApiListMemoriesReque
 	return r
 }
 
+// Time axis to filter and order by. &#x60;created_at&#x60; / &#x60;updated_at&#x60; &#x3D; ingest and last-write time; &#x60;mentioned_at&#x60; / &#x60;occurred_start&#x60; / &#x60;occurred_end&#x60; &#x3D; event time. Defaults to &#x60;created_at&#x60; when only &#x60;start_date&#x60;/&#x60;end_date&#x60; are given. Filtering and ordering both follow &#x60;time_field&#x60;, and rows with no value on that column are excluded — so &#x60;total&#x60; counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+func (r ApiListMemoriesRequest) TimeField(timeField string) ApiListMemoriesRequest {
+	r.timeField = &timeField
+	return r
+}
+
+// Filter from this ISO datetime (inclusive)
+func (r ApiListMemoriesRequest) StartDate(startDate string) ApiListMemoriesRequest {
+	r.startDate = &startDate
+	return r
+}
+
+// Filter until this ISO datetime (exclusive)
+func (r ApiListMemoriesRequest) EndDate(endDate string) ApiListMemoriesRequest {
+	r.endDate = &endDate
+	return r
+}
+
 func (r ApiListMemoriesRequest) Limit(limit int32) ApiListMemoriesRequest {
 	r.limit = &limit
 	return r
@@ -1074,7 +1095,7 @@ func (r ApiListMemoriesRequest) Execute() (*ListMemoryUnitsResponse, *http.Respo
 /*
 ListMemories List memory units
 
-List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -1144,6 +1165,15 @@ func (a *MemoryAPIService) ListMemoriesExecute(r ApiListMemoriesRequest) (*ListM
 	} else {
 		var defaultValue string = "any"
 		r.tagsMatch = &defaultValue
+	}
+	if r.timeField != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "time_field", r.timeField, "form", "")
+	}
+	if r.startDate != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "start_date", r.startDate, "form", "")
+	}
+	if r.endDate != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "end_date", r.endDate, "form", "")
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

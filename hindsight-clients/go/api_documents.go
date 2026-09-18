@@ -564,6 +564,9 @@ type ApiListDocumentsRequest struct {
 	q *string
 	tags *[]string
 	tagsMatch *string
+	timeField *string
+	startDate *string
+	endDate *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -584,6 +587,24 @@ func (r ApiListDocumentsRequest) Tags(tags []string) ApiListDocumentsRequest {
 // How to match tags: &#39;any&#39;, &#39;all&#39;, &#39;any_strict&#39;, &#39;all_strict&#39;
 func (r ApiListDocumentsRequest) TagsMatch(tagsMatch string) ApiListDocumentsRequest {
 	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Time axis to filter and order by: &#x60;created_at&#x60; (when the document first arrived) or &#x60;updated_at&#x60; (its last write, the default ordering). Filtering and ordering both follow &#x60;time_field&#x60;, and rows with no value on that column are excluded — so &#x60;total&#x60; counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+func (r ApiListDocumentsRequest) TimeField(timeField string) ApiListDocumentsRequest {
+	r.timeField = &timeField
+	return r
+}
+
+// Filter from this ISO datetime (inclusive)
+func (r ApiListDocumentsRequest) StartDate(startDate string) ApiListDocumentsRequest {
+	r.startDate = &startDate
+	return r
+}
+
+// Filter until this ISO datetime (exclusive)
+func (r ApiListDocumentsRequest) EndDate(endDate string) ApiListDocumentsRequest {
+	r.endDate = &endDate
 	return r
 }
 
@@ -609,7 +630,7 @@ func (r ApiListDocumentsRequest) Execute() (*ListDocumentsResponse, *http.Respon
 /*
 ListDocuments List documents
 
-List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.
+List documents with pagination, optional search, and an optional time window. Most recently written first (`updated_at` descending) unless `time_field` selects another axis. Documents are the source content from which memory units are extracted.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -664,6 +685,15 @@ func (a *DocumentsAPIService) ListDocumentsExecute(r ApiListDocumentsRequest) (*
 	} else {
 		var defaultValue string = "any_strict"
 		r.tagsMatch = &defaultValue
+	}
+	if r.timeField != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "time_field", r.timeField, "form", "")
+	}
+	if r.startDate != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "start_date", r.startDate, "form", "")
+	}
+	if r.endDate != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "end_date", r.endDate, "form", "")
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

@@ -782,6 +782,9 @@ class Hindsight:
         type: str | None = None,
         search_query: str | None = None,
         entity_id: str | None = None,
+        time_field: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ListMemoryUnitsResponse:
@@ -796,6 +799,9 @@ class Hindsight:
                 type=type,
                 search_query=search_query,
                 entity_id=entity_id,
+                time_field=time_field,
+                start_date=start_date,
+                end_date=end_date,
                 limit=limit,
                 offset=offset,
             )
@@ -807,6 +813,9 @@ class Hindsight:
         type: str | None = None,
         search_query: str | None = None,
         entity_id: str | None = None,
+        time_field: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ListMemoryUnitsResponse:
@@ -814,12 +823,22 @@ class Hindsight:
 
         entity_id: filter to memory units linked to this entity ID (stored links,
         not text/semantic match).
+
+        time_field / start_date / end_date are one time window: the named axis
+        (created_at, updated_at, mentioned_at, occurred_start, occurred_end) both
+        filters and orders the results, over the half-open range
+        ``[start_date, end_date)`` given as ISO-8601 strings. Memories carrying no
+        value on that axis are excluded, so ``total`` counts the window rather than
+        the bank.
         """
         return await self._memory_api.list_memories(
             bank_id=bank_id,
             type=type,
             q=search_query,
             entity_id=entity_id,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             _request_timeout=self._timeout,

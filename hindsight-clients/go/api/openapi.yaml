@@ -190,8 +190,9 @@ paths:
   /v1/default/banks/{bank_id}/memories/list:
     get:
       description: "List memory units with pagination and optional full-text search.\
-        \ Supports filtering by type, source document, and linked entity ID. Results\
-        \ are sorted by most recent first (mentioned_at DESC, then created_at DESC)."
+        \ Supports filtering by type, source document, linked entity ID, and a time\
+        \ window. Results are sorted by most recent first (mentioned_at DESC, then\
+        \ created_at DESC) unless a time window selects another axis."
       operationId: list_memories
       parameters:
       - explode: false
@@ -273,6 +274,44 @@ paths:
           - all_strict
           - exact
           title: Tags Match
+          type: string
+        style: form
+      - description: "Time axis to filter and order by. `created_at` / `updated_at`\
+          \ = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end`\
+          \ = event time. Defaults to `created_at` when only `start_date`/`end_date`\
+          \ are given. Filtering and ordering both follow `time_field`, and rows with\
+          \ no value on that column are excluded — so `total` counts only rows carrying\
+          \ that timestamp, and can be 0 on a bank that is not empty."
+        explode: true
+        in: query
+        name: time_field
+        required: false
+        schema:
+          enum:
+          - created_at
+          - updated_at
+          - mentioned_at
+          - occurred_start
+          - occurred_end
+          nullable: true
+          type: string
+        style: form
+      - description: Filter from this ISO datetime (inclusive)
+        explode: true
+        in: query
+        name: start_date
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter until this ISO datetime (exclusive)
+        explode: true
+        in: query
+        name: end_date
+        required: false
+        schema:
+          nullable: true
           type: string
         style: form
       - explode: true
@@ -2261,9 +2300,10 @@ paths:
       - Directives
   /v1/default/banks/{bank_id}/documents:
     get:
-      description: "List documents with pagination and optional search, most recently\
-        \ written first (`updated_at` descending). Documents are the source content\
-        \ from which memory units are extracted."
+      description: "List documents with pagination, optional search, and an optional\
+        \ time window. Most recently written first (`updated_at` descending) unless\
+        \ `time_field` selects another axis. Documents are the source content from\
+        \ which memory units are extracted."
       operationId: list_documents
       parameters:
       - explode: false
@@ -2304,6 +2344,40 @@ paths:
           default: any_strict
           description: "How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
           title: Tags Match
+          type: string
+        style: form
+      - description: "Time axis to filter and order by: `created_at` (when the document\
+          \ first arrived) or `updated_at` (its last write, the default ordering).\
+          \ Filtering and ordering both follow `time_field`, and rows with no value\
+          \ on that column are excluded — so `total` counts only rows carrying that\
+          \ timestamp, and can be 0 on a bank that is not empty."
+        explode: true
+        in: query
+        name: time_field
+        required: false
+        schema:
+          enum:
+          - created_at
+          - updated_at
+          nullable: true
+          type: string
+        style: form
+      - description: Filter from this ISO datetime (inclusive)
+        explode: true
+        in: query
+        name: start_date
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter until this ISO datetime (exclusive)
+        explode: true
+        in: query
+        name: end_date
+        required: false
+        schema:
+          nullable: true
           type: string
         style: form
       - explode: true

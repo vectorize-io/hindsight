@@ -130,7 +130,17 @@ class InMemoryMemories(MemoriesExtension):
         return {"nodes": [], "edges": []}
 
     async def list_documents(
-        self, *, bank_id, search_query=None, tags=None, tags_match="any_strict", limit=100, offset=0
+        self,
+        *,
+        bank_id,
+        search_query=None,
+        tags=None,
+        tags_match="any_strict",
+        time_field=None,
+        start_date=None,
+        end_date=None,
+        limit=100,
+        offset=0,
     ):
         items = [{"id": doc_id, **doc} for doc_id, doc in self.documents.items()]
         return {"items": items[offset : offset + limit], "total": len(items), "limit": limit, "offset": offset}

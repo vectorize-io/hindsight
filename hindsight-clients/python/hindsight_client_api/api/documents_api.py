@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictStr
+from pydantic import Field, StrictStr, field_validator
 from typing import List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.chunk_response import ChunkResponse
@@ -1244,6 +1244,9 @@ class DocumentsApi:
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1262,7 +1265,7 @@ class DocumentsApi:
     ) -> ListDocumentsResponse:
         """List documents
 
-        List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.
+        List documents with pagination, optional search, and an optional time window. Most recently written first (`updated_at` descending) unless `time_field` selects another axis. Documents are the source content from which memory units are extracted.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1272,6 +1275,12 @@ class DocumentsApi:
         :type tags: List[str]
         :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
         :type tags_match: str
+        :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1305,6 +1314,9 @@ class DocumentsApi:
             q=q,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1337,6 +1349,9 @@ class DocumentsApi:
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1355,7 +1370,7 @@ class DocumentsApi:
     ) -> ApiResponse[ListDocumentsResponse]:
         """List documents
 
-        List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.
+        List documents with pagination, optional search, and an optional time window. Most recently written first (`updated_at` descending) unless `time_field` selects another axis. Documents are the source content from which memory units are extracted.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1365,6 +1380,12 @@ class DocumentsApi:
         :type tags: List[str]
         :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
         :type tags_match: str
+        :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1398,6 +1419,9 @@ class DocumentsApi:
             q=q,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1430,6 +1454,9 @@ class DocumentsApi:
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
+        start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
+        end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1448,7 +1475,7 @@ class DocumentsApi:
     ) -> RESTResponseType:
         """List documents
 
-        List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.
+        List documents with pagination, optional search, and an optional time window. Most recently written first (`updated_at` descending) unless `time_field` selects another axis. Documents are the source content from which memory units are extracted.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1458,6 +1485,12 @@ class DocumentsApi:
         :type tags: List[str]
         :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
         :type tags_match: str
+        :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
+        :type time_field: str
+        :param start_date: Filter from this ISO datetime (inclusive)
+        :type start_date: str
+        :param end_date: Filter until this ISO datetime (exclusive)
+        :type end_date: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1491,6 +1524,9 @@ class DocumentsApi:
             q=q,
             tags=tags,
             tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1518,6 +1554,9 @@ class DocumentsApi:
         q,
         tags,
         tags_match,
+        time_field,
+        start_date,
+        end_date,
         limit,
         offset,
         authorization,
@@ -1557,6 +1596,18 @@ class DocumentsApi:
         if tags_match is not None:
             
             _query_params.append(('tags_match', tags_match))
+            
+        if time_field is not None:
+            
+            _query_params.append(('time_field', time_field))
+            
+        if start_date is not None:
+            
+            _query_params.append(('start_date', start_date))
+            
+        if end_date is not None:
+            
+            _query_params.append(('end_date', end_date))
             
         if limit is not None:
             

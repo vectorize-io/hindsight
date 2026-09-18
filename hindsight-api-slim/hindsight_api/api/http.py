@@ -252,6 +252,7 @@ from hindsight_api.engine.retain.attachment_store import StoredAttachment
 from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
+from hindsight_api.engine.time_filter import DocumentTimeField, MemoryTimeField
 from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
@@ -286,6 +287,32 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
     return HTTPException(status_code=500, detail=str(exc))
 
+
+def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
+    """Parse an ISO-8601 query parameter, or 400 if it is not one.
+
+    The bare ``datetime.fromisoformat(...)`` the audit-log routes inline turns a
+    typo'd date into a 500, which reads as "the server broke" rather than "you
+    sent nonsense". Accepts a trailing ``Z``, which ``fromisoformat`` does not on
+    every supported Python.
+    """
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid {param}: '{value}' is not an ISO-8601 datetime."
+        ) from None
+
+
+# The shared prose for the two list endpoints' time window (#4349). One copy so the
+# generated clients cannot document the same parameter two different ways.
+_TIME_WINDOW_NOTE = (
+    "Filtering and ordering both follow `time_field`, and rows with no value on "
+    "that column are excluded — so `total` counts only rows carrying that "
+    "timestamp, and can be 0 on a bank that is not empty."
+)
 
 # 499 is the de facto reverse-proxy status for "client closed request".
 _CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
@@ -5392,7 +5419,11 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/memories/list",
         response_model=ListMemoryUnitsResponse,
         summary="List memory units",
-        description="List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
+        description=(
+            "List memory units with pagination and optional full-text search. Supports filtering by type, "
+            "source document, linked entity ID, and a time window. Results are sorted by most recent first "
+            "(mentioned_at DESC, then created_at DESC) unless a time window selects another axis."
+        ),
         operation_id="list_memories",
         tags=["Memory"],
         responses=_BANK_NOT_FOUND_RESPONSES,
@@ -5407,6 +5438,16 @@ def _register_routes(app: FastAPI):
         entity_id: str | None = None,
         tags: list[str] | None = Query(default=None),
         tags_match: TagsMatch = Query(default="any"),
+        time_field: MemoryTimeField | None = Query(
+            default=None,
+            description=(
+                "Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write "
+                "time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to "
+                "`created_at` when only `start_date`/`end_date` are given. " + _TIME_WINDOW_NOTE
+            ),
+        ),
+        start_date: str | None = Query(None, description="Filter from this ISO datetime (inclusive)"),
+        end_date: str | None = Query(None, description="Filter until this ISO datetime (exclusive)"),
         limit: int = Query(default=100, ge=0),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -5431,6 +5472,10 @@ def _register_routes(app: FastAPI):
             tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND) both
                 also include untagged memories; 'any_strict'/'all_strict' exclude
                 untagged; 'exact' matches the tag set exactly.
+            time_field: Time axis to filter and order by; excludes memories with no
+                value on it.
+            start_date: Inclusive lower bound on time_field (ISO-8601).
+            end_date: Exclusive upper bound on time_field (ISO-8601).
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -5445,6 +5490,9 @@ def _register_routes(app: FastAPI):
                 entity_id=entity_id,
                 tags=tags,
                 tags_match=tags_match,
+                time_field=time_field,
+                start_date=_parse_iso_datetime(start_date, "start_date"),
+                end_date=_parse_iso_datetime(end_date, "end_date"),
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
@@ -7296,7 +7344,11 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/documents",
         response_model=ListDocumentsResponse,
         summary="List documents",
-        description="List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.",
+        description=(
+            "List documents with pagination, optional search, and an optional time window. Most recently "
+            "written first (`updated_at` descending) unless `time_field` selects another axis. Documents "
+            "are the source content from which memory units are extracted."
+        ),
         operation_id="list_documents",
         tags=["Documents"],
         responses=_BANK_NOT_FOUND_RESPONSES,
@@ -7310,6 +7362,15 @@ def _register_routes(app: FastAPI):
         tags_match: str = Query(
             "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
         ),
+        time_field: DocumentTimeField | None = Query(
+            default=None,
+            description=(
+                "Time axis to filter and order by: `created_at` (when the document first arrived) or "
+                "`updated_at` (its last write, the default ordering). " + _TIME_WINDOW_NOTE
+            ),
+        ),
+        start_date: str | None = Query(None, description="Filter from this ISO datetime (inclusive)"),
+        end_date: str | None = Query(None, description="Filter until this ISO datetime (exclusive)"),
         limit: int = Query(default=100, ge=0),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -7322,6 +7383,9 @@ def _register_routes(app: FastAPI):
             q: Case-insensitive substring filter on document ID
             tags: Filter documents by tags
             tags_match: How to match tags (any, all, any_strict, all_strict)
+            time_field: Time axis to filter and order by (created_at, updated_at)
+            start_date: Inclusive lower bound on time_field (ISO-8601)
+            end_date: Exclusive upper bound on time_field (ISO-8601)
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -7331,11 +7395,16 @@ def _register_routes(app: FastAPI):
                 search_query=q,
                 tags=tags,
                 tags_match=tags_match,
+                time_field=time_field,
+                start_date=_parse_iso_datetime(start_date, "start_date"),
+                end_date=_parse_iso_datetime(end_date, "end_date"),
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
             )
             return data
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

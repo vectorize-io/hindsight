@@ -679,6 +679,15 @@ export class HindsightClient {
       state?: "valid" | "invalidated";
       documentId?: string;
       entityId?: string;
+      /**
+       * Time axis to filter and order by. Also drops memories with no value on
+       * that column, so `total` counts only the ones inside the window.
+       */
+      timeField?: "created_at" | "updated_at" | "mentioned_at" | "occurred_start" | "occurred_end";
+      /** ISO-8601, inclusive. */
+      startDate?: string;
+      /** ISO-8601, exclusive. */
+      endDate?: string;
       signal?: AbortSignal;
     }
   ): Promise<ListMemoryUnitsResponse> {
@@ -694,6 +703,9 @@ export class HindsightClient {
         state: options?.state,
         document_id: options?.documentId,
         entity_id: options?.entityId,
+        time_field: options?.timeField,
+        start_date: options?.startDate,
+        end_date: options?.endDate,
       },
       signal: options?.signal,
     });
@@ -1631,12 +1643,28 @@ export class HindsightClient {
    */
   async listDocuments(
     bankId: string,
-    options?: { limit?: number; offset?: number; signal?: AbortSignal }
+    options?: {
+      limit?: number;
+      offset?: number;
+      /** Time axis to filter and order by; `updated_at` is the default ordering. */
+      timeField?: "created_at" | "updated_at";
+      /** ISO-8601, inclusive. */
+      startDate?: string;
+      /** ISO-8601, exclusive. */
+      endDate?: string;
+      signal?: AbortSignal;
+    }
   ): Promise<ListDocumentsResponse> {
     const response = await sdk.listDocuments({
       client: this.client,
       path: { bank_id: bankId },
-      query: { limit: options?.limit, offset: options?.offset },
+      query: {
+        limit: options?.limit,
+        offset: options?.offset,
+        time_field: options?.timeField,
+        start_date: options?.startDate,
+        end_date: options?.endDate,
+      },
       signal: options?.signal,
     });
 
