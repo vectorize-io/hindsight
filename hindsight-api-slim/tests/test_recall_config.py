@@ -7,11 +7,14 @@ and as overrides on a mental model's `trigger` JSONB field.
 """
 
 import dataclasses
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 from hindsight_api.engine.reflect.tools import tool_recall
+from hindsight_api.engine.response_models import ChunkInfo
 from hindsight_api.engine.response_models import RecallResult as RecallResultModel
 from hindsight_api.models import RequestContext
 
@@ -59,6 +62,57 @@ class TestToolRecallIncludeChunks:
         kwargs = engine.recall_async.call_args.kwargs
         assert kwargs["max_chunk_tokens"] == 2500
         assert kwargs["max_tokens"] == 512
+
+
+class TestToolRecallChunkBudget:
+    """#4495: tool_recall's "chunks" payload must be bounded by max_chunk_tokens
+    on the RENDERED payload, not just the raw text the recall engine already
+    budgets -- a store-answered recall never goes through that budget loop at
+    all, so the tool must be self-bounding regardless of the recall path."""
+
+    @staticmethod
+    def _engine_with_chunks(chunks: dict[str, ChunkInfo]):
+        engine = MagicMock()
+        engine.recall_async = AsyncMock(return_value=RecallResultModel(results=[], entities={}, chunks=chunks))
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_oversized_chunk_payload_is_bounded(self, mock_request_context):
+        """A recall path that ignores the budget (e.g. an unbounded store
+        response) must still come back under max_chunk_tokens once rendered."""
+        chunks = {f"c{i}": ChunkInfo(chunk_text="x" * 4000, chunk_index=i) for i in range(20)}
+        engine = self._engine_with_chunks(chunks)
+
+        result = await tool_recall(engine, "bank-1", "q", mock_request_context, max_chunk_tokens=1000)
+
+        rendered = json.dumps(result["chunks"], indent=2, default=str, ensure_ascii=False)
+        assert result["chunks"], "budget must not drop every chunk"
+        assert count_prompt_tokens(rendered) <= 1000
+
+    @pytest.mark.asyncio
+    async def test_highest_relevance_chunks_are_kept(self, mock_request_context):
+        """Chunks are walked in the order the recall result gives them
+        (relevance order); dropped chunks must be a suffix, not an arbitrary
+        subset."""
+        chunks = {f"c{i}": ChunkInfo(chunk_text="x" * 4000, chunk_index=i) for i in range(20)}
+        engine = self._engine_with_chunks(chunks)
+
+        result = await tool_recall(engine, "bank-1", "q", mock_request_context, max_chunk_tokens=1000)
+
+        assert "c0" in result["chunks"]
+        assert "c19" not in result["chunks"]
+        kept_indices = [int(k[1:]) for k in result["chunks"]]
+        assert kept_indices == sorted(kept_indices), "surviving chunks must be a prefix of the original order"
+
+    @pytest.mark.asyncio
+    async def test_payload_within_budget_is_returned_untouched(self, mock_request_context):
+        """The common case (chunks already fit) must be unaffected by the cap."""
+        chunks = {f"c{i}": ChunkInfo(chunk_text="y" * 10, chunk_index=i) for i in range(3)}
+        engine = self._engine_with_chunks(chunks)
+
+        result = await tool_recall(engine, "bank-1", "q", mock_request_context, max_chunk_tokens=1000)
+
+        assert set(result["chunks"]) == {"c0", "c1", "c2"}
 
 
 class TestRecallConfigFields:

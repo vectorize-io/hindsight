@@ -576,6 +576,20 @@ _SPLIT_SYNTHESIS_WARN_CHUNKS = 4
 #: safe for any real model, so the floor caps fan-out without dropping data.
 _MIN_SPLIT_CHUNK_TOKENS = 1024
 
+#: Cap, as a fraction of the per-chunk budget, on a sibling key of the
+#: split-key list (e.g. ``tool_recall``'s unbounded ``chunks`` field riding
+#: alongside ``memories``) that the item-split loop is allowed to carry into
+#: every partial/candidate/cut block. Without this, a sibling that merely
+#: fits under budget still leaves no room for even one list item, so the
+#: packer degenerates to one output chunk per item — each one re-carrying a
+#: full copy of the same sibling. That is #4495: an unbounded tool-result
+#: field turned a handful of expected chunks into hundreds, each duplicating
+#: the same ~20-30k-token blob. A sibling over this fraction is dropped from
+#: the split entirely rather than merely truncated, since it is carried into
+#: *every* block and only the split-key list is what "don't drop evidence"
+#: actually promises.
+_MAX_SPLIT_SIBLING_FRACTION = 0.5
+
 #: The line between synthesis and invention, shared by every path that writes an
 #: answer (the tool-loop system prompt, the forced-synthesis system prompt, and
 #: the final-synthesis instructions) so they cannot drift apart.
@@ -612,14 +626,23 @@ _FINAL_INSTRUCTIONS = (
 )
 
 
+def _dump_output_json(value: Any) -> str:
+    """Serialize a tool-history ``output`` value for rendering or token-counting.
+
+    Shared by every place that needs the same text a chunk will actually render
+    as, so the fallback for a value ``json.dumps`` can't handle (e.g. a
+    circular reference) can't silently diverge between them.
+    """
+    try:
+        return json.dumps(value, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _render_history_block(entry: dict) -> str:
     """Render one context-history entry as a fenced JSON block."""
     tool = entry["tool"]
-    output = entry["output"]
-    try:
-        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
-    except (TypeError, ValueError):
-        output_str = str(output)
+    output_str = _dump_output_json(entry["output"])
     return f"\n### From {tool}:\n```json\n{output_str}\n```"
 
 
@@ -632,11 +655,7 @@ def _cut_entry_to_budget(entry: dict, token_budget: int) -> dict:
     window. The cut text is wrapped back into an output dict so the entry
     renders like any other block.
     """
-    output = entry["output"]
-    try:
-        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
-    except (TypeError, ValueError):
-        output_str = str(output)
+    output_str = _dump_output_json(entry["output"])
     tokens = count_prompt_tokens(output_str)
     while output_str and tokens > token_budget:
         # Proportional shrink with a safety margin; the loop guards against the
@@ -701,23 +720,37 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
             _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             continue
 
+        # A sibling key riding alongside split_key (e.g. tool_recall's "chunks")
+        # would otherwise be spread into every candidate/partial/cut below —
+        # see _MAX_SPLIT_SIBLING_FRACTION. Computed once per oversized entry,
+        # not per item: it is O(sibling count), not O(item count).
+        sibling_allowance = int(budget * _MAX_SPLIT_SIBLING_FRACTION)
+        omitted = [
+            k
+            for k in output
+            if k != split_key and count_prompt_tokens(_dump_output_json(output[k])) > sibling_allowance
+        ]
+        slim_output = {k: v for k, v in output.items() if k not in omitted}
+        if omitted:
+            slim_output["omitted_fields"] = omitted
+
         items = output[split_key]
         piece: list = []
         for item in items:
-            candidate = {**entry, "output": {**output, split_key: piece + [item]}}
+            candidate = {**entry, "output": {**slim_output, split_key: piece + [item]}}
             if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
-                partial = {**entry, "output": {**output, split_key: piece}}
+                partial = {**entry, "output": {**slim_output, split_key: piece}}
                 _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
                 piece = []
-                candidate = {**entry, "output": {**output, split_key: [item]}}
+                candidate = {**entry, "output": {**slim_output, split_key: [item]}}
             single_tokens = count_prompt_tokens(_render_history_block(candidate))
             if not piece and single_tokens > budget:
-                cut = _cut_entry_to_budget({**entry, "output": {**output, split_key: [item]}}, budget)
+                cut = _cut_entry_to_budget({**entry, "output": {**slim_output, split_key: [item]}}, budget)
                 _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             else:
                 piece.append(item)
         if piece:
-            partial = {**entry, "output": {**output, split_key: piece}}
+            partial = {**entry, "output": {**slim_output, split_key: piece}}
             _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
 
     _close_current()

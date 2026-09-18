@@ -65,12 +65,14 @@ class DropUnreadFieldsTests(unittest.TestCase):
 
 class ChunkEnvelopeTests(unittest.TestCase):
     def test_chunk_info_carries_no_unread_fields(self):
-        """Pins why ``chunks`` is left untrimmed in tool_recall.
+        """Pins why ``chunks`` is left field-untrimmed in tool_recall.
 
-        ChunkInfo holds only chunk_text / chunk_index / truncated, so trimming
-        it would be a no-op and its absence is not an inconsistency. If a future
-        field lands here that IS plumbing, this test fails and the decision gets
-        revisited instead of silently going stale.
+        ChunkInfo holds only chunk_text / chunk_index / truncated, so
+        _drop_unread_fields trimming it would be a no-op and its absence is not
+        an inconsistency. (The payload IS size-bounded separately -- see
+        _chunks_within_budget / #4495 -- this test is only about field
+        trimming.) If a future field lands here that IS plumbing, this test
+        fails and the decision gets revisited instead of silently going stale.
         """
         overlap = set(ChunkInfo.model_fields) & set(_UNREAD_RESULT_FIELDS)
         self.assertEqual(

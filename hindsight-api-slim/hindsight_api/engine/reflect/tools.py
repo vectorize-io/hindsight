@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..chunk_ids import resolve_chunk_id_in
+from .tokenization import count_prompt_tokens
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -70,6 +71,29 @@ def _prune_nulls(d: dict[str, Any]) -> dict[str, Any]:
     emitting ``None``.
     """
     return {k: v for k, v in d.items() if v is not None and v != "" and v != [] and v != {}}
+
+
+def _chunks_within_budget(chunks: dict[str, dict[str, Any]], budget: int) -> dict[str, dict[str, Any]]:
+    """Bound a serialized ``chunks`` payload to ``budget`` prompt tokens.
+
+    ``max_chunk_tokens`` already caps the raw chunk *text* the recall engine
+    accumulates (see the chunk budget loop in ``memory_engine.py``), but that
+    counts raw text, not the JSON this dict renders as in the reflect prompt
+    (indent, keys, escaping) -- and a store-answered recall never goes through
+    that loop at all, so its ``chunks`` dict is unbounded regardless. Walking
+    the dict in the order given (relevance order on the engine path) and
+    stopping at the first chunk that would push the running total over budget
+    makes the tool's own output self-bounding on both paths (#4495).
+    """
+    kept: dict[str, dict[str, Any]] = {}
+    total = 0
+    for chunk_id, chunk in chunks.items():
+        tokens = count_prompt_tokens(json.dumps(chunk, indent=2, default=str, ensure_ascii=False))
+        if kept and total + tokens > budget:
+            break
+        kept[chunk_id] = chunk
+        total += tokens
+    return kept
 
 
 def _document_metadata_from_retain_params(retain_params: Any) -> dict[str, Any] | None:
@@ -375,7 +399,9 @@ async def tool_recall(
         tags: Filter by tags (includes untagged memories)
         tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         connection_budget: Max DB connections for this recall (default 1 for internal ops)
-        max_chunk_tokens: Maximum tokens for raw source chunk text (default 1000)
+        max_chunk_tokens: Token budget for the returned ``chunks`` payload (default 1000). Also
+            bounds the engine's raw chunk-text accumulation; see ``_chunks_within_budget`` for why
+            this tool re-bounds the rendered payload on top of that.
         fact_types: Optional filter for fact types to retrieve. Defaults to ["experience", "world"].
         include_chunks: Whether to fetch raw chunk text alongside facts (default True).
 
@@ -406,14 +432,16 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
+    # ``chunks`` is deliberately not FIELD-trimmed: ChunkInfo carries only
+    # chunk_text / chunk_index / truncated, so _drop_unread_fields would be a
+    # no-op. Pinned by test_chunk_info_carries_no_unread_fields. It IS
+    # SIZE-bounded to max_chunk_tokens, measured on this rendered JSON rather
+    # than raw text -- see _chunks_within_budget (#4495).
+    chunks = {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()}
     return {
         "query": query,
         "memories": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
-        # ``chunks`` is deliberately not trimmed: ChunkInfo carries only
-        # chunk_text / chunk_index / truncated, so it holds none of the fields
-        # above and the call would be a no-op. Pinned by
-        # test_chunk_info_carries_no_unread_fields.
-        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
+        "chunks": _chunks_within_budget(chunks, max_chunk_tokens),
     }
 
 
