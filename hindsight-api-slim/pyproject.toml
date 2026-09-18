@@ -133,11 +133,22 @@ local-ml = [
     "torch>=2.11.0",
     "einops>=0.8.2",
     "flashrank>=0.2.0",
-    # Apple Silicon local inference — mlx publishes wheels only for
-    # macOS/Linux, not Windows, so gate on platform to let `uv sync
-    # --all-extras` resolve on win_amd64 runners.
-    "mlx>=0.31.0; sys_platform != 'win32'",
-    "mlx-lm>=0.31.1; sys_platform != 'win32'",
+    # Apple Silicon local inference. mlx publishes: macOS arm64 wheels
+    # (macosx_11_0_arm64), Linux glibc wheels targeting manylinux_2_35
+    # (glibc >= 2.35) and Windows wheels. There are no wheels for Intel
+    # macs, musl (Alpine) or glibc < 2.35 Linux, so a blanket
+    # `sys_platform != 'win32'` marker makes [all]/[local-ml]
+    # unresolvable on those platforms.
+    #
+    # The base (py3-none-any) wheel therefore gates mlx to darwin/arm64
+    # only, and scripts/build-api-slim-wheels.sh additionally publishes
+    # manylinux_2_35-tagged wheel variants whose metadata requires mlx on
+    # Linux, so glibc >= 2.35 Linux users keep mlx-backed local inference.
+    # Every platform keeps exactly the capabilities it has today; the
+    # previously-unresolvable platforms (Intel mac, musl, old-glibc Linux)
+    # now install cleanly without mlx.
+    "mlx>=0.31.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "safetensors>=0.6.2",
 ]
 local-llm = [
