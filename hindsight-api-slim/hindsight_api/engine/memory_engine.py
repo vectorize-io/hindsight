@@ -1403,8 +1403,33 @@ def _entity_map_from_results(
     return out
 
 
+def _is_foreign_key_violation(e: Exception) -> bool:
+    """Return True for a foreign-key violation on either dialect.
+
+    Oracle folds every constraint kind into ``IntegrityError``, so the FK case is
+    picked out by code: ORA-02291, parent key not found. That is the inserting
+    side, which is the side that fails — every FK in the Oracle baseline is
+    ON DELETE CASCADE or SET NULL, so a delete never raises ORA-02292.
+    """
+    if isinstance(e, asyncpg.exceptions.ForeignKeyViolationError):
+        return True
+    if not _is_oracledb_integrity_error(e):
+        return False
+    code = getattr(e.args[0], "code", None) if e.args else None
+    return code == 2291
+
+
 def _is_non_retryable_task_error(e: Exception) -> bool:
     """Classify deterministic task failures that should skip worker retry."""
+    # A foreign-key violation here is a concurrency race, not bad data: a retain
+    # writes unit_entities for units a concurrent delete is removing (see
+    # ``delete_document``, which documents the race it runs in). The row the
+    # write needed is gone *this moment*, not wrong — the retry finds a settled
+    # database and succeeds. Classifying it with its deterministic
+    # IntegrityConstraintViolationError siblings sent those retains terminal at
+    # retry_count=0 and dropped the content silently (issue #4453).
+    if _is_foreign_key_violation(e):
+        return False
     return (
         isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
         or _is_oracledb_integrity_error(e)
