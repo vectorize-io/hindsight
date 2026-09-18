@@ -33,6 +33,12 @@ from ..config import (
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
+    DEFAULT_RERANKER_TYPESAFE_BASE_URL,
+    DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE,
+    DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
+    DEFAULT_RERANKER_TYPESAFE_MODEL,
+    DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
+    DEFAULT_RERANKER_TYPESAFE_TIMEOUT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     DEFAULT_ZEROENTROPY_BASE_URL,
     RerankerMemberConfig,
@@ -93,6 +99,13 @@ class CrossEncoderModel(ABC):
     # remember — the omission that let a single Cohere 429 fail an entire recall
     # (#4134).
     retry_policy: RetryPolicy | None = None
+
+    # Whether this backend prunes candidates it judges irrelevant, marking each with
+    # a score of exactly 0.0 for the caller to leave out. Ordinary rerankers only
+    # order candidates — they have no calibrated notion of "not relevant", so their
+    # lowest score still means "least bad of these" and must be kept. Leave False
+    # unless the score is a real decision.
+    prunes_candidates: bool = False
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -886,6 +899,138 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
+
+
+class TypeSafeCrossEncoder(CrossEncoderModel):
+    """
+    TypeSafe reranker (https://typesafe.ai), Jev by default.
+
+    Not a Cohere-compatible /rerank endpoint: TypeSafe evaluates typed *questions*
+    against a *state* and answers with a pick plus a probability per option. A
+    (query, doc) pair therefore maps to state=doc and one three-way Choice.
+
+    Scoring and the keep/prune verdict are the *same* question, not two passes: the
+    one answer carries both the pick and the probability of each option, so the
+    probability of "relevant" ranks the candidate while — when ``prune_candidates``
+    is on — a pick of "irrelevant" scores it 0.0 for the caller to leave out.
+    Pruning therefore costs no extra call, no extra token and no extra latency; the
+    flag only decides whether we act on a verdict we were already given.
+
+    The three-way split is what makes pruning safe. Asked a plain relevant-or-not
+    binary the model throws away about a third of the evidence it should keep;
+    given "related" as a home for partial matches it keeps ~87% of the gold
+    evidence while still pruning ~90% of the candidate pool.
+    """
+
+    SYSTEMONE_PATH = "/v1/systemone"
+    PRUNE = "irrelevant"
+    CRITERIA = {
+        "relevant": "The candidate states, or directly supports, an answer to the question",
+        "related": "The candidate is about the same people, topic or period, and could help answer it in part",
+        "irrelevant": "The candidate is about something else entirely and cannot help answer the question",
+    }
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_TYPESAFE_MODEL,
+        base_url: str = DEFAULT_RERANKER_TYPESAFE_BASE_URL,
+        timeout: float = DEFAULT_RERANKER_TYPESAFE_TIMEOUT,
+        max_concurrent: int = DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
+        batch_size: int = DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE,
+        prune_candidates: bool = DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
+    ):
+        # Tolerate an unset-but-present value ("VAR=" in a compose file, or a config
+        # built with every field zeroed) by falling back to the default.
+        self.model = model or DEFAULT_RERANKER_TYPESAFE_MODEL
+        self.base_url = (base_url or DEFAULT_RERANKER_TYPESAFE_BASE_URL).rstrip("/")
+        self.timeout = timeout
+        self.batch_size = max(1, batch_size or DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE)
+        self.prunes_candidates = bool(prune_candidates)
+        # CrossLoopSemaphore, not asyncio.Semaphore: one encoder instance is built at
+        # startup and reached from every loop in the process (worker threads run their
+        # own via asyncio.run), and an asyncio.Semaphore binds to whichever loop first
+        # waits on it — the second loop to contend then raises "bound to a different
+        # event loop". Same reasoning as RemoteTEICrossEncoder's cap above. The calls
+        # it gates are network round trips, well clear of the "short and hot" work
+        # _cross_loop warns against guarding this way.
+        self._semaphore = CrossLoopSemaphore(max_concurrent or DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT)
+        self._session = LoopLocalSession(
+            timeout=per_phase_timeout(timeout),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "typesafe"
+
+    async def initialize(self) -> None:
+        logger.info(
+            f"Reranker: initializing TypeSafe provider at {self.base_url} with model {self.model} "
+            f"(batch_size={self.batch_size}, prune_candidates={self.prunes_candidates})"
+        )
+
+    async def _score_batch(self, query: str, docs: list[str]) -> list[float]:
+        """Score one chunk of candidates, returning 0.0 for any the model prunes.
+
+        One question per candidate answers both things at once — the rank and the
+        verdict — so a chunk is a single request either way.
+
+        With batch_size 1 the candidate is the whole state, which is what the
+        verdict needs. Above that the chunk shares one state: one round trip and
+        ~1/batch_size the input tokens, but the model's judgment of each candidate
+        degrades as the others crowd in, so batching is a ranking-only economy.
+        """
+        if len(docs) == 1:
+            state: str = docs[0]
+            instructions = [f"Is this text relevant to the question: {query}"]
+        else:
+            state = "\n\n".join(f"[{i + 1}] {doc}" for i, doc in enumerate(docs))
+            instructions = [f"Is candidate [{i + 1}] relevant to the question: {query}" for i in range(len(docs))]
+        body = {
+            "state": state,
+            "model": self.model,
+            "questions": {
+                f"d{i}": {"type": "choice", "instructions": text, "criteria": self.CRITERIA}
+                for i, text in enumerate(instructions)
+            },
+        }
+        async with self._semaphore:
+            async with self._session.get().post(
+                f"{self.base_url}{self.SYSTEMONE_PATH}",
+                headers=reranker_bank_attribution_headers(),
+                json=body,
+            ) as response:
+                await raise_for_status(response)
+                result = await response.json(content_type=None)
+        answers = [result["answers"][f"d{i}"] for i in range(len(docs))]
+        return [
+            0.0
+            if (self.prunes_candidates and answer["choice"] == self.PRUNE)
+            else float(answer["probabilities"]["relevant"])
+            for answer in answers
+        ]
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        if not pairs:
+            return []
+        query_groups: dict[str, list[int]] = {}
+        for index, (query, _) in enumerate(pairs):
+            query_groups.setdefault(query, []).append(index)
+
+        chunks: list[tuple[str, list[int]]] = []
+        for query, indices in query_groups.items():
+            for start in range(0, len(indices), self.batch_size):
+                chunks.append((query, indices[start : start + self.batch_size]))
+
+        scored = await asyncio.gather(
+            *(self._score_batch(query, [pairs[i][1] for i in indices]) for query, indices in chunks)
+        )
+        all_scores = [0.0] * len(pairs)
+        for (_, indices), values in zip(chunks, scored, strict=True):
+            for index, value in zip(indices, values, strict=True):
+                all_scores[index] = value
+        return all_scores
 
 
 class RRFPassthroughCrossEncoder(CrossEncoderModel):
@@ -1970,13 +2115,28 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             model=member.alibaba_model,
             timeout=member.alibaba_timeout,
         )
+    elif provider == "typesafe":
+        api_key = member.typesafe_api_key
+        if not api_key:
+            raise ValueError(
+                f"{member.env_name('TYPESAFE_API_KEY')} is required when {member.env_name('PROVIDER')} is 'typesafe'"
+            )
+        return TypeSafeCrossEncoder(
+            api_key=api_key,
+            model=member.typesafe_model,
+            base_url=member.typesafe_base_url,
+            timeout=member.typesafe_timeout,
+            max_concurrent=member.typesafe_max_concurrent,
+            batch_size=member.typesafe_batch_size,
+            prune_candidates=member.typesafe_prune_candidates,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     elif provider == "jina-mlx":
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'typesafe', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
 
 

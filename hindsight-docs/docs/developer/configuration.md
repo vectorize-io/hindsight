@@ -1149,7 +1149,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `typesafe`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
@@ -1191,6 +1191,13 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL` | SiliconFlow rerank model (e.g., `BAAI/bge-reranker-v2-m3`) | `BAAI/bge-reranker-v2-m3` |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL` | Base URL for the SiliconFlow `/rerank` endpoint | `https://api.siliconflow.cn/v1` |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_TIMEOUT` | HTTP request timeout for SiliconFlow reranker (seconds). | `60.0` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY` | TypeSafe API key for reranking | - |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_MODEL` | TypeSafe model used to judge relevance | `jev-latest` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL` | Base URL for the TypeSafe API | `https://api.typesafe.ai` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT` | HTTP request timeout for the TypeSafe reranker (seconds). | `60.0` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_BATCH_SIZE` | Candidates per API call. `1` gives each candidate its own call and the sharpest judgment; higher values share one call (fewer round trips, fewer input tokens) at the cost of per-candidate accuracy. Raise only when ranking quality alone matters — see the note below. | `1` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT` | Maximum in-flight TypeSafe requests. | `24` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES` | Prune candidates TypeSafe judges irrelevant instead of merely ranking them last. Shrinks what recall returns — see the note below. | `false` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_API_KEY` | Alibaba Cloud DashScope API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ALIBABA_MODEL` | DashScope rerank model | `qwen3-rerank` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_TIMEOUT` | HTTP request timeout for the Alibaba Cloud DashScope reranker (seconds). | `60.0` |
@@ -1344,6 +1351,12 @@ export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3
 # export HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1  # default
 
+# TypeSafe - relevance judged by a typed-decision model (Jev), not a /rerank endpoint
+export HINDSIGHT_API_RERANKER_PROVIDER=typesafe
+export HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY=your-api-key
+# export HINDSIGHT_API_RERANKER_TYPESAFE_MODEL=jev-latest              # default
+# export HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true          # also prune irrelevant candidates
+
 # Alibaba Cloud DashScope - qwen3-rerank via Cohere-compatible /reranks endpoint
 export HINDSIGHT_API_RERANKER_PROVIDER=alibaba
 export HINDSIGHT_API_RERANKER_ALIBABA_API_KEY=your-dashscope-api-key  # or set DASHSCOPE_API_KEY
@@ -1384,6 +1397,32 @@ Both support the same providers:
 - **Voyage AI** (`voyage/rerank-2`)
 - **Jina AI** (`jina_ai/jina-reranker-v2`)
 - **AWS Bedrock** (`bedrock/...`)
+
+#### TypeSafe
+
+TypeSafe is not a `/rerank` endpoint. It evaluates typed *questions* against a *state*
+and answers with a pick plus a probability, so Hindsight sends each candidate as the
+state with one three-way question — `relevant`, `related`, or `irrelevant`. The
+probability of `relevant` becomes the candidate's score.
+
+**Pruning irrelevant candidates.** That one answer carries both the pick and the
+probabilities, so the score and the keep-or-prune verdict come back from the *same*
+question — not a second pass. `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true`
+simply acts on the verdict, leaving pruned candidates out instead of ranking them last;
+it costs no extra call, token or millisecond. No score threshold is involved — the model
+makes the call. It does meaningfully shrink what recall returns, so it is off by
+default; turn it on when the consumer is an LLM prompt (reflect, for instance) and every
+irrelevant memory is wasted context.
+
+The three-way split is what makes pruning safe: asked a plain relevant/irrelevant
+question the model prunes roughly a third of the evidence that should be kept, while
+`related` gives partial matches somewhere to live.
+
+**Batching.** `HINDSIGHT_API_RERANKER_TYPESAFE_BATCH_SIZE` above `1` packs several
+candidates into one call, cutting round trips and input tokens. The trade-off is that
+batched candidates share a state and the model's judgment of each degrades as the
+others crowd in — measurably so for the keep/prune verdict. Leave it at `1` when
+`PRUNE_CANDIDATES` is on; raise it when only the ranking matters.
 
 #### Jina MLX (Apple Silicon)
 
