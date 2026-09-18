@@ -230,6 +230,9 @@ async def list_memory_units(
         query_conditions.append(f"created_at < ${param_count}")
         query_params.append(created_before)
 
+    # Validation rides along with the clause here, unlike `list_documents`, which has to
+    # validate before its store-owned branch returns. Memories have no such branch — every
+    # store reaches this builder — so a second guard upstream would only be a second copy.
     window = build_time_clause(
         time_field=time_field,
         start_date=start_date,

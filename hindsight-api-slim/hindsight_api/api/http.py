@@ -291,8 +291,8 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
 def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
     """Parse an ISO-8601 query parameter into a tz-aware datetime, or 400.
 
-    Replaces the bare ``datetime.fromisoformat(...)`` the four list/audit routes
-    used to inline, which had two failure modes. A typo'd date raised ``ValueError`` out of the
+    Replaces the bare ``datetime.fromisoformat(...)`` the four date-windowed list
+    routes used to inline, which had two failure modes. A typo'd date raised ``ValueError`` out of the
     handler and became a 500 — "the server broke" rather than "you sent nonsense".
     And a value with no offset stayed naive, which is worse than it looks: two
     naive bounds compare fine but reach a ``timestamptz`` column meaning whatever
@@ -303,7 +303,9 @@ def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
     A value with no offset is therefore read as UTC, which is what the repo does
     everywhere else it parses a caller's timestamp.
 
-    Accepts a trailing ``Z``; ``fromisoformat`` does not on every supported Python.
+    The trailing ``Z`` is rewritten rather than passed through: every interpreter
+    this package supports (3.11+) parses it, but the rewrite keeps the accepted
+    syntax pinned to this function rather than to the interpreter under it.
     """
     if value is None:
         return None
