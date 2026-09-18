@@ -1155,7 +1155,7 @@
     "errorRunningSearch": "Error running search",
     "tooltipCrossEncoder": "Cross-encoder score (primary relevance signal)",
     "tooltipTemporal": "Temporal proximity boost (±10% — only active for temporal queries)",
-    "tooltipRecency": "Recency boost (±10% — based on memory age)",
+    "tooltipRecency": "Recency boost (±10% — based on time decay)",
     "temporalWindowLabel": "Time window",
     "helpTypes": "Which memory layers to search: world facts, the bank's own experiences, and consolidated observations.",
     "helpBudget": "How hard recall searches. A higher budget explores more candidates and graph links: better recall, more latency.",
@@ -1566,7 +1566,7 @@
     "errorPrefix": "Error: {error}"
   },
   "mentalModelDetailModal": {
-    "noBasedOnData": "No based_on data.",
+    "noBasedOnData": "No basis data available.",
     "viewArrow": "View →",
     "unchanged": "unchanged",
     "diffBefore": "Before",
