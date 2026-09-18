@@ -658,9 +658,14 @@ which makes Cursor a *client* of Hindsight. Here Cursor is the model backend Hin
 - **Free plans are limited to `auto`.** A named `--model` returns
   `Named models unavailable Free plans can only use Auto`. Paid plans can use any id from
   `cursor-agent --list-models`.
-- **Calls run in an empty scratch workspace.** `cursor-agent` is workspace-shaped and will
-  read files around its working directory; Hindsight points it at an empty temp directory
-  and runs it in read-only `--mode ask`, so the server's own files never reach a prompt.
+- **The agent's own tools are turned off.** `cursor-agent` is an agent, not a completions
+  endpoint: it ships Shell, Read, Write, Delete, web fetch and more, and `--mode ask` is
+  *not* a tool switch — a headless run in ask mode will still read files out of its
+  working directory. Hindsight therefore runs the CLI in an empty scratch workspace, with
+  its own `CURSOR_CONFIG_DIR` (so it never sees your `~/.cursor` config, hooks or session
+  history), and writes a `cli-config.json` there that denies every tool by name. That is
+  the equivalent of the `tools=[]` the `claude-code` provider passes its SDK, and it
+  matters because retain prompts are built from whatever text you store in Hindsight.
 - Usage counts against your Cursor subscription.
 - Reasoning effort is not supported — the CLI has no such flag, and Hindsight warns once
   at startup if `HINDSIGHT_API_LLM_REASONING_EFFORT` is set.

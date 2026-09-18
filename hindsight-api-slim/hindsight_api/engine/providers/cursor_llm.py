@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import re
 import shutil
 import tempfile
@@ -88,16 +89,63 @@ class _CursorDirs:
 _dirs_lock = threading.Lock()
 _dirs: _CursorDirs | None = None
 
+#: Every tool the agent advertises, denied. This is the counterpart of
+#: ``claude_code_llm.py``'s ``tools=[]`` / ``allowed_tools=[]``: Hindsight wants a text
+#: completion, not an agent, and the prompts it sends are built from arbitrary
+#: user-retained content, so nothing in them should be able to reach a file or a shell.
+#:
+#: The CLI has no flag for this — ``--mode ask`` is documented as read-only but is NOT
+#: a tool switch: with no deny rules a plain ``-p --mode ask`` run happily reads a file
+#: out of its working directory (verified with a canary file). Only ``cli-config.json``
+#: permissions stop it, and only as explicit per-tool rules — a single ``"*"`` entry is
+#: silently ignored and the read succeeds (also verified). So the list is enumerated,
+#: from what the agent reports when asked to name its tools on CLI 2026.09.15.
+#:
+#: The enumeration is the weakness: a tool added by a later CLI is allowed until it is
+#: listed here. That is survivable because the agent is already confined to an empty
+#: scratch workspace and its MCP servers are unapproved (the CLI refuses an MCP call
+#: without ``--approve-mcps``, which we never pass), so a new tool starts with nothing
+#: interesting in reach. Re-run the "name every tool you have" probe when bumping a
+#: tested CLI version.
+_DENIED_TOOLS = (
+    "Shell",
+    "AwaitShell",
+    "Read",
+    "Write",
+    "Delete",
+    "StrReplace",
+    "EditNotebook",
+    "Grep",
+    "Glob",
+    "ReadLints",
+    "WebSearch",
+    "WebFetch",
+    "Task",
+    "TodoWrite",
+    "GetDynamicTools",
+    "CallDynamicTool",
+    "FetchMcpResource",
+    "CreateGoal",
+    "UpdateGoal",
+    "GenerateImage",
+)
+
 
 def _get_dirs() -> _CursorDirs:
     global _dirs
     with _dirs_lock:
         if _dirs is None:
-            _dirs = _CursorDirs(
+            dirs = _CursorDirs(
                 workspace=tempfile.mkdtemp(prefix="hindsight-cursor-ws-"),
                 config_dir=tempfile.mkdtemp(prefix="hindsight-cursor-cfg-"),
             )
-            logger.debug(f"Cursor: isolated workspace={_dirs.workspace} CURSOR_CONFIG_DIR={_dirs.config_dir}")
+            config = {
+                "version": 1,
+                "permissions": {"allow": [], "deny": [f"{tool}(*)" for tool in _DENIED_TOOLS]},
+            }
+            pathlib.Path(dirs.config_dir, "cli-config.json").write_text(json.dumps(config), encoding="utf-8")
+            _dirs = dirs
+            logger.debug(f"Cursor: isolated workspace={dirs.workspace} CURSOR_CONFIG_DIR={dirs.config_dir}")
         return _dirs
 
 

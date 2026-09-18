@@ -13,6 +13,7 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -168,6 +169,27 @@ async def test_child_is_confined_to_scratch_dirs_and_never_sees_the_key_in_argv(
     assert "hindsight-cursor-cfg-" in config_dir
     assert "hindsight-cursor-ws-" in kwargs["cwd"]
     assert kwargs["cwd"] != config_dir
+
+
+def test_isolated_config_denies_every_advertised_tool():
+    """The CLI has no tools=[] flag, so the deny list is what keeps it a text completion.
+
+    --mode ask is not a tool switch: without these rules a headless run reads files out
+    of its cwd. A single "*" rule is silently ignored by the CLI, so every tool has to be
+    named — which is why this asserts the shape, and why the names are worth reviewing
+    when the tested CLI version moves.
+    """
+    from hindsight_api.engine.providers import cursor_llm
+
+    dirs = cursor_llm._get_dirs()
+    config = json.loads(Path(dirs.config_dir, "cli-config.json").read_text())
+
+    deny = set(config["permissions"]["deny"])
+    assert config["permissions"]["allow"] == []
+    # The ones that reach the host or the network, spelled out so a silent drop fails here.
+    for tool in ("Shell", "Read", "Write", "Delete", "WebFetch", "CallDynamicTool"):
+        assert f"{tool}(*)" in deny, f"{tool} is not denied"
+    assert all(rule.endswith("(*)") for rule in deny)
 
 
 @pytest.mark.asyncio
