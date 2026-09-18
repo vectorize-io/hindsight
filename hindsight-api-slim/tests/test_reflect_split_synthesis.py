@@ -113,6 +113,65 @@ class TestSplitContextHistory:
         assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
         assert total_entries < 30, "history was shredded into per-entry chunks"
 
+    def test_oversized_sibling_does_not_defeat_packing(self):
+        """#4495 regression: an unbounded sibling of the split-key list (e.g.
+        tool_recall's raw "chunks") must not ride into every candidate/partial
+        of the item-split loop — that turned N items into N one-item chunks,
+        each duplicating the sibling. With the sibling dropped, splitting a
+        history with the sibling must behave the same as without it."""
+        without_sibling = _entry("recall", "memories", 30, 300)
+        with_sibling = {
+            **without_sibling,
+            "output": {
+                **without_sibling["output"],
+                "chunks": {f"c{i}": {"chunk_text": "x" * 400, "chunk_index": i} for i in range(20)},
+            },
+        }
+
+        chunks_without = split_context_history([without_sibling], _MAX_CONTEXT)
+        chunks_with = split_context_history([with_sibling], _MAX_CONTEXT)
+
+        assert len(chunks_with) <= len(chunks_without) + 1
+        assert len(chunks_with) < 30, "an oversized sibling caused one chunk per item (#4495)"
+        assert _ids_in(chunks_with) == [f"mem-{i}" for i in range(30)]
+        for chunk in chunks_with:
+            rendered = "".join(_render_history_block(e) for e in chunk)
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
+            for entry in chunk:
+                assert "chunks" not in entry["output"]
+                assert entry["output"]["query"] == "q"
+                assert entry["output"]["omitted_fields"] == ["chunks"]
+
+    def test_entry_oversized_only_by_sibling_stays_one_chunk(self):
+        """An entry whose item list alone fits the budget, but whose total
+        (list + sibling) does not, must collapse to one chunk once the
+        sibling is dropped — not one token-cut chunk per item."""
+        big_sibling = {f"c{i}": {"chunk_text": "x" * 800, "chunk_index": i} for i in range(20)}
+        entry = _entry("recall", "memories", 3, 50)
+        entry["output"]["chunks"] = big_sibling
+
+        chunks = split_context_history([entry], _MAX_CONTEXT)
+
+        assert len(chunks) == 1
+        assert _ids_in(chunks) == ["mem-0", "mem-1", "mem-2"]
+        (only_entry,) = chunks[0]
+        assert "truncated" not in only_entry["output"]
+        assert only_entry["output"]["omitted_fields"] == ["chunks"]
+
+    def test_small_siblings_survive_the_split(self):
+        """The sibling filter is a size cap, not "drop every sibling": a small
+        sibling that fits the allowance must reach every partial block."""
+        history = [_entry("search_observations", "observations", 40, 400)]
+        history[0]["output"]["note"] = "short-note-" + "z" * 20
+
+        chunks = split_context_history(history, _MAX_CONTEXT)
+
+        assert len(chunks) > 1
+        for chunk in chunks:
+            for entry in chunk:
+                assert entry["output"]["note"] == "short-note-" + "z" * 20
+                assert "omitted_fields" not in entry["output"]
+
 
 class TestSplitSynthesisPrompts:
     def test_chunk_claims_prompt_carries_evidence_and_question(self):
