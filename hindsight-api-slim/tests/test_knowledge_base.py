@@ -481,6 +481,12 @@ class TestSearch:
         # Scores are strictly descending.
         scores = [r["score"] for r in body["results"]]
         assert scores == sorted(scores, reverse=True)
+        # ...and normalized onto 0..1. The raw RRF terms top out near 0.016, which
+        # reads as "no match" to any caller assuming a 0..1 relevance scale, so the
+        # arms are scaled before the score leaves the engine. The top hit here is
+        # found by both arms, so it should sit near the 1.0 ceiling, not at 0.03.
+        assert all(0.0 < s <= 1.0 for s in scores), scores
+        assert scores[0] > 0.5, scores
         top = body["results"][0]
         assert top["id"] == ids.billing
         assert top["mental_model_id"]

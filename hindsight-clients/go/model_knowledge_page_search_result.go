@@ -25,6 +25,7 @@ type KnowledgePageSearchResult struct {
 	Name string `json:"name"`
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
 	Snippet string `json:"snippet"`
+	// Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.
 	Score float32 `json:"score"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 }

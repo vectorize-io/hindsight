@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
@@ -30,7 +30,7 @@ class KnowledgePageSearchResult(BaseModel):
     name: StrictStr
     mental_model_id: Optional[StrictStr] = None
     snippet: StrictStr
-    score: Union[StrictFloat, StrictInt]
+    score: Union[StrictFloat, StrictInt] = Field(description="Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.")
     updated_at: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["id", "name", "mental_model_id", "snippet", "score", "updated_at"]
 

@@ -3392,7 +3392,13 @@ class KnowledgePageSearchResult(BaseModel):
     name: str
     mental_model_id: str | None = None
     snippet: str
-    score: float
+    score: float = Field(
+        description=(
+            "Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. "
+            "It reflects where the page ranked for this query, not how well its text matched, so "
+            "it is only comparable within one result set."
+        )
+    )
     updated_at: str | None = None
 
 

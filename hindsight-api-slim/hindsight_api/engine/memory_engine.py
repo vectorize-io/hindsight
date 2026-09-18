@@ -126,6 +126,16 @@ _nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.Context
     "nested_operation_authorized", default=False
 )
 
+# Reciprocal Rank Fusion constant for knowledge-page search, and the factor that
+# maps a single arm's raw RRF term (1/(K+rank), max 1/61 at rank 1) onto 0..1.
+# Every arm of search_knowledge_pages scales by this so the `score` it returns is
+# comparable across backends: the raw terms top out around 0.016 and read as "no
+# match" to anyone who assumes a 0..1 relevance scale, and the store-owned path
+# used a different formula again — the same field meant 0.016 or 1.0 for the same
+# top hit depending on which store answered.
+_KNOWLEDGE_RRF_K = 60
+_KNOWLEDGE_RRF_NORM = float(_KNOWLEDGE_RRF_K + 1)
+
 
 @contextmanager
 def _authorize_nested_operations() -> "Iterator[None]":
@@ -19192,6 +19202,14 @@ class MemoryEngine(MemoryEngineInterface):
         ranked by fused score, each with a short content snippet. Folders are
         excluded.
 
+        ``score`` is normalized to ``0..1``, where 1.0 is the best a page can do
+        on this query: every arm at rank 1. It is a *rank* score, not a relevance
+        one — it says where a page placed, never how well it matched, so it is
+        only meaningful against the other results for the same query. A one-arm
+        search (vector-only, BM25-only) tops out at 1.0 as well; in the fused
+        search a page found by a single arm tops out at 0.5, since the other arm
+        contributes nothing.
+
         The BM25 arm is dispatched on the configured text-search backend
         (:func:`knowledge_bm25_arm`); backends whose ``mental_models`` BM25 index
         is unpopulated (``vchord``) degrade to a vector-only search rather than
@@ -19271,7 +19289,9 @@ class MemoryEngine(MemoryEngineInterface):
                     "name": r["name"],
                     "mental_model_id": r["mental_model_id"],
                     "snippet": (r["snippet"] or "").strip(),
-                    "score": 1.0 / (1 + order[r["mental_model_id"]]),
+                    # Same normalized single-arm RRF curve as the SQL paths below, so a
+                    # store-owned bank's scores mean what a Postgres-ranked bank's do.
+                    "score": _KNOWLEDGE_RRF_NORM / (_KNOWLEDGE_RRF_K + 1 + order[r["mental_model_id"]]),
                     "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
                 }
                 for r in rows
@@ -19311,7 +19331,7 @@ class MemoryEngine(MemoryEngineInterface):
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
                            LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                           1.0 / (60 + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
+                           {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
                     FROM {join}
                     WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
                     ORDER BY mm.embedding <=> $1::vector
@@ -19369,7 +19389,8 @@ class MemoryEngine(MemoryEngineInterface):
                         ),
                         fused AS (
                             SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
-                                   COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
+                                   ({_KNOWLEDGE_RRF_NORM} / 2) * (COALESCE(1.0 / ({_KNOWLEDGE_RRF_K} + vec.rnk), 0)
+                                                                + COALESCE(1.0 / ({_KNOWLEDGE_RRF_K} + bm.rnk), 0)) AS score
                             FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
                         )
                         SELECT kp.id, kp.name, kp.mental_model_id,
@@ -19391,10 +19412,14 @@ class MemoryEngine(MemoryEngineInterface):
                         pg_search_tokenizer=cfg.text_search_extension_pg_search_tokenizer,
                         max_query_terms=cfg.bm25_max_query_terms,
                     )
+                    # Ranked, not raw: each backend's BM25 operator returns its own scale
+                    # (ts_rank_cd, a negated distance, paradedb.score), and those have
+                    # nothing in common with each other or with the fused path above. The
+                    # rank does, so the same normalized RRF curve is applied here too.
                     sql = f"""
                         SELECT kp.id, kp.name, kp.mental_model_id,
                                LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                               {bm25.score_expr} AS score
+                               {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY {bm25.order_by})) AS score
                         FROM {join}
                         WHERE kp.bank_id = $1 AND kp.kind = 'page'
                               {bm25.match_filter}
