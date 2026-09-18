@@ -252,31 +252,6 @@ class FactCausalRelation(BaseModel):
     )
 
 
-# The four descriptive dimensions are nullable on purpose (#4457). When they were
-# required non-null strings, a strict-schema grammar forced smaller local models to
-# put *something* in every one of them, and the nearest plausible value is whatever
-# the surrounding text happens to mention — an unrelated project date landing in a
-# fact's `when`. A fabricated date becomes durable memory, so `null` has to be a
-# legal answer. The keys stay required (see each model's `json_schema_extra`); only
-# the values may be null. Downstream, `get_value` already collapses null / "" /
-# "N/A" to None, so "N/A" from an older prompt or a model that prefers it still works.
-#
-# These stay as close to the original wording as the change allows: only the "'N/A'
-# if …" placeholder instruction becomes "null if …". A first version rewrote them
-# into "explicitly stated for THIS fact … never invent a motive", which reads like a
-# harmless tightening and is not one — `why` stopped absorbing the request behind an
-# agent's action, so "the user asked me to refactor X" came back as its own separate
-# `world` fact and flipped the experience/world balance in
-# test_fact_extraction_agent_experience. The schema change is the fix; the prompt is
-# not the place to relitigate what these fields mean.
-_WHEN_DESCRIPTION = (
-    "When it happened. null if unknown. Never infer it from a date the text states about something else."
-)
-_WHERE_DESCRIPTION = "Location if relevant. null if none."
-_WHO_DESCRIPTION = "People involved with relationships. null if general."
-_WHY_DESCRIPTION = "Context/significance if important. null if obvious."
-
-
 class ExtractedFact(BaseModel):
     """A single extracted fact."""
 
@@ -286,10 +261,10 @@ class ExtractedFact(BaseModel):
     )
 
     what: str = Field(description="Core fact - concise but complete (1-2 sentences)")
-    when: str | None = Field(default=None, description=_WHEN_DESCRIPTION)
-    where: str | None = Field(default=None, description=_WHERE_DESCRIPTION)
-    who: str | None = Field(default=None, description=_WHO_DESCRIPTION)
-    why: str | None = Field(default=None, description=_WHY_DESCRIPTION)
+    when: str = Field(description="When it happened. 'N/A' if unknown.")
+    where: str = Field(description="Location if relevant. 'N/A' if none.")
+    who: str = Field(description="People involved with relationships. 'N/A' if general.")
+    why: str = Field(description="Context/significance if important. 'N/A' if obvious.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
@@ -400,44 +375,37 @@ class ExtractedFactVerbose(BaseModel):
         "NOT: 'A wedding happened' or 'Emily got married'"
     )
 
-    when: str | None = Field(
-        default=None,
+    when: str = Field(
         description="WHEN it happened - ALWAYS include temporal information if mentioned. "
         "Include: specific dates, times, durations, relative time references. "
         "Examples: 'on June 15th, 2024 at 3pm', 'last weekend', 'for the past 3 years', 'every morning at 6am'. "
-        "Use null ONLY if absolutely no temporal context exists, and never infer a time from a date the "
-        "text states about something else. Prefer converting to absolute dates when possible.",
+        "Write 'N/A' ONLY if absolutely no temporal context exists. Prefer converting to absolute dates when possible."
     )
 
-    where: str | None = Field(
-        default=None,
+    where: str = Field(
         description="WHERE it happened or is about - SPECIFIC locations, places, areas, regions if applicable. "
         "Include: cities, neighborhoods, venues, buildings, countries, specific addresses when mentioned. "
         "Examples: 'downtown San Francisco at a rooftop garden venue', 'at the user's home in Brooklyn', 'online via Zoom', 'Paris, France'. "
-        "Use null ONLY if absolutely no location context exists or if the fact is completely location-agnostic.",
+        "Write 'N/A' ONLY if absolutely no location context exists or if the fact is completely location-agnostic."
     )
 
-    who: str | None = Field(
-        default=None,
+    who: str = Field(
         description="WHO is involved - ALL people/entities with FULL context and relationships. "
         "Include: names, roles, relationships to user, background details. "
         "Resolve coreferences (if 'my roommate' is later named 'Emily', write 'Emily, the user's college roommate'). "
         "BE DETAILED about relationships and roles. "
         "Example: 'Emily (user's college roommate from Stanford, now works at Google), Sarah (Emily's partner of 5 years, software engineer)' "
-        "NOT: 'my friend' or 'Emily and Sarah'. "
-        "Use null if the text names nobody.",
+        "NOT: 'my friend' or 'Emily and Sarah'"
     )
 
-    why: str | None = Field(
-        default=None,
+    why: str = Field(
         description="WHY it matters - ALL emotional, contextual, and motivational details. "
         "Include EVERYTHING: feelings, preferences, motivations, observations, context, background, significance. "
         "BE VERBOSE - capture all the nuance and meaning. "
         "FOR ASSISTANT FACTS: MUST include what the user asked/requested that led to this interaction! "
         "Example (world): 'The user felt thrilled and inspired, has always dreamed of an outdoor ceremony, mentioned wanting a similar garden venue, was particularly moved by the intimate atmosphere and personal vows' "
         "Example (assistant): 'User asked how to fix slow API performance with 1000+ concurrent users, expected 70-80% reduction in database load' "
-        "NOT: 'User liked it' or 'To help user'. "
-        "Use null if the text gives no rationale.",
+        "NOT: 'User liked it' or 'To help user'"
     )
 
     fact_kind: str = Field(
@@ -500,14 +468,10 @@ class ExtractedFactNoCausal(BaseModel):
 
     # Same fields as ExtractedFact but without causal_relations
     what: str = Field(description="WHAT happened - COMPLETE, DETAILED description with ALL specifics.")
-    # This model's own wording, kept verbatim — it never named a placeholder, so
-    # nullability is carried by the type alone and nothing about the prompt changes.
-    when: str | None = Field(default=None, description="WHEN it happened - include temporal information if mentioned.")
-    where: str | None = Field(default=None, description="WHERE it happened - SPECIFIC locations if applicable.")
-    who: str | None = Field(default=None, description="WHO is involved - ALL people/entities with relationships.")
-    why: str | None = Field(
-        default=None, description="WHY it matters - emotional, contextual, and motivational details."
-    )
+    when: str = Field(description="WHEN it happened - include temporal information if mentioned.")
+    where: str = Field(description="WHERE it happened - SPECIFIC locations if applicable.")
+    who: str = Field(description="WHO is involved - ALL people/entities with relationships.")
+    why: str = Field(description="WHY it matters - emotional, contextual, and motivational details.")
 
     fact_kind: str = Field(
         default="conversation",
@@ -557,9 +521,9 @@ class VerbatimExtractedFact(BaseModel):
         json_schema_extra={"required": ["when", "where", "who", "fact_type"]},
     )
 
-    when: str | None = Field(default=None, description=_WHEN_DESCRIPTION)
-    where: str | None = Field(default=None, description=_WHERE_DESCRIPTION)
-    who: str | None = Field(default=None, description=_WHO_DESCRIPTION)
+    when: str = Field(description="When it happened. 'N/A' if unknown.")
+    where: str = Field(description="Location if relevant. 'N/A' if none.")
+    who: str = Field(description="People involved with relationships. 'N/A' if general.")
 
     fact_kind: str = Field(default="conversation", description="'event' or 'conversation'")
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
@@ -1091,10 +1055,10 @@ FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
 1. "what": Core fact - concise but complete (1-2 sentences max)
-2. "when": Temporal info if mentioned. null if none. Use day name when known.
-3. "where": Location if relevant. null if none.
-4. "who": People involved with relationships. null if just general info.
-5. "why": Context/significance ONLY if important. null if obvious.
+2. "when": Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. "where": Location if relevant. "N/A" if none.
+4. "who": People involved with relationships. "N/A" if just general info.
+5. "why": Context/significance ONLY if important. "N/A" if obvious.
 
 CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
 
@@ -1182,7 +1146,7 @@ Example 1 - Selective extraction (Event Date: June 10, 2024):
 Input: "Hey! How's it going? Good morning! So I'm planning my wedding - want a small outdoor ceremony. Just got back from Emily's wedding, she married Sarah at a rooftop garden. It was nice weather. I grabbed a coffee on the way."
 
 Output: ONLY 2 facts (skip greetings, weather, coffee):
-1. what="User planning wedding, wants small outdoor ceremony", who="user", why=null, entities=["user", "wedding"]
+1. what="User planning wedding, wants small outdoor ceremony", who="user", why="N/A", entities=["user", "wedding"]
 2. what="Emily married Sarah at rooftop garden", who="Emily (user's friend), Sarah", occurred_start="2024-06-09", entities=["Emily", "Sarah", "wedding"]
 
 Example 2 - Professional context:
@@ -1516,6 +1480,63 @@ def _with_iso_timestamp_pattern(fact_class: type[BaseModel]) -> type[BaseModel]:
     return create_model(f"{fact_class.__name__}IsoTimestamps", __base__=fact_class, **constrained)
 
 
+#: Appended to the extraction prompt when the dimensions are optional, so the
+#: instructions cannot keep asking for a placeholder the schema no longer wants.
+OPTIONAL_DIMENSIONS_SECTION = """
+
+══════════════════════════════════════════════════════════════════════════
+OPTIONAL FIELDS
+══════════════════════════════════════════════════════════════════════════
+
+"when", "where", "who" and "why" may be null. Write null — not "N/A" — when the
+text states no value for the fact you are writing, and never carry over a value
+the text states about a different subject.
+"""
+
+
+def _null_instead_of_na(text: str) -> str:
+    """Swap the "N/A" placeholder instruction for "null", changing nothing else.
+
+    A mechanical substitution on purpose. An earlier attempt rewrote these
+    descriptions properly ("explicitly stated for THIS fact … never invent a
+    motive") and that is not the harmless tightening it looks like: `why` stopped
+    absorbing the request behind an agent's action, so "the user asked me to
+    refactor X" came back as its own separate world fact and flipped the
+    experience/world balance in test_fact_extraction_agent_experience. The flag
+    exists to make the value optional, not to restate what the fields mean.
+    """
+    return text.replace("'N/A'", "null").replace('"N/A"', "null")
+
+
+def _with_optional_dimensions(fact_class: type[BaseModel]) -> type[BaseModel]:
+    """Re-declare when/where/who/why as nullable, keeping the keys required.
+
+    Layered on at schema-build time rather than declared on the models, for the
+    same reason as the timestamp pattern: the default path then serializes
+    byte-identically to before, and only a bank that opted in sees the change.
+
+    Under strict structured output every declared property is required, so a model
+    asked for `when` on a fact the text gives no date for has no legal way to say
+    "not stated" — it must emit a string, and the nearest plausible one is whatever
+    the surrounding text mentions (#4457). Making the value nullable gives it a
+    legal answer. Note this is not a guarantee: a model that wants to say the date
+    can still write it into `what` instead, which is what it did here on
+    gemini-3.1-flash-lite. It removes the pressure; it does not police the output.
+    """
+    optional: dict[str, Any] = {}
+    for name in ("when", "where", "who", "why"):
+        existing = fact_class.model_fields.get(name)
+        # Verbatim extraction has no `why` — it only collects metadata.
+        if existing is None:
+            continue
+        described = existing.description
+        optional[name] = (
+            str | None,
+            Field(default=None, description=_null_instead_of_na(described) if described else described),
+        )
+    return create_model(f"{fact_class.__name__}OptionalDimensions", __base__=fact_class, **optional)
+
+
 def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     """
     Build extraction prompt and response schema based on config.
@@ -1595,6 +1616,25 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
                 Field(description=base_response_class.model_fields["facts"].description),
             ),
         )
+
+    # Let a fact leave the four descriptive dimensions empty instead of filling
+    # them with "N/A". Off by default — it changes what a capable model returns,
+    # see DEFAULT_RETAIN_OPTIONAL_FACT_DIMENSIONS.
+    if config.retain_optional_fact_dimensions:
+        base_fact_class = _with_optional_dimensions(base_fact_class)
+        base_response_class = create_model(
+            f"{base_response_class.__name__}OptionalDimensions",
+            facts=(
+                list[base_fact_class],  # type: ignore[valid-type]
+                Field(description=base_response_class.model_fields["facts"].description),
+            ),
+        )
+        # The FACT FORMAT block still spells out '"N/A" if none' per field, which
+        # would contradict the section below and the schema. Same mechanical swap
+        # as the field descriptions get. It also rewrites an "N/A" a custom
+        # instruction happens to contain, which is the intended reading of the
+        # flag: this bank does not use that placeholder.
+        prompt = _null_instead_of_na(prompt) + OPTIONAL_DIMENSIONS_SECTION
 
     # Add entity labels section if configured and build dynamic schema
     entity_labels_raw = config.entity_labels

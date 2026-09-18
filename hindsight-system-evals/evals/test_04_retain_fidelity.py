@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 import pytest
 from hindsight_client import Hindsight
+from hindsight_client_api.models.bank_config_update import BankConfigUpdate
 
 from hindsight_system_evals import evaluate
 from hindsight_system_evals.pages import SettleFn
@@ -157,6 +158,13 @@ async def _run(client: Hindsight, bank_id: str, settled: SettleFn, case_id: str)
     # here — they cost model time and write rows this eval never reads. The
     # extraction mode is left at the default, because that call is the subject.
     await client.aupdate_bank_config(bank_id, enable_observations=False, enable_auto_consolidation=False)
+    # The behaviour under test is the opt-in, which is off by default. It has no
+    # wrapper kwarg — neither do its neighbours `retain_extract_causal_links` and
+    # `llm_supports_string_pattern` — so it goes through the generic config
+    # endpoint, which is still the published client and still blackbox.
+    await client.banks.update_bank_config(
+        bank_id, BankConfigUpdate(updates={"retain_optional_fact_dimensions": True})
+    )
     await client.aretain(bank_id=bank_id, content=case.document)
     await settled(bank_id)
 

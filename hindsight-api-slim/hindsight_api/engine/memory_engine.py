@@ -12562,6 +12562,7 @@ class MemoryEngine(MemoryEngineInterface):
             "retain_extraction_mode",
             "retain_custom_instructions",
             "retain_extract_causal_links",
+            "retain_optional_fact_dimensions",
             "retain_chunk_size",
             "entity_labels",
             "entities_allow_free_form",

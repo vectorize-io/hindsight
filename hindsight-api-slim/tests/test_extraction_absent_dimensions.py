@@ -18,8 +18,14 @@ Note what this can and cannot show. It passes when the model is faithful; it is
 not a regression guard, because a strong model stays faithful under the old
 required-non-null schema too (measured on Qwen3.6-35B under strict schema, which
 passed both ways — the reported case was a 9B).
+
+It is also not a guarantee the flag delivers. Nullability removes the pressure to
+fill `when`; it does not stop a model that wants to state the date from writing
+it into `what` instead, which is exactly what gemini-3.1-flash-lite did on CI
+when the descriptions were pared back too far.
 """
 
+import dataclasses
 from datetime import datetime
 
 import pytest
@@ -44,11 +50,16 @@ _NOTE = (
 
 @pytest.mark.asyncio
 async def test_a_fact_does_not_borrow_a_date_stated_about_another_subject():
+    # The flag is off by default, so it is set explicitly here: with the four
+    # dimensions required and non-null, "not stated" is not a legal answer and the
+    # model has to put something in `when` — which is the behaviour this test
+    # exists to show the opt-in changes.
+    config = dataclasses.replace(_get_raw_config(), retain_optional_fact_dimensions=True)
     facts, _, _ = await extract_facts_from_text(
         text=_NOTE,
         event_date=datetime(2026, 9, 1),
         llm_config=LLMConfig.from_env(),
-        config=_get_raw_config(),
+        config=config,
     )
 
     assert len(facts) > 0, "Should extract at least one fact"

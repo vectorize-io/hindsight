@@ -1,29 +1,35 @@
-"""The four descriptive extraction fields must accept null (#4457).
+"""`retain_optional_fact_dimensions` — the opt-in that lets a fact say "not stated" (#4457).
 
-`when` / `where` / `who` / `why` used to be required non-null strings. Under
-strict structured output every property is required, so a grammar-constrained
-model had no legal way to say "the text doesn't state this for this fact" — and
-a small local model asked to produce *some* string reaches for the nearest
-plausible one, which is whatever the surrounding text mentions. The reported
-case copied an unrelated project date into a fact's `when`; a fabricated date
-becomes durable memory and gets acted on later.
+Under strict structured output every declared property is required, so a model
+asked for `when` on a fact the text gives no date for has no legal way to say
+"not stated": it must emit a string, and the nearest plausible one is whatever
+the surrounding text mentions. A project's start date became the deadline of an
+unrelated requirement, and a fabricated date is durable memory nothing
+downstream can tell from a real one.
 
-The fix keeps the keys required (so the model can't silently drop them) and
-makes the *values* nullable, exactly like `occurred_start` / `occurred_end`
-already were. These tests pin both halves of that, across every fact model the
-prompt builder can pick, plus the parse-side contract that null and the legacy
-"N/A" placeholder both mean "absent" and stay out of the stored fact text.
+The flag makes the four descriptive values nullable. It is **off by default**,
+and that is the half worth pinning: turning it on is not neutral even on a
+capable model. With `why` droppable, "the user asked me to refactor X" comes
+back as its own `world` fact instead of riding along as the agent fact's
+rationale — a defensible reading, but a different one, which is why existing
+deployments keep today's behaviour until an operator opts in.
+
+So these tests assert both states: off is byte-for-byte the old contract, on is
+nullable-but-still-required. Everything here is structural and deterministic —
+whether a real model actually stops borrowing the date is judged in
+`test_extraction_absent_dimensions.py`.
 """
 
 from unittest.mock import MagicMock
 
 import pytest
 
+from hindsight_api.config import DEFAULT_RETAIN_OPTIONAL_FACT_DIMENSIONS
 from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
 from hindsight_api.engine.structured_output import strict_json_schema
 
 # (retain_extraction_mode, retain_extract_causal_links) -> every fact model the
-# builder can pick. Verbatim has no `what`/`why`; the rest carry all four.
+# builder can pick, so the flag cannot be wired into just one of them.
 EXTRACTION_MODES = (
     ("concise", True),
     ("concise", False),
@@ -34,10 +40,11 @@ EXTRACTION_MODES = (
 DESCRIPTIVE_FIELDS = ("when", "where", "who", "why")
 
 
-def _config(*, mode: str, causal: bool) -> MagicMock:
+def _config(*, mode: str, causal: bool, optional_dimensions: bool) -> MagicMock:
     config = MagicMock()
     config.retain_extraction_mode = mode
     config.retain_extract_causal_links = causal
+    config.retain_optional_fact_dimensions = optional_dimensions
     config.retain_custom_instructions = None
     config.retain_mission = None
     config.entity_labels = None
@@ -47,72 +54,82 @@ def _config(*, mode: str, causal: bool) -> MagicMock:
     return config
 
 
-def _fact_model(mode: str, causal: bool) -> type:
-    """The per-fact model inside the response wrapper the builder returns."""
-    _, response_schema = _build_extraction_prompt_and_schema(_config(mode=mode, causal=causal))
-    return response_schema.model_fields["facts"].annotation.__args__[0]
-
-
-def _fact_definition(mode: str, causal: bool) -> dict:
+def _fact_definition(mode: str, causal: bool, optional_dimensions: bool) -> dict:
     """The strict-subset schema for the per-fact object, as a provider sees it."""
-    _, response_schema = _build_extraction_prompt_and_schema(_config(mode=mode, causal=causal))
+    _, response_schema = _build_extraction_prompt_and_schema(
+        _config(mode=mode, causal=causal, optional_dimensions=optional_dimensions)
+    )
     definitions = strict_json_schema(response_schema)["$defs"].values()
     return next(d for d in definitions if "when" in d.get("properties", {}))
 
 
+def _prompt(mode: str, causal: bool, optional_dimensions: bool) -> str:
+    prompt, _ = _build_extraction_prompt_and_schema(
+        _config(mode=mode, causal=causal, optional_dimensions=optional_dimensions)
+    )
+    return prompt
+
+
+def test_the_flag_is_off_by_default():
+    """Turning it on changes what a capable model returns, so nobody gets it by surprise."""
+    assert DEFAULT_RETAIN_OPTIONAL_FACT_DIMENSIONS is False
+
+
 @pytest.mark.parametrize(("mode", "causal"), EXTRACTION_MODES)
 @pytest.mark.parametrize("field", DESCRIPTIVE_FIELDS)
-def test_strict_schema_keeps_the_key_required(mode, causal, field):
-    """Required, so a model can't quietly drop the dimension entirely."""
-    definition = _fact_definition(mode, causal)
+def test_off_keeps_the_required_non_null_contract(mode, causal, field):
+    """The default path must serialize exactly as it did before the flag existed."""
+    definition = _fact_definition(mode, causal, optional_dimensions=False)
     if field not in definition["properties"]:
         pytest.skip(f"{mode} mode has no '{field}' field")
+    schema = definition["properties"][field]
 
+    assert schema.get("type") == "string"
+    assert "anyOf" not in schema
     assert field in definition["required"]
 
 
 @pytest.mark.parametrize(("mode", "causal"), EXTRACTION_MODES)
 @pytest.mark.parametrize("field", DESCRIPTIVE_FIELDS)
-def test_strict_schema_accepts_string_or_null(mode, causal, field):
-    """Nullable, so "not stated here" is a legal answer and not a dare to invent one."""
-    definition = _fact_definition(mode, causal)
+def test_on_makes_the_value_nullable_but_keeps_the_key_required(mode, causal, field):
+    """Nullable, so "not stated" is a legal answer; required, so the key can't vanish."""
+    definition = _fact_definition(mode, causal, optional_dimensions=True)
     if field not in definition["properties"]:
         pytest.skip(f"{mode} mode has no '{field}' field")
-    branches = definition["properties"][field].get("anyOf", [])
+    schema = definition["properties"][field]
 
-    assert {"type": "string"} in branches
-    assert {"type": "null"} in branches
+    assert {"type": "string"} in schema["anyOf"]
+    assert {"type": "null"} in schema["anyOf"]
+    assert field in definition["required"]
     # OpenAI strict rejects `default`; the generator strips it. Pin that it stayed stripped.
-    assert "default" not in definition["properties"][field]
+    assert "default" not in schema
 
 
 @pytest.mark.parametrize(("mode", "causal"), EXTRACTION_MODES)
-@pytest.mark.parametrize("field", DESCRIPTIVE_FIELDS)
-def test_model_validates_null(mode, causal, field):
-    model = _fact_model(mode, causal)
-    if field not in model.model_fields:
-        pytest.skip(f"{mode} mode has no '{field}' field")
-    payload = {"fact_type": "world", "what": "Customer notifications precede fieldwork", field: None}
+def test_on_stops_asking_for_the_n_a_placeholder(mode, causal):
+    """Schema and prompt have to agree, or the instructions fight the grammar.
 
-    assert getattr(model.model_validate(payload), field) is None
-
-
-@pytest.mark.parametrize(("mode", "causal"), EXTRACTION_MODES)
-def test_descriptions_stop_asking_for_the_n_a_placeholder(mode, causal):
-    """The schema descriptions are the model's only instructions per field.
-
-    Leaving "write 'N/A'" in them re-creates the same pressure the nullable type
-    removes: a model told to write a placeholder string still has to write a
-    string, and "N/A" competes with the nearby date for that slot.
-
-    Only the placeholder is asserted, not that the description says "null".
-    Descriptions that never named a placeholder are left exactly as they were and
-    let the schema carry nullability — rewriting them is what broke the
-    experience/world balance in test_fact_extraction_agent_experience once
-    already, so this test must not push anyone back toward that.
+    Only the placeholder is swapped, nothing else is reworded. Rewriting these
+    descriptions properly ("explicitly stated for THIS fact … never invent a
+    motive") is what flipped the experience/world balance in
+    test_fact_extraction_agent_experience, so the substitution stays mechanical.
     """
-    model = _fact_model(mode, causal)
+    definition = _fact_definition(mode, causal, optional_dimensions=True)
+    prompt = _prompt(mode, causal, optional_dimensions=True)
 
     for field in DESCRIPTIVE_FIELDS:
-        description = (model.model_fields[field].description or "") if field in model.model_fields else ""
+        description = definition["properties"].get(field, {}).get("description", "")
         assert "N/A" not in description, f"{field} still tells the model to write 'N/A'"
+    # Everything before the opt-in section must be clean. The section itself names
+    # the placeholder on purpose — "write null, not N/A" is the instruction — so
+    # asserting over the whole prompt would forbid the very sentence doing the work.
+    body, _, optional_section = prompt.partition("OPTIONAL FIELDS")
+    assert "N/A" not in body, "the FACT FORMAT block still asks for the placeholder"
+    assert 'not "N/A"' in optional_section
+
+
+@pytest.mark.parametrize(("mode", "causal"), EXTRACTION_MODES)
+def test_off_leaves_the_prompt_untouched(mode, causal):
+    """The opt-in section is the only prompt difference, and it is opt-in."""
+    assert "OPTIONAL FIELDS" not in _prompt(mode, causal, optional_dimensions=False)
+    assert "OPTIONAL FIELDS" in _prompt(mode, causal, optional_dimensions=True)
