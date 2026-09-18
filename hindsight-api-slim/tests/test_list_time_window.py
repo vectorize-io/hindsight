@@ -228,12 +228,15 @@ async def test_documents_window_filters_and_counts(memory: MemoryEngine, request
     now = datetime.now(UTC)
 
     try:
-        for doc_id in ("doc-old", "doc-new"):
+        # Four documents, each excluded by a different one of the three filters below,
+        # so no filter can be dropped or mis-bound without changing the result.
+        for doc_id in ("report-old", "report-new", "report-untagged", "memo-recent"):
             # Gibberish so fact extraction finds nothing; the document row is what matters.
             await memory.retain_batch_async(
                 bank_id=bank_id,
                 contents=[{"content": f"xyzabc123 !@# $$$ {doc_id}"}],
                 document_id=doc_id,
+                document_tags=None if doc_id == "report-untagged" else ["shelf"],
                 request_context=request_context,
             )
 
@@ -242,7 +245,7 @@ async def test_documents_window_filters_and_counts(memory: MemoryEngine, request
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE documents SET created_at = $1 WHERE bank_id = $2 AND id = 'doc-old'",
+                "UPDATE documents SET created_at = $1 WHERE bank_id = $2 AND id = 'report-old'",
                 now - timedelta(days=90),
                 bank_id,
             )
@@ -253,23 +256,28 @@ async def test_documents_window_filters_and_counts(memory: MemoryEngine, request
             start_date=now - timedelta(days=7),
             request_context=request_context,
         )
-        assert [d["id"] for d in recent["items"]] == ["doc-new"]
-        assert recent["total"] == 1
+        assert {d["id"] for d in recent["items"]} == {"report-new", "report-untagged", "memo-recent"}
+        assert recent["total"] == 3
 
-        # The tags clause allocates its placeholders before the window's, so the two
-        # together are what proves the `$N` handoff in this builder as well.
-        with_search = await memory.list_documents(
+        # This builder is the trickier of the two: the tags SQL is appended to the WHERE
+        # text AFTER the window conditions, while its params go in BEFORE them. That is
+        # only correct because asyncpg binds by `$N` rather than by textual position, so
+        # search + tags + window together are what prove the handoff. `memo-recent` fails
+        # the search, `report-untagged` the tags, `report-old` the window.
+        combined = await memory.list_documents(
             bank_id=bank_id,
-            search_query="doc-",
+            search_query="report",
+            tags=["shelf"],
+            tags_match="any_strict",
             time_field="created_at",
             start_date=now - timedelta(days=7),
             request_context=request_context,
         )
-        assert [d["id"] for d in with_search["items"]] == ["doc-new"]
-        assert with_search["total"] == 1
+        assert [d["id"] for d in combined["items"]] == ["report-new"]
+        assert combined["total"] == 1, "the count query must bind the same params as the page query"
 
-        # Both are still there on the untouched default listing.
-        assert (await memory.list_documents(bank_id=bank_id, request_context=request_context))["total"] == 2
+        # All four are still there on the untouched default listing.
+        assert (await memory.list_documents(bank_id=bank_id, request_context=request_context))["total"] == 4
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
