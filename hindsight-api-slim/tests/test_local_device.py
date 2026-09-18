@@ -7,6 +7,8 @@ real GPU: the functions under test do ``import torch`` lazily, so the fake is
 picked up.
 """
 
+import logging
+import os
 import sys
 import types
 from unittest.mock import patch
@@ -62,31 +64,38 @@ def _fake_mlx(*, clear_cache_log=None, raises=False):
 class TestSelectLocalDevice:
     def test_force_cpu_short_circuits(self):
         # force_cpu wins even if a GPU is present — no torch import needed.
-        assert select_local_device(force_cpu=True, allow_mps=True) == "cpu"
+        assert select_local_device(force_cpu=True) == "cpu"
 
     def test_cuda_auto_selects(self):
         with patch.dict(sys.modules, {"torch": _fake_torch(cuda=True)}):
-            assert select_local_device(force_cpu=False, allow_mps=False) is None
+            assert select_local_device(force_cpu=False) is None
 
     def test_xpu_auto_selects(self):
         with patch.dict(sys.modules, {"torch": _fake_torch(xpu=True, has_xpu=True)}):
-            assert select_local_device(force_cpu=False, allow_mps=False) is None
+            assert select_local_device(force_cpu=False) is None
 
-    def test_mps_disabled_by_default_falls_back_to_cpu(self):
+    def test_mps_never_selected(self):
+        # MPS leaks per-shape memory and aborts under concurrent inference (#4412),
+        # so an Apple Silicon GPU is not an accelerator as far as we're concerned.
         with patch.dict(sys.modules, {"torch": _fake_torch(mps=True)}):
-            assert select_local_device(force_cpu=False, allow_mps=False) == "cpu"
+            assert select_local_device(force_cpu=False) == "cpu"
 
-    def test_mps_used_when_allowed(self):
-        with patch.dict(sys.modules, {"torch": _fake_torch(mps=True)}):
-            assert select_local_device(force_cpu=False, allow_mps=True) == "mps"
+    def test_removed_allow_mps_env_is_ignored_with_a_warning(self, caplog):
+        with (
+            patch.dict(sys.modules, {"torch": _fake_torch(mps=True)}),
+            patch.dict(os.environ, {"HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS": "true"}),
+            caplog.at_level(logging.WARNING, logger="hindsight_api.engine.local_device"),
+        ):
+            assert select_local_device(force_cpu=False) == "cpu"
+        assert "HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS" in caplog.text
 
-    def test_cuda_preferred_over_mps_even_when_mps_allowed(self):
+    def test_cuda_preferred_over_mps(self):
         with patch.dict(sys.modules, {"torch": _fake_torch(cuda=True, mps=True)}):
-            assert select_local_device(force_cpu=False, allow_mps=True) is None
+            assert select_local_device(force_cpu=False) is None
 
     def test_no_accelerator_is_cpu(self):
         with patch.dict(sys.modules, {"torch": _fake_torch()}):
-            assert select_local_device(force_cpu=False, allow_mps=True) == "cpu"
+            assert select_local_device(force_cpu=False) == "cpu"
 
     def test_torch_failure_falls_back_to_cpu(self):
         broken = types.ModuleType("torch")
@@ -97,7 +106,7 @@ class TestSelectLocalDevice:
                 raise RuntimeError("no torch")
 
         with patch.dict(sys.modules, {"torch": Boom("torch")}):
-            assert select_local_device(force_cpu=False, allow_mps=False) == "cpu"
+            assert select_local_device(force_cpu=False) == "cpu"
 
 
 class TestResolveModelDeviceType:

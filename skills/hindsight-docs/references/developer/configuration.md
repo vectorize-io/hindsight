@@ -828,8 +828,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded — e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5. Same providers as above. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider. Models that ship their own search-text and stored-text instructions (e.g. the Qwen3-Embedding family) have them applied automatically — see the note below. | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
-| `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
-| `HINDSIGHT_API_EMBEDDINGS_LOCAL_ALLOW_MPS` | Opt in to the Apple Silicon MPS GPU for local embeddings. Disabled by default because MPS caches a distinct kernel/allocator pool per input shape and never releases it, so under variable-length workloads memory grows without bound (idle instances reached ~20 GB). CUDA/XPU are unaffected and still auto-select. | `false` |
+| `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings even when CUDA/XPU is available | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` | Hugging Face model repo for the ONNX provider. Used for auto-download and as the tokenizer fallback. | `intfloat/multilingual-e5-small` |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` | Local path to the ONNX graph. When unset, Hindsight downloads `HINDSIGHT_API_EMBEDDINGS_ONNX_FILE` from `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`. | - |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this when using `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` |
@@ -1159,11 +1158,10 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
-| `HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU` | Force CPU mode for local reranker (avoids MPS/XPC issues on macOS) | `false` |
-| `HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS` | Opt in to the Apple Silicon MPS GPU for the local reranker. Disabled by default because MPS caches a distinct kernel/allocator pool per input shape and never releases it, so under variable-length workloads memory grows without bound (idle instances reached ~20 GB). CUDA/XPU are unaffected and still auto-select. | `false` |
-| `HINDSIGHT_API_RERANKER_LOCAL_FP16` | Half-precision (FP16) inference for the local reranker. 27–36% faster on MPS; quality-identical. Disabled by default to avoid regressions on non-MPS deployments — some CPUs lack native FP16 support. | `false` |
+| `HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU` | Force CPU mode for local reranker even when CUDA/XPU is available | `false` |
+| `HINDSIGHT_API_RERANKER_LOCAL_FP16` | Half-precision (FP16) inference for the local reranker. Faster on CUDA; quality-identical. Disabled by default because some CPUs lack native FP16 support. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_BUCKET_BATCHING` | Sort pairs by token length before batching to reduce padding waste. 36–54% faster across models; quality-identical by construction. | `false` |
-| `HINDSIGHT_API_RERANKER_LOCAL_BATCH_SIZE` | Batch size for local reranker `predict()`. Optimal value varies by hardware and model (smaller batches can outperform larger ones on MPS). | `32` |
+| `HINDSIGHT_API_RERANKER_LOCAL_BATCH_SIZE` | Batch size for local reranker `predict()`. Optimal value varies by hardware and model (smaller batches can outperform larger ones). | `32` |
 | `HINDSIGHT_API_RERANKER_TEI_URL` | TEI server URL | - |
 | `HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE` | Batch size for TEI reranking | `128` |
 | `HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT` | Max concurrent TEI reranking requests | `8` |
@@ -1205,6 +1203,19 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE` | Passages scored per FlashRank forward pass. Each pass allocates attention tensors sized `batch × heads × seq²`, and FlashRank pads a batch to its longest passage, so raising this raises peak memory sharply on long candidates. Lower it if the reranker is the memory ceiling on a large bank. | `32` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
+
+:::note Apple Silicon: the local providers run on CPU
+
+PyTorch's MPS (Metal) backend is never used for the local embeddings or reranker
+models. It caches a kernel and allocator pool per input tensor shape and never releases
+them, so a variable-length workload grows without bound (idle instances reached ~20 GB),
+and concurrent inference aborts the process with a Metal validation assertion. The
+`HINDSIGHT_API_EMBEDDINGS_LOCAL_ALLOW_MPS` and `HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS`
+flags that used to opt in have been removed; setting them now logs a warning and does
+nothing. For GPU reranking on Apple Silicon use `HINDSIGHT_API_RERANKER_PROVIDER=jina-mlx`.
+CUDA and Intel XPU are unaffected and still auto-select.
+
+:::
 
 #### Reranker failover chain
 

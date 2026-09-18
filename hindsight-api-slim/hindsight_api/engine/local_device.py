@@ -3,7 +3,7 @@ SentenceTransformer / CrossEncoder models.
 
 Two concerns live here, both about keeping a local API instance's memory flat:
 
-**1. Device selection — MPS is opt-in.**
+**1. Device selection — MPS is never used.**
 On Apple Silicon the PyTorch **MPS** (Metal) backend caches a distinct compiled
 kernel graph *and* allocator pool per unique input tensor shape, and never
 releases them. Under the variable-length, high-volume recall/rerank/embed traffic
@@ -13,10 +13,18 @@ of Metal graphics memory plus ~8 GB of native heap, essentially all of it stale
 per-shape MPS cache. CPU inference has no per-shape cache: the same workload holds
 flat at a few hundred MB, with negligible latency cost for the small default
 models (and MPS actually *slows down* over time as it recompiles graphs for new
-shapes). So MPS is excluded from auto-detection and must be opted into explicitly;
-CUDA and Intel XPU still auto-select.
+shapes). MPS is also not thread-safe for concurrent encodes: overlapping
+``CrossEncoder.predict()`` calls hit the same Metal command buffer and Metal
+validation aborts the whole process (issue #4412,
+``A command encoder is already encoding to this command buffer``).
 
-This is a confirmed, still-open PyTorch bug in the MPSGraph compilation cache
+So MPS is never selected. It used to be reachable through
+``*_LOCAL_ALLOW_MPS`` opt-in flags; those were removed because every
+known outcome of enabling them was worse than CPU. The supported Metal path on
+Apple Silicon is the MLX reranker (``jina_mlx_reranker.py``). CUDA and Intel XPU
+still auto-select.
+
+The leak is a confirmed, still-open PyTorch bug in the MPSGraph compilation cache
 (keyed on tensor shape, no eviction path). We are tracking it upstream:
   - https://github.com/pytorch/pytorch/issues/181213
     ([MPS] unbounded RSS growth with varying-shape inference — our exact case)
@@ -27,7 +35,8 @@ This is a confirmed, still-open PyTorch bug in the MPSGraph compilation cache
     env var that would let us keep MPS)
 No released mitigation exists today: empty_cache(), synchronize(),
 PYTORCH_MPS_HIGH_WATERMARK_RATIO, and autorelease pools were all confirmed
-ineffective upstream. Revisit MPS-as-default once one of those knobs lands.
+ineffective upstream. Revisit MPS once one of those knobs lands *and* the
+concurrency abort has an answer.
 
 **3. Weight alignment — safetensors tensors can land unaligned.**
 ``transformers`` loads safetensors zero-copy: each parameter is a view onto the
@@ -66,24 +75,44 @@ import ctypes
 import ctypes.util
 import gc
 import logging
+import os
 import sys
 
 logger = logging.getLogger(__name__)
 
 
-def select_local_device(force_cpu: bool, allow_mps: bool) -> str | None:
+#: Removed opt-in flags. Still read only to tell anyone who set them that they no
+#: longer do anything, so the switch back to CPU is not silent.
+_REMOVED_ALLOW_MPS_ENV = (
+    "HINDSIGHT_API_EMBEDDINGS_LOCAL_ALLOW_MPS",
+    "HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS",
+)
+
+
+def _warn_if_allow_mps_set() -> None:
+    set_vars = [name for name in _REMOVED_ALLOW_MPS_ENV if os.getenv(name)]
+    if set_vars:
+        logger.warning(
+            "%s is set but no longer has any effect: MPS was removed because it leaks "
+            "memory under variable-length workloads and aborts the process under "
+            "concurrent inference. Running on CPU. For GPU on Apple Silicon use the MLX "
+            "reranker (HINDSIGHT_API_RERANKER_PROVIDER=jina-mlx).",
+            ", ".join(set_vars),
+        )
+
+
+def select_local_device(force_cpu: bool) -> str | None:
     """Choose the device for a local SentenceTransformer / CrossEncoder.
 
     Returns a value suitable to pass as the model's ``device`` argument:
 
-    - ``"cpu"``  — forced CPU, or the only accelerator is MPS and it is not allowed.
+    - ``"cpu"``  — forced CPU, or the only accelerator is MPS.
     - ``None``   — let sentence-transformers auto-detect (picks CUDA / XPU,
                    handling multi-GPU correctly).
-    - ``"mps"``  — Apple Silicon GPU, only when ``allow_mps`` is set.
 
-    MPS is never auto-selected because its per-shape cache leaks unbounded memory
-    under the engine's variable-length workload (see the module docstring). Set the
-    matching ``*_ALLOW_MPS`` config flag to opt back in.
+    MPS is never selected: its per-shape cache leaks unbounded memory under the
+    engine's variable-length workload, and concurrent encodes abort the process
+    (see the module docstring).
     """
     if force_cpu:
         return "cpu"
@@ -96,16 +125,13 @@ def select_local_device(force_cpu: bool, allow_mps: bool) -> str | None:
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             return None  # auto-detect Intel XPU
 
-        mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        if mps_available:
-            if allow_mps:
-                return "mps"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             logger.info(
-                "Local model: MPS (Apple Silicon GPU) is available but disabled by "
-                "default because its per-shape cache leaks memory under variable-length "
-                "workloads; running on CPU. Set the *_ALLOW_MPS flag to opt in."
+                "Local model: MPS (Apple Silicon GPU) is available but unsupported "
+                "(leaks memory under variable-length workloads, aborts under concurrent "
+                "inference); running on CPU."
             )
-            return "cpu"
+            _warn_if_allow_mps_set()
         return "cpu"
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("Local device detection failed, falling back to CPU: %s", e)

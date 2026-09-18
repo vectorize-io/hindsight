@@ -470,7 +470,6 @@ ENV_EMBEDDINGS_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX"
 ENV_EMBEDDINGS_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
-ENV_EMBEDDINGS_LOCAL_ALLOW_MPS = "HINDSIGHT_API_EMBEDDINGS_LOCAL_ALLOW_MPS"
 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE"
 ENV_EMBEDDINGS_ONNX_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID"
 ENV_EMBEDDINGS_ONNX_MODEL_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH"
@@ -592,7 +591,6 @@ ENV_RERANKER_PROVIDER = "HINDSIGHT_API_RERANKER_PROVIDER"
 ENV_RERANKER_SEND_BANK_AS_HEADER = "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"
 ENV_RERANKER_LOCAL_MODEL = "HINDSIGHT_API_RERANKER_LOCAL_MODEL"
 ENV_RERANKER_LOCAL_FORCE_CPU = "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"
-ENV_RERANKER_LOCAL_ALLOW_MPS = "HINDSIGHT_API_RERANKER_LOCAL_ALLOW_MPS"
 ENV_RERANKER_LOCAL_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT"
 ENV_RERANKER_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE"
 ENV_RERANKER_LOCAL_FP16 = "HINDSIGHT_API_RERANKER_LOCAL_FP16"
@@ -1195,9 +1193,6 @@ DEFAULT_LLM_GEMINI_SAFETY_SETTINGS = None  # None = use Gemini default safety se
 DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings
-# Apple Silicon MPS is opt-in: it leaks memory under variable-length workloads
-# (unbounded per-shape kernel/allocator cache). CUDA/XPU still auto-select.
-DEFAULT_EMBEDDINGS_LOCAL_ALLOW_MPS = False
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
 DEFAULT_EMBEDDINGS_ONNX_MODEL_ID = "intfloat/multilingual-e5-small"
 DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
@@ -1259,14 +1254,11 @@ DEFAULT_RERANKER_PROVIDER = "local"
 DEFAULT_RERANKER_SEND_BANK_AS_HEADER = False
 DEFAULT_RERANKER_LOCAL_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_RERANKER_LOCAL_FORCE_CPU = False  # Force CPU mode for local reranker
-# Apple Silicon MPS is opt-in: it leaks memory under variable-length workloads
-# (unbounded per-shape kernel/allocator cache). CUDA/XPU still auto-select.
-DEFAULT_RERANKER_LOCAL_ALLOW_MPS = False
 DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT = 4  # Limit concurrent CPU-bound reranking to prevent thrashing
 DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE = (
     False  # Security: disabled by default, required for some models like jina-reranker-v2
 )
-DEFAULT_RERANKER_LOCAL_FP16 = False  # FP16 inference: opt-in, faster on MPS/CUDA (not CPU)
+DEFAULT_RERANKER_LOCAL_FP16 = False  # FP16 inference: opt-in, faster on CUDA (not CPU)
 DEFAULT_RERANKER_LOCAL_BUCKET_BATCHING = False  # Length-sorted bucket batching: opt-in, 36-54% speedup
 DEFAULT_RERANKER_LOCAL_BATCH_SIZE = 32  # Batch size for local reranker predict() calls
 DEFAULT_RERANKER_TEI_BATCH_SIZE = 128
@@ -2569,7 +2561,6 @@ class RerankerMemberConfig:
     # local
     local_model: str
     local_force_cpu: bool
-    local_allow_mps: bool
     local_max_concurrent: int
     local_trust_remote_code: bool
     local_fp16: bool
@@ -2714,7 +2705,6 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 provider=provider,
                 local_model=_member_str(base, "LOCAL_MODEL", DEFAULT_RERANKER_LOCAL_MODEL),
                 local_force_cpu=_member_bool(base, "LOCAL_FORCE_CPU", DEFAULT_RERANKER_LOCAL_FORCE_CPU),
-                local_allow_mps=_member_bool(base, "LOCAL_ALLOW_MPS", DEFAULT_RERANKER_LOCAL_ALLOW_MPS),
                 local_max_concurrent=_member_int(base, "LOCAL_MAX_CONCURRENT", DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT),
                 local_trust_remote_code=_member_bool(
                     base, "LOCAL_TRUST_REMOTE_CODE", DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE
@@ -3053,7 +3043,6 @@ class HindsightConfig:
     embeddings_max_input_tokens: int | None
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
-    embeddings_local_allow_mps: bool
     embeddings_local_trust_remote_code: bool
     embeddings_onnx_model_id: str
     embeddings_onnx_model_path: str | None
@@ -3107,7 +3096,6 @@ class HindsightConfig:
     reranker_send_bank_as_header: bool
     reranker_local_model: str
     reranker_local_force_cpu: bool
-    reranker_local_allow_mps: bool
     reranker_local_max_concurrent: int
     reranker_local_trust_remote_code: bool
     reranker_local_fp16: bool
@@ -3696,7 +3684,6 @@ class HindsightConfig:
             provider=self.reranker_provider,
             local_model=self.reranker_local_model,
             local_force_cpu=self.reranker_local_force_cpu,
-            local_allow_mps=self.reranker_local_allow_mps,
             local_max_concurrent=self.reranker_local_max_concurrent,
             local_trust_remote_code=self.reranker_local_trust_remote_code,
             local_fp16=self.reranker_local_fp16,
@@ -4271,10 +4258,6 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_LOCAL_FORCE_CPU, str(DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU)
             ).lower()
             in ("true", "1"),
-            embeddings_local_allow_mps=os.getenv(
-                ENV_EMBEDDINGS_LOCAL_ALLOW_MPS, str(DEFAULT_EMBEDDINGS_LOCAL_ALLOW_MPS)
-            ).lower()
-            in ("true", "1"),
             embeddings_local_trust_remote_code=os.getenv(
                 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE, str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE)
             ).lower()
@@ -4488,10 +4471,6 @@ class HindsightConfig:
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
             reranker_local_force_cpu=os.getenv(
                 ENV_RERANKER_LOCAL_FORCE_CPU, str(DEFAULT_RERANKER_LOCAL_FORCE_CPU)
-            ).lower()
-            in ("true", "1"),
-            reranker_local_allow_mps=os.getenv(
-                ENV_RERANKER_LOCAL_ALLOW_MPS, str(DEFAULT_RERANKER_LOCAL_ALLOW_MPS)
             ).lower()
             in ("true", "1"),
             reranker_local_max_concurrent=int(
