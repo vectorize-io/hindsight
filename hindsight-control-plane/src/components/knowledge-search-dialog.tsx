@@ -55,7 +55,7 @@ export function KnowledgeSearchDialog({
 
   const run = async () => {
     const q = query.trim();
-    if (!q || !bankId) return;
+    if (!q) return;
     setSearching(true);
     const started = performance.now();
     try {

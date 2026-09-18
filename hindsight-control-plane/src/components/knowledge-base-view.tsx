@@ -56,6 +56,7 @@ import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { KnowledgeSearchDialog } from "./knowledge-search-dialog";
 import { KnowledgeSearchResult, type KnowledgeSearchHit } from "./knowledge-search-result";
+import { buildPathIndex } from "@/lib/knowledge-path";
 import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
@@ -222,23 +223,11 @@ export function KnowledgeBaseView() {
   }, [currentBank, loadTree]);
 
   const allNodes = useMemo(() => flatten(roots), [roots]);
-  // Folder path of every node, bank root first ("demo / Guides"). Search returns
-  // ids and names only, so the tree is what says where a hit actually lives —
-  // two pages called "Overview" in different folders are otherwise identical.
-  const pathById = useMemo(() => {
-    const byId = new Map(allNodes.map((n) => [n.id, n]));
-    const out = new Map<string, string>();
-    for (const n of allNodes) {
-      const parts: string[] = [];
-      let p = n.parent_id ? byId.get(n.parent_id) : undefined;
-      while (p) {
-        parts.unshift(p.name);
-        p = p.parent_id ? byId.get(p.parent_id) : undefined;
-      }
-      out.set(n.id, [currentBank || "/", ...parts].join(" / "));
-    }
-    return out;
-  }, [allNodes, currentBank]);
+  // Where each hit lives, for the search result list — see buildPathIndex.
+  const pathById = useMemo(
+    () => buildPathIndex(allNodes, currentBank || "/"),
+    [allNodes, currentBank]
+  );
   // A synthetic top-level folder for the bank so the root itself is visible and
   // you can add folders/pages directly under it. Its "" id makes add-child create
   // at the root; it's never deletable (TreeRow hides delete for the root).
