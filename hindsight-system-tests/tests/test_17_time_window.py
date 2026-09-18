@@ -100,7 +100,8 @@ async def test_the_event_clock_and_the_ingest_clock_answer_differently(client, b
         start_date=(now - timedelta(hours=1)).isoformat(),
         limit=100,
     )
-    assert _texts(by_ingest) >= {BERLIN, CAT, JAZZ}
+    assert _texts(by_ingest) == {BERLIN, CAT, JAZZ}
+    assert by_ingest.total == 3
 
 
 async def test_a_fact_with_no_date_on_that_axis_is_left_out(client, bank_with_two_eras):
