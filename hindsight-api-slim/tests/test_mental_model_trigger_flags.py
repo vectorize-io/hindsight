@@ -127,6 +127,32 @@ class TestRetrievalFlagsReachReflect:
         )
         assert run["reflect_kwargs"]["recall_chunks_max_tokens_override"] == 777
 
+    async def test_reflect_search_observations_max_tokens(
+        self, memory, request_context, patch_reflect, patch_llm_call
+    ):
+        """The per-model budget for search_observations (#4483), below the bank default."""
+        run = await _refresh_with_trigger(
+            memory,
+            request_context,
+            patch_reflect,
+            patch_llm_call,
+            {"reflect_search_observations_max_tokens": 3000},
+        )
+        assert run["reflect_kwargs"]["reflect_search_observations_max_tokens_override"] == 3000
+
+    async def test_reflect_search_observations_include_entities(
+        self, memory, request_context, patch_reflect, patch_llm_call
+    ):
+        """False must travel as False — not be read as "unset" and fall back to on."""
+        run = await _refresh_with_trigger(
+            memory,
+            request_context,
+            patch_reflect,
+            patch_llm_call,
+            {"reflect_search_observations_include_entities": False},
+        )
+        assert run["reflect_kwargs"]["reflect_search_observations_include_entities_override"] is False
+
     async def test_tags_match_applies_to_the_model_tags(self, memory, request_context, patch_reflect, patch_llm_call):
         run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {"tags_match": "all"})
         assert run["reflect_kwargs"]["tags_match"] == "all"
