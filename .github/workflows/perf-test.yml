@@ -48,7 +48,7 @@ on:
         type: string
         default: "1.0"
       system_evals_skip:
-        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language)"
+        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language, retain fidelity)"
         type: boolean
         default: false
       system_evals_mode:
