@@ -11205,19 +11205,24 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             entities_count = int(_ents.get("total") or 0)
 
-                        # Files written before keys carried the tenant sit outside the bank's
-                        # prefix, so the sweep after the commit cannot find them: only these
-                        # rows know their keys. Read before the rows go.
-                        # ponytail: one unbatched list; only pre-prefix banks have any.
+                        # Rows whose key sits outside the bank's current prefix, so the sweep
+                        # after the commit cannot find them: only these rows know their keys.
+                        # Read before the rows go. Two ways in: keys written before they
+                        # carried the tenant, and keys written under an id the bank has since
+                        # been renamed away from. Compared as a prefix rather than with LIKE
+                        # because the prefix percent-encodes each segment and can therefore
+                        # contain LIKE wildcards of its own.
+                        # ponytail: one unbatched list; only these two cases have any.
                         legacy_files = [
                             row["storage_key"]
                             for row in await conn.fetch(
                                 f"SELECT storage_key FROM {fq_table('attachments')} "
-                                f"WHERE bank_id = $1 AND storage_key NOT LIKE 'tenants/%' "
+                                f"WHERE bank_id = $1 AND SUBSTR(storage_key, 1, LENGTH($2)) <> $2 "
                                 f"UNION ALL SELECT file_storage_key FROM {fq_table('documents')} "
                                 f"WHERE bank_id = $1 AND file_storage_key IS NOT NULL "
-                                f"AND file_storage_key NOT LIKE 'tenants/%'",
+                                f"AND SUBSTR(file_storage_key, 1, LENGTH($2)) <> $2",
                                 bank_id,
+                                bank_storage_prefix(bank_id),
                             )
                         ]
 

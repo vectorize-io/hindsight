@@ -211,6 +211,36 @@ async def test_renaming_the_bank_moves_its_blobs_so_deleting_it_leaves_nothing(a
 
 
 @pytest.mark.asyncio
+async def test_deleting_the_bank_deletes_blobs_left_under_a_stale_bank_prefix(api_client, memory):
+    """#4502: a row can still name a key under an id the bank was renamed away from.
+
+    `rename-bank` re-keys the bank's files now, so a completed rename no longer
+    leaves this behind. A rename interrupted between two rows does, and so does a
+    row the move skipped. The key sits under `tenants/`, so the tenantless
+    predicate reads it as current, and it sits under another bank's prefix, so the
+    sweep after the commit never looks there.
+    """
+    from hindsight_api.engine.retain.attachment_store import attachment_storage_key
+
+    bank_id = f"life-{uuid.uuid4().hex[:8]}"
+    stale_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, bank_id, [{"type": "text", "text": "only"}, _image_block()], "doc")
+
+    stale_key = attachment_storage_key(stale_id, "doc", png)
+    await memory._file_storage.store(file_data=PNG_BYTES, key=stale_key)
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:
+        await conn.execute("UPDATE attachments SET storage_key = $2 WHERE bank_id = $1", bank_id, stale_key)
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_id}")
+    assert response.status_code == 200, response.text
+
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(stale_key)
+
+
+@pytest.mark.asyncio
 async def test_attachment_keys_are_scoped_to_the_tenant_and_the_document(memory):
     """Object stores share one bucket across tenant schemas; the key must say whose it is."""
     from hindsight_api.engine.memory_engine import get_current_schema
