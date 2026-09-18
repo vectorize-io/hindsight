@@ -8,8 +8,6 @@ Configuration via environment variables - see hindsight_api.config for all env v
 
 import asyncio
 import logging
-import platform
-import sys
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -1398,17 +1396,6 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         if self._reranker is not None:
             return
 
-        # mlx runs on Apple's Metal/unified-memory stack. Its Linux wheels are
-        # CPU-only and slower than the `local` provider, so this provider is not
-        # shipped there (see the local-ml extra in pyproject.toml) — fail here,
-        # at startup, instead of at the first recall with a bare ImportError.
-        if not (sys.platform == "darwin" and platform.machine() == "arm64"):
-            raise RuntimeError(
-                f"Reranker provider 'jina-mlx' requires Apple Silicon (macOS arm64); "
-                f"this host is {sys.platform}/{platform.machine()}. Use "
-                f"HINDSIGHT_API_RERANKER_PROVIDER=local (or a hosted provider) instead."
-            )
-
         # Pre-warm transformers.AutoTokenizer to fully populate the transformers
         # namespace before mlx_lm imports it. transformers 5.x uses _LazyModule,
         # which has an unguarded window where `from transformers import AutoTokenizer`
@@ -1430,9 +1417,16 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
             msg = str(exc)
             if "mlx" not in msg and "mlx_lm" not in msg:
                 raise
+            # mlx is Apple's Metal/unified-memory framework, so the local-ml extra
+            # only installs it on macOS arm64 (see pyproject.toml). Missing here
+            # therefore usually means "wrong platform", not "forgot the extra" —
+            # say both, and name the way out.
             raise ImportError(
-                "mlx and mlx-lm are required for JinaMLXCrossEncoder. "
-                "Install with: pip install mlx>=0.31.0 mlx-lm>=0.31.1 safetensors>=0.6.2"
+                "mlx and mlx-lm are required for the 'jina-mlx' reranker, and are only "
+                "installed on Apple Silicon — mlx is Apple's Metal framework, and its "
+                "Linux build is CPU-only and slower than the 'local' provider. Set "
+                "HINDSIGHT_API_RERANKER_PROVIDER=local (or a hosted provider), or install "
+                "them yourself: pip install mlx>=0.31.0 mlx-lm>=0.31.1 safetensors>=0.6.2"
             ) from exc
 
         loop = asyncio.get_event_loop()
