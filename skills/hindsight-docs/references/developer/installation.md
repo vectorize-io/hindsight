@@ -12,7 +12,7 @@ Hindsight runs on **Linux**, **macOS**, and **Windows**:
 
 | Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
 |----------|--------|------------------|--------------------|-------|
-| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
+| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production. The `local-ml` extra's `mlx` dependency (Apple-Silicon local generation) publishes Linux wheels only for glibc ≥ 2.35; on glibc 2.28–2.34 (e.g. RHEL/Alma/Rocky 8, Ubuntu 20.04, Debian 11) the bundle resolves without `mlx` — use a hosted, Ollama or llama.cpp provider for local generation. |
 | **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
 | **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
 | **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported — see [Windows setup](#windows) for external PostgreSQL option |

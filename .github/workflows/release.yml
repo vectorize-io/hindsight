@@ -45,8 +45,7 @@ jobs:
       run: uv build --out-dir dist
 
     - name: Build hindsight-api-slim
-      working-directory: ./hindsight-api-slim
-      run: uv build --out-dir dist
+      run: ./scripts/build-api-slim-wheels.sh hindsight-api-slim hindsight-api-slim/dist
 
     - name: Build hindsight-api
       working-directory: ./hindsight-api
