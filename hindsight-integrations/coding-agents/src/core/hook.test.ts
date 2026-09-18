@@ -118,7 +118,10 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).not.toHaveBeenCalled();
-    expect(first.context).toBeUndefined();
+    // The guide is re-stated every turn now (pageRefreshEveryTurns defaults to
+    // 1), so context is never empty — what this test is about is that no MEMORY
+    // was injected on the deferred turn.
+    expect(first.context).not.toContain("<hindsight_memory>");
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).deferInitialReflect).toBeUndefined();
 
     const second = await buildHookOutput({
@@ -147,7 +150,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     // Reflect failed -> no reflect block; pages are never auto-injected -> nothing to inject.
-    expect(t1.context).toBeUndefined();
+    expect(t1.context).not.toContain("<hindsight_memory>");
     // ...but the turn is NOT silent: one line pointing at the diag trail (#3443).
     expect(t1.notice).toContain("no memory this turn");
     expect(t1.notice).toContain(diagFilePath());
@@ -220,7 +223,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(result.notice).toBeUndefined();
-    expect(result.context).toBeUndefined();
+    expect(result.context).not.toContain("<hindsight_memory>");
   });
 
   it("uses a bounded low-budget reflect with the 20000ms default timeout", async () => {
@@ -362,7 +365,7 @@ describe("buildHookOutput", () => {
       });
 
       expect(client.recallObservations).toHaveBeenCalledTimes(1);
-      expect(out.context).toBeUndefined();
+      expect(out.context).not.toContain("<hindsight_memory>");
       expect(out.notice).toContain("no memory this turn");
       expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
     });
@@ -559,7 +562,9 @@ describe("buildHookOutput", () => {
     });
     expect(result.context).toContain("REFLECT_ANSWER"); // reflect still injected
     expect(result.context).not.toContain(PAGES_HEADER);
-    expect(result.context).not.toContain("hindsight_read_knowledge_page");
+    // The tool NAME now appears in the every-turn guide, so the thing to assert
+    // is the absence of a page entry, not of the string.
+    expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
   });
 
   it("injects the page-roster refresh only on cadence turns", async () => {
@@ -583,7 +588,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(t2.context).toContain("<hindsight_knowledge_refresh>");
-    expect(t2.context).toContain("Uploader guide (p1)");
+    expect(t2.context).toContain("deliberately NOT listed here");
     // reflect block is NOT re-injected on cadence turns (injected once, on the reflect turn)
     expect(t2.context).not.toContain("REFLECT_ANSWER");
   });

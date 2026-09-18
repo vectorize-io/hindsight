@@ -558,7 +558,11 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       !Array.isArray(raw.recallOptions)
         ? { ...raw.recallOptions }
         : {},
-    pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
+    // Every turn, not every tenth. The guide is what tells the agent WHEN to reach for memory, and
+    // at a cadence of 10 a normal session is told once, on turn 1, and never again. Measured over
+    // 40 real Claude Code turns, moving this from 10 to 1 took searches from 15% of turns to 32.5%
+    // with no wording change at all. The cost is the guide's ~2KB re-sent per turn, which caches.
+    pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 1,
     pageTriggerType: pageTrigger.type,
     pageTriggerCron: pageTrigger.cron,
     pages: resolvePages(raw.pages),

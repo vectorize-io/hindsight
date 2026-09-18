@@ -18,8 +18,32 @@ export function parsePageList(raw: unknown): PageRef[] {
   return out;
 }
 
-function roster(pages: PageRef[]): string {
-  return pages.map((p) => `- ${p.title} (${p.id})`).join("\n");
+const EMPTY_STATE =
+  "No knowledge pages yet — Hindsight is still learning this repo; they'll appear as it processes.";
+
+/**
+ * What the agent is told EXISTS, without listing it.
+ *
+ * A full roster of titles and ids reads as an index, and an index makes search
+ * pointless: measured over 40 real Claude Code turns against a prefilled bank, every single
+ * retrieval was `hindsight_read_knowledge_page` called with an id copied from this
+ * block — 0 searches at 3 pages, and still 0 at 12. The model was right: searching to
+ * locate one of a dozen titles already in its context buys nothing.
+ *
+ * It is the wrong trade anyway. A title says what a page is ABOUT; the search
+ * returns the passage that bears on THIS turn, ranked, across pages whose titles
+ * give no hint. Naming the count and the way in, rather than the contents, is what
+ * makes the first call a search.
+ */
+function indexLine(pages: PageRef[]): string {
+  const count =
+    pages.length === 1 ? "1 knowledge page covers" : `${pages.length} knowledge pages cover`;
+  return (
+    `${count} this repository — architecture, conventions, past decisions and ` +
+    "in-flight initiatives. They are deliberately NOT listed here: call " +
+    "hindsight_search_knowledge_pages(query) to find the ones that bear on the current turn, then " +
+    "hindsight_read_knowledge_page(<id>) on anything the results show is worth reading in full."
+  );
 }
 
 /**
@@ -29,10 +53,21 @@ function roster(pages: PageRef[]): string {
  * context. (Omits hindsight_diagnose — pure troubleshooting, no workflow trigger.)
  */
 const TOOL_GUIDE =
-  "- hindsight_search_knowledge_pages(query) — FIRST STOP for any question the project's accumulated " +
-  "knowledge might answer (components, conventions, past decisions, initiatives): search the knowledge " +
-  "pages and credit results visibly with a markdown blockquote so it renders as a callout, exactly: " +
-  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>".\n' +
+  "- hindsight_search_knowledge_pages(query) — FIRST STOP, and the way IN to everything below. The code " +
+  "shows what is true today, never what was decided or why, so work built from code alone quietly " +
+  "re-litigates settled questions. Search BEFORE you act whenever the turn is one of these — they are " +
+  "the ones that go wrong silently:\n" +
+  "    • the user reports a bug or a wrong response (the intended behaviour, and the status code or " +
+  "value it should return, is usually already decided);\n" +
+  "    • you are about to write or change a test (what this project expects a change to ship with, and " +
+  "how it asserts, is a convention, not a preference);\n" +
+  "    • you are implementing something new, or two parts have to fit together;\n" +
+  "    • the user asks why something is the way it is, or what is left to do;\n" +
+  "    • you are about to commit, and need to know what the change was supposed to honour.\n" +
+  "  It ranks the pages by relevance and returns the matching passage, which a page title cannot tell " +
+  "you. Credit what you use visibly with a markdown blockquote so it renders as a callout, exactly: " +
+  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Credit the search that ' +
+  "changed what you did, not only the ones you quote.\n" +
   "- hindsight_list_knowledge_pages / hindsight_read_knowledge_page — BEFORE substantial work, list the pages and " +
   "read the relevant ones to ground yourself in this repo's architecture, conventions, and past decisions instead " +
   "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n" +
@@ -70,9 +105,7 @@ function toolGuide(opts?: ToolGuideOpts): string {
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const body = pages.length
-    ? `Knowledge pages currently in this repository:\n${roster(pages)}`
-    : "No knowledge pages yet — Hindsight is still learning this repo; they'll appear as it processes.";
+  const body = pages.length ? indexLine(pages) : EMPTY_STATE;
   return (
     "<hindsight_knowledge>\n" +
     "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
@@ -94,9 +127,7 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  * which tools exist and WHEN to call each is unconditional.
  */
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
-  const rosterBlock = pages.length
-    ? `Current Hindsight knowledge pages (may have changed):\n${roster(pages)}\n`
-    : "";
+  const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
   return (
     "<hindsight_knowledge_refresh>\n" +
     rosterBlock +

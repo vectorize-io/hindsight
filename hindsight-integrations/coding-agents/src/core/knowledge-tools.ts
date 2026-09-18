@@ -56,6 +56,28 @@ const NON_DESTRUCTIVE_WRITE_ANNOTATIONS: ToolSafetyAnnotations = {
   openWorldHint: false,
 };
 
+/**
+ * What the agent gets back from reading one page.
+ *
+ * The API returns `body` AND `markdown`, where `markdown` is that same body with YAML frontmatter
+ * on top — so passing the response straight through handed the model the entire page twice, on
+ * every read. `timestamp` goes out as `last_updated_at`: the value is the page's last refresh, and
+ * a bare "timestamp" beside a page tells the model nothing about whether it is looking at something
+ * current.
+ */
+export function shapePage(page: unknown): unknown {
+  const p = (page ?? {}) as Record<string, unknown>;
+  const body = typeof p.body === "string" && p.body.trim() ? p.body : p.markdown;
+  return {
+    id: p.id,
+    name: p.name,
+    ...(p.description ? { description: p.description } : {}),
+    ...(Array.isArray(p.tags) && p.tags.length ? { tags: p.tags } : {}),
+    ...(p.timestamp ? { last_updated_at: p.timestamp } : {}),
+    body,
+  };
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -199,12 +221,16 @@ export function buildKnowledgeTools(
           // Limit comes from the client (`pageSearchLimit`), so the tool and the hook's injection
           // can never drift apart — this used to pass its own literal 3.
           const hits = await client.searchKnowledgePages(args.query);
+          // No `score`. The server fuses BM25 and vector search with reciprocal rank fusion, so the
+          // number is ~1/(60+rank) summed over two retrievers: a perfect top hit scores about 0.03
+          // and nothing ever approaches 1. Handed that, a model reads a strong match as 3% relevant
+          // and discounts it. The hits arrive in rank order, which is the ranking that means
+          // something here.
           return ok(
             hits.map((h) => ({
               page: h.name,
               page_id: h.id,
               snippet: h.snippet,
-              score: h.score,
             }))
           );
         } catch (e) {
@@ -236,7 +262,7 @@ export function buildKnowledgeTools(
         "that id. Prefer reading a page over re-deriving the same understanding from source.",
       inputSchema: { page_id: z.string() },
       annotations: READ_ONLY_ANNOTATIONS,
-      handler: guarded(async ({ page_id }) => client.getPage(page_id)),
+      handler: guarded(async ({ page_id }) => shapePage(await client.getPage(page_id))),
     },
     {
       name: "hindsight_reflect",

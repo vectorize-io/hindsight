@@ -204,8 +204,14 @@ export class ReflectError extends Error {
 
 export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
 /** Knowledge pages returned by one search — the hook's injection and the agent-facing
- *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both. */
-export const DEFAULT_PAGE_SEARCH_LIMIT = 3;
+ *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both.
+ *
+ *  Ten, not three. Three was set when the page roster was injected wholesale and search was a
+ *  rarely-used fallback; search is now the way in, and a repo's pages are narrow by design, so the
+ *  decision one turn needs is routinely split across two of them ("Pricing decisions" AND
+ *  "Conventions") and a three-hit cut drops one. Ten snippets is a few hundred tokens on a call the
+ *  agent made deliberately. */
+export const DEFAULT_PAGE_SEARCH_LIMIT = 10;
 /**
  * The recall body this client sends when `recallOptions` overrides nothing — one object rather
  * than a field per parameter, so a new recall parameter needs no plumbing here.

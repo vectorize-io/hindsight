@@ -146,6 +146,10 @@ export async function buildRetain(args: {
     turns,
     cursors: args.usageCursors ?? fileUsageCursorStore(harness),
     lastTurnComplete: true,
+    // The host has usually not flushed this turn's final reply yet — and that is
+    // the message carrying the credit line. Re-emit the previous turn so the next
+    // Stop, reading a complete transcript, corrects it. See recordUsage.
+    reviseLastTurn: true,
   });
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();

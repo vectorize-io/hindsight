@@ -160,15 +160,58 @@ describe("buildKnowledgeTools", () => {
     expect(result.isError).toBeFalsy();
     // The tool passes no limit — the client's pageSearchLimit is the single source for it.
     expect(client.searchKnowledgePages).toHaveBeenCalledWith("upload retries");
+    // No `score`: the server's RRF number tops out near 0.03, so a model reading it treats its best
+    // hit as 3% relevant. Rank order carries the ranking.
     expect(JSON.parse(result.content[0].text)).toEqual([
-      {
-        page: "Uploader guide",
-        page_id: "p1",
-        snippet: "Uploads retry with backoff…",
-        score: 0.031,
-      },
-      { page: "Auth notes", page_id: "p2", snippet: "Tokens rotate daily.", score: 0.012 },
+      { page: "Uploader guide", page_id: "p1", snippet: "Uploads retry with backoff…" },
+      { page: "Auth notes", page_id: "p2", snippet: "Tokens rotate daily." },
     ]);
+  });
+
+  it("hindsight_read_knowledge_page returns the body once, with a dated field the model can judge", async () => {
+    const client = stubClient({
+      getPage: vi.fn(async () => ({
+        id: "p1",
+        name: "Pricing decisions",
+        description: "What has been decided about pricing?",
+        tags: ["type:knowledge-page"],
+        timestamp: "2026-09-17T10:00:00Z",
+        body: "The threshold is compared against the discounted subtotal.",
+        // The API also returns the SAME body with YAML frontmatter on top; passing the response
+        // through handed the model the page twice.
+        markdown:
+          "---\nname: Pricing decisions\n---\nThe threshold is compared against the discounted subtotal.",
+      })),
+    });
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_read_knowledge_page");
+    const result = await tool.handler({ page_id: "p1" });
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      id: "p1",
+      name: "Pricing decisions",
+      description: "What has been decided about pricing?",
+      tags: ["type:knowledge-page"],
+      last_updated_at: "2026-09-17T10:00:00Z",
+      body: "The threshold is compared against the discounted subtotal.",
+    });
+  });
+
+  it("hindsight_read_knowledge_page falls back to the full markdown when a page has no body", async () => {
+    const client = stubClient({
+      getPage: vi.fn(async () => ({
+        id: "p2",
+        name: "Empty",
+        markdown: "---\nname: Empty\n---\n",
+      })),
+    });
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_read_knowledge_page");
+
+    expect(JSON.parse((await tool.handler({ page_id: "p2" })).content[0].text)).toEqual({
+      id: "p2",
+      name: "Empty",
+      body: "---\nname: Empty\n---\n",
+    });
   });
 
   it("hindsight_search_knowledge_pages returns isError:true when the server search throws", async () => {

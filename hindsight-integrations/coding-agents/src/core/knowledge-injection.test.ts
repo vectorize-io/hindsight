@@ -22,11 +22,14 @@ describe("parsePageList", () => {
 });
 
 describe("buildKnowledgePreamble", () => {
-  it("lists the pages and gives a when-to-call guide for the FULL tool suite", () => {
+  it("names how many pages exist, withholds the index, and gives the FULL tool guide", () => {
     const out = buildKnowledgePreamble([{ id: "p1", title: "Component map" }]);
     expect(out).toContain("<hindsight_knowledge>");
-    expect(out).toContain("Component map");
-    expect(out).toContain("p1");
+    expect(out).toContain("1 knowledge page covers this repository");
+    expect(out).toContain("deliberately NOT listed here");
+    // Titles and ids stay OUT: handed the index, the agent reads by id and never
+    // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
+    expect(out).not.toContain("Component map");
     // Every meaningful tool must be named with a when-to-call, not just pages.
     expect(out).toContain("hindsight_list_knowledge_pages");
     expect(out).toContain("hindsight_read_knowledge_page");
@@ -71,10 +74,13 @@ describe("buildKnowledgePreamble", () => {
 });
 
 describe("buildRosterRefresh", () => {
-  it("lists current pages and re-states the full tool guide", () => {
+  it("re-states the page count and the full tool guide, still without the index", () => {
     const out = buildRosterRefresh([{ id: "p1", title: "Component map" }]);
-    expect(out).toContain("Component map");
-    expect(out).toContain("p1");
+    expect(out).toContain("1 knowledge page covers this repository");
+    expect(out).toContain("deliberately NOT listed here");
+    // Titles and ids stay OUT: handed the index, the agent reads by id and never
+    // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
+    expect(out).not.toContain("Component map");
     for (const tool of [
       "hindsight_list_knowledge_pages",
       "hindsight_read_knowledge_page",

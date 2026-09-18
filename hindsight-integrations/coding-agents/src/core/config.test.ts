@@ -71,8 +71,8 @@ describe("loadConfig layering", () => {
     expect(loadConfig(globalCfg).bankId).toBe("legacy");
   });
 
-  it("pageRefreshEveryTurns defaults to 10", () => {
-    expect(loadConfig({ harness: "claude-code" }).pageRefreshEveryTurns).toBe(10);
+  it("pageRefreshEveryTurns defaults to 1 — the guide is re-stated every turn", () => {
+    expect(loadConfig({ harness: "claude-code" }).pageRefreshEveryTurns).toBe(1);
   });
 
   it("pageRefreshEveryTurns override wins over the default", () => {
@@ -376,7 +376,7 @@ describe("environment fallback", () => {
   });
 
   it("pageSearchLimit: default, override and env fallback", () => {
-    expect(resolveConfig({}).pageSearchLimit).toBe(3);
+    expect(resolveConfig({}).pageSearchLimit).toBe(10);
     expect(resolveConfig({ pageSearchLimit: 8 }).pageSearchLimit).toBe(8);
     writeJson(globalCfg, {});
     process.env.HINDSIGHT_PAGE_SEARCH_LIMIT = "6";

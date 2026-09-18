@@ -108,10 +108,29 @@ export function recordUsage(args: {
   turns: TransportTurn[];
   cursors: UsageCursorStore;
   lastTurnComplete: boolean;
+  /**
+   * Also re-emit the turn recorded most recently, so a later, more complete read
+   * of the transcript supersedes it (`readUsage` keeps the LAST line per turn).
+   *
+   * For a hook harness the Stop hook fires before the host has flushed that
+   * turn's final assistant message, and the credit blockquote lives in exactly
+   * that message — so the turn was written `credited: false` and, with the cursor
+   * already past it, never looked at again. Measured over 40 real Claude Code
+   * turns: 13 credited turns recorded live against 31 that the SAME code finds
+   * when it re-reads the finished transcript. The report understated attribution
+   * by 2.4x. Costs one extra line per turn in a rotating log.
+   *
+   * The persistent-plugin runtime does NOT need it and does not pass it: there `onTranscript` is
+   * told whether the reply is in and holds the turn back when it is not, and `onSessionIdle`
+   * refetches a complete transcript before recording. Only the hook harnesses read a file the host
+   * is still writing.
+   */
+  reviseLastTurn?: boolean;
 }): void {
   const summary = summarizeTurns(args.turns);
   const finished = args.lastTurnComplete ? summary : summary.slice(0, -1);
-  const from = args.cursors.read(args.sessionId) ?? 0;
+  const recorded = args.cursors.read(args.sessionId) ?? 0;
+  const from = args.reviseLastTurn ? Math.max(0, recorded - 1) : recorded;
   // `<=` also covers a transcript that shrank (rewritten): nothing new to say about it.
   if (finished.length <= from) return;
   const ts = new Date().toISOString();

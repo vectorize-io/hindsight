@@ -276,6 +276,10 @@ export class RuntimeCore {
       turns,
       cursors: this.usageCursors,
       lastTurnComplete,
+      // No `reviseLastTurn` here, unlike the hook path: this runtime never records a turn before its
+      // reply exists. `onTranscript` is handed `false` while the host is still building the request,
+      // which holds the turn back, and `onSessionIdle` refetches a transcript that includes the
+      // reply before recording it.
     });
   }
 
