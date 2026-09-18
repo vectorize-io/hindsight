@@ -172,6 +172,16 @@ _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 _REFRESH_AUTOMATIC_KEY = "_automatic"
 
 
+def refresh_serialization_key(mental_model_id: str) -> str:
+    """The claim-time serialisation key for a mental model's refreshes.
+
+    Namespaced because the column is shared with per-document retains, whose key is a
+    caller-supplied document id — without the prefix a document named ``mm-...`` would
+    queue behind a mental model's refreshes for no reason.
+    """
+    return f"mental_model:{mental_model_id}"
+
+
 def get_current_schema() -> str:
     """Get the current schema from context (falls back to config default)."""
     schema = _current_schema.get()
@@ -21497,6 +21507,7 @@ class MemoryEngine(MemoryEngineInterface):
         dedupe_excludes_operation_id: str | None = None,
         dedupe_in_flight_payload_key: str | None = None,
         dedupe_in_flight_includes_processing: bool = True,
+        serialization_key: str | None = None,
     ) -> dict[str, Any]:
         """Generic helper to submit an async operation.
 
@@ -21523,6 +21534,11 @@ class MemoryEngine(MemoryEngineInterface):
                 counts for dedupe_in_flight_payload_key, on top of a pending one. False keeps the
                 guarantee to "at most one pending", which is all that a submit carrying new intent
                 (an explicit refresh after an edit) can safely fold into.
+            serialization_key: Written to the row's ``serialization_key`` column, which the claim
+                query serialises on: at most one operation per (bank, key) runs at a time, and the
+                oldest claimable pending peer goes first (see ``key_serialization_sql``). Dedupe
+                decides whether a *row* is created; this decides whether a created row may run
+                beside its peers. Leave None for work whose runs are independent.
 
         Returns:
             Dict with operation_id and optionally deduplicated=True if an existing task was found
@@ -21718,8 +21734,10 @@ class MemoryEngine(MemoryEngineInterface):
                         }
                 await conn.execute(
                     f"""
-                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                    INSERT INTO {fq_table("async_operations")}
+                        (operation_id, bank_id, operation_type, result_metadata, status,
+                         task_payload, serialization_key)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
                     """,
                     operation_id,
                     bank_id,
@@ -21727,6 +21745,7 @@ class MemoryEngine(MemoryEngineInterface):
                     json.dumps(result_metadata or {}, default=_json_default),
                     "pending",
                     json.dumps(full_payload, default=_json_default),
+                    serialization_key,
                 )
 
         # For SyncTaskBackend: executes the task immediately.
@@ -22631,6 +22650,14 @@ class MemoryEngine(MemoryEngineInterface):
                 floor, any submit path that forgets this flag piles up unbounded pending
                 copies on a bank whose refresh queue drains slower than it fills.
 
+        Rows are also serialised per model at claim time: the operation carries
+        ``serialization_key = mental_model:<id>``, so a bank runs at most one refresh
+        per model at a time and runs them in submission order. Dedupe alone does not
+        give that — it only bounds the *queue*, and a refresh queued behind a running
+        one used to be claimed immediately and write the same model beside it, where
+        whichever finished last won regardless of which read more. Models are
+        independent, so a bank with hundreds of them keeps refreshing them in parallel.
+
         Returns:
             Dict with operation_id — the surviving operation's when this submit was
             suppressed, together with ``deduplicated=True``, so the caller can poll
@@ -22683,6 +22710,7 @@ class MemoryEngine(MemoryEngineInterface):
             dedupe_by_bank=False,
             dedupe_in_flight_payload_key="mental_model_id",
             dedupe_in_flight_includes_processing=skip_if_in_flight,
+            serialization_key=refresh_serialization_key(mental_model_id),
         )
 
         # An explicit refresh that folded into a queued automatic one inherits its park.

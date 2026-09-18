@@ -65,6 +65,13 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 code="no_stub_rule",
             )
 
+        # Parked after resolve, so the call is already recorded and its rule already
+        # matched: from the story's side the step has happened and its operation is
+        # running, only the answer is outstanding.
+        held = stubs.llm.hold_for(chat_request)
+        if held is not None:
+            await held.park()
+
         return JSONResponse(
             {
                 "id": "chatcmpl-stub",

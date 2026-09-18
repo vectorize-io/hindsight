@@ -416,6 +416,11 @@ it runs, so it already covers what you just asked for. Poll the returned `operat
 as usual. A refresh that is already *running* is not reused: it may have read the model
 before your latest change, so a new operation is queued behind it.
 
+**And they run one at a time, in submission order.** A model's refreshes never overlap:
+the operation queued behind a running one starts when that one finishes, so the model is
+written by one refresh at a time instead of by whichever happened to finish last. This is
+per model — a bank refreshes as many different models in parallel as it has workers for.
+
 ---
 
 ## Troubleshoot a Refresh
