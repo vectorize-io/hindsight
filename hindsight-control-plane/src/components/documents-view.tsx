@@ -932,6 +932,15 @@ export function DocumentsView() {
   }, [inFlightDocIds, documents]);
   const hasUpdatingDocs = updatingDocIds.size > 0;
 
+  const customRange = resolveCustomRange(customFrom, customTo);
+  // Whether a window is actually being sent. "Custom range" with both fields
+  // blank — or half-typed — selects a preset but filters nothing yet, so it must
+  // not count as one.
+  const hasTimeWindow =
+    dateRange === "custom"
+      ? Boolean(customRange.bounds.start_date || customRange.bounds.end_date)
+      : dateRange !== "all";
+
   // Pending rows: in-flight/failed uploads that aren't yet in the real list.
   // A tag filter hides them entirely — their tags only exist on the document
   // row the conversion hasn't produced yet, so we can't honestly match them.
@@ -939,7 +948,7 @@ export function DocumentsView() {
   // belong to that same unwritten row, so a pending upload left in the table
   // would be claiming to fall inside a window nothing has placed it in.
   const pendingRows = useMemo<PendingUpload[]>(() => {
-    if (selectedTags.length > 0 || dateRange !== "all") return [];
+    if (selectedTags.length > 0 || hasTimeWindow) return [];
     const realIds = new Set(documents.map((doc) => doc.id));
     const q = searchQuery.trim().toLowerCase();
     return pendingUploads
@@ -951,9 +960,7 @@ export function DocumentsView() {
           (upload.filename?.toLowerCase().includes(q) ?? false)
         );
       });
-  }, [documents, pendingUploads, searchQuery, selectedTags, dateRange]);
-
-  const customRange = resolveCustomRange(customFrom, customTo);
+  }, [documents, pendingUploads, searchQuery, selectedTags, hasTimeWindow]);
 
   const hasActiveFilters =
     searchQuery.trim().length > 0 || selectedTags.length > 0 || dateRange !== "all";
@@ -1577,20 +1584,27 @@ export function DocumentsView() {
         </Select>
         {dateRange === "custom" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{t("dateRangeFrom")}</span>
+            {/* A real <label> rather than a span plus aria-label: the two together
+                name the field once but read it twice in a screen reader's browse
+                mode, and the label also makes the text click into the field. */}
+            <label htmlFor="documents-range-from" className="text-xs text-muted-foreground">
+              {t("dateRangeFrom")}
+            </label>
             <Input
+              id="documents-range-from"
               type="datetime-local"
               value={customFrom}
               onChange={(e) => setCustomFrom(e.target.value)}
-              aria-label={t("dateRangeFrom")}
               className="h-9 w-[200px]"
             />
-            <span className="text-xs text-muted-foreground">{t("dateRangeTo")}</span>
+            <label htmlFor="documents-range-to" className="text-xs text-muted-foreground">
+              {t("dateRangeTo")}
+            </label>
             <Input
+              id="documents-range-to"
               type="datetime-local"
               value={customTo}
               onChange={(e) => setCustomTo(e.target.value)}
-              aria-label={t("dateRangeTo")}
               className="h-9 w-[200px]"
             />
             {/* A reversed range sends no bounds at all, so without this the list
