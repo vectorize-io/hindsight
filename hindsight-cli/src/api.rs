@@ -477,12 +477,15 @@ impl ApiClient {
                 .client
                 .list_documents(
                     agent_id,
+                    None, // end_date
                     limit.map(|l| l as u64),
                     offset.map(|o| o as u64),
                     q,
-                    None,
-                    None,
-                    None,
+                    None, // start_date
+                    None, // tags
+                    None, // tags_match
+                    None, // time_field
+                    None, // authorization
                 )
                 .humanized()
                 .await?;
@@ -581,13 +584,16 @@ impl ApiClient {
                     bank_id,
                     None, // consolidation_state
                     None, // document_id
+                    None, // end_date
                     None, // entity_id
                     limit.map(|l| l as u64),
                     offset.map(|o| o as u64),
                     q,
+                    None, // start_date
                     None, // state
                     None, // tags
                     None, // tags_match
+                    None, // time_field
                     type_filter,
                     None, // authorization
                 )

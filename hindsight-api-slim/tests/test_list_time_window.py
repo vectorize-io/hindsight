@@ -136,6 +136,54 @@ async def test_memories_window_filters_orders_and_drops_undated(memory: MemoryEn
 
 
 @pytest.mark.asyncio
+async def test_the_window_composes_with_the_other_filters(memory: MemoryEngine, request_context: RequestContext):
+    """Tags, search and the window share one ``$N`` counter across two clause builders.
+
+    Nothing else exercises that handoff: each builder takes ``param_offset`` from
+    where the last one stopped, and the count query and the page query bind the
+    same list. Get the order wrong and asyncpg fails at runtime — not at import,
+    and not in any test that uses the filters one at a time.
+    """
+    bank_id = f"test-window-combo-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    now = datetime.now(UTC)
+
+    try:
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            wanted = await _seed_unit(
+                conn, memory, bank_id, "kangaroo in the window", created_at=now, mentioned_at=now - timedelta(days=2)
+            )
+            # Right text and tag, wrong window.
+            await _seed_unit(
+                conn, memory, bank_id, "kangaroo long ago", created_at=now, mentioned_at=now - timedelta(days=400)
+            )
+            # Right window, wrong text.
+            await _seed_unit(
+                conn, memory, bank_id, "wombat in the window", created_at=now, mentioned_at=now - timedelta(days=2)
+            )
+            await conn.execute(
+                "UPDATE memory_units SET tags = ARRAY['zoo'] WHERE bank_id = $1 AND text LIKE 'kangaroo%'",
+                bank_id,
+            )
+
+        combined = await memory.list_memory_units(
+            bank_id,
+            search_query="kangaroo",
+            tags=["zoo"],
+            tags_match="any_strict",
+            time_field="mentioned_at",
+            start_date=now - timedelta(days=30),
+            end_date=now,
+            request_context=request_context,
+        )
+        assert _ids(combined) == [wanted]
+        assert combined["total"] == 1, "the count query must bind the same params as the page query"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_memories_window_applies_to_invalidated_archive(memory: MemoryEngine, request_context: RequestContext):
     """The archive is a different table read through the same builder."""
     bank_id = f"test-window-arch-{uuid.uuid4().hex[:8]}"
@@ -207,6 +255,18 @@ async def test_documents_window_filters_and_counts(memory: MemoryEngine, request
         )
         assert [d["id"] for d in recent["items"]] == ["doc-new"]
         assert recent["total"] == 1
+
+        # The tags clause allocates its placeholders before the window's, so the two
+        # together are what proves the `$N` handoff in this builder as well.
+        with_search = await memory.list_documents(
+            bank_id=bank_id,
+            search_query="doc-",
+            time_field="created_at",
+            start_date=now - timedelta(days=7),
+            request_context=request_context,
+        )
+        assert [d["id"] for d in with_search["items"]] == ["doc-new"]
+        assert with_search["total"] == 1
 
         # Both are still there on the untouched default listing.
         assert (await memory.list_documents(bank_id=bank_id, request_context=request_context))["total"] == 2

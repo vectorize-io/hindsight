@@ -120,6 +120,12 @@ jobs:
             - 'hindsight-clients/python/**'
           clients-rust:
             - 'hindsight-clients/rust/**'
+            # The Rust client is not committed source — build.rs regenerates it with
+            # progenitor from this spec, and progenitor emits query params POSITIONALLY
+            # in alphabetical order. So adding one query param to any endpoint shifts
+            # every later argument and breaks the call sites, with nothing under
+            # hindsight-clients/rust/ changed to trigger this job (#4509).
+            - 'hindsight-docs/static/openapi.json'
           clients-go:
             - 'hindsight-clients/go/**'
           control-plane:
@@ -128,6 +134,9 @@ jobs:
             - 'package-lock.json'
           cli:
             - 'hindsight-cli/**'
+            # Same reason as clients-rust above: the CLI compiles against the
+            # progenitor-generated client, so an OpenAPI change alone can break it.
+            - 'hindsight-docs/static/openapi.json'
           docker:
             - 'docker/**'
           helm:
