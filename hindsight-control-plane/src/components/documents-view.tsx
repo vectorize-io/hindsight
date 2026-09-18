@@ -821,11 +821,13 @@ export function DocumentsView() {
       setLoading(true);
       try {
         const pageOffset = (page - 1) * ITEMS_PER_PAGE;
-        const window =
+        // Not named `window`: this file reaches for the global elsewhere
+        // (setInterval, addEventListener), and shadowing it here is a trap.
+        const timeWindow =
           dateRange === "custom"
             ? resolveCustomRange(customFrom, customTo).bounds
             : resolveDateRangePreset(dateRange);
-        const hasWindow = Boolean(window.start_date || window.end_date);
+        const hasWindow = Boolean(timeWindow.start_date || timeWindow.end_date);
         const data: any = await client.listDocuments({
           bank_id: currentBank,
           q: searchQuery,
@@ -834,8 +836,8 @@ export function DocumentsView() {
           // Send the axis only with a window: on its own it would re-sort the
           // list for no visible reason.
           time_field: hasWindow ? timeField : undefined,
-          start_date: window.start_date,
-          end_date: window.end_date,
+          start_date: timeWindow.start_date,
+          end_date: timeWindow.end_date,
           limit: ITEMS_PER_PAGE,
           offset: pageOffset,
         });
@@ -933,8 +935,11 @@ export function DocumentsView() {
   // Pending rows: in-flight/failed uploads that aren't yet in the real list.
   // A tag filter hides them entirely — their tags only exist on the document
   // row the conversion hasn't produced yet, so we can't honestly match them.
+  // A time window hides them for the same reason: the timestamps it filters on
+  // belong to that same unwritten row, so a pending upload left in the table
+  // would be claiming to fall inside a window nothing has placed it in.
   const pendingRows = useMemo<PendingUpload[]>(() => {
-    if (selectedTags.length > 0) return [];
+    if (selectedTags.length > 0 || dateRange !== "all") return [];
     const realIds = new Set(documents.map((doc) => doc.id));
     const q = searchQuery.trim().toLowerCase();
     return pendingUploads
@@ -946,7 +951,7 @@ export function DocumentsView() {
           (upload.filename?.toLowerCase().includes(q) ?? false)
         );
       });
-  }, [documents, pendingUploads, searchQuery, selectedTags]);
+  }, [documents, pendingUploads, searchQuery, selectedTags, dateRange]);
 
   const customRange = resolveCustomRange(customFrom, customTo);
 
@@ -1544,7 +1549,20 @@ export function DocumentsView() {
           onMatchModeChange={setTagsMatch}
           className="flex-1 min-w-[260px]"
         />
-        <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRangePreset)}>
+        <Select
+          value={dateRange}
+          onValueChange={(v) => {
+            const next = v as DateRangePreset;
+            setDateRange(next);
+            // Going back to "all" hides the axis Select, so a non-default axis
+            // would survive unseen and reappear on the next range the user picks.
+            if (next === "all") {
+              setTimeField("updated_at");
+              setCustomFrom("");
+              setCustomTo("");
+            }
+          }}
+        >
           <SelectTrigger className="w-[150px] h-9" aria-label={t("dateRangeAriaLabel")}>
             <SelectValue />
           </SelectTrigger>
@@ -1559,6 +1577,7 @@ export function DocumentsView() {
         </Select>
         {dateRange === "custom" && (
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{t("dateRangeFrom")}</span>
             <Input
               type="datetime-local"
               value={customFrom}
@@ -1582,8 +1601,9 @@ export function DocumentsView() {
           </div>
         )}
         {/* The axis appears only alongside a window: with no range it changes
-            nothing a user can see, and the server drops documents that carry no
-            value on it. */}
+            nothing a user can see, since it is the window it applies to. (Both
+            document timestamps are always set, so unlike the memories axes it
+            never drops rows — the re-sort is the whole of its effect.) */}
         {dateRange !== "all" && (
           <Select value={timeField} onValueChange={(v) => setTimeField(v as DocumentTimeField)}>
             <SelectTrigger className="w-[150px] h-9" aria-label={t("timeFieldAriaLabel")}>

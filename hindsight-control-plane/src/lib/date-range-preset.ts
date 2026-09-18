@@ -13,8 +13,6 @@
  */
 export type DateRangePreset = "all" | "1h" | "1d" | "7d" | "30d" | "custom";
 
-export const DATE_RANGE_PRESETS: DateRangePreset[] = ["all", "1h", "1d", "7d", "30d", "custom"];
-
 export interface DateRangeBounds {
   start_date?: string;
   end_date?: string;
@@ -41,13 +39,18 @@ export interface CustomRangeState {
  * then carries the correct instant with an offset.
  */
 export function resolveCustomRange(from: string, to: string): CustomRangeState {
-  // Compared as raw strings: `datetime-local` is zero-padded `YYYY-MM-DDTHH:mm`,
-  // so lexicographic order is chronological order and no parsing is needed.
-  if (from && to && to <= from) return { bounds: {}, reversed: true };
-
-  const bounds: DateRangeBounds = {};
   const start = toIsoOrNull(from);
   const end = toIsoOrNull(to);
+
+  // Compared as the converted instants, not as the typed strings. The two
+  // disagree inside a daylight-saving gap: 02:30 on a spring-forward morning
+  // does not exist and normalises *forward*, so "02:30 -> 03:00" reads as
+  // ascending text but is a reversed hour. Comparing what is actually sent also
+  // keeps this rule identical to the server's (`end_date <= start_date` is a
+  // 400), so the inline message replaces an error toast rather than racing it.
+  if (start && end && end <= start) return { bounds: {}, reversed: true };
+
+  const bounds: DateRangeBounds = {};
   if (start) bounds.start_date = start;
   if (end) bounds.end_date = end;
   return { bounds, reversed: false };

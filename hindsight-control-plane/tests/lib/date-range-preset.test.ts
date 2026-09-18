@@ -88,4 +88,19 @@ describe("resolveCustomRange", () => {
     expect(state.reversed).toBe(true);
     expect(state.bounds).toEqual({});
   });
+
+  it("judges a range by the instants it sends, not by the typed text", () => {
+    // The two disagree across a daylight-saving gap, where a wall-clock time
+    // that does not exist normalises forward. Comparing the typed strings would
+    // call such a pair ascending and send an inverted window for the server to
+    // reject with a 400; comparing the instants catches it inline.
+    const from = "2026-03-08T02:30";
+    const to = "2026-03-08T03:00";
+    const state = resolveCustomRange(from, to);
+    const inverted = new Date(to).getTime() <= new Date(from).getTime();
+    // True only in a spring-forward zone (US Pacific et al); elsewhere this is an
+    // ordinary ascending range. Either way the verdict must follow the instants.
+    expect(state.reversed).toBe(inverted);
+    expect(Object.keys(state.bounds).length === 0).toBe(inverted);
+  });
 });
