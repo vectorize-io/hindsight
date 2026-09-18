@@ -1614,8 +1614,11 @@ export function DocumentsView() {
             )}
           </div>
         )}
-        {/* The axis appears only alongside a window: with no range it changes
-            nothing a user can see, since it is the window it applies to. (Both
+        {/* Shown as soon as a range is picked, not once bounds are actually sent:
+            under "Custom range" it belongs to the form being filled in, and making
+            it appear only on the keystroke that completes a date would make the
+            toolbar jump. With no range at all it is hidden, because it is the
+            window it applies to and there is nothing to apply it to. (Both
             document timestamps are always set, so unlike the memories axes it
             never drops rows — the re-sort is the whole of its effect.) */}
         {dateRange !== "all" && (
