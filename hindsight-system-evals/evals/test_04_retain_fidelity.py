@@ -12,8 +12,14 @@ strings, and under strict structured output every property is required — so a
 model had no legal way to say "the text doesn't state this". Asked for a string,
 a smaller model supplies the most plausible one in sight, which is whatever the
 surrounding text mentions. A document whose first line carried a project start
-date produced a *requirement* fact dated to it. The fields are nullable now, and
-this suite checks that the models we actually run keep the metadata honest.
+date produced a *requirement* fact dated to it.
+``HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS`` lets an operator make those
+four values nullable, so a model has a legal way to say "not stated".
+
+This suite sets nothing: it measures the server as configured, which on CI means
+the default (required, "N/A") path — the one worth watching, since it is what
+every deployment runs until someone opts in. A server started with the flag on
+runs the same cases against its own setting.
 
 It verifies behaviour; it is not a backwards-compatibility guard, and the
 difference was measured rather than assumed. Qwen3.6-35B under strict schema
@@ -153,9 +159,6 @@ class FidelityOutcome:
 
 async def _run(client: Hindsight, bank_id: str, settled: SettleFn, case_id: str) -> FidelityOutcome:
     case = _CASES[case_id]
-    # Observations and consolidation off for the same reason as every other suite
-    # here — they cost model time and write rows this eval never reads. The
-    # extraction mode is left at the default, because that call is the subject.
     # Observations and consolidation off for the same reason as every other suite
     # here — they cost model time and write rows this eval never reads. The
     # extraction mode is left at the default, because that call is the subject.

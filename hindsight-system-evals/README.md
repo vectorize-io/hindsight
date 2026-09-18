@@ -67,9 +67,11 @@ states a date, an owner or a place for one subject, then makes a claim about a
 different subject that has none of its own — and the extracted fact must not
 carry the borrowed value across. A fabrication here is the worst kind, because
 reflect can be asked again while an invented date is written once and read back
-as fact forever. Behind it (#4457): `when`/`where`/`who`/`why` were required
-non-null strings, so under strict structured output a model had no legal way to
-say "not stated" and supplied the nearest plausible value instead.
+as fact forever. Behind it (#4457): `when`/`where`/`who`/`why` are required
+non-null strings, so under strict structured output a model has no legal way to
+say "not stated" and supplies the nearest plausible value instead.
+`HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` makes them nullable; this suite
+sets nothing and measures the server as configured, so CI watches the default.
 
 It verifies behaviour rather than guarding the regression, and the difference
 was measured: Qwen3.6-35B under strict schema passes all three cases with the

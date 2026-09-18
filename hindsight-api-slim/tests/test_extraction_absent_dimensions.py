@@ -1,11 +1,15 @@
 """A fact must not borrow metadata the text stated about something else (#4457).
 
-`when` / `where` / `who` / `why` used to be required non-null strings. Under
+`when` / `where` / `who` / `why` are required non-null strings by default. Under
 strict structured output every declared property is required, so a model asked
-for `when` on a fact the text gives no date for had no legal way to say "not
+for `when` on a fact the text gives no date for has no legal way to say "not
 stated" — and the most plausible string in sight is whatever the surrounding
 text mentions. The reported case turned a project's target start date into the
 deadline of an unrelated requirement.
+
+This test runs with ``retain_optional_fact_dimensions`` on, which is what gives
+the model that legal answer; the flag is off by default, so the config is built
+explicitly below rather than read from the environment.
 
 Real-LLM test, because the thing under test is what the model does with the
 prompt and the schema. MockLLM echoes its input, so it cannot exercise the

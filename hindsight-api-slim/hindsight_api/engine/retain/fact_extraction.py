@@ -1513,7 +1513,7 @@ def _with_optional_dimensions(fact_class: type[BaseModel]) -> type[BaseModel]:
 
     Layered on at schema-build time rather than declared on the models, for the
     same reason as the timestamp pattern: the default path then serializes
-    byte-identically to before, and only a bank that opted in sees the change.
+    byte-identically to before, and only a server that opted in sees the change.
 
     Under strict structured output every declared property is required, so a model
     asked for `when` on a fact the text gives no date for has no legal way to say
@@ -1633,7 +1633,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         # would contradict the section below and the schema. Same mechanical swap
         # as the field descriptions get. It also rewrites an "N/A" a custom
         # instruction happens to contain, which is the intended reading of the
-        # flag: this bank does not use that placeholder.
+        # flag: this server does not use that placeholder.
         prompt = _null_instead_of_na(prompt) + OPTIONAL_DIMENSIONS_SECTION
 
     # Add entity labels section if configured and build dynamic schema
