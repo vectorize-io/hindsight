@@ -26,8 +26,10 @@ from typing_extensions import Self
 
 class MentalModelTriggerOutput(BaseModel):
     """
-    Trigger settings for a mental model.
+    Trigger settings for a mental model.  Inherits the reflect options an operator can also default per bank (``reflect_default_options``): set here they apply to this model's refreshes only, and win over the bank default.
     """ # noqa: E501
+    reflect_search_observations_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
+    reflect_search_observations_include_entities: Optional[StrictBool] = None
     mode: Optional[StrictStr] = Field(default='full', description="Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.")
     refresh_after_consolidation: Optional[StrictBool] = Field(default=False, description="If true, refresh this mental model after observations consolidation (real-time mode)")
     refresh_cron: Optional[StrictStr] = None
@@ -42,7 +44,7 @@ class MentalModelTriggerOutput(BaseModel):
     recall_chunks_max_tokens: Optional[StrictInt] = None
     response_schema: Optional[Dict[str, Any]] = None
     keep_trace: Optional[StrictBool] = Field(default=False, description="If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.")
-    __properties: ClassVar[List[str]] = ["mode", "refresh_after_consolidation", "refresh_cron", "min_refresh_interval_seconds", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "response_schema", "keep_trace"]
+    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "mode", "refresh_after_consolidation", "refresh_cron", "min_refresh_interval_seconds", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "response_schema", "keep_trace"]
 
     @field_validator('mode')
     def mode_validate_enum(cls, value):
@@ -121,6 +123,16 @@ class MentalModelTriggerOutput(BaseModel):
                 if _item_tag_groups:
                     _items.append(_item_tag_groups.to_dict())
             _dict['tag_groups'] = _items
+        # set to None if reflect_search_observations_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_observations_max_tokens is None and "reflect_search_observations_max_tokens" in self.model_fields_set:
+            _dict['reflect_search_observations_max_tokens'] = None
+
+        # set to None if reflect_search_observations_include_entities (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_observations_include_entities is None and "reflect_search_observations_include_entities" in self.model_fields_set:
+            _dict['reflect_search_observations_include_entities'] = None
+
         # set to None if refresh_cron (nullable) is None
         # and model_fields_set contains the field
         if self.refresh_cron is None and "refresh_cron" in self.model_fields_set:
@@ -183,6 +195,8 @@ class MentalModelTriggerOutput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "reflect_search_observations_max_tokens": obj.get("reflect_search_observations_max_tokens"),
+            "reflect_search_observations_include_entities": obj.get("reflect_search_observations_include_entities"),
             "mode": obj.get("mode") if obj.get("mode") is not None else 'full',
             "refresh_after_consolidation": obj.get("refresh_after_consolidation") if obj.get("refresh_after_consolidation") is not None else False,
             "refresh_cron": obj.get("refresh_cron"),

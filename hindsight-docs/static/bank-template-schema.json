@@ -398,6 +398,20 @@
           "description": "Trigger fields merged over the built-in knowledge-page default when a page is created (e.g. {\"refresh_cron\": \"0 * * * *\"}). A trigger sent with the create request still wins.",
           "title": "Knowledge Page Default Trigger"
         },
+        "reflect_default_options": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default reflect options for this bank (e.g. {\"reflect_search_observations_max_tokens\": 3000, \"reflect_search_observations_include_entities\": false}). Applied to every reflect in the bank -- API, MCP and mental-model refresh -- whenever the request (or the model's trigger) leaves the option unset.",
+          "title": "Reflect Default Options"
+        },
         "mental_model_min_refresh_interval_seconds": {
           "anyOf": [
             {
@@ -873,8 +887,35 @@
       "type": "object"
     },
     "MentalModelTrigger": {
-      "description": "Trigger settings for a mental model.",
+      "description": "Trigger settings for a mental model.\n\nInherits the reflect options an operator can also default per bank\n(``reflect_default_options``): set here they apply to this model's refreshes\nonly, and win over the bank default.",
       "properties": {
+        "reflect_search_observations_max_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).",
+          "title": "Reflect Search Observations Max Tokens"
+        },
+        "reflect_search_observations_include_entities": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.",
+          "title": "Reflect Search Observations Include Entities"
+        },
         "mode": {
           "default": "full",
           "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",

@@ -717,6 +717,8 @@ class Hindsight:
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
+        reflect_search_observations_max_tokens: int | None = None,
+        reflect_search_observations_include_entities: bool | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (sync wrapper — prefer :meth:`areflect` in async code).
@@ -749,6 +751,11 @@ class Hindsight:
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
+            reflect_search_observations_max_tokens: Token budget for the agent's search_observations
+                calls. None uses the bank's reflect_default_options, then the shipped default.
+            reflect_search_observations_include_entities: Whether search_observations attaches
+                resolved entity names, which can be over half the tool payload. None uses the
+                bank default (enabled).
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -773,6 +780,8 @@ class Hindsight:
                 fact_types=fact_types,
                 exclude_mental_models=exclude_mental_models,
                 exclude_mental_model_ids=exclude_mental_model_ids,
+                reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
+                reflect_search_observations_include_entities=reflect_search_observations_include_entities,
             )
         )
 
@@ -1402,6 +1411,8 @@ class Hindsight:
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
+        reflect_search_observations_max_tokens: int | None = None,
+        reflect_search_observations_include_entities: bool | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (async — preferred over :meth:`reflect`).
@@ -1434,6 +1445,11 @@ class Hindsight:
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
+            reflect_search_observations_max_tokens: Token budget for the agent's search_observations
+                calls. None uses the bank's reflect_default_options, then the shipped default.
+            reflect_search_observations_include_entities: Whether search_observations attaches
+                resolved entity names, which can be over half the tool payload. None uses the
+                bank default (enabled).
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -1472,6 +1488,8 @@ class Hindsight:
             fact_types=fact_types,
             exclude_mental_models=exclude_mental_models or None,
             exclude_mental_model_ids=exclude_mental_model_ids,
+            reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
+            reflect_search_observations_include_entities=reflect_search_observations_include_entities,
         )
 
         return await _retry_on_capacity(

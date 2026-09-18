@@ -647,6 +647,14 @@ export type BankTemplateConfig = {
     [key: string]: unknown;
   } | null;
   /**
+   * Reflect Default Options
+   *
+   * Default reflect options for this bank (e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). Applied to every reflect in the bank -- API, MCP and mental-model refresh -- whenever the request (or the model's trigger) leaves the option unset.
+   */
+  reflect_default_options?: {
+    [key: string]: unknown;
+  } | null;
+  /**
    * Mental Model Min Refresh Interval Seconds
    *
    * Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds.
@@ -4441,8 +4449,24 @@ export type MentalModelTraceToolCall = {
  * MentalModelTrigger
  *
  * Trigger settings for a mental model.
+ *
+ * Inherits the reflect options an operator can also default per bank
+ * (``reflect_default_options``): set here they apply to this model's refreshes
+ * only, and win over the bank default.
  */
 export type MentalModelTriggerInput = {
+  /**
+   * Reflect Search Observations Max Tokens
+   *
+   * Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).
+   */
+  reflect_search_observations_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Include Entities
+   *
+   * Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.
+   */
+  reflect_search_observations_include_entities?: boolean | null;
   /**
    * Mode
    *
@@ -4535,8 +4559,24 @@ export type MentalModelTriggerInput = {
  * MentalModelTrigger
  *
  * Trigger settings for a mental model.
+ *
+ * Inherits the reflect options an operator can also default per bank
+ * (``reflect_default_options``): set here they apply to this model's refreshes
+ * only, and win over the bank default.
  */
 export type MentalModelTriggerOutput = {
+  /**
+   * Reflect Search Observations Max Tokens
+   *
+   * Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).
+   */
+  reflect_search_observations_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Include Entities
+   *
+   * Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.
+   */
+  reflect_search_observations_include_entities?: boolean | null;
   /**
    * Mode
    *
@@ -5528,6 +5568,18 @@ export type ReflectMentalModel = {
  * Request model for reflect endpoint.
  */
 export type ReflectRequest = {
+  /**
+   * Reflect Search Observations Max Tokens
+   *
+   * Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).
+   */
+  reflect_search_observations_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Include Entities
+   *
+   * Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.
+   */
+  reflect_search_observations_include_entities?: boolean | null;
   /**
    * Query
    */

@@ -1487,7 +1487,37 @@ class ReflectIncludeOptions(BaseModel):
     )
 
 
-class ReflectRequest(BaseModel):
+class ReflectDefaultOptions(BaseModel):
+    """Reflect options an operator can default per bank.
+
+    Every field is ``None`` = "not set", so the same model is both the shape of
+    the ``reflect_default_options`` bank config key and the set of fields a
+    reflect request (or a mental model's trigger) inherits from it. The
+    resolution chain is: explicit request/trigger value -> bank
+    ``reflect_default_options`` -> the shipped default.
+    """
+
+    reflect_search_observations_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token budget for reflect's search_observations tool when the model names none. "
+            "Observation evidence is often the largest contributor to the reflect context; "
+            "lowering it trades the lowest-ranked observations for a smaller LLM context. "
+            "None means use the shipped default (5000)."
+        ),
+    )
+    reflect_search_observations_include_entities: bool | None = Field(
+        default=None,
+        description=(
+            "Whether search_observations attaches resolved entity names to each observation. "
+            "Entities can be more than half the serialized tool payload; turning them off keeps "
+            "the same observations and ranking with a much smaller context. None means enabled."
+        ),
+    )
+
+
+class ReflectRequest(ReflectDefaultOptions):
     """Request model for reflect endpoint."""
 
     model_config = ConfigDict(
@@ -3060,8 +3090,13 @@ class UpdateDirectiveRequest(BaseModel):
 # =========================================================================
 
 
-class MentalModelTrigger(BaseModel):
-    """Trigger settings for a mental model."""
+class MentalModelTrigger(ReflectDefaultOptions):
+    """Trigger settings for a mental model.
+
+    Inherits the reflect options an operator can also default per bank
+    (``reflect_default_options``): set here they apply to this model's refreshes
+    only, and win over the bank default.
+    """
 
     mode: Literal["full", "delta"] = Field(
         default="full",
@@ -3678,6 +3713,15 @@ class BankTemplateConfig(BaseModel):
         description=(
             "Trigger fields merged over the built-in knowledge-page default when a page is created "
             '(e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.'
+        ),
+    )
+    reflect_default_options: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Default reflect options for this bank "
+            '(e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). '
+            "Applied to every reflect in the bank -- API, MCP and mental-model refresh -- whenever "
+            "the request (or the model's trigger) leaves the option unset."
         ),
     )
     mental_model_min_refresh_interval_seconds: int | None = Field(
@@ -6099,6 +6143,8 @@ def _register_routes(app: FastAPI):
                         fact_types=request.fact_types,
                         exclude_mental_models=request.exclude_mental_models,
                         exclude_mental_model_ids=request.exclude_mental_model_ids,
+                        reflect_search_observations_max_tokens_override=request.reflect_search_observations_max_tokens,
+                        reflect_search_observations_include_entities_override=request.reflect_search_observations_include_entities,
                     ),
                     operation="reflect",
                     bank_id=bank_id,

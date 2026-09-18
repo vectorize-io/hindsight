@@ -5908,6 +5908,9 @@ components:
         knowledge_page_default_trigger:
           additionalProperties: {}
           nullable: true
+        reflect_default_options:
+          additionalProperties: {}
+          nullable: true
         mental_model_min_refresh_interval_seconds:
           minimum: 0.0
           nullable: true
@@ -6687,6 +6690,7 @@ components:
             tags:
             - tags
             - tags
+          reflect_search_observations_include_entities: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -6699,10 +6703,11 @@ components:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
+          reflect_search_observations_max_tokens: 1
           tags_match: any
           min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 1
+          recall_max_tokens: 5
         tags:
         - tags
         - tags
@@ -7895,6 +7900,7 @@ components:
             tags:
             - tags
             - tags
+          reflect_search_observations_include_entities: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -7907,10 +7913,11 @@ components:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
+          reflect_search_observations_max_tokens: 1
           tags_match: any
           min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 1
+          recall_max_tokens: 5
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -8143,6 +8150,7 @@ components:
               tags:
               - tags
               - tags
+            reflect_search_observations_include_entities: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -8155,10 +8163,11 @@ components:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
+            reflect_search_observations_max_tokens: 1
             tags_match: any
             min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 1
+            recall_max_tokens: 5
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -8188,6 +8197,7 @@ components:
               tags:
               - tags
               - tags
+            reflect_search_observations_include_entities: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -8200,10 +8210,11 @@ components:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
+            reflect_search_observations_max_tokens: 1
             tags_match: any
             min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 1
+            recall_max_tokens: 5
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -9506,9 +9517,9 @@ components:
     MentalModelListResponse:
       description: Response model for listing mental models.
       example:
-        total: 5
-        offset: 7
-        limit: 2
+        total: 2
+        offset: 9
+        limit: 7
         items:
         - max_tokens: 0
           created_at: created_at
@@ -9526,6 +9537,7 @@ components:
               tags:
               - tags
               - tags
+            reflect_search_observations_include_entities: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -9538,10 +9550,11 @@ components:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
+            reflect_search_observations_max_tokens: 1
             tags_match: any
             min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 1
+            recall_max_tokens: 5
           last_refreshed_at: last_refreshed_at
           is_stale: true
           last_memory_seen_at: last_memory_seen_at
@@ -9571,6 +9584,7 @@ components:
               tags:
               - tags
               - tags
+            reflect_search_observations_include_entities: true
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
@@ -9583,10 +9597,11 @@ components:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
             include_chunks: true
+            reflect_search_observations_max_tokens: 1
             tags_match: any
             min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 1
+            recall_max_tokens: 5
           last_refreshed_at: last_refreshed_at
           is_stale: true
           last_memory_seen_at: last_memory_seen_at
@@ -9782,6 +9797,7 @@ components:
             tags:
             - tags
             - tags
+          reflect_search_observations_include_entities: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -9794,10 +9810,11 @@ components:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
+          reflect_search_observations_max_tokens: 1
           tags_match: any
           min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 1
+          recall_max_tokens: 5
         last_refreshed_at: last_refreshed_at
         is_stale: true
         last_memory_seen_at: last_memory_seen_at
@@ -9936,7 +9953,12 @@ components:
       - tool
       title: MentalModelTraceToolCall
     MentalModelTrigger-Input:
-      description: Trigger settings for a mental model.
+      description: |-
+        Trigger settings for a mental model.
+
+        Inherits the reflect options an operator can also default per bank
+        (``reflect_default_options``): set here they apply to this model's refreshes
+        only, and win over the bank default.
       example:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
@@ -9951,6 +9973,7 @@ components:
           tags:
           - tags
           - tags
+        reflect_search_observations_include_entities: true
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
@@ -9963,11 +9986,19 @@ components:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
         include_chunks: true
+        reflect_search_observations_max_tokens: 1
         tags_match: any
         min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 1
+        recall_max_tokens: 5
       properties:
+        reflect_search_observations_max_tokens:
+          minimum: 1.0
+          nullable: true
+          type: integer
+        reflect_search_observations_include_entities:
+          nullable: true
+          type: boolean
         mode:
           default: full
           description: "Refresh mode. 'full' (default) regenerates the mental model\
@@ -10055,7 +10086,12 @@ components:
           type: boolean
       title: MentalModelTrigger
     MentalModelTrigger-Output:
-      description: Trigger settings for a mental model.
+      description: |-
+        Trigger settings for a mental model.
+
+        Inherits the reflect options an operator can also default per bank
+        (``reflect_default_options``): set here they apply to this model's refreshes
+        only, and win over the bank default.
       example:
         recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
@@ -10070,6 +10106,7 @@ components:
           tags:
           - tags
           - tags
+        reflect_search_observations_include_entities: true
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
@@ -10082,11 +10119,19 @@ components:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
         include_chunks: true
+        reflect_search_observations_max_tokens: 1
         tags_match: any
         min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 1
+        recall_max_tokens: 5
       properties:
+        reflect_search_observations_max_tokens:
+          minimum: 1.0
+          nullable: true
+          type: integer
+        reflect_search_observations_include_entities:
+          nullable: true
+          type: boolean
         mode:
           default: full
           description: "Refresh mode. 'full' (default) regenerates the mental model\
@@ -11138,6 +11183,13 @@ components:
         - user_a
         tags_match: any
       properties:
+        reflect_search_observations_max_tokens:
+          minimum: 1.0
+          nullable: true
+          type: integer
+        reflect_search_observations_include_entities:
+          nullable: true
+          type: boolean
         query:
           title: Query
           type: string
@@ -11911,6 +11963,7 @@ components:
             tags:
             - tags
             - tags
+          reflect_search_observations_include_entities: true
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
@@ -11923,10 +11976,11 @@ components:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
           include_chunks: true
+          reflect_search_observations_max_tokens: 1
           tags_match: any
           min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 1
+          recall_max_tokens: 5
         tags:
         - tags
         - tags

@@ -267,6 +267,7 @@ async def tool_search_observations(
     last_consolidated_at: datetime | None = None,
     pending_consolidation: int = 0,
     source_facts_max_tokens: int = -1,
+    include_entities: bool = True,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
 ) -> dict[str, Any]:
@@ -287,6 +288,7 @@ async def tool_search_observations(
         last_consolidated_at: When consolidation last ran (for staleness check)
         pending_consolidation: Number of memories waiting to be consolidated
         source_facts_max_tokens: Token budget for source facts (-1 = disabled, 0+ = enabled with limit)
+        include_entities: Attach resolved entity names to each observation (see below)
 
     Returns:
         Dict with matching observations including freshness info and source memories
@@ -315,8 +317,10 @@ async def tool_search_observations(
         # Canonical entity names are semantic signal the surface text may lack
         # ("Bob" in the text vs canonical "Robert Smith"): they populate each
         # result's `entities` field, giving the agent resolved names to cite
-        # and to pivot follow-up queries on.
-        include_entities=True,
+        # and to pivot follow-up queries on. They are also a large share of the
+        # serialized payload, so a bank that does not need them can turn them off
+        # (reflect_default_options.reflect_search_observations_include_entities, #4483).
+        include_entities=include_entities,
         created_after=created_after,
         created_before=created_before,
         _connection_budget=1,

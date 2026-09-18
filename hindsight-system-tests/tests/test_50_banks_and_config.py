@@ -141,3 +141,34 @@ async def test_a_bank_id_at_the_byte_limit_is_accepted(client):
         assert [b.bank_id for b in listing.banks] == [at_limit]
     finally:
         await client.banks.delete_bank(at_limit)
+
+
+async def test_reflect_default_options_persist_and_are_validated(client, configured_bank):
+    """The bank-wide reflect defaults (#4483).
+
+    ``reflect_default_options`` is an object, not a scalar, so it travels through
+    the config API by a different path than every field above: it is validated
+    against the reflect request model at the door, and stored whole. Both halves
+    matter — a typo'd key stored silently would quietly do nothing on every
+    reflect afterwards, with nothing to explain why the budget never changed.
+    """
+    from hindsight_client_api.exceptions import ApiException
+
+    await client.banks.update_bank_config(
+        configured_bank,
+        {"updates": {"reflect_default_options": {"reflect_search_observations_max_tokens": 3000}}},
+    )
+
+    config = (await client.banks.get_bank_config(configured_bank)).config
+    assert config["reflect_default_options"] == {"reflect_search_observations_max_tokens": 3000}
+
+    with pytest.raises(ApiException) as exc:
+        await client.banks.update_bank_config(
+            configured_bank,
+            {"updates": {"reflect_default_options": {"observation_max_tokens": 3000}}},
+        )
+    assert exc.value.status == 400
+    assert "reflect_default_options" in str(exc.value.body)
+
+    unchanged = (await client.banks.get_bank_config(configured_bank)).config
+    assert unchanged["reflect_default_options"] == {"reflect_search_observations_max_tokens": 3000}

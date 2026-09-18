@@ -99,6 +99,8 @@ interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    reflect_search_observations_max_tokens?: number;
+    reflect_search_observations_include_entities?: boolean;
     response_schema?: Record<string, unknown>;
     keep_trace?: boolean;
   };

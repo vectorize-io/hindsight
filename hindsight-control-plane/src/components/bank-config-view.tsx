@@ -123,6 +123,14 @@ type MentalModelsEdits = {
   mental_model_min_refresh_interval_seconds: number | null;
 };
 
+// The bank's default reflect options (reflect_default_options). Stored as one
+// object, edited as two fields; null means "not set", so reflect falls back to
+// the shipped default.
+type ReflectOptionsEdits = {
+  reflect_search_observations_max_tokens: number | null;
+  reflect_search_observations_include_entities: boolean | null;
+};
+
 // The server's built-in knowledge-page trigger (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER).
 // The configured default merges over it, so the form starts from the pair to show
 // what a new page actually gets.
@@ -367,6 +375,42 @@ function mentalModelsSlice(overrides: Record<string, any>): MentalModelsEdits {
   };
 }
 
+/** The bank's reflect defaults as chips, so the row reads without opening the dialog. */
+function ReflectOptionsSummary({ options }: { options: ReflectOptionsEdits }) {
+  const t = useTranslations("bankConfig");
+  const chips = [
+    options.reflect_search_observations_max_tokens != null
+      ? t("reflectObservationsMaxTokensChip", {
+          tokens: options.reflect_search_observations_max_tokens,
+        })
+      : t("reflectObservationsMaxTokensChipDefault"),
+    options.reflect_search_observations_include_entities === false
+      ? t("reflectObservationsEntitiesOff")
+      : t("reflectObservationsEntitiesOn"),
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <span
+          key={chip}
+          className="rounded-full border border-border/60 bg-background px-2.5 py-0.5 text-xs text-foreground"
+        >
+          {chip}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function reflectOptionsSlice(overrides: Record<string, any>): ReflectOptionsEdits {
+  const opts = overrides.reflect_default_options ?? {};
+  return {
+    reflect_search_observations_max_tokens: opts.reflect_search_observations_max_tokens ?? null,
+    reflect_search_observations_include_entities:
+      opts.reflect_search_observations_include_entities ?? null,
+  };
+}
+
 function recallSlice(overrides: Record<string, any>): RecallEdits {
   return {
     enable_text_search: overrides.enable_text_search ?? null,
@@ -407,6 +451,14 @@ export function BankConfigView() {
     observationsSlice({}, {})
   );
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
+  // Reflect's default options are edited in their own dialog and saved from
+  // there, apart from the section's Save — same as the knowledge-page trigger.
+  const [reflectOptionsOpen, setReflectOptionsOpen] = useState(false);
+  const [reflectOptionsForm, setReflectOptionsForm] = useState<ReflectOptionsEdits>(
+    reflectOptionsSlice({})
+  );
+  const [reflectOptionsSaving, setReflectOptionsSaving] = useState(false);
+  const [reflectOptionsError, setReflectOptionsError] = useState<string | null>(null);
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
@@ -509,6 +561,7 @@ export function BankConfigView() {
       setStrategiesEdits(strategiesSlice(cfg));
       setObservationsEdits(observationsSlice(cfg, overrides));
       setReflectEdits(prof);
+      setReflectOptionsForm(reflectOptionsSlice(cfg));
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
       setAuditEdits(auditSlice(overrides));
@@ -575,6 +628,35 @@ export function BankConfigView() {
       setReflectError(err.message || t("reflectFailedToSave"));
     } finally {
       setReflectSaving(false);
+    }
+  };
+
+  const openReflectOptions = () => {
+    setReflectOptionsError(null);
+    setReflectOptionsForm(reflectOptionsSlice(baseConfig));
+    setReflectOptionsOpen(true);
+  };
+
+  const saveReflectOptions = async (reset: boolean) => {
+    if (!bankId) return;
+    setReflectOptionsSaving(true);
+    setReflectOptionsError(null);
+    try {
+      // Every field left unset means "no bank default at all": send null so the
+      // override is cleared rather than stored as an empty object.
+      const options = Object.fromEntries(
+        Object.entries(reflectOptionsForm).filter(([, v]) => v !== null)
+      );
+      const reflect_default_options = reset || Object.keys(options).length === 0 ? null : options;
+      await client.updateBankConfig(bankId, { reflect_default_options });
+      setBaseConfig((prev) => ({ ...prev, reflect_default_options }));
+      setBaseOverrides((prev) => ({ ...prev, reflect_default_options }));
+      setReflectOptionsForm(reflectOptionsSlice({ reflect_default_options }));
+      setReflectOptionsOpen(false);
+    } catch (err: any) {
+      setReflectOptionsError(err.message || t("reflectFailedToSave"));
+    } finally {
+      setReflectOptionsSaving(false);
     }
   };
 
@@ -964,6 +1046,124 @@ export function BankConfigView() {
               />
             }
           />
+          <div className="px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <div className="min-w-0 space-y-2">
+              <div>
+                <p className="text-sm font-medium">{t("reflectDefaultOptionsLabel")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {t("reflectDefaultOptionsDescription")}
+                </p>
+              </div>
+              <ReflectOptionsSummary options={reflectOptionsSlice(baseConfig)} />
+            </div>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={openReflectOptions}>
+              {t("knowledgePageDefaultTriggerEdit")}
+            </Button>
+          </div>
+          <Dialog
+            open={reflectOptionsOpen}
+            onOpenChange={(o) => !o && setReflectOptionsOpen(false)}
+          >
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>{t("reflectDefaultOptionsDialogTitle")}</DialogTitle>
+                <DialogDescription>{t("reflectDefaultOptionsDialogHint")}</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-sm font-medium">{t("reflectObservationsMaxTokensLabel")}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("reflectObservationsMaxTokensDescription")}
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={reflectOptionsForm.reflect_search_observations_max_tokens ?? ""}
+                    onChange={(e) =>
+                      setReflectOptionsForm((prev) => ({
+                        ...prev,
+                        reflect_search_observations_max_tokens: e.target.value
+                          ? parseInt(e.target.value, 10)
+                          : null,
+                      }))
+                    }
+                    placeholder={t("serverDefault")}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-sm font-medium">{t("reflectObservationsEntitiesLabel")}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("reflectObservationsEntitiesDescription")}
+                    </p>
+                  </div>
+                  <Select
+                    value={
+                      reflectOptionsForm.reflect_search_observations_include_entities === null
+                        ? "default"
+                        : String(reflectOptionsForm.reflect_search_observations_include_entities)
+                    }
+                    onValueChange={(v) =>
+                      setReflectOptionsForm((prev) => ({
+                        ...prev,
+                        reflect_search_observations_include_entities:
+                          v === "default" ? null : v === "true",
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">{t("serverDefault")}</SelectItem>
+                      <SelectItem value="true">{t("reflectObservationsEntitiesOn")}</SelectItem>
+                      <SelectItem value="false">{t("reflectObservationsEntitiesOff")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {reflectOptionsError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{reflectOptionsError}</AlertDescription>
+                </Alert>
+              )}
+              <DialogFooter className="sm:justify-between">
+                <div>
+                  {baseOverrides.reflect_default_options && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => saveReflectOptions(true)}
+                      disabled={reflectOptionsSaving}
+                    >
+                      {t("resetToInherited")}
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setReflectOptionsOpen(false)}
+                    disabled={reflectOptionsSaving}
+                  >
+                    {tMentalModels("cancelButton")}
+                  </Button>
+                  <Button onClick={() => saveReflectOptions(false)} disabled={reflectOptionsSaving}>
+                    {reflectOptionsSaving ? (
+                      <>
+                        <Spinner size="sm" className="mr-2" />
+                        {t("saving")}
+                      </>
+                    ) : (
+                      t("saveChanges")
+                    )}
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <TraitRow
             label={t("skepticismLabel")}
             description={t("skepticismDescription")}

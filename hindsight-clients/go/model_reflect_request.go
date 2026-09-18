@@ -21,6 +21,8 @@ var _ MappedNullable = &ReflectRequest{}
 
 // ReflectRequest Request model for reflect endpoint.
 type ReflectRequest struct {
+	ReflectSearchObservationsMaxTokens NullableInt32 `json:"reflect_search_observations_max_tokens,omitempty"`
+	ReflectSearchObservationsIncludeEntities NullableBool `json:"reflect_search_observations_include_entities,omitempty"`
 	Query string `json:"query"`
 	Budget *Budget `json:"budget,omitempty"`
 	Context NullableString `json:"context,omitempty"`
@@ -75,6 +77,90 @@ func NewReflectRequestWithDefaults() *ReflectRequest {
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
 	return &this
+}
+
+// GetReflectSearchObservationsMaxTokens returns the ReflectSearchObservationsMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectRequest) GetReflectSearchObservationsMaxTokens() int32 {
+	if o == nil || IsNil(o.ReflectSearchObservationsMaxTokens.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.ReflectSearchObservationsMaxTokens.Get()
+}
+
+// GetReflectSearchObservationsMaxTokensOk returns a tuple with the ReflectSearchObservationsMaxTokens field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectRequest) GetReflectSearchObservationsMaxTokensOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReflectSearchObservationsMaxTokens.Get(), o.ReflectSearchObservationsMaxTokens.IsSet()
+}
+
+// HasReflectSearchObservationsMaxTokens returns a boolean if a field has been set.
+func (o *ReflectRequest) HasReflectSearchObservationsMaxTokens() bool {
+	if o != nil && o.ReflectSearchObservationsMaxTokens.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectSearchObservationsMaxTokens gets a reference to the given NullableInt32 and assigns it to the ReflectSearchObservationsMaxTokens field.
+func (o *ReflectRequest) SetReflectSearchObservationsMaxTokens(v int32) {
+	o.ReflectSearchObservationsMaxTokens.Set(&v)
+}
+// SetReflectSearchObservationsMaxTokensNil sets the value for ReflectSearchObservationsMaxTokens to be an explicit nil
+func (o *ReflectRequest) SetReflectSearchObservationsMaxTokensNil() {
+	o.ReflectSearchObservationsMaxTokens.Set(nil)
+}
+
+// UnsetReflectSearchObservationsMaxTokens ensures that no value is present for ReflectSearchObservationsMaxTokens, not even an explicit nil
+func (o *ReflectRequest) UnsetReflectSearchObservationsMaxTokens() {
+	o.ReflectSearchObservationsMaxTokens.Unset()
+}
+
+// GetReflectSearchObservationsIncludeEntities returns the ReflectSearchObservationsIncludeEntities field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectRequest) GetReflectSearchObservationsIncludeEntities() bool {
+	if o == nil || IsNil(o.ReflectSearchObservationsIncludeEntities.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.ReflectSearchObservationsIncludeEntities.Get()
+}
+
+// GetReflectSearchObservationsIncludeEntitiesOk returns a tuple with the ReflectSearchObservationsIncludeEntities field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectRequest) GetReflectSearchObservationsIncludeEntitiesOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReflectSearchObservationsIncludeEntities.Get(), o.ReflectSearchObservationsIncludeEntities.IsSet()
+}
+
+// HasReflectSearchObservationsIncludeEntities returns a boolean if a field has been set.
+func (o *ReflectRequest) HasReflectSearchObservationsIncludeEntities() bool {
+	if o != nil && o.ReflectSearchObservationsIncludeEntities.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectSearchObservationsIncludeEntities gets a reference to the given NullableBool and assigns it to the ReflectSearchObservationsIncludeEntities field.
+func (o *ReflectRequest) SetReflectSearchObservationsIncludeEntities(v bool) {
+	o.ReflectSearchObservationsIncludeEntities.Set(&v)
+}
+// SetReflectSearchObservationsIncludeEntitiesNil sets the value for ReflectSearchObservationsIncludeEntities to be an explicit nil
+func (o *ReflectRequest) SetReflectSearchObservationsIncludeEntitiesNil() {
+	o.ReflectSearchObservationsIncludeEntities.Set(nil)
+}
+
+// UnsetReflectSearchObservationsIncludeEntities ensures that no value is present for ReflectSearchObservationsIncludeEntities, not even an explicit nil
+func (o *ReflectRequest) UnsetReflectSearchObservationsIncludeEntities() {
+	o.ReflectSearchObservationsIncludeEntities.Unset()
 }
 
 // GetQuery returns the Query field value
@@ -510,6 +596,12 @@ func (o ReflectRequest) MarshalJSON() ([]byte, error) {
 
 func (o ReflectRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	if o.ReflectSearchObservationsMaxTokens.IsSet() {
+		toSerialize["reflect_search_observations_max_tokens"] = o.ReflectSearchObservationsMaxTokens.Get()
+	}
+	if o.ReflectSearchObservationsIncludeEntities.IsSet() {
+		toSerialize["reflect_search_observations_include_entities"] = o.ReflectSearchObservationsIncludeEntities.Get()
+	}
 	toSerialize["query"] = o.Query
 	if !IsNil(o.Budget) {
 		toSerialize["budget"] = o.Budget

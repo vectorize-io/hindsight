@@ -48,6 +48,7 @@ type BankTemplateConfig struct {
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
 	KnowledgePageDefaultTrigger map[string]interface{} `json:"knowledge_page_default_trigger,omitempty"`
+	ReflectDefaultOptions map[string]interface{} `json:"reflect_default_options,omitempty"`
 	MentalModelMinRefreshIntervalSeconds NullableInt32 `json:"mental_model_min_refresh_interval_seconds,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
 	RecallBudgetFunction NullableString `json:"recall_budget_function,omitempty"`
@@ -1260,6 +1261,39 @@ func (o *BankTemplateConfig) SetKnowledgePageDefaultTrigger(v map[string]interfa
 	o.KnowledgePageDefaultTrigger = v
 }
 
+// GetReflectDefaultOptions returns the ReflectDefaultOptions field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetReflectDefaultOptions() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.ReflectDefaultOptions
+}
+
+// GetReflectDefaultOptionsOk returns a tuple with the ReflectDefaultOptions field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetReflectDefaultOptionsOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.ReflectDefaultOptions) {
+		return map[string]interface{}{}, false
+	}
+	return o.ReflectDefaultOptions, true
+}
+
+// HasReflectDefaultOptions returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasReflectDefaultOptions() bool {
+	if o != nil && !IsNil(o.ReflectDefaultOptions) {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectDefaultOptions gets a reference to the given map[string]interface{} and assigns it to the ReflectDefaultOptions field.
+func (o *BankTemplateConfig) SetReflectDefaultOptions(v map[string]interface{}) {
+	o.ReflectDefaultOptions = v
+}
+
 // GetMentalModelMinRefreshIntervalSeconds returns the MentalModelMinRefreshIntervalSeconds field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetMentalModelMinRefreshIntervalSeconds() int32 {
 	if o == nil || IsNil(o.MentalModelMinRefreshIntervalSeconds.Get()) {
@@ -2178,6 +2212,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.KnowledgePageDefaultTrigger != nil {
 		toSerialize["knowledge_page_default_trigger"] = o.KnowledgePageDefaultTrigger
+	}
+	if o.ReflectDefaultOptions != nil {
+		toSerialize["reflect_default_options"] = o.ReflectDefaultOptions
 	}
 	if o.MentalModelMinRefreshIntervalSeconds.IsSet() {
 		toSerialize["mental_model_min_refresh_interval_seconds"] = o.MentalModelMinRefreshIntervalSeconds.Get()

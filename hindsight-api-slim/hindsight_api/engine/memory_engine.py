@@ -14990,6 +14990,8 @@ class MemoryEngine(MemoryEngineInterface):
         recall_include_chunks: bool | None = None,
         recall_max_tokens_override: int | None = None,
         recall_chunks_max_tokens_override: int | None = None,
+        reflect_search_observations_max_tokens_override: int | None = None,
+        reflect_search_observations_include_entities_override: bool | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         answer_as_document: bool = False,
@@ -15160,6 +15162,25 @@ class MemoryEngine(MemoryEngineInterface):
             "reflect_source_facts_max_tokens", DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS
         )
 
+        # Reflect options an operator can default per bank: caller arg (the reflect
+        # request, or the mental model's trigger) → bank reflect_default_options →
+        # the shipped default. Unlike the recall budgets these have no flat config
+        # key of their own — they are reflect's own knobs, so they live together in
+        # one object shaped like the request fields that carry them (#4483).
+        reflect_defaults: dict[str, Any] = config_dict.get("reflect_default_options") or {}
+        effective_observations_max_tokens = (
+            reflect_search_observations_max_tokens_override
+            if reflect_search_observations_max_tokens_override is not None
+            else reflect_defaults.get("reflect_search_observations_max_tokens") or DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+        )
+        effective_reflect_search_observations_include_entities = (
+            reflect_search_observations_include_entities_override
+            if reflect_search_observations_include_entities_override is not None
+            else reflect_defaults.get("reflect_search_observations_include_entities")
+        )
+        if effective_reflect_search_observations_include_entities is None:
+            effective_reflect_search_observations_include_entities = True
+
         # Resolve recall overrides: caller arg (e.g. mental model trigger) → bank config → env default
         effective_recall_include_chunks = (
             recall_include_chunks
@@ -15189,7 +15210,7 @@ class MemoryEngine(MemoryEngineInterface):
         tool_token_limits = ReflectToolTokenLimits(
             recall_max_tokens=effective_recall_max_tokens,
             recall_chunk_max_tokens=effective_recall_chunks_max_tokens,
-            observations_max_tokens=DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+            observations_max_tokens=effective_observations_max_tokens,
         )
 
         async def search_observations_fn(q: str, max_tokens: int) -> dict[str, Any]:
@@ -15205,6 +15226,7 @@ class MemoryEngine(MemoryEngineInterface):
                 last_consolidated_at=last_consolidated_at,
                 pending_consolidation=pending_consolidation,
                 source_facts_max_tokens=reflect_source_facts_max_tokens,
+                include_entities=effective_reflect_search_observations_include_entities,
                 created_after=created_after,
                 created_before=created_before,
             )
@@ -17097,6 +17119,10 @@ class MemoryEngine(MemoryEngineInterface):
         recall_include_chunks_override = trigger_data.get("include_chunks")
         recall_max_tokens_override = trigger_data.get("recall_max_tokens")
         recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
+        reflect_search_observations_max_tokens_override = trigger_data.get("reflect_search_observations_max_tokens")
+        reflect_search_observations_include_entities_override = trigger_data.get(
+            "reflect_search_observations_include_entities"
+        )
         requested_mode: RefreshMode = trigger_data.get("mode") or "full"
 
         current_content = (mental_model.get("content") or "").strip()
@@ -17191,6 +17217,8 @@ class MemoryEngine(MemoryEngineInterface):
             recall_include_chunks=recall_include_chunks_override,
             recall_max_tokens_override=recall_max_tokens_override,
             recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
+            reflect_search_observations_max_tokens_override=reflect_search_observations_max_tokens_override,
+            reflect_search_observations_include_entities_override=reflect_search_observations_include_entities_override,
             # The refresh stores a document, so the agent states its structure and
             # the markdown is rendered from it. The model never writes the markdown
             # that gets persisted, and nothing has to read markdown back to find

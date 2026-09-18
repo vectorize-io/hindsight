@@ -618,6 +618,10 @@ export class HindsightClient {
       excludeMentalModels?: boolean;
       /** Exclude specific mental models by ID from reflection. */
       excludeMentalModelIds?: string[];
+      /** Token budget for the agent's search_observations calls. Omit to use the bank's reflect_default_options, then the shipped default. */
+      reflectSearchObservationsMaxTokens?: number;
+      /** Whether search_observations attaches resolved entity names, which can be over half the tool payload. Omit to use the bank default (enabled). */
+      reflectSearchObservationsIncludeEntities?: boolean;
       /** If true, the response includes a 'based_on' field listing the memories, mental models, and directives used. */
       includeFacts?: boolean;
       /** If true, the response includes a 'trace' field with the tool calls and LLM calls made during reflection (trace.tool_calls / trace.llm_calls). */
@@ -653,6 +657,9 @@ export class HindsightClient {
             fact_types: options?.factTypes,
             exclude_mental_models: options?.excludeMentalModels,
             exclude_mental_model_ids: options?.excludeMentalModelIds,
+            reflect_search_observations_max_tokens: options?.reflectSearchObservationsMaxTokens,
+            reflect_search_observations_include_entities:
+              options?.reflectSearchObservationsIncludeEntities,
             include,
           },
           signal: options?.signal,

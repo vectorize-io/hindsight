@@ -106,3 +106,84 @@ async def test_unconfigured_bank_falls_back_to_server_defaults(engine, monkeypat
 
     assert limits.recall_max_tokens == DEFAULT_RECALL_MAX_TOKENS
     assert limits.recall_chunk_max_tokens == DEFAULT_RECALL_CHUNKS_MAX_TOKENS
+
+
+async def _capture_observation_call(engine, monkeypatch, **reflect_kwargs) -> dict:
+    """Run reflect and report the kwargs its search_observations tool would use."""
+    from hindsight_api.engine.reflect.models import ReflectAgentResult
+
+    captured: dict = {}
+
+    async def fake_tool_search_observations(*args, **kwargs):
+        captured.update(kwargs)
+        return {"observations": []}
+
+    async def fake_run_reflect_agent(**kwargs):
+        captured["limits"] = kwargs["tool_token_limits"]
+        await kwargs["search_observations_fn"]("q", kwargs["tool_token_limits"].observations_max_tokens)
+        return ReflectAgentResult(text="ok")
+
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.tool_search_observations", fake_tool_search_observations)
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.run_reflect_agent", fake_run_reflect_agent)
+
+    await engine.reflect_async(
+        bank_id="bank-1",
+        query="test",
+        request_context=RequestContext(),
+        exclude_mental_models=True,
+        **reflect_kwargs,
+    )
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_observation_budget_defaults_to_the_shipped_value(engine, monkeypatch):
+    """An unconfigured bank keeps today's 5000-token budget and its entities (#4483)."""
+    from hindsight_api.engine.reflect.agent import DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+
+    _with_bank_config(engine)
+
+    captured = await _capture_observation_call(engine, monkeypatch)
+
+    assert captured["limits"].observations_max_tokens == DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+    assert captured["max_tokens"] == DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+    assert captured["include_entities"] is True
+
+
+@pytest.mark.asyncio
+async def test_bank_reflect_default_options_reach_the_observations_tool(engine, monkeypatch):
+    """The bank's reflect_default_options are what reflect uses when nothing overrides them."""
+    _with_bank_config(
+        engine,
+        reflect_default_options={
+            "reflect_search_observations_max_tokens": 3000,
+            "reflect_search_observations_include_entities": False,
+        },
+    )
+
+    captured = await _capture_observation_call(engine, monkeypatch)
+
+    assert captured["limits"].observations_max_tokens == 3000
+    assert captured["include_entities"] is False
+
+
+@pytest.mark.asyncio
+async def test_request_overrides_win_over_bank_reflect_default_options(engine, monkeypatch):
+    """An explicit request/trigger value beats the bank default, in both directions."""
+    _with_bank_config(
+        engine,
+        reflect_default_options={
+            "reflect_search_observations_max_tokens": 3000,
+            "reflect_search_observations_include_entities": False,
+        },
+    )
+
+    captured = await _capture_observation_call(
+        engine,
+        monkeypatch,
+        reflect_search_observations_max_tokens_override=7000,
+        reflect_search_observations_include_entities_override=True,
+    )
+
+    assert captured["limits"].observations_max_tokens == 7000
+    assert captured["include_entities"] is True

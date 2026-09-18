@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
@@ -29,6 +30,8 @@ class ReflectRequest(BaseModel):
     """
     Request model for reflect endpoint.
     """ # noqa: E501
+    reflect_search_observations_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
+    reflect_search_observations_include_entities: Optional[StrictBool] = None
     query: StrictStr
     budget: Optional[Budget] = None
     context: Optional[StrictStr] = None
@@ -42,7 +45,7 @@ class ReflectRequest(BaseModel):
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
+    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -114,6 +117,16 @@ class ReflectRequest(BaseModel):
                 if _item_tag_groups:
                     _items.append(_item_tag_groups.to_dict())
             _dict['tag_groups'] = _items
+        # set to None if reflect_search_observations_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_observations_max_tokens is None and "reflect_search_observations_max_tokens" in self.model_fields_set:
+            _dict['reflect_search_observations_max_tokens'] = None
+
+        # set to None if reflect_search_observations_include_entities (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_observations_include_entities is None and "reflect_search_observations_include_entities" in self.model_fields_set:
+            _dict['reflect_search_observations_include_entities'] = None
+
         # set to None if context (nullable) is None
         # and model_fields_set contains the field
         if self.context is None and "context" in self.model_fields_set:
@@ -156,6 +169,8 @@ class ReflectRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "reflect_search_observations_max_tokens": obj.get("reflect_search_observations_max_tokens"),
+            "reflect_search_observations_include_entities": obj.get("reflect_search_observations_include_entities"),
             "query": obj.get("query"),
             "budget": obj.get("budget"),
             "context": obj.get("context"),

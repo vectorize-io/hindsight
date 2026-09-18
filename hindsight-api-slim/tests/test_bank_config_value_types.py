@@ -180,3 +180,27 @@ class TestKnowledgePageDefaultTrigger:
 
         with pytest.raises(ValueError, match=match):
             _validate_knowledge_page_default_trigger(value)
+
+
+class TestReflectDefaultOptions:
+    def test_valid_partial_options_pass(self):
+        from hindsight_api.config_resolver import _validate_reflect_default_options
+
+        _validate_reflect_default_options({"reflect_search_observations_max_tokens": 3000})
+
+    @pytest.mark.parametrize(
+        ("value", "match"),
+        [
+            ({"observation_max_tokens": 3000}, "unknown fields: observation_max_tokens"),
+            ({"reflect_search_observations_max_tokens": 0}, "reflect_search_observations_max_tokens"),
+            (
+                {"reflect_search_observations_include_entities": "yes please"},
+                "reflect_search_observations_include_entities",
+            ),
+        ],
+    )
+    def test_invalid_options_raise(self, value, match):
+        from hindsight_api.config_resolver import _validate_reflect_default_options
+
+        with pytest.raises(ValueError, match=match):
+            _validate_reflect_default_options(value)
