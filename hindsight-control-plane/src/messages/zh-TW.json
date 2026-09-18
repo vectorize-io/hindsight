@@ -2003,7 +2003,16 @@
     "editPageTitle": "編輯知識頁",
     "editPageDescription": "修改頁面名稱以及驅動其內容重構的來源查詢。",
     "editSourceQueryHint": "更改此項會根據你的記憶重建頁面內容。",
-    "saveChanges": "儲存變更"
+    "saveChanges": "儲存變更",
+    "advancedSearchTitle": "進階搜尋",
+    "advancedSearchDescription": "在伺服器上執行混合搜尋（BM25 + 向量），查看排序後的頁面與原始回應。",
+    "advancedQuery": "查詢",
+    "advancedLimit": "數量上限",
+    "advancedRun": "搜尋",
+    "advancedResults": "結果",
+    "advancedJson": "原始 JSON",
+    "advancedMeta": "{total} 筆結果 · {ms} 毫秒",
+    "advancedIdle": "執行搜尋即可查看排序後的頁面與原始回應。"
   },
   "home": {
     "title": "Home",

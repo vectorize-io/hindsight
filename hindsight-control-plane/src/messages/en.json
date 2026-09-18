@@ -2003,7 +2003,16 @@
     "editPageTitle": "Edit page",
     "editPageDescription": "Update the page's name, the question that rebuilds it, and its tags.",
     "editSourceQueryHint": "Changing this rebuilds the page's content from your memories.",
-    "saveChanges": "Save changes"
+    "saveChanges": "Save changes",
+    "advancedSearchTitle": "Advanced search",
+    "advancedSearchDescription": "Run the hybrid search (BM25 + vector) on the server and inspect the ranked pages and the raw response.",
+    "advancedQuery": "Query",
+    "advancedLimit": "Limit",
+    "advancedRun": "Search",
+    "advancedResults": "Results",
+    "advancedJson": "Raw JSON",
+    "advancedMeta": "{total} results · {ms} ms",
+    "advancedIdle": "Run a search to see ranked pages and the raw response."
   },
   "home": {
     "title": "Home",

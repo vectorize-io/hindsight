@@ -54,6 +54,8 @@ import { CompactMarkdown } from "./compact-markdown";
 import { StalenessBadge } from "./staleness-badge";
 import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { KnowledgeSearchDialog } from "./knowledge-search-dialog";
+import { KnowledgeSearchResult, type KnowledgeSearchHit } from "./knowledge-search-result";
 import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
@@ -98,10 +100,10 @@ export function KnowledgeBaseView() {
 
   // Hybrid search (BM25 + vector). A non-empty query swaps the tree for ranked hits.
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<
-    Array<{ id: string; name: string; snippet: string; score: number }>
-  >([]);
+  const [results, setResults] = useState<KnowledgeSearchHit[]>([]);
   const [searching, setSearching] = useState(false);
+  // The same search with its limit exposed and the raw response beside the hits.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Obsidian-style editor tabs: multiple pages open at once; `activeId` is focused.
   const [tabs, setTabs] = useState<PageDetail[]>([]);
@@ -220,6 +222,23 @@ export function KnowledgeBaseView() {
   }, [currentBank, loadTree]);
 
   const allNodes = useMemo(() => flatten(roots), [roots]);
+  // Folder path of every node, bank root first ("demo / Guides"). Search returns
+  // ids and names only, so the tree is what says where a hit actually lives —
+  // two pages called "Overview" in different folders are otherwise identical.
+  const pathById = useMemo(() => {
+    const byId = new Map(allNodes.map((n) => [n.id, n]));
+    const out = new Map<string, string>();
+    for (const n of allNodes) {
+      const parts: string[] = [];
+      let p = n.parent_id ? byId.get(n.parent_id) : undefined;
+      while (p) {
+        parts.unshift(p.name);
+        p = p.parent_id ? byId.get(p.parent_id) : undefined;
+      }
+      out.set(n.id, [currentBank || "/", ...parts].join(" / "));
+    }
+    return out;
+  }, [allNodes, currentBank]);
   // A synthetic top-level folder for the bank so the root itself is visible and
   // you can add folders/pages directly under it. Its "" id makes add-child create
   // at the root; it's never deletable (TreeRow hides delete for the root).
@@ -461,8 +480,8 @@ export function KnowledgeBaseView() {
       <div className="flex items-stretch overflow-hidden h-[calc(100vh-13rem)] min-h-[520px]">
         <aside className="w-1/3 flex-shrink-0 bg-muted/30 border-r border-border flex flex-col">
           {/* Hybrid search box — a query swaps the tree for ranked results. */}
-          <div className="shrink-0 border-b border-border p-2">
-            <div className="relative">
+          <div className="shrink-0 border-b border-border p-2 flex items-stretch gap-1">
+            <div className="relative flex-1">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <input
                 value={query}
@@ -480,7 +499,25 @@ export function KnowledgeBaseView() {
                 </button>
               )}
             </div>
+            <button
+              onClick={() => setAdvancedOpen(true)}
+              title={t("advancedSearchTitle")}
+              aria-label={t("advancedSearchTitle")}
+              className="flex items-center justify-center rounded-md border border-border px-1.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </button>
           </div>
+          {currentBank && advancedOpen && (
+            <KnowledgeSearchDialog
+              open
+              onOpenChange={setAdvancedOpen}
+              bankId={currentBank}
+              initialQuery={query}
+              pathById={pathById}
+              onOpenPage={openPage}
+            />
+          )}
 
           <div className="flex-1 overflow-y-auto">
             {query.trim() ? (
@@ -494,26 +531,15 @@ export function KnowledgeBaseView() {
                 </p>
               ) : (
                 <ul className="py-1">
-                  {results.map((r) => (
+                  {results.map((r, i) => (
                     <li key={r.id}>
-                      <button
+                      <KnowledgeSearchResult
+                        hit={r}
+                        rank={i + 1}
+                        path={pathById.get(r.id) ?? currentBank ?? "/"}
+                        selected={selected?.id === r.id}
                         onClick={() => openPage(r.id)}
-                        className={`w-full text-left px-3 py-2 border-l-2 transition-colors ${
-                          selected?.id === r.id
-                            ? "bg-primary/10 border-primary"
-                            : "border-transparent hover:bg-muted"
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
-                          <span className="text-sm truncate">{r.name}</span>
-                        </span>
-                        {r.snippet && (
-                          <span className="mt-0.5 block pl-5 text-xs text-muted-foreground/80 line-clamp-2">
-                            {r.snippet}
-                          </span>
-                        )}
-                      </button>
+                      />
                     </li>
                   ))}
                 </ul>

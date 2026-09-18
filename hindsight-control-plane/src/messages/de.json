@@ -2003,7 +2003,16 @@
     "editPageTitle": "Seite bearbeiten",
     "editPageDescription": "Aktualisieren Sie den Namen der Seite und die Frage, die sie neu aufbaut.",
     "editSourceQueryHint": "Wenn Sie dies ändern, wird der Inhalt der Seite aus Ihren Erinnerungen neu aufgebaut.",
-    "saveChanges": "Änderungen speichern"
+    "saveChanges": "Änderungen speichern",
+    "advancedSearchTitle": "Erweiterte Suche",
+    "advancedSearchDescription": "Führt die hybride Suche (BM25 + Vektor) auf dem Server aus und zeigt die bewerteten Seiten sowie die Rohantwort.",
+    "advancedQuery": "Suchanfrage",
+    "advancedLimit": "Limit",
+    "advancedRun": "Suchen",
+    "advancedResults": "Ergebnisse",
+    "advancedJson": "Rohes JSON",
+    "advancedMeta": "{total} Ergebnisse · {ms} ms",
+    "advancedIdle": "Starten Sie eine Suche, um bewertete Seiten und die Rohantwort zu sehen."
   },
   "home": {
     "title": "Home",

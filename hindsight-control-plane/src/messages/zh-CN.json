@@ -2003,7 +2003,16 @@
     "editPageTitle": "编辑知识页",
     "editPageDescription": "修改页面名称以及驱动其内容重构的源查询。",
     "editSourceQueryHint": "更改此项会根据你的记忆重建页面内容。",
-    "saveChanges": "保存更改"
+    "saveChanges": "保存更改",
+    "advancedSearchTitle": "高级搜索",
+    "advancedSearchDescription": "在服务器上运行混合搜索（BM25 + 向量），查看排序后的页面和原始响应。",
+    "advancedQuery": "查询",
+    "advancedLimit": "数量上限",
+    "advancedRun": "搜索",
+    "advancedResults": "结果",
+    "advancedJson": "原始 JSON",
+    "advancedMeta": "{total} 条结果 · {ms} 毫秒",
+    "advancedIdle": "运行搜索即可查看排序后的页面和原始响应。"
   },
   "home": {
     "title": "Home",

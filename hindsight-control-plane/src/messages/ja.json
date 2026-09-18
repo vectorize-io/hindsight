@@ -2003,7 +2003,16 @@
     "editPageTitle": "ページを編集",
     "editPageDescription": "ページ名と再構築の基準となるソースクエリを更新します。",
     "editSourceQueryHint": "これを変更すると、記憶に基づいてページの内容が再構築されます。",
-    "saveChanges": "変更を保存"
+    "saveChanges": "変更を保存",
+    "advancedSearchTitle": "詳細検索",
+    "advancedSearchDescription": "サーバー側のハイブリッド検索（BM25 + ベクトル）を実行し、順位付けされたページと生のレスポンスを確認します。",
+    "advancedQuery": "クエリ",
+    "advancedLimit": "件数上限",
+    "advancedRun": "検索",
+    "advancedResults": "結果",
+    "advancedJson": "生の JSON",
+    "advancedMeta": "{total} 件 · {ms} ミリ秒",
+    "advancedIdle": "検索を実行すると、順位付けされたページと生のレスポンスが表示されます。"
   },
   "home": {
     "title": "Home",

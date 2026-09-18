@@ -2003,7 +2003,16 @@
     "editPageTitle": "페이지 편집",
     "editPageDescription": "페이지 이름 및 페이지를 재구성하는 소스 쿼리를 업데이트합니다.",
     "editSourceQueryHint": "이 항목을 변경하면 기억을 기반으로 페이지 내용이 다시 생성됩니다.",
-    "saveChanges": "변경사항 저장"
+    "saveChanges": "변경사항 저장",
+    "advancedSearchTitle": "고급 검색",
+    "advancedSearchDescription": "서버에서 하이브리드 검색(BM25 + 벡터)을 실행하고 순위가 매겨진 페이지와 원본 응답을 확인합니다.",
+    "advancedQuery": "질의",
+    "advancedLimit": "개수 제한",
+    "advancedRun": "검색",
+    "advancedResults": "결과",
+    "advancedJson": "원본 JSON",
+    "advancedMeta": "결과 {total}개 · {ms} ms",
+    "advancedIdle": "검색을 실행하면 순위가 매겨진 페이지와 원본 응답이 표시됩니다."
   },
   "home": {
     "title": "Home",

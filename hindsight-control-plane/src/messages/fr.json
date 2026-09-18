@@ -2003,7 +2003,16 @@
     "editPageTitle": "Modifier la page",
     "editPageDescription": "Mettez à jour le nom de la page et la question qui la reconstruit.",
     "editSourceQueryHint": "Modifier ceci reconstruit le contenu de la page à partir de vos mémoires.",
-    "saveChanges": "Enregistrer les modifications"
+    "saveChanges": "Enregistrer les modifications",
+    "advancedSearchTitle": "Recherche avancée",
+    "advancedSearchDescription": "Lance la recherche hybride (BM25 + vectorielle) sur le serveur et affiche les pages classées ainsi que la réponse brute.",
+    "advancedQuery": "Requête",
+    "advancedLimit": "Limite",
+    "advancedRun": "Rechercher",
+    "advancedResults": "Résultats",
+    "advancedJson": "JSON brut",
+    "advancedMeta": "{total} résultats · {ms} ms",
+    "advancedIdle": "Lancez une recherche pour voir les pages classées et la réponse brute."
   },
   "home": {
     "title": "Home",
