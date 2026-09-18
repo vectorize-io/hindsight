@@ -1407,8 +1407,8 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         _ = transformers.AutoTokenizer
 
         try:
-            import mlx.core  # noqa: F401
-            import mlx_lm  # noqa: F401
+            import mlx.core  # noqa: F401  # ty: ignore[unresolved-import]
+            import mlx_lm  # noqa: F401  # ty: ignore[unresolved-import]
         except ImportError as exc:
             # Only swallow "package not installed" errors. Anything else (e.g. a
             # transitive import failure inside mlx_lm) must surface verbatim so

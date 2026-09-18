@@ -17,13 +17,13 @@ import numpy as np
 
 class _MLPProjector:
     def __init__(self):
-        import mlx.nn as nn
+        import mlx.nn as nn  # ty: ignore[unresolved-import]
 
         self.linear1 = nn.Linear(1024, 512, bias=False)
         self.linear2 = nn.Linear(512, 512, bias=False)
 
     def __call__(self, x):
-        import mlx.nn as nn
+        import mlx.nn as nn  # ty: ignore[unresolved-import]
 
         x = self.linear1(x)
         x = nn.relu(x)
@@ -32,7 +32,7 @@ class _MLPProjector:
 
 
 def _load_projector(projector_path: str) -> _MLPProjector:
-    import mlx.core as mx
+    import mlx.core as mx  # ty: ignore[unresolved-import]
     from safetensors import safe_open
 
     projector = _MLPProjector()
@@ -90,7 +90,7 @@ class MLXReranker:
     _QUERY_TOKEN_ID = 151671
 
     def __init__(self, model_path: str, projector_path: str):
-        from mlx_lm import load
+        from mlx_lm import load  # ty: ignore[unresolved-import]
 
         self.model, self.tokenizer = load(model_path)
         self.model.eval()
@@ -103,7 +103,7 @@ class MLXReranker:
         Returns a list of dicts with keys: document, relevance_score, index.
         Sorted by descending relevance_score.
         """
-        import mlx.core as mx
+        import mlx.core as mx  # ty: ignore[unresolved-import]
 
         prompt = _format_prompt(query, documents, self._SPECIAL_TOKENS)
         input_ids = self.tokenizer.encode(prompt)

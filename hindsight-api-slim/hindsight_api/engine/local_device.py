@@ -205,7 +205,7 @@ def _empty_gpu_cache(device_type: str | None) -> None:
         # this the cache is effectively unbounded. torch has no "mlx" attribute, so
         # the lookup below would silently free nothing.
         try:
-            import mlx.core as mx
+            import mlx.core as mx  # ty: ignore[unresolved-import]
 
             mx.clear_cache()
         except Exception:  # pragma: no cover - defensive
