@@ -133,11 +133,14 @@ local-ml = [
     "torch>=2.11.0",
     "einops>=0.8.2",
     "flashrank>=0.2.0",
-    # Apple Silicon local inference — mlx publishes wheels only for
-    # macOS/Linux, not Windows, so gate on platform to let `uv sync
-    # --all-extras` resolve on win_amd64 runners.
-    "mlx>=0.31.0; sys_platform != 'win32'",
-    "mlx-lm>=0.31.1; sys_platform != 'win32'",
+    # Apple Silicon local inference. mlx is Apple's Metal/unified-memory
+    # framework: the only provider using it (`jina-mlx` reranker) refuses to
+    # start anywhere else, and mlx's Linux wheels are CPU-only, exist only for
+    # manylinux_2_35 (glibc >= 2.35) and ship no sdist — so on older-glibc Linux
+    # the whole `[all]` extra became unresolvable and pip silently backtracked
+    # to an ancient release with a pre-CVE torch pin. See issue #4499.
+    "mlx>=0.31.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.31.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "safetensors>=0.6.2",
 ]
 local-llm = [

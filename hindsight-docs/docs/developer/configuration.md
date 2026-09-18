@@ -1389,6 +1389,8 @@ Both support the same providers:
 
 The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface.co/jinaai/jina-reranker-v3-mlx), optimized for Apple Silicon. The model (~1.2 GB) is downloaded from HuggingFace Hub automatically on first startup and cached locally.
 
+This provider is **macOS on Apple Silicon only** — `mlx` is Apple's Metal framework, and it is not installed on other platforms. Selecting `jina-mlx` anywhere else fails at startup; use `local` or a hosted provider there.
+
 :::note License
 `jina-reranker-v3-mlx` is licensed under CC BY-NC 4.0. Contact Jina AI for commercial usage.
 :::

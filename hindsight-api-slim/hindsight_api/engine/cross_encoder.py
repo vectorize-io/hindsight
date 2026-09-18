@@ -8,6 +8,8 @@ Configuration via environment variables - see hindsight_api.config for all env v
 
 import asyncio
 import logging
+import platform
+import sys
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -1395,6 +1397,17 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
     async def initialize(self) -> None:
         if self._reranker is not None:
             return
+
+        # mlx runs on Apple's Metal/unified-memory stack. Its Linux wheels are
+        # CPU-only and slower than the `local` provider, so this provider is not
+        # shipped there (see the local-ml extra in pyproject.toml) — fail here,
+        # at startup, instead of at the first recall with a bare ImportError.
+        if not (sys.platform == "darwin" and platform.machine() == "arm64"):
+            raise RuntimeError(
+                f"Reranker provider 'jina-mlx' requires Apple Silicon (macOS arm64); "
+                f"this host is {sys.platform}/{platform.machine()}. Use "
+                f"HINDSIGHT_API_RERANKER_PROVIDER=local (or a hosted provider) instead."
+            )
 
         # Pre-warm transformers.AutoTokenizer to fully populate the transformers
         # namespace before mlx_lm imports it. transformers 5.x uses _LazyModule,
