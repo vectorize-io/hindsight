@@ -16,7 +16,12 @@ import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any, Callable
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
@@ -601,6 +606,22 @@ class AnthropicLLM(LLMInterface):
             "tools": anthropic_tools,
             "max_tokens": max_completion_tokens or _DEFAULT_MAX_TOKENS,
         }
+        # Map the canonical modes onto Anthropic's own tool_choice. A named choice
+        # rides the wire natively, so the complete tool list stays on the request
+        # instead of being narrowed to the forced tool.
+        if tool_choice.mode is LLMToolChoiceMode.NAMED:
+            forced_name = tool_choice.selected_function_name
+            matching = [tool for tool in anthropic_tools if tool.get("name") == forced_name]
+            if len(matching) != 1:
+                raise ValueError(
+                    f"Named tool_choice must reference exactly one declared tool; "
+                    f"found {len(matching)} definitions for {forced_name!r}"
+                )
+            call_params["tool_choice"] = {"type": "tool", "name": forced_name}
+        elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
+            call_params["tool_choice"] = {"type": "any"}
+        elif tool_choice.mode is LLMToolChoiceMode.NONE:
+            call_params["tool_choice"] = {"type": "none"}
         if system_prompt:
             call_params["system"] = _cached_system_blocks(system_prompt)
 
