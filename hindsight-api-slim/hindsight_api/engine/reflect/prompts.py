@@ -637,14 +637,18 @@ def _cut_entry_to_budget(entry: dict, token_budget: int) -> dict:
         output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
         output_str = str(output)
-    tokens = count_prompt_tokens(output_str)
+    cut = {**entry, "output": {"truncated": True, "content": output_str}}
+    # Count the final block, not the raw text: wrapping JSON as a string escapes
+    # quotes and newlines again, and the wrapper and tool heading also take space.
+    tokens = count_prompt_tokens(_render_history_block(cut))
     while output_str and tokens > token_budget:
         # Proportional shrink with a safety margin; the loop guards against the
         # estimate landing high, and always makes progress.
         keep = min(len(output_str) - 1, max(1, int(len(output_str) * token_budget / tokens * 0.95)))
         output_str = output_str[:keep]
-        tokens = count_prompt_tokens(output_str)
-    return {**entry, "output": {"truncated": True, "content": output_str}}
+        cut["output"]["content"] = output_str
+        tokens = count_prompt_tokens(_render_history_block(cut))
+    return cut
 
 
 def split_context_history(context_history: list[dict], max_context_tokens: int) -> list[list[dict]]:
