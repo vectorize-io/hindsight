@@ -1480,7 +1480,19 @@ def _with_iso_timestamp_pattern(fact_class: type[BaseModel]) -> type[BaseModel]:
     return create_model(f"{fact_class.__name__}IsoTimestamps", __base__=fact_class, **constrained)
 
 
-def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
+@dataclass(frozen=True)
+class ExtractionPrompt:
+    """Prebuilt extraction system prompt and Pydantic response schema.
+
+    Hoisted outside the per-chunk loop to avoid repeatedly formatting prompt templates
+    and dynamically re-generating Pydantic models via create_model() for every individual chunk.
+    """
+
+    system_prompt: str
+    response_schema: type[BaseModel]
+
+
+def _build_extraction_prompt_and_schema(config) -> ExtractionPrompt:
     """
     Build extraction prompt and response schema based on config.
 
@@ -1489,7 +1501,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     This enables JSON schema enforcement for structured outputs.
 
     Returns:
-        Tuple of (prompt, response_schema)
+        ExtractionPrompt containing system_prompt and response_schema
     """
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
@@ -1612,7 +1624,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             DynamicResponse = create_model("LabelsResponse", facts=(list[DynamicFact], ...))  # type: ignore[valid-type]
             response_schema = DynamicResponse
 
-    return prompt, response_schema
+    return ExtractionPrompt(system_prompt=prompt, response_schema=response_schema)
 
 
 @dataclass(frozen=True)
@@ -1626,7 +1638,7 @@ class ChunkPromptParts:
 
     system_prompt: str
     user_message: str
-    response_schema: type
+    response_schema: type[BaseModel]
 
 
 def build_chunk_prompt_parts(
@@ -1639,13 +1651,20 @@ def build_chunk_prompt_parts(
     context: str = "",
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
+    extraction_prompt: ExtractionPrompt | None = None,
 ) -> ChunkPromptParts:
     """Render the extraction messages for one chunk without calling the LLM.
 
     The single place both the extraction path and the prompt-preview endpoint go
     through, so a preview always reflects the real request.
+
+    When ``extraction_prompt`` is provided, reuses the precomputed system prompt and
+    response schema (hoisted outside the chunk loop to eliminate per-chunk create_model()
+    calls and repeated template formatting). When omitted, builds them on demand from
+    ``config``, guaranteeing standalone and preview callers remain self-contained.
     """
-    system_prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    if extraction_prompt is None:
+        extraction_prompt = _build_extraction_prompt_and_schema(config)
     user_message = _build_user_message(
         chunk,
         chunk_index,
@@ -1657,9 +1676,9 @@ def build_chunk_prompt_parts(
         mission_preamble=_retain_mission_preamble(config),
     )
     return ChunkPromptParts(
-        system_prompt=system_prompt,
+        system_prompt=extraction_prompt.system_prompt,
         user_message=user_message,
-        response_schema=response_schema,
+        response_schema=extraction_prompt.response_schema,
     )
 
 
@@ -1873,6 +1892,7 @@ async def _extract_facts_from_chunk(
     metadata: dict[str, str] | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    extraction_prompt: ExtractionPrompt | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -1897,6 +1917,7 @@ async def _extract_facts_from_chunk(
         context=context,
         metadata=metadata,
         agent_name=agent_name,
+        extraction_prompt=extraction_prompt,
     )
     prompt = parts.system_prompt
     response_schema = parts.response_schema
@@ -2303,6 +2324,7 @@ async def _extract_facts_with_auto_split(
     metadata: dict[str, str] | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    extraction_prompt: ExtractionPrompt | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -2323,6 +2345,9 @@ async def _extract_facts_with_auto_split(
         attachment_loader: Resolves the chunk's image placeholders back to bytes, or None
             when the caller has no images to resolve. Carried through the split
             recursion so a half-chunk keeps the images it still references.
+        vlm_config: Optional vision-capable LLMConfig for chunks with attachments.
+        extraction_prompt: Optional precomputed extraction prompt and response schema,
+            forwarded down the chunk execution and recursive split tree.
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
@@ -2345,6 +2370,7 @@ async def _extract_facts_with_auto_split(
             metadata=metadata,
             attachment_loader=attachment_loader,
             vlm_config=vlm_config,
+            extraction_prompt=extraction_prompt,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk and retry. Conversation
@@ -2382,6 +2408,7 @@ async def _extract_facts_with_auto_split(
                 metadata=metadata,
                 attachment_loader=attachment_loader,
                 vlm_config=vlm_config,
+                extraction_prompt=extraction_prompt,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -2395,6 +2422,7 @@ async def _extract_facts_with_auto_split(
                 metadata=metadata,
                 attachment_loader=attachment_loader,
                 vlm_config=vlm_config,
+                extraction_prompt=extraction_prompt,
             ),
         ]
 
@@ -2422,6 +2450,7 @@ async def extract_facts_from_text(
     agent_name: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    extraction_prompt: ExtractionPrompt | None = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -2447,6 +2476,10 @@ async def extract_facts_from_text(
             sees each image in position. None means the text carries no images (or
             the caller has no store to resolve them from), and every chunk is sent
             as plain text exactly as before.
+        vlm_config: Optional vision-capable LLMConfig for chunks with attachments.
+        extraction_prompt: Optional precomputed extraction prompt and response schema.
+            When provided, reuses the already compiled system prompt and Pydantic model
+            across all chunks in this text. When omitted, compiles them once from config.
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -2462,6 +2495,11 @@ async def extract_facts_from_text(
     route_for = getattr(llm_config, "route_for", None)
     if route_for is not None:
         llm_config = route_for(metadata)
+
+    # Build prompt and schema once for all chunks in this text (eliminates redundant
+    # dynamic create_model() and AST traversals across parallel chunks)
+    if extraction_prompt is None:
+        extraction_prompt = _build_extraction_prompt_and_schema(config)
 
     chunks = chunk_text(
         text,
@@ -2496,6 +2534,7 @@ async def extract_facts_from_text(
             metadata=metadata,
             attachment_loader=attachment_loader,
             vlm_config=vlm_config,
+            extraction_prompt=extraction_prompt,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -2723,7 +2762,7 @@ async def extract_facts_from_contents_batch_api(
     batch_requests = []
 
     # Build prompt and schema once (same for all chunks)
-    prompt, response_schema = _build_extraction_prompt_and_schema(config)
+    extraction_prompt = _build_extraction_prompt_and_schema(config)
 
     for content_index, item in enumerate(contents):
         chunks = chunk_text(
@@ -2751,7 +2790,13 @@ async def extract_facts_from_contents_batch_api(
             )
 
             # Build request body using helper function
-            request_body = _build_request_body(batch_impl, config, prompt, user_message, response_schema)
+            request_body = _build_request_body(
+                batch_impl,
+                config,
+                extraction_prompt.system_prompt,
+                user_message,
+                extraction_prompt.response_schema,
+            )
 
             batch_requests.append(
                 {"custom_id": custom_id, "method": "POST", "url": "/v1/chat/completions", "body": request_body}
@@ -3274,6 +3319,8 @@ async def extract_facts_from_contents(
     if config.retain_batch_enabled:
         return await extract_facts_from_contents_batch_api(contents, llm_config, config, pool, operation_id, schema)
 
+    extraction_prompt = _build_extraction_prompt_and_schema(config)
+
     # Step 1: Create parallel fact extraction tasks
     fact_extraction_tasks = []
     for item in contents:
@@ -3287,6 +3334,7 @@ async def extract_facts_from_contents(
             metadata=item.metadata or None,
             attachment_loader=attachment_loader,
             vlm_config=vlm_config,
+            extraction_prompt=extraction_prompt,
         )
         fact_extraction_tasks.append(task)
 

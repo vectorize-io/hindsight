@@ -78,7 +78,7 @@ def test_entity_labels_extraction_schema_has_no_ref_siblings() -> None:
     config.llm_output_language = None
     config.llm_supports_string_pattern = False
 
-    _, response_schema = _build_extraction_prompt_and_schema(config)
+    response_schema = _build_extraction_prompt_and_schema(config).response_schema
     schema = strict_json_schema(response_schema)
 
     labels_property = schema["$defs"]["LabelsFact"]["properties"]["labels"]

@@ -128,7 +128,7 @@ class TestRetainBraceSafety:
         )
 
         config = self._make_config(retain_mission='{"focus": "compliance"}')
-        prompt, _ = _build_extraction_prompt_and_schema(config)
+        prompt = _build_extraction_prompt_and_schema(config).system_prompt
         # The mission no longer lives in the (cached, bank-agnostic) system prompt;
         # it rides in the per-request user-message preamble, verbatim and unescaped
         # (the preamble is not passed through str.format(), so braces are safe).
@@ -144,7 +144,7 @@ class TestRetainBraceSafety:
             retain_extraction_mode="custom",
             retain_custom_instructions="Output as {key: value} pairs",
         )
-        prompt, _ = _build_extraction_prompt_and_schema(config)
+        prompt = _build_extraction_prompt_and_schema(config).system_prompt
         assert "{key: value}" in prompt
 
     def test_both_mission_and_custom_with_braces(self):
@@ -158,7 +158,7 @@ class TestRetainBraceSafety:
             retain_mission='{"scope": "all"}',
             retain_custom_instructions="Format: {k: v}",
         )
-        prompt, _ = _build_extraction_prompt_and_schema(config)
+        prompt = _build_extraction_prompt_and_schema(config).system_prompt
         # Mission → user-message preamble; custom instructions stay in the system prompt.
         assert '{"scope": "all"}' in _retain_mission_preamble(config)
         assert "{k: v}" in prompt

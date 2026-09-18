@@ -80,7 +80,7 @@ def _config(*, mode: str, causal: bool, supports_pattern: bool) -> MagicMock:
 
 def _fact_model(config: MagicMock) -> type:
     """The per-fact model inside the response wrapper the builder returns."""
-    _, response_schema = _build_extraction_prompt_and_schema(config)
+    response_schema = _build_extraction_prompt_and_schema(config).response_schema
     return response_schema.model_fields["facts"].annotation.__args__[0]
 
 

@@ -10,6 +10,7 @@ BadRequestError handler and not for non-dict JSON responses.
 """
 
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
+from hindsight_api.engine.retain.fact_extraction import ExtractionPrompt
 import dataclasses
 import json
 from datetime import datetime, timezone
@@ -187,7 +188,7 @@ async def test_non_dict_json_all_retries_raises():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         with pytest.raises(RuntimeError, match="non-dict JSON"):
             await _extract_facts_from_chunk(
@@ -231,7 +232,7 @@ async def test_top_level_fact_list_is_accepted_without_retry():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris in 2023.",
@@ -274,7 +275,7 @@ async def test_fact_text_alias_is_recovered(fact_fields, expected_text):
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris.",
@@ -313,7 +314,7 @@ async def test_schema_drifted_facts_are_retried_then_raise():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         with pytest.raises(RuntimeError, match="all 2 facts returned by the LLM were unusable"):
             await _extract_facts_from_chunk(
@@ -348,7 +349,7 @@ async def test_schema_drifted_facts_do_not_discard_the_usable_ones():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris in 2023.",
@@ -381,7 +382,7 @@ async def test_placeholder_what_is_skipped_without_retry_or_raise(placeholder):
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="ok thanks",
@@ -408,7 +409,7 @@ async def test_empty_facts_list_is_not_treated_as_schema_drift():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="ok thanks",
@@ -439,7 +440,7 @@ async def test_verbatim_mode_tolerates_facts_without_what():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris in 2023.",
@@ -469,7 +470,7 @@ async def test_non_dict_json_with_default_max_retries_raises():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         with pytest.raises(RuntimeError, match="non-dict JSON"):
             await _extract_facts_from_chunk(
@@ -500,7 +501,7 @@ async def test_retain_llm_max_retries_overrides_global():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         with pytest.raises(RuntimeError, match="non-dict JSON"):
             await _extract_facts_from_chunk(
@@ -534,7 +535,7 @@ async def test_zero_retry_budget_performs_single_chunk_extraction_call():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris in 2023.",
@@ -569,7 +570,7 @@ async def test_none_event_date_with_empty_facts_no_crash():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, usage = await _extract_facts_from_chunk(
             chunk="A plain text document with no timestamp.",
@@ -610,7 +611,7 @@ async def test_none_event_date_with_valid_facts_no_crash():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, usage = await _extract_facts_from_chunk(
             chunk="Alice visited Paris in 2023.",

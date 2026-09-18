@@ -21,7 +21,7 @@ def _baseline_config() -> MagicMock:
 
 
 def test_concise_prompt_keeps_user_preferences_rules_and_corrections_world():
-    prompt, _ = _build_extraction_prompt_and_schema(_baseline_config())
+    prompt = _build_extraction_prompt_and_schema(_baseline_config()).system_prompt
 
     assert '"world": Objective/external facts' in prompt
     assert "user's preferences, rules, corrections, constraints" in prompt

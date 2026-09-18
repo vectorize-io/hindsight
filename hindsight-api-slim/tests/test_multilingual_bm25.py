@@ -72,7 +72,7 @@ def test_retain_unset_does_not_inject_directive():
     config = _baseline_config()
     config.llm_output_language = None
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     assert "Respond exclusively in" not in prompt
     assert "Translate any source content" not in prompt
@@ -82,7 +82,7 @@ def test_retain_injects_directive():
     config = _baseline_config()
     config.llm_output_language = "Japanese"
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     assert "Respond exclusively in Japanese" in prompt
     assert "Translate any source content into Japanese" in prompt
@@ -94,7 +94,7 @@ def test_retain_directive_appears_after_base_prompt():
     config = _baseline_config()
     config.llm_output_language = "Spanish"
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     directive_idx = prompt.find("Respond exclusively in Spanish")
     assert directive_idx > 0
@@ -118,7 +118,7 @@ def test_retain_directive_replaces_source_language_rule(mode):
     config.retain_custom_instructions = "Extract only product mentions." if mode == "custom" else None
     config.llm_output_language = "English"
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     assert _RETAIN_DEFAULT_LANGUAGE_RULE not in prompt
     assert output_language_directive("English") in prompt
@@ -136,7 +136,7 @@ def test_retain_unset_requires_source_language(mode):
     config.retain_custom_instructions = "Extract only product mentions." if mode == "custom" else None
     config.llm_output_language = None
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     assert _RETAIN_DEFAULT_LANGUAGE_RULE in prompt
     assert "Respond exclusively in" not in prompt
@@ -149,7 +149,7 @@ def test_retain_works_with_custom_mode():
     config.retain_custom_instructions = "Extract only product mentions."
     config.llm_output_language = "French"
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
 
     assert "Extract only product mentions." in prompt
     assert "Respond exclusively in French" in prompt
