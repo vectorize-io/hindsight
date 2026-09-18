@@ -29,6 +29,8 @@ signal to re-run, not proof of a regression.
 The knowledge-page and reflect suites share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
 specific baited falsehood — the one that matters). The trap is asserted first.
+The two retain suites bring their own inputs, because they grade ingestion
+rather than retrieval.
 
 **`test_01` — knowledge-page convergence.** A page is created with a source
 query and then *accumulates*: data arrives in waves and each refresh edits what
@@ -58,6 +60,24 @@ other than the input's is the trap. The regression behind it (#4283): English
 coding-agent sessions stored as Spanish, French or Russian facts — about one run
 in six on gpt-5.6-luna. Italian and Japanese inputs guard the other direction, a
 fix that just forces English. It does not use the corpus.
+
+**`test_04` — retain fidelity.** The other retain suite asks whether a fact is
+written in the right language; this one asks whether it is true. Each document
+states a date, an owner or a place for one subject, then makes a claim about a
+different subject that has none of its own — and the extracted fact must not
+carry the borrowed value across. A fabrication here is the worst kind, because
+reflect can be asked again while an invented date is written once and read back
+as fact forever. Behind it (#4457): `when`/`where`/`who`/`why` were required
+non-null strings, so under strict structured output a model had no legal way to
+say "not stated" and supplied the nearest plausible value instead.
+
+It verifies behaviour rather than guarding the regression, and the difference
+was measured: Qwen3.6-35B under strict schema passes all three cases with the
+nullable fields *and* with the old required-non-null ones. The pressure to
+invent a value only bites a model weak enough to feel it — the reported case was
+a 9B — so a green run means "extraction is sound on this model", not "the
+regression cannot return". The test that fails on that is
+`hindsight-api-slim/tests/test_fact_extraction_nullable_dimensions.py`.
 
 ## The corpus
 

@@ -111,6 +111,14 @@ def provider_environment() -> dict[str, str]:
         )
     if base_url := pick("LLM_BASE_URL"):
         env["HINDSIGHT_API_LLM_BASE_URL"] = base_url
+    # Strict structured output changes what the model is even able to emit: every
+    # declared property becomes required, so a field the text gives no value for
+    # still has to carry one. That pressure is where a whole class of extraction
+    # fabrications comes from (#4457), and it is off by default — so an eval that
+    # cannot switch it on cannot reproduce the condition its own suite exists to
+    # measure. Passed through rather than inherited, like everything else here.
+    if strict := pick("LLM_STRICT_SCHEMA"):
+        env["HINDSIGHT_API_LLM_STRICT_SCHEMA"] = strict
     return env
 
 

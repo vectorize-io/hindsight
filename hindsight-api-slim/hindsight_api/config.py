@@ -767,6 +767,7 @@ ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
+ENV_RETAIN_OPTIONAL_FACT_DIMENSIONS = "HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
@@ -1585,6 +1586,19 @@ DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) k
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
+# Let a fact leave when/where/who/why empty instead of filling them with "N/A" (#4457).
+# Off by default because it is not free: the four fields become `string | null` and the
+# prompt stops naming a placeholder, and on a capable model that measurably changes what
+# comes back -- with `why` droppable, "the user asked me to refactor X" is emitted as its
+# own world fact instead of riding along as the agent fact's rationale. That is a
+# defensible reading, but it is a different one, so existing deployments keep today's
+# behaviour and operators opt in. Worth turning on for a small local model under strict
+# structured output, where "must emit a string" is what produces invented dates.
+#
+# Server-level, not per-bank: it decides how the extraction prompt and schema are built
+# for the whole process, and the deployments that want it are the ones running one weak
+# model everywhere, not a single bank on an otherwise capable server.
+DEFAULT_RETAIN_OPTIONAL_FACT_DIMENSIONS = False
 DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom", "verbatim", "chunks")  # Allowed extraction modes
 DEFAULT_RETAIN_MISSION = None  # Declarative spec of what to retain (injected into any extraction mode)
@@ -3223,6 +3237,7 @@ class HindsightConfig:
     retain_chunk_size: int
     retain_structured_chunk_size: int | None
     retain_extract_causal_links: bool
+    retain_optional_fact_dimensions: bool
     retain_extraction_mode: str
     retain_mission: str | None
     retain_custom_instructions: str | None
@@ -4728,6 +4743,10 @@ class HindsightConfig:
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)
             ).lower()
             == "true",
+            retain_optional_fact_dimensions=_parse_boolean_env(
+                ENV_RETAIN_OPTIONAL_FACT_DIMENSIONS,
+                DEFAULT_RETAIN_OPTIONAL_FACT_DIMENSIONS,
+            ),
             retain_extraction_mode=_validate_extraction_mode(
                 os.getenv(ENV_RETAIN_EXTRACTION_MODE, DEFAULT_RETAIN_EXTRACTION_MODE)
             ),
