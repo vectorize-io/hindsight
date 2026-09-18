@@ -831,7 +831,16 @@
     "invalidatedFactsTitle": "無効化されたファクト",
     "documentUpdating": "更新中",
     "lastRefreshed": "更新 {time}",
-    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document.",
+    "dateRangeAll": "全期間",
+    "dateRangeLastHour": "過去1時間",
+    "dateRangeLast24Hours": "過去24時間",
+    "dateRangeLast7Days": "過去7日間",
+    "dateRangeLast30Days": "過去30日間",
+    "dateRangeAriaLabel": "期間で絞り込み",
+    "timeFieldAriaLabel": "時間軸",
+    "timeFieldUpdated": "最終更新",
+    "timeFieldCreated": "追加日時"
   },
   "entitiesView": {
     "viewRelations": "関係",

@@ -831,7 +831,16 @@
     "invalidatedFactsTitle": "무효화된 사실",
     "documentUpdating": "업데이트 중",
     "lastRefreshed": "새로고침 {time}",
-    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document.",
+    "dateRangeAll": "전체 기간",
+    "dateRangeLastHour": "최근 1시간",
+    "dateRangeLast24Hours": "최근 24시간",
+    "dateRangeLast7Days": "최근 7일",
+    "dateRangeLast30Days": "최근 30일",
+    "dateRangeAriaLabel": "기간으로 필터",
+    "timeFieldAriaLabel": "시간 기준",
+    "timeFieldUpdated": "마지막 업데이트",
+    "timeFieldCreated": "추가된 시점"
   },
   "entitiesView": {
     "viewRelations": "관계",

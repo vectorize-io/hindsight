@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
+import { resolveDateRangePreset } from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
 import { client, LLMRequestEntry, LLMRequestStatsBucket } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -774,17 +775,6 @@ export function LLMRequestsView() {
   const [selected, setSelected] = useState<LLMRequestEntry | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const getDateRange = useCallback((range: string): { start_date?: string; end_date?: string } => {
-    if (range === "all") return {};
-    const now = new Date();
-    const start = new Date();
-    if (range === "1h") start.setHours(now.getHours() - 1);
-    else if (range === "1d") start.setDate(now.getDate() - 1);
-    else if (range === "7d") start.setDate(now.getDate() - 7);
-    else if (range === "30d") start.setDate(now.getDate() - 30);
-    return { start_date: start.toISOString() };
-  }, []);
-
   const loadRequests = useCallback(
     async (
       newStatusFilter: string | null = statusFilter,
@@ -797,7 +787,7 @@ export function LLMRequestsView() {
 
       setLoading(true);
       try {
-        const dates = getDateRange(newDateRange);
+        const dates = resolveDateRangePreset(newDateRange);
         const data = await client.listLLMRequests(currentBank, {
           status: newStatusFilter || undefined,
           operation: newOperationFilter || undefined,
@@ -815,7 +805,7 @@ export function LLMRequestsView() {
         setLoading(false);
       }
     },
-    [currentBank, statusFilter, operationFilter, dateRange, offset, grouped, limit, getDateRange]
+    [currentBank, statusFilter, operationFilter, dateRange, offset, grouped, limit]
   );
 
   const handleGroupToggle = () => {

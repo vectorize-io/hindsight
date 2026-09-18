@@ -831,7 +831,16 @@
     "invalidatedFactsTitle": "已失效的事实",
     "documentUpdating": "更新中",
     "lastRefreshed": "已刷新 {time}",
-    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document.",
+    "dateRangeAll": "全部时间",
+    "dateRangeLastHour": "最近 1 小时",
+    "dateRangeLast24Hours": "最近 24 小时",
+    "dateRangeLast7Days": "最近 7 天",
+    "dateRangeLast30Days": "最近 30 天",
+    "dateRangeAriaLabel": "按时间筛选",
+    "timeFieldAriaLabel": "时间轴",
+    "timeFieldUpdated": "最后更新",
+    "timeFieldCreated": "首次添加"
   },
   "entitiesView": {
     "viewRelations": "关系",

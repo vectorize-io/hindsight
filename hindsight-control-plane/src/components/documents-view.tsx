@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { toast } from "sonner";
-import { client, LLMRequestEntry } from "@/lib/api";
+import { client, DocumentTimeField, LLMRequestEntry } from "@/lib/api";
+import { DateRangePreset, resolveDateRangePreset } from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
@@ -746,6 +747,11 @@ export function DocumentsView() {
   // The UI exposes the two useful modes; both map to their *_strict variant so
   // that filtering by a tag never surfaces untagged documents.
   const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
+  // The time window. `timeField` picks the axis the server filters AND orders
+  // on, so it only means anything once a range is chosen — see the note on the
+  // axis Select below.
+  const [dateRange, setDateRange] = useState<DateRangePreset>("all");
+  const [timeField, setTimeField] = useState<DocumentTimeField>("updated_at");
   const [total, setTotal] = useState(0);
 
   // Document transfer (export/import) state
@@ -808,11 +814,17 @@ export function DocumentsView() {
       setLoading(true);
       try {
         const pageOffset = (page - 1) * ITEMS_PER_PAGE;
+        const window = resolveDateRangePreset(dateRange);
         const data: any = await client.listDocuments({
           bank_id: currentBank,
           q: searchQuery,
           tags: selectedTags,
           tags_match: tagsMatch === "all" ? "all_strict" : "any_strict",
+          // Send the axis only with a window: on its own it would re-sort the
+          // list for no visible reason.
+          time_field: window.start_date ? timeField : undefined,
+          start_date: window.start_date,
+          end_date: window.end_date,
           limit: ITEMS_PER_PAGE,
           offset: pageOffset,
         });
@@ -826,7 +838,7 @@ export function DocumentsView() {
         setLastRefreshedAt(Date.now());
       }
     },
-    [currentBank, searchQuery, selectedTags, tagsMatch]
+    [currentBank, searchQuery, selectedTags, tagsMatch, dateRange, timeField]
   );
 
   // Pull in-flight/failed file uploads straight from the server's
@@ -925,11 +937,16 @@ export function DocumentsView() {
       });
   }, [documents, pendingUploads, searchQuery, selectedTags]);
 
-  const hasActiveFilters = searchQuery.trim().length > 0 || selectedTags.length > 0;
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 || selectedTags.length > 0 || dateRange !== "all";
 
   const clearFilters = () => {
     setSearchQuery("");
     setSelectedTags([]);
+    // The axis goes back to the default too — left behind, it would keep
+    // re-sorting a list the user thinks they have unfiltered.
+    setDateRange("all");
+    setTimeField("updated_at");
   };
 
   // Clicking a tag chip in the table toggles it in the filter.
@@ -1512,6 +1529,32 @@ export function DocumentsView() {
           onMatchModeChange={setTagsMatch}
           className="flex-1 min-w-[260px]"
         />
+        <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRangePreset)}>
+          <SelectTrigger className="w-[150px] h-9" aria-label={t("dateRangeAriaLabel")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value="all">{t("dateRangeAll")}</SelectItem>
+            <SelectItem value="1h">{t("dateRangeLastHour")}</SelectItem>
+            <SelectItem value="1d">{t("dateRangeLast24Hours")}</SelectItem>
+            <SelectItem value="7d">{t("dateRangeLast7Days")}</SelectItem>
+            <SelectItem value="30d">{t("dateRangeLast30Days")}</SelectItem>
+          </SelectContent>
+        </Select>
+        {/* The axis appears only alongside a window: with no range it changes
+            nothing a user can see, and the server drops documents that carry no
+            value on it. */}
+        {dateRange !== "all" && (
+          <Select value={timeField} onValueChange={(v) => setTimeField(v as DocumentTimeField)}>
+            <SelectTrigger className="w-[150px] h-9" aria-label={t("timeFieldAriaLabel")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value="updated_at">{t("timeFieldUpdated")}</SelectItem>
+              <SelectItem value="created_at">{t("timeFieldCreated")}</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         {hasActiveFilters && (
           <Button
             variant="ghost"

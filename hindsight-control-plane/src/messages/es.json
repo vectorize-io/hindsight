@@ -831,7 +831,16 @@
     "invalidatedFactsTitle": "Hechos invalidados",
     "documentUpdating": "Actualizando",
     "lastRefreshed": "Actualizado {time}",
-    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document.",
+    "dateRangeAll": "Todo el tiempo",
+    "dateRangeLastHour": "Última hora",
+    "dateRangeLast24Hours": "Últimas 24 horas",
+    "dateRangeLast7Days": "Últimos 7 días",
+    "dateRangeLast30Days": "Últimos 30 días",
+    "dateRangeAriaLabel": "Filtrar por tiempo",
+    "timeFieldAriaLabel": "Eje temporal",
+    "timeFieldUpdated": "Última actualización",
+    "timeFieldCreated": "Fecha de creación"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
