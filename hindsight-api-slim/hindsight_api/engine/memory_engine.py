@@ -8625,9 +8625,9 @@ class MemoryEngine(MemoryEngineInterface):
             bm25_results.sort(key=lambda r: r.bm25_score if hasattr(r, "bm25_score") else 0, reverse=True)
             graph_results.sort(key=lambda r: r.activation if hasattr(r, "activation") else 0, reverse=True)
             if temporal_results:
-                temporal_results.sort(
-                    key=lambda r: r.combined_score if hasattr(r, "combined_score") else 0, reverse=True
-                )
+                # temporal_score is the temporal arm's own ranking signal (float | None on
+                # RetrievalResult); combined_score only exists on ScoredResult, after fusion.
+                temporal_results.sort(key=lambda r: r.temporal_score or 0, reverse=True)
 
             # Cap each source independently before fusion so a single
             # over-expanding backend (e.g. VectorChord returning hundreds of
