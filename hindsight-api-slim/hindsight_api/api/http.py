@@ -17,7 +17,7 @@ import traceback
 import uuid
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
@@ -289,21 +289,33 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
 
 
 def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
-    """Parse an ISO-8601 query parameter, or 400 if it is not one.
+    """Parse an ISO-8601 query parameter into a tz-aware datetime, or 400.
 
-    The bare ``datetime.fromisoformat(...)`` the audit-log routes inline turns a
-    typo'd date into a 500, which reads as "the server broke" rather than "you
-    sent nonsense". Accepts a trailing ``Z``, which ``fromisoformat`` does not on
-    every supported Python.
+    Replaces the bare ``datetime.fromisoformat(...)`` the four list/audit routes
+    used to inline, which had two failure modes. A typo'd date raised ``ValueError`` out of the
+    handler and became a 500 — "the server broke" rather than "you sent nonsense".
+    And a value with no offset stayed naive, which is worse than it looks: two
+    naive bounds compare fine but reach a ``timestamptz`` column meaning whatever
+    zone the server assumes, while a naive bound next to an aware one raises
+    ``TypeError`` on comparison — not ``ValueError``, so it escaped the 400 path
+    and became a 500 as well.
+
+    A value with no offset is therefore read as UTC, which is what the repo does
+    everywhere else it parses a caller's timestamp.
+
+    Accepts a trailing ``Z``; ``fromisoformat`` does not on every supported Python.
     """
     if value is None:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Only a trailing Z is an offset; stripping every "Z" would corrupt a
+        # string that legitimately contained one elsewhere.
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
     except ValueError:
         raise HTTPException(
             status_code=400, detail=f"Invalid {param}: '{value}' is not an ISO-8601 datetime."
         ) from None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
 # The shared prose for the two list endpoints' time window (#4349). One copy so the
@@ -9952,8 +9964,8 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
                 action=action,
                 transport=transport,
-                start_date=datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date else None,
-                end_date=datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date else None,
+                start_date=_parse_iso_datetime(start_date, "start_date"),
+                end_date=_parse_iso_datetime(end_date, "end_date"),
                 limit=limit,
                 offset=offset,
             )
@@ -10043,8 +10055,8 @@ def _register_routes(app: FastAPI):
                 document_id=document_id,
                 memory_id=memory_id,
                 group=group,
-                start_date=datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date else None,
-                end_date=datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date else None,
+                start_date=_parse_iso_datetime(start_date, "start_date"),
+                end_date=_parse_iso_datetime(end_date, "end_date"),
                 limit=limit,
                 offset=offset,
             )

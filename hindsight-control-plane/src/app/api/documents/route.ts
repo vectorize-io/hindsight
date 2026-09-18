@@ -6,6 +6,10 @@ import { respondWithSdk } from "@/lib/sdk-response";
 // Tag matching modes accepted by the dataplane's list_documents endpoint.
 const TAGS_MATCH_MODES = new Set(["any", "all", "any_strict", "all_strict", "exact"]);
 
+// Time axes accepted by list_documents. Validated here rather than passed through so a
+// typo is a dropped parameter, not a 422 from the dataplane.
+const TIME_FIELDS = new Set(["created_at", "updated_at"]);
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const bankId = searchParams.get("bank_id");
@@ -31,10 +35,24 @@ export async function GET(request: NextRequest) {
   const tagsMatch =
     tags && tagsMatchParam && TAGS_MATCH_MODES.has(tagsMatchParam) ? tagsMatchParam : undefined;
 
+  const timeFieldParam = searchParams.get("time_field");
+  const timeField = timeFieldParam && TIME_FIELDS.has(timeFieldParam) ? timeFieldParam : undefined;
+  const startDate = searchParams.get("start_date") || undefined;
+  const endDate = searchParams.get("end_date") || undefined;
+
   const response = await sdk.listDocuments({
     client: lowLevelClient,
     path: { bank_id: bankId },
-    query: { q, tags, tags_match: tagsMatch, limit, offset },
+    query: {
+      q,
+      tags,
+      tags_match: tagsMatch,
+      time_field: timeField,
+      start_date: startDate,
+      end_date: endDate,
+      limit,
+      offset,
+    },
   });
   return respondWithSdk(response, "Failed to fetch documents", { request });
 }

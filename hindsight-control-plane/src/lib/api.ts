@@ -207,6 +207,17 @@ export interface OperationProgress {
 
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
+// Time axes the two list endpoints can filter and order by. The chosen axis does
+// both, and rows with no value on it are excluded — see the dataplane's
+// engine/time_filter.py.
+export type MemoryTimeField =
+  | "created_at"
+  | "updated_at"
+  | "mentioned_at"
+  | "occurred_start"
+  | "occurred_end";
+export type DocumentTimeField = "created_at" | "updated_at";
+
 export type TagResolution = "exact" | "fuzzy";
 
 export type TagGroup =
@@ -963,6 +974,12 @@ export class ControlPlaneClient {
     q?: string;
     tags?: string[];
     tags_match?: TagsMatch;
+    /** Time axis to filter and order by; `updated_at` is the default ordering. */
+    time_field?: DocumentTimeField;
+    /** ISO-8601, inclusive. */
+    start_date?: string;
+    /** ISO-8601, exclusive. */
+    end_date?: string;
     limit?: number;
     offset?: number;
   }) {
@@ -973,6 +990,9 @@ export class ControlPlaneClient {
     if (params.tags?.length && params.tags_match) {
       queryParams.append("tags_match", params.tags_match);
     }
+    if (params.time_field) queryParams.append("time_field", params.time_field);
+    if (params.start_date) queryParams.append("start_date", params.start_date);
+    if (params.end_date) queryParams.append("end_date", params.end_date);
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.offset) queryParams.append("offset", params.offset.toString());
     return this.fetchApi(`/api/documents?${queryParams}`);
@@ -1116,6 +1136,15 @@ export class ControlPlaneClient {
       state?: "valid" | "invalidated";
       documentId?: string;
       entityId?: string;
+      /**
+       * Time axis to filter and order by. Also drops memories with no value on it,
+       * so `total` counts the window rather than the bank.
+       */
+      timeField?: MemoryTimeField;
+      /** ISO-8601, inclusive. */
+      startDate?: string;
+      /** ISO-8601, exclusive. */
+      endDate?: string;
       limit?: number;
       offset?: number;
     }
@@ -1127,6 +1156,9 @@ export class ControlPlaneClient {
     if (options?.state) params.set("state", options.state);
     if (options?.documentId) params.set("document_id", options.documentId);
     if (options?.entityId) params.set("entity_id", options.entityId);
+    if (options?.timeField) params.set("time_field", options.timeField);
+    if (options?.startDate) params.set("start_date", options.startDate);
+    if (options?.endDate) params.set("end_date", options.endDate);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
     return this.fetchApi<{

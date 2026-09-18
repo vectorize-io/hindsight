@@ -58,6 +58,26 @@ class TimeClause:
     order_by: str | None
 
 
+def validate_time_window(
+    *,
+    time_field: str | None,
+    start_date: datetime | None,
+    end_date: datetime | None,
+    allowed: tuple[str, ...],
+) -> None:
+    """Reject a window the store must not be asked to answer. Raises ``ValueError``.
+
+    Separate from :func:`build_time_clause` because a store that owns its own
+    documents never reaches the SQL builder — ``list_documents`` returns to it
+    before any clause is built — and an inverted window has to be an error there
+    too, not a silently empty page on one backend and a 400 on the other.
+    """
+    if time_field is not None and time_field not in allowed:
+        raise ValueError(f"Invalid time_field '{time_field}': expected one of {', '.join(allowed)}.")
+    if start_date is not None and end_date is not None and end_date <= start_date:
+        raise ValueError("Invalid time window: end_date must be after start_date.")
+
+
 def build_time_clause(
     *,
     time_field: str | None,
@@ -66,7 +86,6 @@ def build_time_clause(
     allowed: tuple[str, ...],
     default_field: str,
     param_offset: int = 1,
-    table_alias: str = "",
 ) -> TimeClause:
     """Build the WHERE conditions and ORDER BY for one time window.
 
@@ -83,23 +102,18 @@ def build_time_clause(
             ``DOCUMENT_TIME_FIELDS``).
         default_field: The axis used when only ``start_date``/``end_date`` are given.
         param_offset: First free ``$N`` placeholder.
-        table_alias: Optional prefix, e.g. ``"mu."``.
 
     Returns:
         A ``TimeClause``. When no time parameter was given at all, it is empty
         and ``order_by`` is ``None``, so the caller's existing query is unchanged.
     """
-    if time_field is not None and time_field not in allowed:
-        raise ValueError(f"Invalid time_field '{time_field}': expected one of {', '.join(allowed)}.")
-    if start_date is not None and end_date is not None and end_date <= start_date:
-        raise ValueError("Invalid time window: end_date must be after start_date.")
+    validate_time_window(time_field=time_field, start_date=start_date, end_date=end_date, allowed=allowed)
 
     if time_field is None and start_date is None and end_date is None:
         return TimeClause(conditions=[], params=[], next_param_offset=param_offset, order_by=None)
 
-    field = time_field or default_field
     # `field` is one of `allowed` here, never caller text, so interpolating it is safe.
-    column = f"{table_alias}{field}"
+    column = time_field or default_field
 
     # Excluding NULLs is what makes the ordering total, so it belongs to the
     # window itself, not to the bounds — a bare `time_field` with no dates still
@@ -122,5 +136,5 @@ def build_time_clause(
         conditions=conditions,
         params=params,
         next_param_offset=offset,
-        order_by=f"{column} DESC, {table_alias}id",
+        order_by=f"{column} DESC, id",
     )

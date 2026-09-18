@@ -594,7 +594,7 @@ from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, bui
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
 from .task_backend import TaskBackend
-from .time_filter import DOCUMENT_TIME_FIELDS, build_time_clause
+from .time_filter import DOCUMENT_TIME_FIELDS, build_time_clause, validate_time_window
 
 # Recall ranking strategy: how the per-arm (semantic/bm25/graph/temporal) results are
 # fused and reranked into the final order.
@@ -12951,6 +12951,13 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         await self._require_bank_exists(bank_id)
+
+        # Validated here rather than inside the SQL builder below, because the store-owned branch
+        # never reaches it: without this, an inverted window is a 400 on Postgres and a silently
+        # empty page on a store that owns its documents.
+        validate_time_window(
+            time_field=time_field, start_date=start_date, end_date=end_date, allowed=DOCUMENT_TIME_FIELDS
+        )
 
         # A store that owns its document metadata keeps no rows in the SQL `documents` table, so the
         # query below would return an empty page for it. List from the store's own registry instead.

@@ -313,7 +313,11 @@ hindsight document delete my-bank meeting-2024-03-15
 Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
 ## List Documents
 
-List documents in a bank with optional filtering by ID and tags.
+List documents in a bank with optional filtering by ID, tags, and time.
+
+`start_date=` and `end_date=` restrict the results to a half-open range `[start, end)` on the timestamp named by `time_field=` — either `created_at` (when the document first arrived) or `updated_at` (its last write, and the default ordering). `time_field` also becomes the sort order, newest first.
+
+Because filtering and ordering follow the same column, `total` counts only the documents inside the window rather than the whole bank. Omit all three parameters to keep the default listing.
 
 ### Python
 

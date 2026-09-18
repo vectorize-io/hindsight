@@ -117,7 +117,7 @@ async def test_a_fact_with_no_date_on_that_axis_is_left_out(client, bank_with_tw
     assert JAZZ in _texts(everything)
 
 
-async def test_an_axis_the_bank_never_filled_answers_empty(client, bank_with_two_eras):
+async def test_an_empty_window_answers_empty_on_a_bank_that_is_not(client, bank_with_two_eras):
     """`total: 0` on a bank that plainly is not empty.
 
     Documented, and asserted here so it stays deliberate: the alternative —

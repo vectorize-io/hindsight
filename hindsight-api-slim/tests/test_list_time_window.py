@@ -33,6 +33,7 @@ from hindsight_api.engine.time_filter import (
     DOCUMENT_TIME_FIELDS,
     MEMORY_TIME_FIELDS,
     build_time_clause,
+    validate_time_window,
 )
 
 # Seeds `memory_units` directly to build the time matrix — see the note in
@@ -252,6 +253,15 @@ async def test_http_rejects_bad_dates_and_fields(api_client, memory, request_con
         )
         assert inverted.status_code == 400
 
+        # A bound with no offset is read as UTC. Left naive it would either compare
+        # against the tz-aware bound and raise TypeError — which is not ValueError,
+        # so it escaped the 400 path and surfaced as a 500 — or reach a timestamptz
+        # column meaning whatever zone the server assumes.
+        mixed = await api_client.get(base, params={"start_date": "2024-01-01", "end_date": "2024-06-01T00:00:00Z"})
+        assert mixed.status_code == 200, mixed.text
+        both_naive = await api_client.get(base, params={"start_date": "2024-01-01T00:00:00"})
+        assert both_naive.status_code == 200
+
         # The parameters are known now, so nothing reports them as ignored.
         ok = await api_client.get(base, params={"start_date": "2024-01-01T00:00:00Z"})
         assert ok.status_code == 200
@@ -311,6 +321,26 @@ def test_unknown_time_field_is_rejected_not_silently_swapped():
             end_date=None,
             allowed=MEMORY_TIME_FIELDS,
             default_field="created_at",
+        )
+
+
+def test_the_store_owned_branch_validates_too():
+    """`list_documents` returns to a store that owns its documents before any clause
+    is built, so validation has to sit in front of that branch — otherwise an
+    inverted window is a 400 on Postgres and a silently empty page elsewhere."""
+    with pytest.raises(ValueError, match="end_date must be after start_date"):
+        validate_time_window(
+            time_field=None,
+            start_date=datetime(2024, 2, 1, tzinfo=UTC),
+            end_date=datetime(2024, 1, 1, tzinfo=UTC),
+            allowed=DOCUMENT_TIME_FIELDS,
+        )
+    with pytest.raises(ValueError, match="Invalid time_field"):
+        validate_time_window(
+            time_field="mentioned_at",  # a memory axis; documents have no such column
+            start_date=None,
+            end_date=None,
+            allowed=DOCUMENT_TIME_FIELDS,
         )
 
 
