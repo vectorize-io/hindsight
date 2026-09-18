@@ -127,9 +127,7 @@ class TestRetrievalFlagsReachReflect:
         )
         assert run["reflect_kwargs"]["recall_chunks_max_tokens_override"] == 777
 
-    async def test_reflect_search_observations_max_tokens(
-        self, memory, request_context, patch_reflect, patch_llm_call
-    ):
+    async def test_reflect_search_observations_max_tokens(self, memory, request_context, patch_reflect, patch_llm_call):
         """The per-model budget for search_observations (#4483), below the bank default."""
         run = await _refresh_with_trigger(
             memory,

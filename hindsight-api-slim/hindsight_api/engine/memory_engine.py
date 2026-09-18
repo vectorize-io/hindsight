@@ -15168,18 +15168,29 @@ class MemoryEngine(MemoryEngineInterface):
         # key of their own — they are reflect's own knobs, so they live together in
         # one object shaped like the request fields that carry them (#4483).
         reflect_defaults: dict[str, Any] = config_dict.get("reflect_default_options") or {}
-        effective_observations_max_tokens = (
-            reflect_search_observations_max_tokens_override
-            if reflect_search_observations_max_tokens_override is not None
-            else reflect_defaults.get("reflect_search_observations_max_tokens") or DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+
+        def _reflect_option(override: Any, key: str, shipped: Any) -> Any:
+            """Resolve one option, treating only None as "not set".
+
+            ``or`` would be wrong on both fields: it reads a configured ``false``
+            (entities off) and a small budget as absent and silently restores the
+            shipped default -- the exact setting the operator asked for.
+            """
+            if override is not None:
+                return override
+            configured = reflect_defaults.get(key)
+            return shipped if configured is None else configured
+
+        effective_observations_max_tokens = _reflect_option(
+            reflect_search_observations_max_tokens_override,
+            "reflect_search_observations_max_tokens",
+            DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
         )
-        effective_reflect_search_observations_include_entities = (
-            reflect_search_observations_include_entities_override
-            if reflect_search_observations_include_entities_override is not None
-            else reflect_defaults.get("reflect_search_observations_include_entities")
+        effective_observations_include_entities = _reflect_option(
+            reflect_search_observations_include_entities_override,
+            "reflect_search_observations_include_entities",
+            True,
         )
-        if effective_reflect_search_observations_include_entities is None:
-            effective_reflect_search_observations_include_entities = True
 
         # Resolve recall overrides: caller arg (e.g. mental model trigger) → bank config → env default
         effective_recall_include_chunks = (
@@ -15226,7 +15237,7 @@ class MemoryEngine(MemoryEngineInterface):
                 last_consolidated_at=last_consolidated_at,
                 pending_consolidation=pending_consolidation,
                 source_facts_max_tokens=reflect_source_facts_max_tokens,
-                include_entities=effective_reflect_search_observations_include_entities,
+                include_entities=effective_observations_include_entities,
                 created_after=created_after,
                 created_before=created_before,
             )
