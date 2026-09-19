@@ -1239,7 +1239,10 @@ describe("cursor-cli installer", () => {
   it("install writes sessionStart, beforeSubmitPrompt, and stop hooks plus the mcp.json server entry", () => {
     const ctx = makeCtx();
     expect(run(["install", "cursor-cli"], ctx)).toBe(0);
-    const hooks = readJson(hooksPath(ctx)).hooks;
+    const cfg = readJson(hooksPath(ctx));
+    // Cursor refuses to list hooks.json in Customize > Hooks without a schema version.
+    expect(cfg.version).toBe(1);
+    const hooks = cfg.hooks;
     expect(hooks.sessionStart).toHaveLength(1);
     expect(hooks.sessionStart[0].command).toContain(join(ctx.dist, "cursor-sessionstart-hook.js"));
     expect(hooks.sessionStart[0].timeout).toBe(30);
@@ -1262,6 +1265,26 @@ describe("cursor-cli installer", () => {
     run(["uninstall", "cursor-cli"], ctx);
     expect(readJson(hooksPath(ctx)).hooks).toBeUndefined();
     expect(readJson(mcpPath(ctx)).mcpServers.hindsight).toBeUndefined();
+  });
+
+  it("fills in a missing schema version on reinstall without clobbering one already present", () => {
+    const ctx = makeCtx();
+    writeJsonAt(hooksPath(ctx), {
+      hooks: { stop: [{ command: "echo other" }] },
+    });
+    expect(run(["install", "cursor-cli"], ctx)).toBe(0);
+    expect(readJson(hooksPath(ctx)).version).toBe(1);
+    expect(
+      readJson(hooksPath(ctx)).hooks.stop.map((h: { command: string }) => h.command)
+    ).toContain("echo other");
+
+    writeJsonAt(hooksPath(ctx), {
+      version: 2,
+      hooks: { stop: [{ command: "echo other" }] },
+    });
+    expect(run(["install", "cursor-cli"], ctx)).toBe(0);
+    expect(readJson(hooksPath(ctx)).version).toBe(2);
+    expect(readJson(hooksPath(ctx)).hooks.stop).toHaveLength(2);
   });
 });
 
