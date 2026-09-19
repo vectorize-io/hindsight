@@ -182,6 +182,27 @@ async def test_deleting_the_bank_deletes_blobs_stored_under_the_tenantless_layou
 
 
 @pytest.mark.asyncio
+async def test_deleting_a_renamed_bank_reclaims_blobs_keyed_on_the_old_id(api_client, memory, pg0_db_url):
+    """`rename-bank` moves every `bank_id` column and no key, so the row outlives its prefix."""
+    from hindsight_api.admin.cli import _run_rename_bank
+    from hindsight_api.engine.memory_engine import get_current_schema
+
+    old_id = f"life-{uuid.uuid4().hex[:8]}"
+    new_id = f"life-{uuid.uuid4().hex[:8]}"
+    png = compute_attachment_hash(PNG_BYTES)
+    await _retain(api_client, old_id, [{"type": "text", "text": "only"}, _image_block()], "doc")
+    assert await _blob_exists(memory, old_id, "doc", png)
+
+    await _run_rename_bank(pg0_db_url, get_current_schema(), old_id, new_id, dry_run=False)
+
+    response = await api_client.delete(f"/v1/default/banks/{new_id}")
+    assert response.status_code == 200, response.text
+
+    # The key still names the old id, so only the row knows where the bytes are.
+    assert not await _blob_exists(memory, old_id, "doc", png)
+
+
+@pytest.mark.asyncio
 async def test_attachment_keys_are_scoped_to_the_tenant_and_the_document(memory):
     """Object stores share one bucket across tenant schemas; the key must say whose it is."""
     from hindsight_api.engine.memory_engine import get_current_schema
