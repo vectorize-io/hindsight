@@ -1010,6 +1010,51 @@ class TestMoveRenameDelete:
         )
         assert resp.status_code == 400
 
+    async def test_update_with_only_null_page_options_is_rejected(self, api_client, kb_bank):
+        # Explicit nulls mean "not changing this field" for page options, so a
+        # body made only of them has nothing to update (#4243).
+        bank_id, ids = kb_bank
+        for body in ({"source_query": None}, {"tags": None, "max_tokens": None}, {"name": None, "trigger": None}):
+            resp = await api_client.patch(
+                f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+                json=body,
+            )
+            assert resp.status_code == 400, (body, resp.text)
+
+    async def test_no_op_update_never_reads_the_node_without_authorization(
+        self, api_client, kb_bank, memory, request_context, monkeypatch
+    ):
+        # A tenant denied every write must not learn the node's name, source
+        # query, tags or trigger through a no-op PATCH (#4243).
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE, reason="forbidden")
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": None, "tags": None},
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "Nothing to update" in resp.json()["detail"]
+        # And the engine refuses the same no-op directly, before any bank access.
+        with pytest.raises(ValueError, match="Nothing to update"):
+            await memory.update_knowledge_node(bank_id=bank_id, node_id=ids.orders, request_context=request_context)
+        assert validator.write_ops == []
+        assert validator.read_ops == []
+
+    async def test_update_with_a_real_field_and_null_page_options_still_applies(self, api_client, kb_bank):
+        # The tightening only removes the no-op case: a null page option next to
+        # a real change is still "leave that field alone", as before.
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Orders (renamed)", "tags": None, "source_query": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Orders (renamed)"
+        assert resp.json()["tags"] == ["type:runbook", "sales", "revenue"]
+
     async def test_move_into_folder(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         # move the Loose root page under Policies

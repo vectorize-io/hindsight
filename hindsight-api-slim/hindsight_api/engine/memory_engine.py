@@ -19583,7 +19583,10 @@ class MemoryEngine(MemoryEngineInterface):
         cannot: null there is a real destination (the tree root), so it takes the
         ``KEEP_PARENT`` sentinel for "not supplied" instead.
 
-        Page options live on the backing mental model. Returns the updated node,
+        Page options live on the backing mental model. Raises ``ValueError`` when
+        nothing was supplied at all: an empty patch is a caller error, not a read
+        (the authorization gates below are keyed on the operations performed, so
+        a patch with none would otherwise run no gate). Returns the updated node,
         or ``None`` when the node doesn't exist — or when page options were asked
         for on something that is not a page, in which case nothing is written.
         Changing the source query does not rebuild content here; the API layer
@@ -19596,6 +19599,14 @@ class MemoryEngine(MemoryEngineInterface):
         moving = not isinstance(parent_id, KeepParentSentinel)
         new_parent: str | None = parent_id if not isinstance(parent_id, KeepParentSentinel) else None
         page_options = source_query is not None or tags is not None or max_tokens is not None or trigger is not None
+        # Every authorization gate below is keyed on an operation, so a patch that
+        # names none would run no gate and still read (and hand back) the node.
+        # Refuse it up front: an update with nothing to update is a caller error,
+        # never a read the validator was not asked about (#4243).
+        if name is None and not moving and not page_options:
+            raise ValueError(
+                "Nothing to update: provide name, parent_id, source_query, tags, max_tokens, and/or trigger"
+            )
         if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 

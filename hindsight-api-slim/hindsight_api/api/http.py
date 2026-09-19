@@ -7159,11 +7159,20 @@ def _register_routes(app: FastAPI):
             # what KEEP_PARENT stands in for. Page options live on the backing
             # mental model and each applies only when supplied (so tags=[] clears,
             # distinct from "not provided").
-            page_fields = {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
+            # A page option the client sent as null is "not changing this field" —
+            # the engine reads None that way — so it must not count as an update
+            # here either. Counting it did let a body of only nulls pass this guard
+            # with an empty operation list, and the engine then read and returned
+            # the node without any bank authorization running (#4243).
+            page_fields = {
+                field
+                for field in {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
+                if getattr(body, field) is not None
+            }
             if body.name is None and "parent_id" not in body.model_fields_set and not page_fields:
                 raise HTTPException(
                     status_code=400,
-                    detail="Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update",
+                    detail="Nothing to update: provide name, parent_id, source_query, tags, max_tokens, and/or trigger",
                 )
             # One call, one transaction: a rename must not survive the move that
             # fails after it, which is what left clients retrying against a tree
