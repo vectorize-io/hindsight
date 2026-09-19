@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MoltbotPluginAPI, ServiceConfig } from "./types.js";
 
 let directory: string;
 let service: ServiceConfig;
+let retainHook: Parameters<MoltbotPluginAPI["on"]>[1];
 let hook: Parameters<MoltbotPluginAPI["on"]>[1];
 let Client: typeof import("@vectorize-io/hindsight-client").HindsightClient;
 const memory = { results: [{ id: "fixture", text: "A fixture observation", type: "observation" }] };
@@ -49,7 +50,7 @@ beforeEach(async () => {
               bankId: "test-bank",
               dynamicBankId: false,
               autoRecall: true,
-              autoRetain: false,
+              autoRetain: true,
               recallTimeoutMs: 1000,
               retainQueuePath: join(directory, "queue.jsonl"),
               logLevel: "error",
@@ -63,6 +64,7 @@ beforeEach(async () => {
     },
     on: (name, handler) => {
       if (name === "before_prompt_build") hook = handler;
+      if (name === "agent_end") retainHook = handler;
     },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   };
@@ -104,3 +106,75 @@ it.each(["start", "stop"] as const)(
     expect(await pending).toBeUndefined();
   }
 );
+
+const transcript = {
+  success: true,
+  messages: [
+    { role: "user", content: "The project release date is October 15." },
+    { role: "assistant", content: "I will remember that release date." },
+  ],
+};
+
+it.each([false, true])(
+  "retains after lazy initialization (previously stopped: %s)",
+  async (stopped) => {
+    if (stopped) await service.stop();
+    const globalClient = (
+      globalThis as unknown as {
+        __hindsightClient: { waitForReady(): Promise<void> };
+      }
+    ).__hindsightClient;
+    await globalClient.waitForReady();
+    const retain = vi.spyOn(Client.prototype, "retain").mockResolvedValue({} as never);
+    await retainHook(transcript, ctx);
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(retain.mock.calls)).toContain("The project release date is October 15.");
+  }
+);
+
+it("does not publish a client or restart retention when stopped during lazy initialization", async () => {
+  let finish!: (response: Response) => void;
+  const health = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  vi.mocked(fetch).mockReturnValueOnce(health);
+  const globalClient = (
+    globalThis as unknown as {
+      __hindsightClient: { waitForReady(): Promise<void>; getClient(): unknown };
+    }
+  ).__hindsightClient;
+  const pending = globalClient.waitForReady();
+  await service.stop();
+  finish(new Response("{}", { headers: { "Content-Type": "application/json" } }));
+  await pending;
+  expect(globalClient.getClient()).toBeNull();
+  const retain = vi.spyOn(Client.prototype, "retain").mockResolvedValue({} as never);
+  await retainHook(transcript, ctx);
+  expect(retain).not.toHaveBeenCalled();
+});
+
+it("queues a failed retain after lazy recall and replays it on the flush timer", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.spyOn(Client.prototype, "recall").mockResolvedValue(memory as never);
+    expect(await recall()).toEqual(
+      expect.objectContaining({ prependContext: expect.stringContaining("A fixture observation") })
+    );
+    const retain = vi
+      .spyOn(Client.prototype, "retain")
+      .mockRejectedValueOnce(new Error("temporary transport failure"))
+      .mockResolvedValue({} as never);
+    await retainHook(transcript, ctx);
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(directory, "queue.jsonl"), "utf8")).toContain(
+      "The project release date is October 15."
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(retain).toHaveBeenCalledTimes(2);
+    await service.stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(retain).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});

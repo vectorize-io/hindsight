@@ -579,10 +579,31 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
     return; // Only external API mode supports lazy reinit
   }
 
+  // Lazy initialization must own the same cancellable lifecycle as start().
+  // Reuse the pre-service controller on the first generation so the recall
+  // that triggered initialization remains current. A stop/start during an
+  // await must not let this attempt publish a client or reopen the queue.
+  const reinitGeneration = serviceGeneration;
+  const reinitController =
+    serviceAbortController ??
+    (reinitGeneration === 0 ? preServiceRecallController : new AbortController());
+  serviceAbortController = reinitController;
+  const isCurrentReinit = () =>
+    serviceGeneration === reinitGeneration &&
+    serviceAbortController === reinitController &&
+    !reinitController.signal.aborted;
+
   debug("[Hindsight] Attempting lazy re-initialization...");
   try {
     await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
-    await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
+    if (!isCurrentReinit()) return;
+    await detectAppendCapability(
+      externalApi.apiUrl,
+      externalApi.apiToken,
+      reinitGeneration,
+      reinitController.signal
+    );
+    if (!isCurrentReinit()) return;
 
     const llmConfig = detectLLMConfig(config);
     clientOptions = buildClientOptions(llmConfig, config, externalApi);
@@ -593,6 +614,10 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
       await ensureBankDefaultsApplied(getStaticBankId(config), config);
     }
 
+    if (!isCurrentReinit()) return;
+    if (!retainQueue) {
+      initRetainQueue(config, reinitGeneration, reinitController.signal);
+    }
     usingExternalApi = true;
     isInitialized = true;
     // Replace the rejected initPromise with a resolved one
