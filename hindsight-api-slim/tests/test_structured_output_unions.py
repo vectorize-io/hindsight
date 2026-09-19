@@ -127,7 +127,8 @@ class TestGeminiAcceptsTheSchema:
     def test_request_carries_no_field_the_backend_rejects(self):
         """The SDK accepting a schema does not mean the backend will.
 
-        Every op model sets ``extra="forbid"``, so pydantic emits
+        The ``DeltaOperationList`` container sets ``extra="forbid"`` (the op
+        models themselves ignore extra fields, #4443), so pydantic emits
         ``additionalProperties``. The pydantic-class path drops it; the dict path
         maps it to ``Schema.additional_properties``, and Vertex answers
         ``400 INVALID_ARGUMENT: Unknown name "additional_properties"``. The SDK

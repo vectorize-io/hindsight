@@ -216,3 +216,30 @@ def test_parse_delta_operation_list_top_level_array_all_invalid_raises():
     raw = '[{"op": "append_block", "section_id": "s", "block": {"type": "paragraph", "text": "old shape"}}]'
     with pytest.raises(DeltaAllOpsInvalidError):
         parse_delta_operation_list(raw)
+
+
+def test_parse_delta_operation_list_ignores_hallucinated_extra_field():
+    """A hallucinated extra field on an otherwise-valid op must not fail the refresh (#4443).
+
+    Reflection providers occasionally decorate a delta op with a field the op schema
+    does not declare. Before the fix every op model ran with ``extra="forbid"``, so a
+    single stray key dropped the whole op; when every op in a round carried one the
+    refresh failed with ``delta_ops_failed`` and wrote nothing. ``extra="ignore"``
+    absorbs the stray key while a genuinely-wrong op (missing a required field, or a
+    wrong-typed value) still fails validation.
+    """
+    op_list = parse_delta_operation_list(
+        '[{"op": "append_block", "section_id": "s", "text": "ok", "why": "extra detail"}]'
+    )
+    assert len(op_list.operations) == 1
+    op = op_list.operations[0]
+    assert isinstance(op, AppendBlockOp)
+    assert op.section_id == "s"
+    assert op.text == "ok"
+
+
+def test_parse_delta_operation_list_still_rejects_wrong_type_despite_ignore():
+    """extra=ignore must not mask a genuinely-wrong value type (#4443)."""
+    raw = '[{"op": "append_block", "section_id": "s", "text": {"not": "a string"}}]'
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)

@@ -75,8 +75,9 @@ def _gemini_dict_schema(response_format: Any) -> dict[str, Any]:
 
     Handing the SDK a dict is not the same as handing it the pydantic class. The
     class path quietly drops keys the backend has no field for; the dict path maps
-    them faithfully, so ``extra="forbid"`` — which every delta operation model sets
-    — arrives as ``additionalProperties: false``, becomes ``Schema.additional_properties``,
+    them faithfully, so ``extra="forbid"`` — which the ``DeltaOperationList``
+    container sets (the op models themselves ignore extra fields, #4443) — arrives
+    as ``additionalProperties: false``, becomes ``Schema.additional_properties``,
     and Vertex rejects the whole request:
 
         400 INVALID_ARGUMENT: Unknown name "additional_properties" at

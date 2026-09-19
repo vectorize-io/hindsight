@@ -62,7 +62,12 @@ logger = logging.getLogger(__name__)
 
 
 class _OpBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # A model that hallucinates an extra field on an operation it otherwise emitted
+    # correctly must not cost the whole refresh. ``extra="ignore"`` drops the stray
+    # key while every genuinely-wrong op still fails on its required/typed fields,
+    # mirroring how ``_coerce_block_texts`` absorbs the id-bearing block spelling
+    # rather than rejecting it (#4443).
+    model_config = ConfigDict(extra="ignore")
 
 
 def _coerce_block_texts(value: Any) -> Any:
