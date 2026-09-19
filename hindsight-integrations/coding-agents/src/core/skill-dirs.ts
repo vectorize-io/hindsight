@@ -37,4 +37,9 @@ export const SKILL_DIRS: Record<string, string[]> = {
   // and dsh's copy with it.
   pi: [".pi", "agent", "skills"],
   "prime-agent": [".prime", "agent", "skills"],
+  // WorkBuddy's own user-level skills root (the @genie/agent-cli engine reads ~/.workbuddy).
+  workbuddy: [".workbuddy", "skills"],
+  // CodeBuddy Code reads that SAME engine's default root, ~/.codebuddy — WorkBuddy only overrides
+  // `dataFolderName`, so the two hosts differ by one product config, not by code.
+  codebuddy: [".codebuddy", "skills"],
 };
