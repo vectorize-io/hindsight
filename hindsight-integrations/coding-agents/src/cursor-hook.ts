@@ -3,7 +3,7 @@
  * hindsight-cursor-hook — the Cursor CLI entry point (a `beforeSubmitPrompt` hook).
  *
  * Install (Cursor hooks.json):
- *   { "hooks": { "beforeSubmitPrompt": [ { "command": "hindsight-cursor-hook" } ] } }
+ *   { "version": 1, "hooks": { "beforeSubmitPrompt": [ { "command": "hindsight-cursor-hook" } ] } }
  *
  * Cursor's hook contract (see the hindsight-cursor-cli integration): event on stdin carries the
  * prompt (`prompt` or `user_prompt`) and a `conversation_id`; output is

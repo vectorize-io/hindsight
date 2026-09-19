@@ -1177,6 +1177,11 @@ const cursor: HarnessInstaller = {
   install(c) {
     const hooksPath = join(c.home, ".cursor", "hooks.json");
     const cfg = readJson(hooksPath);
+    // Cursor's hooks.json schema requires a top-level `version`. Without it the
+    // Customize > Hooks view silently drops every entry (the hooks still run).
+    // The Python cursor-cli installer already setdefault's this; this adapter
+    // used to write only `hooks` and so produced a file the UI would not list.
+    cfg.version ??= 1;
     cfg.hooks = cfg.hooks ?? {};
     mergeHarnessHooks(cfg.hooks, "cursor-cli", c.dist);
     writeJson(hooksPath, cfg);
