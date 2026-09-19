@@ -239,6 +239,34 @@ class OpenAIResponsesLLM(LLMInterface):
             f"base_url={self.base_url or 'default'}"
         )
 
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether the backend ignores / rejects non-``auto`` ``tool_choice`` values.
+
+        opencode-go's ``/v1/responses`` endpoint (the host that serves muse-spark,
+        grok-4.6, gpt-5.6-luna) only accepts the default tool choice — it rejects
+        ``"required"``, ``"none"`` and named function choices with HTTP 400. We
+        detect that case by host rather than by provider name (a native OpenAI
+        deployment on the same provider name ``openai-responses`` does accept
+        them), mirroring the host-based pattern in ``cache_affinity.py``.
+
+        When this returns True the caller must downgrade any non-``auto``
+        ``tool_choice`` to ``None`` before the request reaches the wire. The
+        downgrade is best-effort — the model may still call a tool of its own
+        choosing, which is the same tradeoff the chat/completions path takes for
+        the same backend.
+        """
+        from urllib.parse import urlparse
+
+        hostname = (urlparse(self.base_url).hostname or "") if self.base_url else ""
+        # Inline host check — same shape as ``cache_affinity._host_matches``
+        # (exact match or ``.<domain>`` suffix) but kept here to avoid an import
+        # dependency on a constant that may not exist on every base branch.
+        # When the sibling ``cache_affinity`` helper grows a public constant,
+        # this can be replaced with a one-liner import.
+        if not hostname:
+            return False
+        return hostname == "opencode.ai" or hostname.endswith(".opencode.ai")
+
     def _supports_reasoning_model(self) -> bool:
         """Whether the model is an OpenAI reasoning model (gpt-5.x, o1, o3)."""
         model_lower = self.model.lower()
@@ -566,6 +594,13 @@ class OpenAIResponsesLLM(LLMInterface):
             request_tool_choice = None
         else:
             request_tool_choice = tool_choice.mode.value
+
+        # opencode-go's /v1/responses endpoint rejects every tool_choice value
+        # except the default. Downgrade to "auto" (omit the field) — same
+        # tradeoff the chat/completions path takes via
+        # OpenAICompatibleLLM._drops_tool_choice_required for the same backend.
+        if self._drops_tool_choice_required() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+            request_tool_choice = None
 
         params: dict[str, Any] = {
             "model": self.model,
