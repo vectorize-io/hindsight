@@ -214,10 +214,16 @@ const processHook = (dist: string, file: string, timeoutMs: number) => ({
  * back to "claude-code", which is why a Codex `hindsight_ingest_document` landed tagged
  * `harness:claude-code` (and derived its bank as Claude Code's) on machines running both. Every
  * registration MUST name its own harness — pass it here, never rely on the fallback.
+ * `extraArgs` is Cursor-only: Agents Window ignores stdio `cwd`, but interpolates
+ * `${workspaceFolder}` in `args`.
  */
-const mcpServerEntry = (dist: string, harness: HookHarnessName | "cline-cli") => ({
+const mcpServerEntry = (
+  dist: string,
+  harness: HookHarnessName | "cline-cli",
+  extraArgs: string[] = []
+) => ({
   command: "node",
-  args: [join(dist, "mcp-server.js")],
+  args: [join(dist, "mcp-server.js"), ...extraArgs],
   env: { HINDSIGHT_MCP_HARNESS: harness },
 });
 
@@ -1184,7 +1190,7 @@ const cursor: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: mcpServerEntry(c.dist, "cursor-cli"),
+      hindsight: mcpServerEntry(c.dist, "cursor-cli", ["${workspaceFolder}"]),
     };
     writeJson(mcpPath, mcp);
     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);

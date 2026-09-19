@@ -1251,7 +1251,7 @@ describe("cursor-cli installer", () => {
     const mcp = readJson(mcpPath(ctx));
     expect(mcp.mcpServers.hindsight).toEqual({
       command: "node",
-      args: [join(ctx.dist, "mcp-server.js")],
+      args: [join(ctx.dist, "mcp-server.js"), "${workspaceFolder}"],
       env: { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
     });
   });

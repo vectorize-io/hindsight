@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildMcpServer, resolveHarness, selectTools } from "./mcp-server";
+import { buildMcpServer, resolveHarness, resolveProjectCwd, selectTools } from "./mcp-server";
 import { resolveConfig } from "./core/config";
 import type { HindsightClient } from "./core/hindsight";
 
@@ -93,6 +93,34 @@ describe("resolveHarness", () => {
       expect(() => resolveHarness(env)).toThrow(/install <harness>/);
     }
   );
+});
+
+describe("resolveProjectCwd", () => {
+  it("uses HINDSIGHT_MCP_PROJECT_CWD when the survey set it", () => {
+    expect(
+      resolveProjectCwd({ HINDSIGHT_MCP_PROJECT_CWD: "/repo" }, ["node", "mcp.js"], "/home")
+    ).toBe("/repo");
+  });
+
+  it("on cursor-cli, uses argv[2] — Cursor interpolates ${workspaceFolder} into args, not cwd", () => {
+    expect(
+      resolveProjectCwd(
+        { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
+        ["node", "mcp.js", "/repo"],
+        "/home"
+      )
+    ).toBe("/repo");
+  });
+
+  it("ignores an uninterpolated ${workspaceFolder} argument", () => {
+    expect(
+      resolveProjectCwd(
+        { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
+        ["node", "mcp.js", "${workspaceFolder}"],
+        "/home"
+      )
+    ).toBe("/home");
+  });
 });
 
 /**

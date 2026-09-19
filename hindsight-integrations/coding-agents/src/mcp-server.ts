@@ -6,8 +6,11 @@
  * deriveBankId + the banks section, harness from the REQUIRED HINDSIGHT_MCP_HARNESS) so knowledge
  * pages, recall, and retain all land in ONE per-repo bank — this is
  * why this is a native TS server and not a reuse of the Python MCP (whose bank derivation
- * differs). MCP servers launch with the project dir as cwd; the env override is an optional
- * escape hatch (not currently set by the plugin).
+ * differs). MCP servers usually launch with the project dir as cwd; `HINDSIGHT_MCP_PROJECT_CWD`
+ * is the survey's escape hatch when they do not. Cursor's Agents Window is the other case: it
+ * spawns user-level `~/.cursor/mcp.json` from `~` and ignores stdio `cwd`. Cursor *does*
+ * interpolate `${workspaceFolder}` in `args`, so the installer passes the open workspace as
+ * argv[2] rather than as a Hindsight env setting.
  */
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -70,6 +73,27 @@ export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * Directory this process should treat as the project.
+ *
+ * Survey sets `HINDSIGHT_MCP_PROJECT_CWD`. Cursor cannot: user-level mcp.json is spawned from
+ * `~` and Cursor does not interpolate `cwd`. The installer therefore passes
+ * `${workspaceFolder}` as argv[2], which Cursor does interpolate.
+ */
+export function resolveProjectCwd(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: readonly string[] = process.argv,
+  fallbackCwd = process.cwd()
+): string {
+  const override = env.HINDSIGHT_MCP_PROJECT_CWD?.trim();
+  if (override && !override.includes("${")) return override;
+  if (env.HINDSIGHT_MCP_HARNESS === "cursor-cli") {
+    const folder = argv[2]?.trim();
+    if (folder && !folder.includes("${")) return folder;
+  }
+  return fallbackCwd;
+}
+
+/**
  * Build the MCP surface for the resolved project.
  *
  * An opted-out project intentionally has no Hindsight tools, but some clients probe `tools/list`
@@ -102,7 +126,7 @@ export function buildMcpServer(tools: ToolSpec[]): McpServer {
 }
 
 async function main() {
-  const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
+  const cwd = resolveProjectCwd();
   // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
   // `{harness}` bank template, so both routes into a repo land in ONE bank.
   const harness = resolveHarness();
