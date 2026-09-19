@@ -34,10 +34,11 @@ ARG INCLUDE_LOCAL_MODELS
 WORKDIR /app
 
 # Install system dependencies and uv
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 
@@ -164,12 +165,12 @@ WORKDIR /app
 # 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y \
+    && apt-get install -y --no-install-recommends \
     procps \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
-    && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends libicu72 2>/dev/null || apt-get install -y --no-install-recommends libicu74 2>/dev/null || apt-get install -y --no-install-recommends libicu76 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && pip uninstall --yes setuptools wheel
@@ -316,12 +317,12 @@ WORKDIR /app
 # 3.5.7 available (#3906). The tradeoff is deliberate: two builds of the same
 # commit can now resolve different package versions.
 RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y \
+    && apt-get install -y --no-install-recommends \
     procps \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
-    && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends libicu72 2>/dev/null || apt-get install -y --no-install-recommends libicu74 2>/dev/null || apt-get install -y --no-install-recommends libicu76 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && pip uninstall --yes setuptools wheel
