@@ -206,7 +206,7 @@ ENV HF_HUB_DOWNLOAD_TIMEOUT=600
 RUN if [ "$PRELOAD_ML_MODELS" = "true" ] && [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
     MAX_RETRIES=3; \
     RETRY_DELAY=10; \
-    for i in $(seq 1 $MAX_RETRIES); do \
+    for i in $(seq 1 "$MAX_RETRIES"); do \
       echo "Attempt $i/$MAX_RETRIES: Downloading ML models..."; \
       /app/api/.venv/bin/python -c "\
 import os; os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '600'; \
@@ -216,13 +216,13 @@ SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
 print('Models cached successfully')" && break; \
-      if [ $i -lt $MAX_RETRIES ]; then \
+      if [ "$i" -lt "$MAX_RETRIES" ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
-        sleep $RETRY_DELAY; \
+        sleep "$RETRY_DELAY"; \
         RETRY_DELAY=$((RETRY_DELAY * 2)); \
       fi; \
     done; \
-    if [ $i -eq $MAX_RETRIES ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
+    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
       echo "ERROR: Failed to download models after $MAX_RETRIES attempts"; \
       exit 1; \
     fi; \
@@ -390,7 +390,7 @@ ENV HF_HUB_DOWNLOAD_TIMEOUT=600
 RUN if [ "$PRELOAD_ML_MODELS" = "true" ] && [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
     MAX_RETRIES=3; \
     RETRY_DELAY=10; \
-    for i in $(seq 1 $MAX_RETRIES); do \
+    for i in $(seq 1 "$MAX_RETRIES"); do \
       echo "Attempt $i/$MAX_RETRIES: Downloading ML models..."; \
       /app/api/.venv/bin/python -c "\
 import os; os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '600'; \
@@ -400,13 +400,13 @@ SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
 print('Models cached successfully')" && break; \
-      if [ $i -lt $MAX_RETRIES ]; then \
+      if [ "$i" -lt "$MAX_RETRIES" ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
-        sleep $RETRY_DELAY; \
+        sleep "$RETRY_DELAY"; \
         RETRY_DELAY=$((RETRY_DELAY * 2)); \
       fi; \
     done; \
-    if [ $i -eq $MAX_RETRIES ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
+    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
       echo "ERROR: Failed to download models after $MAX_RETRIES attempts"; \
       exit 1; \
     fi; \
