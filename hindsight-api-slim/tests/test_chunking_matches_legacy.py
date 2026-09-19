@@ -23,6 +23,13 @@ JSONL logs, JSON conversations, markdown, source code) plus the ones that break 
 (no separator at all, only separators, a single token larger than the budget, CJK, mixed
 line endings, whitespace runs). Seeded generation adds volume without making failures
 irreproducible.
+
+One deliberate exception, since #2548: a structured unit (a JSONL line or conversation
+turn) too large even for the structured cap is no longer raw-split as text — its scalar
+fields ride along on every fragment. The comparisons below therefore skip exactly the
+budgets where that branch runs, and ``test_structured_oversized_units_use_the_envelope_splitter``
+pins the replacement contract in their place. Every plain-text shape keeps full oracle
+coverage.
 """
 
 import json
@@ -32,6 +39,7 @@ import pytest
 
 from hindsight_api.engine.retain.fact_extraction import (
     _RECURSIVE_TEXT_SEPARATORS,
+    _looks_like_jsonl,
     chunk_text,
     iter_chunks,
 )
@@ -374,11 +382,45 @@ CHUNK_SIZES = (10, 37, 100, 256, 1500, 3000, 100_000)
 # ---------------------------------------------------------------------------
 
 
+def _has_oversized_structured_unit(document: str, structured_limit: int) -> bool:
+    """Whether any JSONL line or conversation turn exceeds ``structured_limit``.
+
+    Exactly the units whose split #2548 changed: at a budget where one exists, the
+    oversized-unit branch runs and the legacy oracle no longer describes the output.
+    The check mirrors the live unit-size accounting — serialized turn length for
+    conversation arrays, raw line length for JSONL — so only the changed branch is
+    excluded from the comparison, never anything else.
+    """
+    try:
+        parsed = json.loads(document)
+    except (json.JSONDecodeError, ValueError):
+        parsed = None
+    if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
+        return any(len(json.dumps(turn, ensure_ascii=False)) > structured_limit for turn in parsed)
+    if _looks_like_jsonl(document):
+        return any(len(line) > structured_limit for line in document.splitlines() if line.strip())
+    return False
+
+
+def _sublist_index(haystack: list[str], needle: list[str]) -> int:
+    """First index where ``needle`` appears in ``haystack`` as a contiguous run, else -1."""
+    for start in range(len(haystack) - len(needle) + 1):
+        if haystack[start : start + len(needle)] == needle:
+            return start
+    return -1
+
+
 @pytest.mark.parametrize("name", sorted(CORPUS))
 def test_chunking_matches_the_implementation_it_replaced(name: str):
-    """Byte-for-byte agreement with the pre-#3756 chunker, at every chunk size."""
+    """Byte-for-byte agreement with the pre-#3756 chunker, at every chunk size.
+
+    Budgets where a structured unit is oversized are skipped — #2548 changed that
+    branch on purpose, and the envelope contract is pinned separately below.
+    """
     document = CORPUS[name]
     for max_chars in CHUNK_SIZES:
+        if _has_oversized_structured_unit(document, max_chars):
+            continue
         expected = _legacy_chunk_text(document, max_chars)
         actual = chunk_text(document, max_chars)
         assert actual == expected, f"{name} at max_chars={max_chars}"
@@ -395,6 +437,8 @@ def test_chunking_matches_with_a_structured_chunk_size(name: str):
     document = CORPUS[name]
     for max_chars in (100, 1500, 3000):
         for structured in (50, max_chars, max_chars * 4):
+            if _has_oversized_structured_unit(document, structured):
+                continue
             expected = _legacy_chunk_text(document, max_chars, structured_chunk_size=structured)
             actual = chunk_text(document, max_chars, structured_chunk_size=structured)
             assert actual == expected, f"{name} at max_chars={max_chars}, structured={structured}"

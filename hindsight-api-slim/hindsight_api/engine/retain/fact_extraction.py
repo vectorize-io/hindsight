@@ -899,15 +899,13 @@ def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limi
         turn_unit_size = len(turn_json)
         turn_size = turn_unit_size + 1  # +1 for comma
 
-        # A turn too large to keep whole even alone: flush, then split it as
-        # text. Fragment within min(structured_limit, max_chars) so no fragment
-        # exceeds the chunk budget — otherwise a downstream re-chunk would split
+        # A turn too large to keep whole even alone: flush, then split its payload
+        # with the envelope attached when possible (issue #2548). Fragments fit
+        # min(structured_limit, max_chars) — otherwise a downstream re-chunk would split
         # it again and collide on chunk_id (issue #2301).
         if turn_unit_size > structured_limit:
             yield from _flush()
-            for fragment in _iter_recursive_splits(
-                turn_json, min(structured_limit, max_chars), _RECURSIVE_TEXT_SEPARATORS
-            ):
+            for fragment in _split_structured_unit(turn_json, min(structured_limit, max_chars)):
                 emitted = True
                 yield fragment
             continue
@@ -973,6 +971,132 @@ def _looks_like_jsonl(text: str) -> bool:
     return seen >= 2
 
 
+def _split_structured_unit(unit_json: str, envelope_budget: int) -> Iterator[str]:
+    """Keep scalar context beside an oversized record's payload (issue #2548).
+
+    Follow only a dominant member, including through list wrappers, rather than
+    guessing a transcript format from field names. Fragment 1 retains all siblings;
+    subsequent fragments retain scalar siblings at every level of that spine.
+    Bounded JSON objects survive re-chunking unchanged (#2301). Preflight and replay
+    the generator so a late budget failure falls back atomically without collecting
+    a document's fragments in memory (#3756).
+    """
+
+    def serialized(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    try:
+        unit = json.loads(unit_json)
+    except (ValueError, RecursionError):
+        unit = None
+
+    def fragments() -> Iterator[str]:
+        if not isinstance(unit, dict):
+            raise ValueError("Not an object")
+
+        spine: list[tuple[dict[str, Any] | list[Any], str | int]] = []
+
+        def rebuild(part: Any, first: bool) -> str:
+            for node, key in reversed(spine):
+                if isinstance(node, dict):
+                    part = {
+                        name: part if name == key else value
+                        for name, value in node.items()
+                        if name == key or first or not isinstance(value, (dict, list))
+                    }
+                else:
+                    part = [
+                        part if index == key else value for index, value in enumerate(node) if first or index == key
+                    ]
+            return serialized(part)
+
+        payload: Any = unit
+        while isinstance(payload, (dict, list)) and payload:
+            members = payload.items() if isinstance(payload, dict) else enumerate(payload)
+            largest_key: str | int = ""
+            largest_size = total_size = 0
+            for key, value in members:
+                size = len(serialized(value))
+                total_size += size
+                if size > largest_size:
+                    largest_key, largest_size = key, size
+            # Once atomic members fit, group this container rather than
+            # needlessly splitting inside its largest element.
+            empty_container = {} if isinstance(payload, dict) else []
+            if spine and largest_size <= envelope_budget - len(rebuild(empty_container, False)):
+                break
+            child = payload[largest_key]
+            if largest_size <= total_size - largest_size:
+                break
+            # Lists are grouped atomically unless a container supplies the next
+            # spine level (e.g. a singleton list wrapping a nested record).
+            if not isinstance(child, (dict, list)) and not (isinstance(payload, dict) and isinstance(child, str)):
+                break
+            if len(spine) == 8:
+                raise ValueError("Spine too deep")
+            spine.append((payload, largest_key))
+            payload = child
+
+        if not spine:
+            raise ValueError("No payload spine")
+
+        empty = "" if isinstance(payload, str) else [] if isinstance(payload, list) else {}
+        fixed_len = len(rebuild(empty, False))
+        if fixed_len >= envelope_budget or fixed_len > envelope_budget // 2:
+            raise ValueError("Envelope dominates the budget")
+        # Reserve fragment 1's extra siblings as well. They must not force an
+        # overflow after later fragments have already been emitted.
+        content_budget = envelope_budget - max(fixed_len, len(rebuild(empty, True)))
+        if content_budget <= 0:
+            raise ValueError("First envelope does not fit")
+
+        def slices() -> Iterator[Any]:
+            if isinstance(payload, str):
+                yield from _iter_recursive_splits(payload, content_budget, _RECURSIVE_TEXT_SEPARATORS)
+                return
+            if not isinstance(payload, (dict, list)):
+                raise ValueError("Unsupported payload")
+            group: Any = {} if isinstance(payload, dict) else []
+            size = 0
+            members = payload.items() if isinstance(payload, dict) else enumerate(payload)
+            for key, value in members:
+                member_size = len(serialized(value))
+                if isinstance(payload, dict):
+                    member_size += len(serialized(key)) + 2  # key and colon
+                if member_size > content_budget:
+                    raise ValueError("Oversized atomic member")
+                if group and size + 2 + member_size > content_budget:
+                    yield group
+                    group = {} if isinstance(payload, dict) else []
+                    size = 0
+                size += (2 if group else 0) + member_size
+                if isinstance(group, dict):
+                    group[key] = value
+                else:
+                    group.append(value)
+            if group:
+                yield group
+
+        for index, part in enumerate(slices()):
+            fragment = rebuild(part, index == 0)
+            # Escaping can expand a text slice; never leak a partial structured
+            # result before deciding whether to use the original text fallback.
+            if len(fragment) > envelope_budget:
+                raise ValueError("Serialized fragment exceeds budget")
+            yield fragment
+
+    try:
+        emitted = False
+        for _ in fragments():
+            emitted = True
+        if not emitted:
+            raise ValueError("Empty payload slices")
+    except (ValueError, RecursionError):
+        yield from _iter_recursive_splits(unit_json, envelope_budget, _RECURSIVE_TEXT_SEPARATORS)
+        return
+    yield from fragments()
+
+
 def _iter_jsonl_chunks(text: str, max_chars: int, structured_limit: int) -> Iterator[str]:
     """Chunk newline-delimited JSON (JSONL) at line boundaries.
 
@@ -1003,13 +1127,13 @@ def _iter_jsonl_chunks(text: str, max_chars: int, structured_limit: int) -> Iter
         line_unit_size = len(line)
         line_size = len(line) + 1  # +1 for the joining newline
 
-        # A line too large to keep whole even alone: flush, then split it as
-        # text. Fragment within min(structured_limit, max_chars) so no fragment
-        # exceeds the chunk budget — otherwise a downstream re-chunk would split
+        # A line too large to keep whole even alone: flush, then split its payload
+        # with the envelope attached when possible (issue #2548). Fragments fit
+        # min(structured_limit, max_chars) — otherwise a downstream re-chunk would split
         # it again and collide on chunk_id (issue #2301).
         if line_unit_size > structured_limit:
             yield from _flush()
-            yield from _iter_recursive_splits(line, min(structured_limit, max_chars), _RECURSIVE_TEXT_SEPARATORS)
+            yield from _split_structured_unit(line, min(structured_limit, max_chars))
             continue
 
         # If adding this line would exceed the limit and we have lines, flush.

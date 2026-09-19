@@ -10,7 +10,12 @@ import json
 
 import pytest
 
-from hindsight_api.engine.retain.fact_extraction import chunk_text
+from hindsight_api.engine.retain.fact_extraction import (
+    _RECURSIVE_TEXT_SEPARATORS,
+    _iter_recursive_splits,
+    _split_structured_unit,
+    chunk_text,
+)
 
 # ---------------------------------------------------------------------------
 # Plain text
@@ -141,8 +146,8 @@ def test_chunk_jsonl_default_structured_unit_limit_matches_budget():
     chunks = chunk_text(text, max_chars=25)
 
     assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyyyyyyy"}',
+        '{"c": "yyyy"}',
         small,
     ]
 
@@ -183,10 +188,10 @@ def test_chunk_jsonl_structured_unit_limit_can_be_below_chunk_size():
     chunks = chunk_text(text, max_chars=55, structured_chunk_size=20)
 
     assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyy"}',
         small,
     ]
     for chunk in chunks:
@@ -194,19 +199,19 @@ def test_chunk_jsonl_structured_unit_limit_can_be_below_chunk_size():
 
 
 def test_chunk_jsonl_huge_line_is_split():
-    """A JSONL line past the structured-chunk cap is split as text — exact fragments."""
+    """A JSONL line past the structured-chunk cap is split with its envelope — exact fragments."""
     huge = json.dumps({"c": "y" * 40})  # 49 chars; budget/cap 20 -> must split
     small = json.dumps({"c": "ok"})
     text = "\n".join([huge, small])
 
     chunks = chunk_text(text, max_chars=20)
 
-    # The huge line is split into text fragments; the small line survives intact.
+    # The huge line is split into JSON objects; the small line survives intact.
     assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyy"}',
         '{"c": "ok"}',
     ]
     # No fragment exceeds the configured split budget.
@@ -277,10 +282,10 @@ def test_chunk_conversation_structured_unit_limit_can_be_below_chunk_size():
     chunks = chunk_text(text, max_chars=55, structured_chunk_size=20)
 
     assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyy"}',
         '[{"c": "ok"}]',
     ]
     for chunk in chunks:
@@ -288,18 +293,18 @@ def test_chunk_conversation_structured_unit_limit_can_be_below_chunk_size():
 
 
 def test_chunk_conversation_huge_turn_is_split():
-    """A single turn past the structured-chunk cap is split as text — exact fragments."""
+    """A single turn past the structured-chunk cap is split with its envelope — exact fragments."""
     turns = [{"c": "y" * 40}, {"c": "ok"}]
     text = json.dumps(turns)
 
     chunks = chunk_text(text, max_chars=20)
 
-    # The huge turn is split into text fragments; the small turn stays a JSON array.
+    # The huge turn is split into JSON objects; the small turn stays a JSON array.
     assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyyyyyy"}',
+        '{"c": "yyyyyyy"}',
         '[{"c": "ok"}]',
     ]
     for chunk in chunks:
@@ -455,3 +460,165 @@ def test_merged_json_array_routes_to_conversation_chunking():
         assert isinstance(parsed, list), f"Chunk must be a JSON array: {chunk[:60]}"
         assert all(isinstance(e, dict) for e in parsed), f"Every element must be a dict: {chunk[:60]}"
         assert all("role" in e for e in parsed), f"Every element must have a role key: {chunk[:60]}"
+
+
+# ---------------------------------------------------------------------------
+# Envelope-preserving structured splits (issue #2548)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("conversation", [False, True])
+@pytest.mark.parametrize("budgets", [(300, 500), (500, 300)])
+def test_structured_fragments_preserve_envelope(conversation, budgets):
+    unit = {
+        "timestamp": "2026-09-17T12:00:00Z",
+        "message": {"role": "assistant", "content": "start" + "x" * 1800 + "end"},
+    }
+    short = {"message": "done"}
+    text = json.dumps([unit, short]) if conversation else "\n".join(map(json.dumps, [unit, short]))
+    max_chars, structured_limit = budgets
+    chunks = _assert_idempotent(text, max_chars=max_chars, structured_chunk_size=structured_limit)
+    fragments = [json.loads(chunk) for chunk in chunks[:-1]]
+    assert len(fragments) > 1
+    assert all(len(chunk) <= min(budgets) and "\n" not in chunk for chunk in chunks)
+    assert all(fragment["timestamp"] == unit["timestamp"] for fragment in fragments)
+    # Also exercise the single-dict keep-whole route, beyond the small-input fast path.
+    assert all(
+        chunk_text(chunk, max_chars=50, structured_chunk_size=structured_limit) == [chunk] for chunk in chunks[:-1]
+    )
+    assert all(fragment["message"]["role"] == "assistant" for fragment in fragments)
+    assert "".join(fragment["message"]["content"] for fragment in fragments) == unit["message"]["content"]
+    assert json.loads(chunks[-1]) == ([short] if conversation else short)
+
+
+def test_structured_nested_carry_down_and_first_fragment_siblings():
+    unit = {
+        "id": "record-1",
+        "parentId": None,
+        "timestamp": "2026-09-17",
+        "extra": {"only": "first"},
+        "message": {
+            "role": "assistant",
+            "enabled": True,
+            "count": 3,
+            "score": 0.5,
+            "content": [{"type": "toolCall", "name": "write", "arguments": {"content": "x" * 4000, "path": "/p/file"}}],
+        },
+    }
+    chunks = _assert_idempotent(json.dumps([unit]), max_chars=700, structured_chunk_size=900)
+    fragments = [json.loads(chunk) for chunk in chunks]
+    assert len(fragments) > 1
+    assert all(len(chunk) <= 700 for chunk in chunks)
+    assert fragments[0]["extra"] == unit["extra"]
+    assert all("extra" not in fragment for fragment in fragments[1:])
+    for fragment in fragments:
+        assert list(fragment) == (
+            ["id", "parentId", "timestamp", "extra", "message"]
+            if "extra" in fragment
+            else ["id", "parentId", "timestamp", "message"]
+        )
+        for key in ("id", "parentId", "timestamp"):
+            assert fragment[key] == unit[key]
+        message = fragment["message"]
+        for key in ("role", "enabled", "count", "score"):
+            assert message[key] == unit["message"][key]
+        call = message["content"][0]
+        assert call["type"] == "toolCall" and call["name"] == "write"
+        assert call["arguments"]["path"] == "/p/file"
+    assert "".join(fragment["message"]["content"][0]["arguments"]["content"] for fragment in fragments) == "x" * 4000
+
+
+@pytest.mark.parametrize("conversation", [False, True])
+def test_envelope_fragments_preserve_packing_and_chunk_ids(conversation):
+    before = [{"i": 0}, {"i": 1}]
+    after = [{"i": 2}, {"i": 3}]
+    unit = {"timestamp": "yesterday", "message": {"role": "user", "content": "z" * 2000}}
+    records = [*before, unit, *after]
+    text = json.dumps(records) if conversation else "\n".join(map(json.dumps, records))
+    chunks = _assert_idempotent(text, max_chars=300, structured_chunk_size=400)
+    assert chunks[0] == (json.dumps(before) if conversation else "\n".join(map(json.dumps, before)))
+    assert chunks[-1] == (json.dumps(after) if conversation else "\n".join(map(json.dumps, after)))
+    assert all(isinstance(json.loads(chunk), dict) for chunk in chunks[1:-1])
+    assert "".join(json.loads(chunk)["message"]["content"] for chunk in chunks[1:-1]) == "z" * 2000
+    chunk_ids = [
+        f"bank_doc_{index}"
+        for index, chunk in enumerate(chunks)
+        for _ in chunk_text(chunk, max_chars=300, structured_chunk_size=400)
+    ]
+    assert len(chunk_ids) == len(chunks) == len(set(chunk_ids))
+
+
+@pytest.mark.parametrize("payload", [["x" * 25] * 30, {str(i): "x" * 25 for i in range(30)}])
+def test_structured_payload_groups_preserve_atomic_members(payload):
+    unit = {"id": "record", "payload": payload}
+    chunks = _assert_idempotent(json.dumps([unit]), max_chars=180, structured_chunk_size=180)
+    fragments = [json.loads(chunk) for chunk in chunks]
+    assert len(fragments) > 1
+    assert all(fragment["id"] == "record" for fragment in fragments)
+    assert all(len(chunk) <= 180 for chunk in chunks)
+    if isinstance(payload, list):
+        assert [item for fragment in fragments for item in fragment["payload"]] == payload
+    else:
+        assert {key: value for fragment in fragments for key, value in fragment["payload"].items()} == payload
+
+
+@pytest.mark.parametrize(
+    "unit_json,budget",
+    [
+        (json.dumps({"timestamp": "t" * 40000, "content": "x" * 80000}), 300),
+        (json.dumps({"a": "x" * 1000, "b": "y" * 1000}), 300),
+        (json.dumps({"payload": ["x" * 1000]}), 300),
+        (json.dumps({"payload": [{"a": "x" * 1000, "b": "y" * 1000}]}), 300),
+        (json.dumps({"meta": "m" * 160, "content": "x" * 1000}), 300),
+        (json.dumps({"content": '"' * 1000}), 300),
+        ('{"broken":', 5),
+        (json.dumps(["x" * 1000]), 300),
+        (json.dumps({"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": "x" * 1000}}}}}}}}}), 300),
+    ],
+    ids=[
+        "large-envelope",
+        "multiple-oversized",
+        "atomic-string",
+        "atomic-dict",
+        "overhead",
+        "escaping",
+        "invalid-json",
+        "non-object",
+        "depth",
+    ],
+)
+def test_structured_fallback_matches_recursive_split_exactly(unit_json, budget):
+    assert list(_split_structured_unit(unit_json, budget)) == list(
+        _iter_recursive_splits(unit_json, budget, _RECURSIVE_TEXT_SEPARATORS)
+    )
+
+
+def test_structured_escaped_newlines_stay_on_one_line():
+    unit = {"id": "record", "content": "x" * 1000 + "\nlast line"}
+    chunks = _assert_idempotent(json.dumps([unit]), max_chars=300, structured_chunk_size=300)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert "\n" not in chunk
+        assert len(chunk) <= 300
+        assert json.loads(chunk)["id"] == "record"
+
+
+def test_structured_list_elements_that_fit_are_not_split():
+    payload = [{"value": "x" * 65}, {}, {}, {}, {}, {}]
+    unit = {"id": "record", "payload": payload}
+    chunks = _assert_idempotent(json.dumps([unit]), max_chars=120, structured_chunk_size=120)
+    assert len(chunks) > 1
+    assert [item for chunk in chunks for item in json.loads(chunk)["payload"]] == payload
+    assert all(len(chunk) <= 120 for chunk in chunks)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [" " * 1000, "x" * 1000 + '"' * 1000, ["ok"] * 20 + ["x" * 1000]],
+    ids=["whitespace", "late-escaping", "late-oversized-element"],
+)
+def test_structured_fallback_does_not_emit_partial_or_empty_results(payload):
+    unit_json = json.dumps({"id": "record", "payload": payload})
+    assert list(_split_structured_unit(unit_json, 150)) == list(
+        _iter_recursive_splits(unit_json, 150, _RECURSIVE_TEXT_SEPARATORS)
+    )
