@@ -131,7 +131,9 @@ RUN npm exec -- next build
 # Create standalone directory structure manually
 # Note: Must exclude node_modules from find to avoid wrong server.js from next/dist/experimental/testmode/
 # Note: Must explicitly copy .next since glob * doesn't match hidden directories
-RUN STANDALONE_ROOT=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1 | xargs dirname) && \
+# Note: Use find -print -quit instead of find | head | xargs. A SHELL with pipefail
+# would fail this layer on SIGPIPE when head exits before find finishes walking the tree.
+RUN STANDALONE_ROOT=$(dirname "$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print -quit)") && \
     mkdir -p standalone && \
     cp -r "$STANDALONE_ROOT"/* standalone/ && \
     cp -r "$STANDALONE_ROOT"/.next standalone/.next && \
