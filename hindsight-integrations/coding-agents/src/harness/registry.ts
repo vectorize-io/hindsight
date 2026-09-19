@@ -70,6 +70,8 @@ export const HARNESS_NAMES = [
   // ZCode is a per-prompt HOOK host too, registered in its own CLI config
   // (~/.zcode/cli/config.json) under `hooks.events` — never the user's real Claude Code settings.
   "zcode",
+  // TraeCode is a per-prompt HOOK host registered in ~/.trae-cn/hooks.json (see src/installer.ts).
+  "traecode",
 ];
 
 const HOOK_BINS: Record<string, string> = {
@@ -84,6 +86,7 @@ const HOOK_BINS: Record<string, string> = {
   "qwen-code": "hindsight-qwen-hook",
   "factory-droid": "hindsight-droid-hook",
   zcode: "hindsight-zcode-hook",
+  traecode: "hindsight-traecode-hook",
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 

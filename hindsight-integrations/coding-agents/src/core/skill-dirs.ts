@@ -15,6 +15,9 @@
  * mechanism at all, and opencode2 has one but no directory of its own to install into — its plugin
  * registers the packaged skill in memory instead (harness/opencode2.ts, #4352).
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 export const SKILL_DIRS: Record<string, string[]> = {
   "claude-code": [".claude", "skills"],
   // Codex and dsh share the agentskills-standard root; uninstalling either removes the one copy.
@@ -32,9 +35,42 @@ export const SKILL_DIRS: Record<string, string[]> = {
   // skill removal is by fixed directory name, so installing into the shared root would make
   // `uninstall zcode` take Codex's and dsh's copy with it.
   zcode: [".zcode", "skills"],
+  // TraeCode's user-level skills root, resolved per edition by traecodeDotDir below — like ZCode's
+  // its own, never the shared agentskills root other hosts install into.
+  traecode: [".trae-cn", "skills"],
   // The pi family reads the shared ~/.agents/skills too, but writes its OWN root: skill removal is
   // by fixed directory name, so installing to the shared one would make `uninstall pi` take Codex's
   // and dsh's copy with it.
   pi: [".pi", "agent", "skills"],
   "prime-agent": [".prime", "agent", "skills"],
+};
+
+/**
+ * TRAE ships two editions whose user-level dot-dir differs: the CN build (TraeCode, this harness's
+ * target) uses `~/.trae-cn` — verified against a live install — while the international build uses
+ * `~/.trae` (docs.trae.ai: rules, commands and skills all live there). No other spelling exists.
+ * The app creates the dir itself, so whichever exists wins; with neither present, default to the
+ * CN name. The same candidates drive the Electron userData probe for mcp.json in installer.ts.
+ */
+const TRAE_DOT_DIRS = [".trae-cn", ".trae"];
+
+/** The edition's dot-dir NAME under home (kept relative — SKILL_DIRS parts are home-relative). */
+export const traecodeDotDirName = (
+  home: string,
+  exists: (p: string) => boolean = existsSync
+): string => {
+  for (const dir of TRAE_DOT_DIRS) {
+    if (exists(join(home, dir))) return dir;
+  }
+  return ".trae-cn";
+};
+
+/** Resolve a host's skills root, applying the per-edition probe for hosts whose dot-dir depends on
+ * the installed build (traecode). Callers that only need the static map keep using SKILL_DIRS. */
+export const resolveSkillDirs = (harness: string, home: string): string[] | undefined => {
+  const parts = SKILL_DIRS[harness];
+  if (harness === "traecode" && parts) {
+    return [traecodeDotDirName(home), ...parts.slice(1)];
+  }
+  return parts;
 };

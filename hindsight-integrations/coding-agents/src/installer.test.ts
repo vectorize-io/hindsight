@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
@@ -20,6 +20,25 @@ import { parse as parseToml } from "smol-toml";
 // explicit harness names so detect() (which probes PATH) never runs.
 
 const homes: string[] = [];
+
+// TraeCode resolves its user-level MCP file by Electron's OS conventions, which consult APPDATA
+// (win32) and XDG_CONFIG_HOME (linux). Left set, the install writes OUTSIDE the temp ctx.home —
+// the CI runner's XDG_CONFIG_HOME is exactly how the family sweep at "MCP registrations name the
+// calling harness" lost the file and failed on linux while every traecode-specific test (which
+// pinned the env locally) passed. Pin the whole file instead: no per-harness describe should have
+// to remember this, the same lesson as SKILL_DIRS — the list everyone forgets lives once.
+let savedEnv: Record<string, string | undefined>;
+beforeAll(() => {
+  savedEnv = { APPDATA: process.env.APPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  delete process.env.APPDATA;
+  delete process.env.XDG_CONFIG_HOME;
+});
+afterAll(() => {
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
 
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
@@ -568,6 +587,177 @@ describe("zcode installer", () => {
     expect(JSON.stringify(hooks)).toContain("their-hook");
     expect(JSON.stringify(hooks)).not.toContain("zcode-hook.js");
     expect(hooks.enabled).toBe(true);
+  });
+});
+
+describe("traecode installer", () => {
+  const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".trae-cn", "hooks.json");
+  // Mirrors traecodeMcpPath's root choice. The env vars it consults are cleared for the whole
+  // file (see the top-level beforeAll) so the resolution lands inside the temp home everywhere.
+  const mcpPath = (ctx: InstallCtx) => {
+    const root =
+      process.platform === "darwin"
+        ? join(ctx.home, "Library", "Application Support")
+        : process.platform === "win32"
+          ? join(ctx.home, "AppData", "Roaming")
+          : join(ctx.home, ".config");
+    return join(root, "Trae CN", "User", "mcp.json");
+  };
+
+  it("registers the three hooks under the hooks key of ~/.trae-cn/hooks.json, in Claude's nested shape", () => {
+    // TraeCode reads the event map from the top-level `hooks` KEY (Claude Code's settings.json
+    // shape), not from the top level of the file the way Droid's hooks.json is read — and it
+    // expects a `version` field it writes itself.
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    const doc = readJson(hooksPath(ctx));
+    expect(doc.version).toBe(1);
+    expect(Object.keys(doc.hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    const entry = (ev: string) => doc.hooks[ev][0].hooks[0];
+    for (const ev of ["SessionStart", "Stop", "UserPromptSubmit"]) {
+      expect(entry(ev).type).toBe("command");
+      // TraeCode spawns hooks through a shell, so a quoted command STRING runs — unlike ZCode.
+      expect(entry(ev).command).toContain(".js");
+    }
+    expect(entry("SessionStart").command).toContain("traecode-sessionstart-hook.js");
+    expect(entry("UserPromptSubmit").command).toContain("traecode-hook.js");
+    expect(entry("Stop").command).toContain("traecode-stop-hook.js");
+  });
+
+  it("writes the budgets as timeout, in seconds (30/30/60)", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    const entry = (ev: string) => readJson(hooksPath(ctx)).hooks[ev][0].hooks[0];
+    expect(entry("SessionStart").timeout).toBe(30);
+    expect(entry("UserPromptSubmit").timeout).toBe(30);
+    expect(entry("Stop").timeout).toBe(60);
+  });
+
+  it("leaves a version the host already wrote alone", () => {
+    const ctx = makeCtx();
+    writeJsonAt(hooksPath(ctx), { version: 2 });
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(readJson(hooksPath(ctx)).version).toBe(2);
+  });
+
+  it("is idempotent — a second install replaces our entries rather than stacking them", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    for (const ev of ["SessionStart", "UserPromptSubmit", "Stop"]) {
+      expect(readJson(hooksPath(ctx)).hooks[ev]).toHaveLength(1);
+    }
+  });
+
+  it("preserves foreign hooks on install — and on uninstall", () => {
+    const ctx = makeCtx();
+    const foreign = { hooks: [{ type: "command", command: "their-hook", timeout: 5 }] };
+    writeJsonAt(hooksPath(ctx), { version: 1, hooks: { PreToolUse: [foreign] } });
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(readJson(hooksPath(ctx)).hooks.PreToolUse).toHaveLength(1);
+
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    const doc = readJson(hooksPath(ctx));
+    expect(JSON.stringify(doc.hooks)).toContain("their-hook");
+    expect(JSON.stringify(doc.hooks)).not.toContain("traecode-hook.js");
+    expect(doc.version).toBe(1);
+  });
+
+  it("uninstall removes the file when nothing but version is left", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+    expect(existsSync(mcpPath(ctx))).toBe(false);
+  });
+
+  it("registers the stdio MCP server in the userData mcp.json, tagged with the traecode harness", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    const server = readJson(mcpPath(ctx)).mcpServers.hindsight;
+    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: "traecode" } });
+    expect(server.args[0]).toContain("mcp-server.js");
+  });
+
+  const sandboxPath = (ctx: InstallCtx) => join(ctx.home, ".trae-cn", "sandbox.json");
+
+  it("seeds a sandbox readWrite rule for ~/.hindsight — hooks run inside TraeCode's sandbox", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(readJson(sandboxPath(ctx)).filesystem.readWrite).toEqual([join(ctx.home, ".hindsight")]);
+  });
+
+  it("merges the sandbox rule without disturbing foreign rules, and never stacks duplicates", () => {
+    const ctx = makeCtx();
+    writeJsonAt(sandboxPath(ctx), {
+      filesystem: { readWrite: ["/opt/other-tool"], readOnly: ["/etc"] },
+    });
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(readJson(sandboxPath(ctx)).filesystem).toEqual({
+      readWrite: ["/opt/other-tool", join(ctx.home, ".hindsight")],
+      readOnly: ["/etc"],
+    });
+  });
+
+  it("uninstall removes our sandbox rule and keeps foreign ones", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    expect(readJson(sandboxPath(ctx)).filesystem.readWrite).toEqual([]);
+  });
+
+  it("targets the international ~/.trae dot-dir when only it exists — the edition probe", () => {
+    const ctx = ctxWithPackagedSkill();
+    mkdirSync(join(ctx.home, ".trae"), { recursive: true });
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ".trae", "hooks.json"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".trae", "skills", "hindsight-coding-agent"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".trae-cn"))).toBe(false);
+  });
+
+  it("refuses to overwrite a user-managed MCP server already named hindsight", () => {
+    const ctx = makeCtx();
+    writeJsonAt(mcpPath(ctx), {
+      mcpServers: { hindsight: { command: "their-own-proxy", args: ["serve"] } },
+    });
+    expect(run(["install", "traecode"], ctx)).not.toBe(0);
+    expect(readJson(mcpPath(ctx)).mcpServers.hindsight.command).toBe("their-own-proxy");
+    // Nothing was written: a doomed setup fails before touching any config.
+    expect(existsSync(hooksPath(ctx))).toBe(false);
+  });
+
+  it("uninstall removes our MCP entry and keeps a foreign server", () => {
+    // Plain makeCtx: ownership is decided by the dist path (isOurMcpEntry), which only the real
+    // package layout satisfies — a temp pkgRoot would read as someone else's server.
+    const ctx = makeCtx();
+    writeJsonAt(mcpPath(ctx), { mcpServers: { playwright: { command: "npx" } } });
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    const mcp = readJson(mcpPath(ctx));
+    expect(mcp.mcpServers.playwright).toBeDefined();
+    expect(mcp.mcpServers.hindsight).toBeUndefined();
+  });
+
+  /** makeCtx's pkgRoot is a synthetic /opt path the test cannot write; stage the packaged skill in
+   *  a real temp package root, like the zcode and droid tests do. */
+  const ctxWithPackagedSkill = (): InstallCtx => {
+    const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-traecodeskill-"));
+    homes.push(pkgRoot);
+    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    return { ...makeCtx(), pkgRoot, dist: join(pkgRoot, "dist") };
+  };
+
+  it("installs the companion skill in TraeCode's own root", () => {
+    const ctx = ctxWithPackagedSkill();
+    expect(run(["install", "traecode"], ctx)).toBe(0);
+    const skill = join(ctx.home, ...SKILL_DIRS.traecode, "hindsight-coding-agent", "SKILL.md");
+    expect(readFileSync(skill, "utf8")).toBe("packaged skill body");
+    expect(run(["uninstall", "traecode"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ...SKILL_DIRS.traecode, "hindsight-coding-agent"))).toBe(
+      false
+    );
   });
 });
 
@@ -1592,6 +1782,7 @@ describe("run() CLI behavior", () => {
       "dsh",
       "factory-droid",
       "zcode",
+      "traecode",
     ]);
   });
 });

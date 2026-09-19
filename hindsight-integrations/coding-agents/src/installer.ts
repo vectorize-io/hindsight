@@ -45,7 +45,7 @@ import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
-import { SKILL_DIRS } from "./core/skill-dirs";
+import { SKILL_DIRS, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
 import { formatUsageReport, readUsage } from "./core/usage";
 import { createInstallerUi, type SelectOption } from "./install-ui";
 
@@ -278,7 +278,7 @@ function stripHarnessHooks(hooks: Record<string, any>, harness: HookHarnessName)
 /** This host's skills directory, from the map core/skill-sync.ts also reads — see SKILL_DIRS for
  *  why the two sides must not keep separate copies of these paths. */
 function skillsBaseFor(c: InstallCtx, harness: string): string {
-  const parts = SKILL_DIRS[harness];
+  const parts = resolveSkillDirs(harness, c.home);
   if (!parts) throw new Error(`${harness} installs a skill but names no directory in SKILL_DIRS`);
   return join(c.home, ...parts);
 }
@@ -1866,6 +1866,131 @@ const zcode: HarnessInstaller = {
   },
 };
 
+/**
+ * TraeCode (TRAE CN's agent) keeps plain JSON files under `~/.trae-cn/`, so like Factory Droid the
+ * installer needs no CLI round-trip:
+ *
+ * - `hooks.json` - user-level hook registrations. TraeCode speaks Claude Code's hook protocol and
+ *   nests the event map under a top-level `hooks` key (Claude's settings.json shape), NOT at the
+ *   top level the way Droid's hooks.json is read. The host also writes and expects a top-level
+ *   `version` field, so the installer seeds it at 1 when absent and leaves it alone otherwise.
+ * - `mcp.json` - `mcpServers.hindsight` runs the same stdio `dist/mcp-server.js` as every other
+ *   host, tagged `HINDSIGHT_MCP_HARNESS=traecode`. A same-named foreign server blocks install
+ *   instead of being overwritten. Unlike the files above, this one is NOT under `~/.trae-cn` —
+ *   TraeCode reads user-level MCP from its Electron userData dir (see traecodeMcpPath).
+ * - `skills/` - the companion skill, in TraeCode's own user-level root (see SKILL_DIRS).
+ * - `sandbox.json` - one `filesystem.readWrite` rule for `~/.hindsight`: hooks execute inside
+ *   TraeCode's sandbox, and without the rule they fail silently (verified on a live install).
+ *
+ * TraeCode keeps sessions in an encrypted local DB or the cloud — there is no transcript file — so
+ * the journal-based lifecycle (see HOOK_HARNESSES.traecode) is the whole write-back path.
+ */
+/**
+ * TRAE splits its config across two roots: a dot-dir holding hooks.json/sandbox.json (and the
+ * skills root), and the app's Electron userData dir holding the user-level MCP file
+ * (`<userData>/User/mcp.json`, following VSCode-fork OS conventions — a `~/.trae-cn/mcp.json` is
+ * never read). Both roots are edition-branded: the CN build uses `~/.trae-cn` / "Trae CN", the
+ * international build `~/.trae` / "Trae", so every path resolves by probing for the brand dir that
+ * actually exists and falling back to the CN names (see traecodeDotDir / traecodeMcpPath).
+ */
+const traecodeMcpPath = (c: InstallCtx): string => {
+  const root =
+    process.platform === "darwin"
+      ? join(c.home, "Library", "Application Support")
+      : process.platform === "win32"
+        ? (process.env.APPDATA ?? join(c.home, "AppData", "Roaming"))
+        : (process.env.XDG_CONFIG_HOME ?? join(c.home, ".config"));
+  for (const brand of ["Trae CN", "Trae"]) {
+    const dir = join(root, brand);
+    if (existsSync(dir)) return join(dir, "User", "mcp.json");
+  }
+  return join(root, "Trae CN", "User", "mcp.json");
+};
+
+const traecode: HarnessInstaller = {
+  name: "traecode",
+  detect: (c) => existsSync(join(c.home, traecodeDotDirName(c.home))) || onPath("trae"),
+  preflight(c) {
+    const mcpPath = traecodeMcpPath(c);
+    const existing = readJson(mcpPath).mcpServers?.hindsight;
+    if (existing && !isOurMcpEntry(existing)) {
+      return (
+        `${mcpPath} already contains a user-managed MCP server named "hindsight". ` +
+        "Rename or remove that entry, then re-run install."
+      );
+    }
+  },
+  install(c) {
+    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    const doc = readJson(hooksPath);
+    doc.version = doc.version ?? 1;
+    const hooks = (doc.hooks = doc.hooks ?? {});
+    mergeHarnessHooks(hooks, "traecode", c.dist);
+    writeJson(hooksPath, doc);
+    c.log?.(`traecode: hooks merged into ${hooksPath}`);
+    installSkill(c, "traecode");
+
+    const mcpPath = traecodeMcpPath(c);
+    const mcp = readJson(mcpPath);
+    mcp.mcpServers = mcp.mcpServers ?? {};
+    mcp.mcpServers.hindsight = mcpServerEntry(c.dist, "traecode");
+    writeJson(mcpPath, mcp);
+    c.log?.(`traecode: MCP server registered in ${mcpPath}`);
+
+    // TraeCode runs every hook inside its sandbox; the profile is generated per session from the
+    // defaults plus the user's `~/.trae-cn/sandbox.json` rules. The defaults cover network and the
+    // journal's tmpdir but NOT `~/.hindsight` (logs, config), so without this rule the hooks fail
+    // silently (exit 0, zero effect) and the only workaround would be running hooks unsandboxed.
+    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    const sandbox = readJson(sandboxPath);
+    const fsRules = (sandbox.filesystem = sandbox.filesystem ?? {});
+    const readWrite = (fsRules.readWrite = fsRules.readWrite ?? []);
+    const hindsightHome = join(c.home, ".hindsight");
+    if (!readWrite.includes(hindsightHome)) {
+      readWrite.push(hindsightHome);
+      writeJson(sandboxPath, sandbox);
+      c.log?.(`traecode: sandbox readWrite rule added for ${hindsightHome}`);
+    }
+  },
+  uninstall(c) {
+    const hooksPath = join(c.home, traecodeDotDirName(c.home), "hooks.json");
+    if (existsSync(hooksPath)) {
+      const doc = readJson(hooksPath);
+      if (doc.hooks) {
+        stripHarnessHooks(doc.hooks, "traecode");
+        if (!Object.keys(doc.hooks).length) delete doc.hooks;
+      }
+      // A file holding nothing but `version` carries no information TraeCode needs: remove it
+      // rather than leave a husk. Foreign hooks keep the file (and the field) alive.
+      if (Object.keys(doc).length > 1) writeJson(hooksPath, doc);
+      else rmSync(hooksPath);
+    }
+    const mcpPath = traecodeMcpPath(c);
+    if (existsSync(mcpPath)) {
+      const mcp = readJson(mcpPath);
+      if (isOurMcpEntry(mcp.mcpServers?.hindsight)) {
+        delete mcp.mcpServers.hindsight;
+        if (Object.keys(mcp.mcpServers).length) writeJson(mcpPath, mcp);
+        else rmSync(mcpPath);
+      }
+    }
+    const sandboxPath = join(c.home, traecodeDotDirName(c.home), "sandbox.json");
+    if (existsSync(sandboxPath)) {
+      const sandbox = readJson(sandboxPath);
+      const readWrite = sandbox.filesystem?.readWrite;
+      if (Array.isArray(readWrite)) {
+        const filtered = readWrite.filter((p: unknown) => p !== join(c.home, ".hindsight"));
+        if (filtered.length !== readWrite.length) {
+          sandbox.filesystem.readWrite = filtered;
+          writeJson(sandboxPath, sandbox);
+        }
+      }
+    }
+    uninstallSkill(c, "traecode");
+    c.log?.(`traecode: hooks + MCP registration + skill removed`);
+  },
+};
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   opencode2,
@@ -1885,6 +2010,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   dsh,
   factoryDroid,
   zcode,
+  traecode,
 ];
 
 // The public executable was renamed from Gemini CLI to Antigravity's `agy`. Keep the

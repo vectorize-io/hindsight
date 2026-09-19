@@ -2,7 +2,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **TraeCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -195,6 +195,35 @@ refuses to touch an MCP server named `hindsight` that it did not write.
 > `Stop` hook records the reply - and the write-back then behaves like every other agent's,
 > appending each new turn to the same session document. `--import-conversations` is therefore not
 > available for ZCode: there is no past history on disk to backfill from.
+
+#### <img src="https://hindsight.vectorize.io/img/harness/traecode.svg" alt="" width="20" height="20" /> TraeCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install traecode
+```
+
+Three hook registrations in TraeCode's user-level `hooks.json`, a stdio MCP server under
+`mcpServers.hindsight` in its Electron userData dir (`~/Library/Application Support/Trae
+CN/User/mcp.json` on macOS — the one root that is NOT a dot-dir), the companion skill under the
+same dot-dir's `skills/`, and one `filesystem.readWrite` rule for `~/.hindsight` in `sandbox.json`:
+TraeCode executes hooks inside its sandbox, and without that rule the hooks fail silently
+(exit 0, no effect) because the sandbox blocks `~/.hindsight` writes. Network is allowed by
+default. TRAE ships two editions with different brand roots — the CN build uses `~/.trae-cn` and
+"Trae CN", the international build `~/.trae` and "Trae" — so every path resolves by probing for
+the edition dir that exists and defaulting to the CN names. Plain JSON files, no CLI round-trip - and the installer refuses to touch an
+MCP server named `hindsight` that it did not write. TraeCode speaks Claude Code's hook protocol, so
+recall and injection work exactly as they do there; the event map lives under the top-level `hooks`
+key and the `version` field the host writes is preserved.
+
+> Two manual steps remain after install (both are UI state the installer cannot write): enable the
+> hooks under TraeCode Settings > Hooks, and add the hindsight MCP server to your agent under
+> Settings > MCP.
+
+> TraeCode keeps no readable session transcript - sessions live in an encrypted local DB or the
+> cloud. Like ZCode, its conversation is journaled by the plugin itself: the prompt hook records
+> what you asked, and the `Stop` hook closes the turn with the reply it carries in
+> `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
+> there is no past history on disk to backfill from.
 
 #### <img src="https://hindsight.vectorize.io/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 
