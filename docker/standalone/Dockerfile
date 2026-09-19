@@ -92,8 +92,8 @@ COPY package.json package-lock.json ./
 COPY hindsight-clients/typescript/ ./hindsight-clients/typescript/
 
 # Install and build SDK using workspace (--ignore-scripts skips git hooks setup)
-RUN npm ci --ignore-scripts -w @vectorize-io/hindsight-client
-RUN npm run build -w @vectorize-io/hindsight-client
+RUN npm ci --ignore-scripts -w @vectorize-io/hindsight-client \
+    && npm run build -w @vectorize-io/hindsight-client
 
 # =============================================================================
 # Stage: Control Plane Builder
@@ -109,8 +109,8 @@ WORKDIR /app/memory-poc/hindsight-control-plane
 # correct platform-specific native bindings for lightningcss/tailwindcss
 COPY hindsight-control-plane/package.json ./
 # Remove the file: dependency on SDK (we'll copy it directly later)
-RUN sed -i '/"@vectorize-io\/hindsight-client":/d' package.json
-RUN npm install
+RUN sed -i '/"@vectorize-io\/hindsight-client":/d' package.json \
+    && npm install
 
 # Copy Control Plane source (excluding node_modules via .dockerignore)
 COPY hindsight-control-plane/ ./
@@ -189,11 +189,9 @@ USER hindsight
 # Create pg0 data directory as hindsight user so that Docker seeds new named
 # volumes with correct ownership (UID 1000) on first use, avoiding the
 # "Permission denied" error when mounting a fresh root-owned volume.
-RUN mkdir -p /home/hindsight/.pg0
-
 # Make /home/hindsight traversable when running with --user UID:GID overrides
 # (default 0700 blocks traversal by non-owner UIDs needed for bind-mount ownership matching)
-RUN chmod 755 /home/hindsight
+RUN mkdir -p /home/hindsight/.pg0 && chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
@@ -346,9 +344,8 @@ RUN apt-get update && apt-get upgrade -y \
 # whose control plane cannot start.
 COPY --from=cp-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=cp-builder /usr/local/LICENSE /usr/local/LICENSE
-RUN node --version && ! command -v npm
-
-RUN useradd -m -s /bin/bash hindsight
+RUN node --version && ! command -v npm \
+    && useradd -m -s /bin/bash hindsight
 
 # Copy API with virtual environment from builder
 COPY --chown=hindsight:hindsight --from=api-builder /app/api /app/api
@@ -373,11 +370,9 @@ USER hindsight
 # Create pg0 data directory as hindsight user so that Docker seeds new named
 # volumes with correct ownership (UID 1000) on first use, avoiding the
 # "Permission denied" error when mounting a fresh root-owned volume.
-RUN mkdir -p /home/hindsight/.pg0
-
 # Make /home/hindsight traversable when running with --user UID:GID overrides
 # (default 0700 blocks traversal by non-owner UIDs needed for bind-mount ownership matching)
-RUN chmod 755 /home/hindsight
+RUN mkdir -p /home/hindsight/.pg0 && chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
