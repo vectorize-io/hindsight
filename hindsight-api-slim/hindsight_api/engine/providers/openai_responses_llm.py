@@ -43,6 +43,7 @@ from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -238,6 +239,29 @@ class OpenAIResponsesLLM(LLMInterface):
             f"OpenAI Responses client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}"
         )
+
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether the backend ignores / rejects non-``auto`` ``tool_choice`` values.
+
+        opencode-go's ``/v1/responses`` endpoint (the host that serves muse-spark,
+        grok-4.6, gpt-5.6-luna) only accepts the default tool choice — it rejects
+        ``"required"``, ``"none"`` and named function choices with HTTP 400. We
+        detect that case by host rather than by provider name (a native OpenAI
+        deployment on the same provider name ``openai-responses`` does accept
+        them), mirroring the host-based pattern in ``cache_affinity.py``.
+
+        When this returns True the caller must downgrade any non-``auto``
+        ``tool_choice`` to ``None`` before the request reaches the wire. The
+        downgrade is best-effort — the model may still call a tool of its own
+        choosing, which is the same tradeoff the chat/completions path takes for
+        the same backend.
+        """
+        from urllib.parse import urlparse
+
+        from hindsight_api.engine.cache_affinity import _OPENCODE_DOMAINS, _host_matches
+
+        hostname = (urlparse(self.base_url).hostname or "") if self.base_url else ""
+        return bool(hostname) and any(_host_matches(hostname, d) for d in _OPENCODE_DOMAINS)
 
     def _supports_reasoning_model(self) -> bool:
         """Whether the model is an OpenAI reasoning model (gpt-5.x, o1, o3)."""
@@ -490,6 +514,12 @@ class OpenAIResponsesLLM(LLMInterface):
                 params["text"] = {"format": {"type": "json_object"}}
 
         apply_bank_attribution(params)
+        # opencode-go's /v1/responses endpoint requires x-opencode-session
+        # the same way /v1/chat/completions does (#4071). Host-based detection
+        # means a provider="openai-responses" deployment pointing at
+        # base_url=https://opencode.ai/zen/go/v1 (e.g. muse-spark-1.3-contributor)
+        # gets the header without operator config gymnastics.
+        apply_opencode_session(params, provider=self.provider, base_url=self.base_url)
 
         def parse(response: Any) -> Any:
             self._raise_if_truncated(response)
@@ -567,6 +597,13 @@ class OpenAIResponsesLLM(LLMInterface):
         else:
             request_tool_choice = tool_choice.mode.value
 
+        # opencode-go's /v1/responses endpoint rejects every tool_choice value
+        # except the default. Downgrade to "auto" (omit the field) — same
+        # tradeoff the chat/completions path takes via
+        # OpenAICompatibleLLM._drops_tool_choice_required for the same backend.
+        if self._drops_tool_choice_required() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+            request_tool_choice = None
+
         params: dict[str, Any] = {
             "model": self.model,
             "input": _messages_to_responses_input(messages),
@@ -589,6 +626,10 @@ class OpenAIResponsesLLM(LLMInterface):
             params["extra_body"] = {**self._config_extra_body}
 
         apply_bank_attribution(params)
+        # Mirror the call() path: opencode-go's Responses endpoint requires
+        # x-opencode-session whenever the host is opencode.ai, regardless of the
+        # configured provider name.
+        apply_opencode_session(params, provider=self.provider, base_url=self.base_url)
 
         def parse(response: Any) -> LLMToolCallResult:
             self._raise_if_truncated(response)

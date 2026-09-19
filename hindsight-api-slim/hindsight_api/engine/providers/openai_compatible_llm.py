@@ -1187,7 +1187,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # deterministic (the schema text is fixed per response_format), so the id
         # stays stable across the calls of one run.
         apply_cache_affinity(call_params, self._cache_affinity)
-        apply_opencode_session(call_params, self.provider)
+        apply_opencode_session(call_params, provider=self.provider, base_url=self.base_url)
 
         last_exception = None
 
@@ -1600,7 +1600,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         apply_bank_attribution(call_params)
         apply_cache_affinity(call_params, self._cache_affinity)
-        apply_opencode_session(call_params, self.provider)
+        apply_opencode_session(call_params, provider=self.provider, base_url=self.base_url)
 
         last_exception = None
 
