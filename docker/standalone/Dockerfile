@@ -1,9 +1,14 @@
 # Hindsight Docker Image
 # Supports building API-only, Control Plane-only, or both
 #
+# Composition is selected with --target, not with a build arg. Docker only builds the
+# stages the chosen target depends on, so --target api-only never runs the Control Plane
+# build at all:
+#   standalone (default) - API + Control Plane
+#   api-only             - API
+#   cp-only              - Control Plane
+#
 # Build args:
-#   INCLUDE_API=true/false         - Include API (default: true)
-#   INCLUDE_CP=true/false          - Include Control Plane (default: true)
 #   INCLUDE_LOCAL_MODELS=true/false - Include local ML models for embeddings/reranking (default: true)
 #                                     Set to false when using external providers (TEI, OpenAI, Cohere)
 #   PRELOAD_ML_MODELS=true/false   - Pre-download ML models during build (default: true)
@@ -11,13 +16,11 @@
 #
 # Examples:
 #   docker build -t hindsight .                                          # Both (standalone)
-#   docker build -t hindsight-api --build-arg INCLUDE_CP=false .         # API only
-#   docker build -t hindsight-cp --build-arg INCLUDE_API=false .         # Control Plane only
+#   docker build -t hindsight-api --target api-only .                    # API only
+#   docker build -t hindsight-cp --target cp-only .                      # Control Plane only
 #   docker build -t hindsight --build-arg PRELOAD_ML_MODELS=false .      # Skip ML model preload
 #   docker build -t hindsight --build-arg INCLUDE_LOCAL_MODELS=false .   # Skip local ML deps (for external providers)
 
-ARG INCLUDE_API=true
-ARG INCLUDE_CP=true
 ARG PRELOAD_ML_MODELS=true
 ARG INCLUDE_LOCAL_MODELS=true
 
@@ -26,9 +29,7 @@ ARG INCLUDE_LOCAL_MODELS=true
 # =============================================================================
 FROM python:3.11-slim AS api-builder
 
-ARG INCLUDE_API
 ARG INCLUDE_LOCAL_MODELS
-RUN if [ "$INCLUDE_API" != "true" ]; then echo "Skipping API build" && exit 0; fi
 
 WORKDIR /app
 
@@ -83,9 +84,6 @@ RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
 # =============================================================================
 FROM node:24-slim AS sdk-builder
 
-ARG INCLUDE_CP
-RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping SDK build" && exit 0; fi
-
 WORKDIR /app
 
 # Copy root package files for npm workspaces
@@ -100,9 +98,6 @@ RUN npm run build -w @vectorize-io/hindsight-client
 # Stage: Control Plane Builder
 # =============================================================================
 FROM node:24-slim AS cp-builder
-
-ARG INCLUDE_CP
-RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping CP build" && exit 0; fi
 
 # Create directory structure matching the monorepo layout
 # This is required because build:standalone script expects .next/standalone/memory-poc/hindsight-control-plane
@@ -436,12 +431,12 @@ ENV TOKENIZERS_PARALLELISM=false
 CMD ["/app/start-all.sh"]
 
 # =============================================================================
-# Default target selection based on build args
+# Stage aliases
 # =============================================================================
 FROM standalone AS default-both
 FROM api-only AS default-api
 FROM cp-only AS default-cp
 
-# This selects the final stage based on INCLUDE_API and INCLUDE_CP
-# Use --target to override: docker build --target api-only .
+# The last stage is what a build without --target produces.
+# Use --target to pick another: docker build --target api-only .
 FROM standalone
