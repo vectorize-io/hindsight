@@ -31,6 +31,9 @@ export default defineConfig({
     // into each bundle rather than a shared chunk.
     pi: "src/pi.ts",
     "prime-agent": "src/prime-agent.ts",
+    "kimi-hook": "src/kimi-hook.ts",
+    "kimi-sessionstart-hook": "src/kimi-sessionstart-hook.ts",
+    "kimi-stop-hook": "src/kimi-stop-hook.ts",
     "qwen-hook": "src/qwen-hook.ts",
     "qwen-sessionstart-hook": "src/qwen-sessionstart-hook.ts",
     "qwen-stop-hook": "src/qwen-stop-hook.ts",
