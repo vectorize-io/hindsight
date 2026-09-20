@@ -1736,7 +1736,10 @@ export class HindsightClient {
       includeKnowledgeBase?: boolean;
       /** Milliseconds between operation-status polls (default 2000). */
       pollIntervalMs?: number;
-      /** Maximum milliseconds to wait for the export to finish (default 300000). */
+      /**
+       * Maximum milliseconds to poll after submission (default 300000).
+       * Nonpositive values time out immediately. Submission and download are excluded.
+       */
       timeoutMs?: number;
       signal?: AbortSignal;
     }
@@ -1756,51 +1759,7 @@ export class HindsightClient {
       signal: options?.signal,
     });
     const submission = this.validateResponse(submitResponse, "exportDocuments");
-    const operationId = submission.operation_id;
-
-    const pollInterval = options?.pollIntervalMs ?? 2000;
-    const timeout = options?.timeoutMs ?? 300000;
-    const deadline = Date.now() + timeout;
-    let resultMetadata: Record<string, unknown> | null | undefined;
-    for (;;) {
-      const statusResponse = await sdk.getOperationStatus({
-        client: this.client,
-        path: { bank_id: bankId, operation_id: operationId },
-        signal: options?.signal,
-      });
-      const status = this.validateResponse(statusResponse, "getOperationStatus");
-      if (status.status === "completed") {
-        resultMetadata = status.result_metadata;
-        break;
-      }
-      if (status.status === "failed" || status.status === "cancelled") {
-        throw new HindsightError(
-          `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
-        );
-      }
-      if (Date.now() >= deadline) {
-        throw new HindsightError(
-          `Export operation ${operationId} did not complete within ${timeout}ms`
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
-
-    const downloadUrl = (resultMetadata as { download_url?: string } | null | undefined)
-      ?.download_url;
-    if (!downloadUrl) {
-      throw new HindsightError(`Export operation ${operationId} completed without a download_url`);
-    }
-    // Fetch the server-provided download_url directly (it carries the raw,
-    // slash-bearing storage key). Going through the templated `downloadFile`
-    // would percent-encode the slashes, which fronting proxies often reject.
-    const downloadResponse = await this.client.get({
-      url: downloadUrl,
-      parseAs: "arrayBuffer",
-      signal: options?.signal,
-    });
-    const data = this.validateResponse(downloadResponse as { data?: ArrayBuffer }, "downloadFile");
-    return new Uint8Array(data);
+    return this.downloadOperationArchive(bankId, submission.operation_id, options);
   }
 
   /**
@@ -1824,7 +1783,10 @@ export class HindsightClient {
       includeHistory?: boolean;
       /** Milliseconds between operation-status polls (default 2000). */
       pollIntervalMs?: number;
-      /** Maximum milliseconds to wait for the export to finish (default 300000). */
+      /**
+       * Maximum milliseconds to poll after submission (default 300000).
+       * Nonpositive values time out immediately. Submission and download are excluded.
+       */
       timeoutMs?: number;
       signal?: AbortSignal;
     }
@@ -1942,30 +1904,63 @@ export class HindsightClient {
   ): Promise<Uint8Array> {
     const pollInterval = options?.pollIntervalMs ?? 2000;
     const timeout = options?.timeoutMs ?? 300000;
-    const deadline = Date.now() + timeout;
+    const timeoutError = new HindsightError(
+      `Export operation ${operationId} did not complete within ${timeout}ms`
+    );
+    options?.signal?.throwIfAborted();
+    if (timeout <= 0) throw timeoutError;
+
+    // The polling budget includes pending HTTP requests and waits between them.
+    // Keep submission and archive download on the caller's original signal.
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(options?.signal?.reason);
+    options?.signal?.addEventListener("abort", onAbort, { once: true });
+    const deadline = performance.now() + timeout;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expire = () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) controller.abort(timeoutError);
+      else timer = setTimeout(expire, Math.min(remaining, 2147483647));
+    };
+    if (Number.isFinite(timeout)) expire();
     let resultMetadata: Record<string, unknown> | null | undefined;
-    for (;;) {
-      const statusResponse = await sdk.getOperationStatus({
-        client: this.client,
-        path: { bank_id: bankId, operation_id: operationId },
-        signal: options?.signal,
-      });
-      const status = this.validateResponse(statusResponse, "getOperationStatus");
-      if (status.status === "completed") {
-        resultMetadata = status.result_metadata;
-        break;
+    try {
+      for (;;) {
+        controller.signal.throwIfAborted();
+        const statusResponse = await sdk.getOperationStatus({
+          client: this.client,
+          path: { bank_id: bankId, operation_id: operationId },
+          signal: controller.signal,
+        });
+        if (performance.now() >= deadline) controller.abort(timeoutError);
+        controller.signal.throwIfAborted();
+        const status = this.validateResponse(statusResponse, "getOperationStatus");
+        if (status.status === "completed") {
+          resultMetadata = status.result_metadata;
+          break;
+        }
+        if (status.status === "failed" || status.status === "cancelled") {
+          throw new HindsightError(
+            `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
+          );
+        }
+        await new Promise<void>((resolve, reject) => {
+          const onPollAbort = () => {
+            clearTimeout(wait);
+            controller.signal.removeEventListener("abort", onPollAbort);
+            reject(controller.signal.reason);
+          };
+          const wait = setTimeout(() => {
+            controller.signal.removeEventListener("abort", onPollAbort);
+            resolve();
+          }, pollInterval);
+          controller.signal.addEventListener("abort", onPollAbort, { once: true });
+          if (controller.signal.aborted) onPollAbort();
+        });
       }
-      if (status.status === "failed" || status.status === "cancelled") {
-        throw new HindsightError(
-          `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
-        );
-      }
-      if (Date.now() >= deadline) {
-        throw new HindsightError(
-          `Export operation ${operationId} did not complete within ${timeout}ms`
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    } finally {
+      clearTimeout(timer);
+      options?.signal?.removeEventListener("abort", onAbort);
     }
 
     const downloadUrl = (resultMetadata as { download_url?: string } | null | undefined)

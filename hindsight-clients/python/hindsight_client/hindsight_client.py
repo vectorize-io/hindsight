@@ -66,6 +66,7 @@ from hindsight_client_api.models import (
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
+from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
@@ -2188,7 +2189,9 @@ class Hindsight:
             include_observations: Also export consolidated observations (whole-bank only).
             include_knowledge_base: Also export Mental Models and Knowledge Pages (whole-bank only).
             poll_interval: Seconds between operation-status polls.
-            timeout: Maximum seconds to wait for the export to finish.
+            timeout: Maximum seconds to poll for completion after submission.
+                Nonpositive values time out immediately. Submission and archive
+                download use the client's request timeout instead.
 
         Returns:
             The transfer ZIP archive as bytes (import it via ``client.document_transfer.import_documents``).
@@ -2289,7 +2292,9 @@ class Hindsight:
             include_bank_config: Carry bank config, mental models, directives, webhooks.
             include_history: Carry audit_log and llm_requests.
             poll_interval: Seconds between operation-status polls.
-            timeout: Maximum seconds to wait for the export to finish.
+            timeout: Maximum seconds to poll for completion after submission.
+                Nonpositive values time out immediately. Submission and archive
+                download use the client's request timeout instead.
 
         Returns:
             The transfer ZIP archive as bytes (restore it with :meth:`aimport_bank`).
@@ -2456,19 +2461,36 @@ class Hindsight:
         Shared by the document and whole-bank exports: both submit an operation
         whose ``result_metadata`` names the finished archive.
         """
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + timeout
-        while True:
-            status = await self._operations_api.get_operation_status(
-                bank_id, operation_id, _request_timeout=self._timeout
-            )
-            if status.status == "completed":
-                break
-            if status.status in ("failed", "cancelled"):
-                raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
-            if loop.time() >= deadline:
+
+        async def poll() -> OperationStatusResponse:
+            while True:
+                status = await self._operations_api.get_operation_status(
+                    bank_id, operation_id, _request_timeout=self._timeout
+                )
+                if status.status == "completed":
+                    return status
+                if status.status in ("failed", "cancelled"):
+                    raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
+                await asyncio.sleep(poll_interval)
+
+        # Bound the whole polling phase, including a pending request or sleep.
+        # Checking only after a response allowed late completion to bypass the
+        # deadline. Submission and download retain their own request timeouts.
+        if timeout <= 0:
+            raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
+        polling = asyncio.create_task(poll())
+        try:
+            # Unlike wait_for on Python 3.10, wait preserves caller cancellation
+            # even when the polling task completes at the same time.
+            done, _ = await asyncio.wait({polling}, timeout=timeout)
+            if not done:
                 raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
-            await asyncio.sleep(poll_interval)
+            status = polling.result()
+        finally:
+            # Await cleanup on timeout/cancellation; retrieve any child exception
+            # without replacing the caller's outcome.
+            polling.cancel()
+            await asyncio.gather(polling, return_exceptions=True)
 
         meta = status.result_metadata or {}
         download_url = meta.get("download_url")
