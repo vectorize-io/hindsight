@@ -1016,7 +1016,9 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
             schema=schema,
         )
         # starts_with, not LIKE: key segments are percent-encoded, so a prefix can
-        # contain '%' and would read as a wildcard.
+        # contain '%' and would read as a wildcard. Keys written before the tenant
+        # layout sit outside the prefix and stay where they are: delete_bank sweeps
+        # those from their rows, which the rename carries to the new id.
         rows = await conn.fetch(
             f"SELECT 'attachments' AS table_name, storage_key AS key FROM {_fq_table('attachments', schema)} "
             f"WHERE bank_id = $1 AND starts_with(storage_key, $2) "
@@ -1027,15 +1029,26 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
             old_prefix,
         )
         columns = {"attachments": "storage_key", "documents": "file_storage_key"}
+        moved = 0
         for row in rows:
             new_key = new_prefix + row["key"][len(old_prefix) :]
-            await storage.store(file_data=await storage.retrieve(row["key"]), key=new_key)
+            try:
+                data = await storage.retrieve(row["key"])
+            except FileNotFoundError:
+                # The row outlived its bytes (an earlier leak swept, a manual
+                # cleanup). Leave it pointing where it does rather than at a key
+                # with nothing behind it, and carry on: the rename is committed.
+                typer.echo(f"Warning: {row['key']} has no stored bytes; its row keeps the old key.")
+                continue
+            await storage.store(file_data=data, key=new_key)
             column = columns[row["table_name"]]
             await conn.execute(
-                f"UPDATE {_fq_table(row['table_name'], schema)} SET {column} = $1 WHERE {column} = $2",
+                f"UPDATE {_fq_table(row['table_name'], schema)} SET {column} = $1 WHERE bank_id = $2 AND {column} = $3",
                 new_key,
+                new_id,
                 row["key"],
             )
+            moved += 1
         # The originals, plus whatever else the bank left under the old prefix:
         # export and import archives, which no row names and which their
         # operation can produce again.
@@ -1043,7 +1056,7 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
             await storage.delete_prefix(old_prefix)
         except Exception as exc:  # noqa: BLE001
             typer.echo(f"Warning: could not clear the old prefix {old_prefix} ({exc}); its files are now orphans.")
-        return len(rows)
+        return moved
     finally:
         await pool.close()
 

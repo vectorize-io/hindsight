@@ -128,6 +128,8 @@ hindsight-admin rename-bank --from OLD_ID --to NEW_ID [OPTIONS]
 - **Stop the bank's clients.** Anything still calling the old id gets a 404, or, if it creates banks on demand, silently starts a new, empty bank under the old id. Point every client, and any API key scoped to the bank, at the new id before restarting them.
 - **Let the bank's operations finish.** The command refuses while the bank has pending or processing operations.
 
+A file's storage key spells the bank id, so after the rows move the bank's stored files — document attachments and uploaded originals — are copied to keys under the new id, their rows repointed, and the old id's prefix cleared. That last step also removes any export or import archive left under the old id: their download links stop working at the rename, and the operation can produce them again. Deleting the bank afterwards removes its files with it.
+
 The rename runs in a single transaction and only locks that bank's rows. Other banks keep serving. Its duration grows with the bank's size. Afterwards, the bank's vector indexes are rebuilt with `CREATE INDEX CONCURRENTLY`, and until that finishes, recall on the renamed bank runs without them. Running API servers may keep answering for the old id until their bank-info cache expires. PostgreSQL only.
 
 **Examples:**
