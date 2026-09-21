@@ -1480,13 +1480,25 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 ### Egress proxy
 
 Outbound calls (LLM providers and gateways, remote embeddings and rerankers, document
-parsers) follow the standard proxy environment variables — `HTTP_PROXY`, `HTTPS_PROXY`,
-`NO_PROXY` — plus `.netrc` credentials. There is no Hindsight-specific proxy setting:
-set these on the process (pod env, systemd unit, shell) and every upstream call goes
-through the proxy.
+parsers, the Supabase tenant extension) follow the standard proxy environment variables —
+`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`. There is no Hindsight-specific proxy setting: set
+these on the process (pod env, systemd unit, shell) before it starts.
 
-Webhook delivery is the one exception: it ignores the proxy variables on purpose, because
-its SSRF guard validates the address it resolved and a proxy would contact a different one.
+Three things to know:
+
+- **The proxy URL itself must be `http://`.** An `https://` proxy URL is ignored (with a
+  warning), and `ALL_PROXY` / SOCKS proxies are not supported. This is the underlying HTTP
+  client's limitation, not a Hindsight one.
+- **Put local endpoints in `NO_PROXY`.** Nothing is exempted automatically — not even
+  `localhost`. A deployment that sets `HTTP_PROXY` and also runs a local Ollama, LM Studio,
+  llama.cpp or TEI must list those hosts in `NO_PROXY`, or their calls are sent to the proxy.
+  (The built-in llama.cpp server Hindsight spawns itself is always contacted directly.)
+- **Credentials in `~/.netrc` are applied too**, to the destination host, not just the proxy.
+  If a netrc entry matches a provider host, it overrides the `Authorization` header Hindsight
+  would have sent. Remove the entry, or point `NETRC` at a file without it.
+
+Webhook delivery is the one caller that ignores all of this on purpose: its SSRF guard
+validates the address it resolved, and a proxy would contact one that was never checked.
 
 ### Retrieval
 

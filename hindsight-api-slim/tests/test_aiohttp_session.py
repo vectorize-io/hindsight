@@ -1,12 +1,15 @@
 """LoopLocalSession / raise_for_status: the shared aiohttp plumbing every client builds on."""
 
+import ast
 import asyncio
+import pathlib
 import threading
 
 import aiohttp
 import pytest
 from aiohttp import web
 
+import hindsight_api
 from hindsight_api.engine.aiohttp_session import (
     LoopLocalSession,
     UpstreamHTTPError,
@@ -121,13 +124,67 @@ def test_aiohttp_connection_errors_are_transient():
 
 
 @pytest.mark.asyncio
-async def test_sessions_honour_proxy_env_by_default_but_webhooks_do_not():
-    from hindsight_api.webhooks.url_guard import GuardedWebhookClient, parse_allowlist
+async def test_request_goes_through_the_proxy_named_by_http_proxy(monkeypatch):
+    # The httpx -> aiohttp migration (#4318) dropped proxy support: httpx reads the
+    # proxy env vars by default, aiohttp only with trust_env. Prove it end to end by
+    # pointing HTTP_PROXY at a stub and asking for a host that does not resolve —
+    # the stub is reached only if the request was actually proxied.
+    proxied: list[str] = []
 
+    async def handler(request: web.Request) -> web.StreamResponse:
+        proxied.append(str(request.url))
+        return web.Response(text="via proxy")
+
+    async with stub_server(handler) as proxy_url:
+        monkeypatch.setenv("HTTP_PROXY", proxy_url)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        holder = LoopLocalSession(timeout=per_phase_timeout(5.0))
+        async with holder.get().get("http://unreachable.invalid/embeddings") as response:
+            assert await response.text() == "via proxy"
+        await holder.close()
+
+    assert proxied == ["http://unreachable.invalid/embeddings"]
+
+
+def test_no_proxy_env_means_no_per_request_env_lookup(monkeypatch):
+    # trust_env costs two executor hops per request (netrc + getproxies), so it stays
+    # off unless the deployment actually set a proxy.
+    for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
     holder = LoopLocalSession(timeout=per_phase_timeout(5.0))
-    assert holder.get().trust_env is True
-    await holder.close()
 
-    guarded = GuardedWebhookClient(parse_allowlist([]))
-    assert guarded._sessions.get().trust_env is False
-    await guarded._sessions.close()
+    async def check() -> bool:
+        session = holder.get()
+        trust_env = session.trust_env
+        await holder.close()
+        return trust_env
+
+    assert asyncio.run(check()) is False
+
+
+def test_every_production_session_decides_about_the_proxy():
+    """Each ``aiohttp.ClientSession`` says whether it follows the proxy env vars.
+
+    A new client that forgets is the failure this guards: it silently gets aiohttp's
+    ``trust_env=False`` and bypasses the proxy, which is exactly how the migration
+    regressed. Sessions built through ``LoopLocalSession`` inherit the decision, so
+    only direct constructions are checked here.
+    """
+    package = pathlib.Path(hindsight_api.__file__).parent
+    # aiohttp_session.py IS the shared decision; llamacpp probes its own child process.
+    exempt = {package / "engine" / "aiohttp_session.py"}
+    missing = []
+    for path in package.rglob("*.py"):
+        if path in exempt:
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            target = ast.unparse(node.func)
+            if target not in ("aiohttp.ClientSession", "ClientSession"):
+                continue
+            if not any(kw.arg == "trust_env" for kw in node.keywords):
+                missing.append(f"{path.relative_to(package)}:{node.lineno} {target}")
+    assert missing == [], "sessions with no explicit trust_env decision: " + ", ".join(missing)

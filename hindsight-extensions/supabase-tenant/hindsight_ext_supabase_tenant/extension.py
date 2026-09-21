@@ -58,6 +58,7 @@ import time
 
 import aiohttp
 import jwt as pyjwt
+from hindsight_api.engine.aiohttp_session import proxy_env_is_set
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
 from jwt import PyJWK
@@ -171,7 +172,10 @@ class SupabaseTenantExtension(TenantExtension):
         self._http = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=None, connect=REQUEST_TIMEOUT_SECONDS, sock_read=REQUEST_TIMEOUT_SECONDS
-            )
+            ),
+            # Supabase is an external endpoint, so it goes through the egress proxy
+            # (HTTPS_PROXY/NO_PROXY) like every other upstream the API calls.
+            trust_env=proxy_env_is_set(),
         )
 
         # Attempt to fetch JWKS for fast local JWT verification
