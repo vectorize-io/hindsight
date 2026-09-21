@@ -40,7 +40,7 @@ export const LEASE_HEARTBEAT_MS = 5_000;
 export const LEASE_STALE_MS = 30_000;
 
 export interface SurveyLease {
-  /** The lock directory: `<root>/survey-<key>.lock`. */
+  /** The lock directory: `<root>/<scope>-<key>.lock`. */
   directory: string;
   /** The owner file inside it — a random token, so a generation can only ever touch its own. */
   owner: string;
@@ -100,6 +100,34 @@ export function heartbeatLease(lease: SurveyLease): boolean {
   }
 }
 
+export interface LeaseHeartbeatOptions {
+  heartbeatMs?: number;
+  /** Called once when this generation's owner file disappears. */
+  onLost?: () => void;
+}
+
+/** Keep a lease live until the returned stop function is called. The owner-token check in
+ *  `heartbeatLease` makes takeover generation-safe: a resumed old holder cannot refresh or remove
+ *  the successor that reclaimed its stale lease. */
+export function startLeaseHeartbeat(
+  lease: SurveyLease,
+  options: LeaseHeartbeatOptions = {}
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setInterval>;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+  };
+  timer = setInterval(() => {
+    if (heartbeatLease(lease)) return;
+    stop();
+    options.onLost?.();
+  }, options.heartbeatMs ?? LEASE_HEARTBEAT_MS);
+  return stop;
+}
+
 /** Clear the way for a new owner when the current lease is abandoned. Returns whether it may be
  *  retried; the retry's own rename is what decides between racing reclaimers. */
 function reclaimIfStale(directory: string, staleMs: number): boolean {
@@ -135,7 +163,8 @@ function reclaimIfStale(directory: string, staleMs: number): boolean {
 export function acquireLease(
   root: string,
   key: string,
-  staleMs: number = LEASE_STALE_MS
+  staleMs: number = LEASE_STALE_MS,
+  scope = "survey"
 ): SurveyLease | undefined {
   let staging: string | undefined;
   try {
@@ -143,7 +172,7 @@ export function acquireLease(
     staging = mkdtempSync(join(root, "claim-"));
     const owner = randomUUID();
     writeFileSync(join(staging, owner), "", { flag: "wx", mode: 0o600 });
-    const directory = join(root, `survey-${key}.lock`);
+    const directory = join(root, `${scope}-${key}.lock`);
     if (!tryRename(staging, directory)) {
       if (!reclaimIfStale(directory, staleMs)) return undefined;
       if (!tryRename(staging, directory)) return undefined; // another reclaimer won
@@ -177,18 +206,21 @@ export function superviseSurvey(
       return resolve();
     }
     let finished = false;
+    let stopHeartbeat = () => {};
     const finish = (release: boolean) => {
       if (finished) return;
       finished = true;
-      clearInterval(timer);
+      stopHeartbeat();
       if (release) releaseLease(spec.lease);
       resolve();
     };
-    const timer = setInterval(() => {
-      if (heartbeatLease(spec.lease)) return;
-      child.kill(); // the lease now belongs to another survey
-      finish(false);
-    }, spec.heartbeatMs ?? LEASE_HEARTBEAT_MS);
+    stopHeartbeat = startLeaseHeartbeat(spec.lease, {
+      heartbeatMs: spec.heartbeatMs,
+      onLost: () => {
+        child.kill(); // the lease now belongs to another survey
+        finish(false);
+      },
+    });
     child.on("error", () => finish(true));
     child.once("exit", () => finish(true));
     stop = () => {
