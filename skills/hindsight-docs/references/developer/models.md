@@ -533,7 +533,7 @@ setting below, so treat these as required rather than optional tuning:
 
 | Variable | Set it to | Why |
 |----------|-----------|-----|
-| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | `300` | Reflect's default is 30s. Muse Spark's final synthesis exceeds that, and the call fails after its retries rather than degrading — reflect returns nothing. |
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | `300` | Reflect's default deadline scales with the prompt from a 30s base and is capped at `HINDSIGHT_API_LLM_TIMEOUT`. Muse Spark reasons before every reply, so its final synthesis can exceed even that, and the call fails after its retries rather than degrading — reflect returns nothing. |
 | `HINDSIGHT_API_LLM_TIMEOUT` | `300` | The global deadline (default 120s) covers retain and consolidation, which are slower here than on a non-reasoning model. |
 | `HINDSIGHT_API_LLM_REASONING_EFFORT` | unset, or `minimal`/`low`/`medium`/`high`/`xhigh` | `none` is rejected with `HTTP 400`. Leave it unset to let the model choose its own depth. |
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | leave at the `64000` default | Reasoning tokens are billed against the **output** budget. Lower this too far and a reply comes back with no content at all. |
@@ -715,9 +715,9 @@ which makes Cursor a *client* of Hindsight. Here Cursor is the model backend Hin
 **Important notes:**
 
 - **Raise the timeouts.** Each call spawns a `cursor-agent` turn, which takes 15-30s
-  against `auto` — slower than a chat-completions request and past the 30s
-  `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` default. Left at the default, reflect spends its
-  first iteration on timeout retries before recovering.
+  against `auto` — slower than a chat-completions request and past the 30s base of the
+  `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` default, which only grows with the prompt. Left at
+  the default, reflect spends its first iteration on timeout retries before recovering.
 - **Structured output and tool calling are prompt-level emulations.** The CLI exposes no
   `response_format`, JSON-schema, temperature or tool-definition flag — only
   `--output-format text|json|stream-json`, which describes the envelope. Hindsight puts

@@ -728,7 +728,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES` | Max retries for reflect | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
 | `HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF` | Initial backoff for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
 | `HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF` | Max backoff cap for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
-| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | Timeout for reflect requests (seconds). Reflect answers a caller who is holding an HTTP request open and makes several sequential LLM calls, so its default is shorter than the global one — one stalled call must not outlive the caller. | `30`, or `HINDSIGHT_API_LLM_TIMEOUT` when that is set explicitly |
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | Per-call LLM deadline for reflect (seconds). Reflect answers a caller who is holding an HTTP request open and makes several sequential LLM calls, so its default is shorter than the global one — one stalled call must not outlive the caller. Left unset, the deadline scales with the prompt: 30s for a short tool-calling turn plus 1s per 1,000 prompt tokens, capped at `HINDSIGHT_API_LLM_TIMEOUT`, so a 60k-token final synthesis gets 90s. Set it to give every reflect call one fixed deadline instead. | Scales from `30`, or `HINDSIGHT_API_LLM_TIMEOUT` when that is set explicitly |
 | `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` | Reasoning effort for reflect operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for reflect operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for reflect operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
@@ -753,7 +753,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES` | Max retries for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_INITIAL_BACKOFF` | Initial backoff for refresh retries (seconds) | Falls back to `HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_BACKOFF` | Max backoff cap for refresh retries (seconds) | Falls back to `HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT` | Timeout for refresh requests (seconds). Nobody is waiting on a background refresh, so this is usually set much higher than the reflect timeout. | Falls back to `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_TIMEOUT` | Timeout for refresh requests (seconds). Nobody is waiting on a background refresh, so this is usually set much higher than the reflect timeout. | `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` when that is set explicitly, else `HINDSIGHT_API_LLM_TIMEOUT` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT` | Reasoning effort for the automatic refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` |
