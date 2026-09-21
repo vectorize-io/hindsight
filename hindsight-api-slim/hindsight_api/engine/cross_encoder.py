@@ -34,7 +34,6 @@ from ..config import (
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_TYPESAFE_BASE_URL,
-    DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE,
     DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
     DEFAULT_RERANKER_TYPESAFE_MODEL,
     DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
@@ -906,29 +905,58 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     TypeSafe reranker (https://typesafe.ai), Jev by default.
 
     Not a Cohere-compatible /rerank endpoint: TypeSafe evaluates typed *questions*
-    against a *state* and answers with a pick plus a probability per option. A
-    (query, doc) pair therefore maps to state=doc and one three-way Choice.
+    against a *state*. This provider asks two of them.
 
-    Scoring and the keep/prune verdict are the *same* question, not two passes: the
-    one answer carries both the pick and the probability of each option, so the
-    probability of "relevant" ranks the candidate while — when ``prune_candidates``
-    is on — a pick of "irrelevant" scores it 0.0 for the caller to leave out.
-    Pruning therefore costs no extra call, no extra token and no extra latency; the
-    flag only decides whether we act on a verdict we were already given.
+    **Rank — one Choice whose options are the candidates.** A Choice answers with a
+    probability for every option, summing to 1, so handing it the whole pool returns
+    the ranking in a single call. That beats scoring each candidate on its own:
+    judged together the model only has to say which candidate beats which, instead
+    of pinning every candidate to an absolute scale it must re-derive each time. On a
+    200-question LoCoMo set the listwise shape scored recall@1 0.94 against 0.87 for
+    one call per candidate, at a thirtieth of the calls.
 
-    The three-way split is what makes pruning safe. Asked a plain relevant-or-not
-    binary the model throws away about a third of the evidence it should keep;
-    given "related" as a home for partial matches it keeps ~87% of the gold
-    evidence while still pruning ~90% of the candidate pool.
+    **Cut — one Score over the ranked shortlist**, asking how far down the list
+    relevance extends. Only asked when ``prune_candidates`` is on. A Score's levels
+    are *ordered*, which is what a cut point needs; the obvious alternative — adding
+    a "none of these" option to the Choice — does not work, because Choice options
+    are unrivalled alternatives rather than a scale, so "none of these" simply wins
+    outright on hard queries and returns nothing at all (35 of 200 questions came
+    back empty in that shape, against 0 here).
+
+    The scores handed back are positions, not confidences: a Choice probability is a
+    share of one pool, so 0.7 means "the best of these" and not "relevant", and two
+    pools are not comparable. Candidates below the cut score exactly 0.0, which is
+    how :attr:`prunes_candidates` tells the caller to leave them out.
     """
 
     SYSTEMONE_PATH = "/v1/systemone"
-    PRUNE = "irrelevant"
-    CRITERIA = {
-        "relevant": "The candidate states, or directly supports, an answer to the question",
-        "related": "The candidate is about the same people, topic or period, and could help answer it in part",
-        "irrelevant": "The candidate is about something else entirely and cannot help answer the question",
-    }
+
+    # A Choice accepts at most 255 options; stay clear of the edge. A pool larger
+    # than this is ranked in chunks whose winners are then ranked against each other,
+    # because probabilities are normalised within a call and so cannot be compared
+    # across two of them.
+    MAX_OPTIONS = 250
+
+    # How many of the ranked candidates the cut question is shown. The cut only ever
+    # keeps a handful, so a longer list costs tokens to no purpose.
+    SHORTLIST = 12
+
+    # Ordered depths for the cut. The model picks the level; these are the
+    # granularity offered, which is a design choice and not a tuned threshold.
+    #
+    # There is deliberately no "nothing is relevant" level, so at least one candidate
+    # always survives. Recall runs on a pool retrieval already judged plausible, and
+    # one weak memory the caller can dismiss beats silence; adding that level cost
+    # 7% of queries returning nothing and dropped gold retention from 0.81 to 0.65.
+    CUT_LEVELS = [
+        "Only the first candidate is relevant",
+        "The first two are relevant",
+        "The first three are relevant",
+        "The first five are relevant",
+        "The first ten are relevant",
+        "All of the listed candidates are relevant",
+    ]
+    CUT_DEPTHS = [1, 2, 3, 5, 10, None]  # None keeps the whole shortlist
 
     def __init__(
         self,
@@ -937,7 +965,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         base_url: str = DEFAULT_RERANKER_TYPESAFE_BASE_URL,
         timeout: float = DEFAULT_RERANKER_TYPESAFE_TIMEOUT,
         max_concurrent: int = DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
-        batch_size: int = DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE,
         prune_candidates: bool = DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
     ):
         # Tolerate an unset-but-present value ("VAR=" in a compose file, or a config
@@ -945,7 +972,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         self.model = model or DEFAULT_RERANKER_TYPESAFE_MODEL
         self.base_url = (base_url or DEFAULT_RERANKER_TYPESAFE_BASE_URL).rstrip("/")
         self.timeout = timeout
-        self.batch_size = max(1, batch_size or DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE)
         self.prunes_candidates = bool(prune_candidates)
         # CrossLoopSemaphore, not asyncio.Semaphore: one encoder instance is built at
         # startup and reached from every loop in the process (worker threads run their
@@ -967,34 +993,10 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     async def initialize(self) -> None:
         logger.info(
             f"Reranker: initializing TypeSafe provider at {self.base_url} with model {self.model} "
-            f"(batch_size={self.batch_size}, prune_candidates={self.prunes_candidates})"
+            f"(prune_candidates={self.prunes_candidates})"
         )
 
-    async def _score_batch(self, query: str, docs: list[str]) -> list[float]:
-        """Score one chunk of candidates, returning 0.0 for any the model prunes.
-
-        One question per candidate answers both things at once — the rank and the
-        verdict — so a chunk is a single request either way.
-
-        With batch_size 1 the candidate is the whole state, which is what the
-        verdict needs. Above that the chunk shares one state: one round trip and
-        ~1/batch_size the input tokens, but the model's judgment of each candidate
-        degrades as the others crowd in, so batching is a ranking-only economy.
-        """
-        if len(docs) == 1:
-            state: str = docs[0]
-            instructions = [f"Is this text relevant to the question: {query}"]
-        else:
-            state = "\n\n".join(f"[{i + 1}] {doc}" for i, doc in enumerate(docs))
-            instructions = [f"Is candidate [{i + 1}] relevant to the question: {query}" for i in range(len(docs))]
-        body = {
-            "state": state,
-            "model": self.model,
-            "questions": {
-                f"d{i}": {"type": "choice", "instructions": text, "criteria": self.CRITERIA}
-                for i, text in enumerate(instructions)
-            },
-        }
+    async def _ask(self, body: dict) -> dict:
         async with self._semaphore:
             async with self._session.get().post(
                 f"{self.base_url}{self.SYSTEMONE_PATH}",
@@ -1002,35 +1004,90 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 json=body,
             ) as response:
                 await raise_for_status(response)
-                result = await response.json(content_type=None)
-        answers = [result["answers"][f"d{i}"] for i in range(len(docs))]
-        return [
-            0.0
-            if (self.prunes_candidates and answer["choice"] == self.PRUNE)
-            else float(answer["probabilities"]["relevant"])
-            for answer in answers
-        ]
+                return await response.json(content_type=None)
+
+    async def _rank_once(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
+        """Rank one group of candidates, returning their indices best first."""
+        body = {
+            "state": f"Question: {query}",
+            "model": self.model,
+            "questions": {
+                "rank": {
+                    "type": "choice",
+                    "instructions": f"Which candidate answers the question: {query}",
+                    "criteria": {f"c{position}": docs[index] for position, index in enumerate(indices)},
+                }
+            },
+        }
+        result = await self._ask(body)
+        probabilities = result["answers"]["rank"]["probabilities"]
+        # Sort the option positions, not the indices themselves: the option key encodes
+        # the position, and two candidates can carry the same index-independent text.
+        by_probability = sorted(range(len(indices)), key=lambda position: -float(probabilities[f"c{position}"]))
+        return [indices[position] for position in by_probability]
+
+    async def _rank(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
+        """Rank a whole pool best first, in rounds when it exceeds the option cap.
+
+        Each round's probabilities are normalised within its own call, so the rounds
+        cannot simply be concatenated — the winners are ranked against each other
+        instead. Candidates that win no round keep their round order behind the
+        finalists: they are the ones the cut would discard anyway.
+        """
+        if len(indices) <= self.MAX_OPTIONS:
+            return await self._rank_once(query, docs, indices)
+
+        groups = [indices[start : start + self.MAX_OPTIONS] for start in range(0, len(indices), self.MAX_OPTIONS)]
+        ranked_groups = await asyncio.gather(*(self._rank_once(query, docs, group) for group in groups))
+        finalists = [index for group in ranked_groups for index in group[: self.SHORTLIST]]
+        rest = [index for group in ranked_groups for index in group[self.SHORTLIST :]]
+        return (await self._rank_once(query, docs, finalists)) + rest
+
+    async def _cut(self, query: str, docs: list[str], order: list[int]) -> int:
+        """How many of the ranked candidates are relevant, as the model sees it."""
+        shortlist = order[: self.SHORTLIST]
+        listing = "\n\n".join(f"[{position + 1}] {docs[index]}" for position, index in enumerate(shortlist))
+        body = {
+            "state": f"Question: {query}\n\nCandidates, already ranked best first:\n{listing}",
+            "model": self.model,
+            "questions": {
+                "depth": {
+                    "type": "score",
+                    "instructions": (
+                        "How far down this ranked list does genuine relevance to the question extend? "
+                        "Count a candidate as relevant only if it helps answer the question."
+                    ),
+                    "criteria": self.CUT_LEVELS,
+                }
+            },
+        }
+        result = await self._ask(body)
+        level = round(float(result["answers"]["depth"]["score"]))
+        depth = self.CUT_DEPTHS[min(len(self.CUT_DEPTHS) - 1, max(0, level))]
+        return len(shortlist) if depth is None else min(depth, len(shortlist))
+
+    async def _rank_group(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
+        order = await self._rank(query, docs, indices)
+        keep = await self._cut(query, docs, order) if self.prunes_candidates else len(order)
+        # Positions, not confidences — see the class docstring. Descending from 1.0 so
+        # the caller's ordering is preserved, and 0.0 for everything past the cut,
+        # which is how prunes_candidates marks a candidate to leave out.
+        for position, index in enumerate(order):
+            scores[index] = (len(order) - position) / len(order) if position < keep else 0.0
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         if not pairs:
             return []
+        docs = [doc for _, doc in pairs]
         query_groups: dict[str, list[int]] = {}
         for index, (query, _) in enumerate(pairs):
             query_groups.setdefault(query, []).append(index)
 
-        chunks: list[tuple[str, list[int]]] = []
-        for query, indices in query_groups.items():
-            for start in range(0, len(indices), self.batch_size):
-                chunks.append((query, indices[start : start + self.batch_size]))
-
-        scored = await asyncio.gather(
-            *(self._score_batch(query, [pairs[i][1] for i in indices]) for query, indices in chunks)
+        scores = [0.0] * len(pairs)
+        await asyncio.gather(
+            *(self._rank_group(query, docs, indices, scores) for query, indices in query_groups.items())
         )
-        all_scores = [0.0] * len(pairs)
-        for (_, indices), values in zip(chunks, scored, strict=True):
-            for index, value in zip(indices, values, strict=True):
-                all_scores[index] = value
-        return all_scores
+        return scores
 
 
 class RRFPassthroughCrossEncoder(CrossEncoderModel):
@@ -2127,7 +2184,6 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             base_url=member.typesafe_base_url,
             timeout=member.typesafe_timeout,
             max_concurrent=member.typesafe_max_concurrent,
-            batch_size=member.typesafe_batch_size,
             prune_candidates=member.typesafe_prune_candidates,
         )
     elif provider == "rrf":

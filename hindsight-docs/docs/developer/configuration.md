@@ -1195,9 +1195,8 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_TYPESAFE_MODEL` | TypeSafe model used to judge relevance | `jev-latest` |
 | `HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL` | Base URL for the TypeSafe API | `https://api.typesafe.ai` |
 | `HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT` | HTTP request timeout for the TypeSafe reranker (seconds). | `60.0` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_BATCH_SIZE` | Candidates per API call. `1` gives each candidate its own call and the sharpest judgment; higher values share one call (fewer round trips, fewer input tokens) at the cost of per-candidate accuracy. Raise only when ranking quality alone matters — see the note below. | `1` |
 | `HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT` | Maximum in-flight TypeSafe requests. | `24` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES` | Prune candidates TypeSafe judges irrelevant instead of merely ranking them last. Shrinks what recall returns — see the note below. | `false` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES` | Ask a second question that cuts the ranked list where relevance ends, returning only the relevant candidates. Shrinks what recall returns — see the note below. | `false` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_API_KEY` | Alibaba Cloud DashScope API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ALIBABA_MODEL` | DashScope rerank model | `qwen3-rerank` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_TIMEOUT` | HTTP request timeout for the Alibaba Cloud DashScope reranker (seconds). | `60.0` |
@@ -1400,29 +1399,42 @@ Both support the same providers:
 
 #### TypeSafe
 
-TypeSafe is not a `/rerank` endpoint. It evaluates typed *questions* against a *state*
-and answers with a pick plus a probability, so Hindsight sends each candidate as the
-state with one three-way question — `relevant`, `related`, or `irrelevant`. The
-probability of `relevant` becomes the candidate's score.
+TypeSafe is not a `/rerank` endpoint. It evaluates typed *questions* against a *state*,
+and this provider asks two of them.
 
-**Pruning irrelevant candidates.** That one answer carries both the pick and the
-probabilities, so the score and the keep-or-prune verdict come back from the *same*
-question — not a second pass. `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true`
-simply acts on the verdict, leaving pruned candidates out instead of ranking them last;
-it costs no extra call, token or millisecond. No score threshold is involved — the model
-makes the call. It does meaningfully shrink what recall returns, so it is off by
-default; turn it on when the consumer is an LLM prompt (reflect, for instance) and every
-irrelevant memory is wasted context.
+**Rank — one question for the whole pool.** A Choice returns a probability for every
+option, summing to 1, so Hindsight makes the candidates the options and reads the
+ranking straight off the answer: one call, however many candidates. Judged together the
+model only has to say which candidate beats which, rather than pin each one to an
+absolute scale in isolation — on a 200-question LoCoMo set that scored recall@1 0.94
+against 0.87 for one call per candidate, at a thirtieth of the calls.
 
-The three-way split is what makes pruning safe: asked a plain relevant/irrelevant
-question the model prunes roughly a third of the evidence that should be kept, while
-`related` gives partial matches somewhere to live.
+A Choice accepts at most 255 options, so a larger pool is ranked in rounds and the
+winners are then ranked against each other. Probabilities are normalised within a
+single call, so rounds cannot simply be concatenated.
 
-**Batching.** `HINDSIGHT_API_RERANKER_TYPESAFE_BATCH_SIZE` above `1` packs several
-candidates into one call, cutting round trips and input tokens. The trade-off is that
-batched candidates share a state and the model's judgment of each degrades as the
-others crowd in — measurably so for the keep/prune verdict. Leave it at `1` when
-`PRUNE_CANDIDATES` is on; raise it when only the ranking matters.
+**Cut — `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true`.** A second question, a
+Score over the ranked shortlist, asks how far down the list relevance extends; whatever
+falls past that point is left out. Recall then returns the relevant candidates in order
+and nothing else. No threshold is tuned — the model picks the depth.
+
+A Score is used rather than adding a "none of these" option to the Choice because Score
+levels are *ordered*, which is what a cut point needs. As a Choice option, "none of
+these" is just another rival for the probability mass, and it wins outright on hard
+queries: 35 of 200 questions came back completely empty, against none with the Score.
+
+There is deliberately no "nothing is relevant" level, so at least one candidate always
+survives. Recall runs on a pool retrieval already judged plausible, and one weak memory
+the caller can dismiss beats silence.
+
+The flag is off by default because it meaningfully shrinks what recall returns. Turn it
+on when the consumer is an LLM prompt (reflect, for instance) and every irrelevant
+memory is wasted context.
+
+**Scores are positions, not confidences.** A Choice probability is a share of one pool:
+0.7 means "the best of these", not "relevant", and two pools are not comparable. The
+provider therefore hands back rank positions, and exactly `0.0` for anything past the
+cut.
 
 #### Jina MLX (Apple Silicon)
 

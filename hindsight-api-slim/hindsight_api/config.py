@@ -638,7 +638,6 @@ ENV_RERANKER_TYPESAFE_API_KEY = "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY"
 ENV_RERANKER_TYPESAFE_MODEL = "HINDSIGHT_API_RERANKER_TYPESAFE_MODEL"
 ENV_RERANKER_TYPESAFE_BASE_URL = "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL"
 ENV_RERANKER_TYPESAFE_TIMEOUT = "HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT"
-ENV_RERANKER_TYPESAFE_BATCH_SIZE = "HINDSIGHT_API_RERANKER_TYPESAFE_BATCH_SIZE"
 ENV_RERANKER_TYPESAFE_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT"
 ENV_RERANKER_TYPESAFE_PRUNE_CANDIDATES = "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES"
 
@@ -1410,12 +1409,6 @@ DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
 DEFAULT_RERANKER_TYPESAFE_MODEL = "jev-latest"
 DEFAULT_RERANKER_TYPESAFE_BASE_URL = "https://api.typesafe.ai"
-# One candidate per call by default. Several candidates can share a single call —
-# cheaper and one round trip — but they then share one state, and the model's
-# judgment of each degrades as the others crowd in. Measured on a 200-question
-# LoCoMo set: at 1 candidate per call it keeps 90% of the gold evidence, at 16 only
-# 73%. Batching is therefore a ranking-only economy, unsafe with prune_candidates.
-DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE = 1
 DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
@@ -2648,7 +2641,6 @@ class RerankerMemberConfig:
     typesafe_model: str
     typesafe_base_url: str
     typesafe_timeout: float
-    typesafe_batch_size: int
     typesafe_max_concurrent: int
     typesafe_prune_candidates: bool
     # alibaba
@@ -2799,7 +2791,6 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 typesafe_model=_member_str(base, "TYPESAFE_MODEL", DEFAULT_RERANKER_TYPESAFE_MODEL),
                 typesafe_base_url=_member_str(base, "TYPESAFE_BASE_URL", DEFAULT_RERANKER_TYPESAFE_BASE_URL),
                 typesafe_timeout=_member_float(base, "TYPESAFE_TIMEOUT", DEFAULT_RERANKER_TYPESAFE_TIMEOUT),
-                typesafe_batch_size=_member_int(base, "TYPESAFE_BATCH_SIZE", DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE),
                 typesafe_max_concurrent=_member_int(
                     base, "TYPESAFE_MAX_CONCURRENT", DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT
                 ),
@@ -3204,7 +3195,6 @@ class HindsightConfig:
     reranker_typesafe_model: str
     reranker_typesafe_base_url: str
     reranker_typesafe_timeout: float
-    reranker_typesafe_batch_size: int
     reranker_typesafe_max_concurrent: int
     reranker_typesafe_prune_candidates: bool
     reranker_alibaba_api_key: str | None
@@ -3798,7 +3788,6 @@ class HindsightConfig:
             typesafe_model=self.reranker_typesafe_model,
             typesafe_base_url=self.reranker_typesafe_base_url,
             typesafe_timeout=self.reranker_typesafe_timeout,
-            typesafe_batch_size=self.reranker_typesafe_batch_size,
             typesafe_max_concurrent=self.reranker_typesafe_max_concurrent,
             typesafe_prune_candidates=self.reranker_typesafe_prune_candidates,
             alibaba_api_key=self.reranker_alibaba_api_key,
@@ -4666,9 +4655,6 @@ class HindsightConfig:
             reranker_typesafe_base_url=os.getenv(ENV_RERANKER_TYPESAFE_BASE_URL, DEFAULT_RERANKER_TYPESAFE_BASE_URL),
             reranker_typesafe_timeout=float(
                 os.getenv(ENV_RERANKER_TYPESAFE_TIMEOUT, str(DEFAULT_RERANKER_TYPESAFE_TIMEOUT))
-            ),
-            reranker_typesafe_batch_size=int(
-                os.getenv(ENV_RERANKER_TYPESAFE_BATCH_SIZE, "").strip() or DEFAULT_RERANKER_TYPESAFE_BATCH_SIZE
             ),
             reranker_typesafe_max_concurrent=int(
                 os.getenv(ENV_RERANKER_TYPESAFE_MAX_CONCURRENT, "").strip() or DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT
