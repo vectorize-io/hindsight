@@ -29,6 +29,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import effective_request_timeout
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -201,7 +202,9 @@ class LiteLLMLLM(LLMInterface):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "timeout": self.timeout,
+            # Lengthened by a caller-set deadline floor for one large call (reflect's
+            # synthesis prompt, issue #4568); the ``wait_for`` backstops below use the same value.
+            "timeout": effective_request_timeout(self.timeout),
         }
 
         if self.api_key:
@@ -345,7 +348,7 @@ class LiteLLMLLM(LLMInterface):
                     set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                     response = await asyncio.wait_for(
                         self._acompletion(**call_kwargs),
-                        timeout=self.timeout,
+                        timeout=effective_request_timeout(self.timeout),
                     )
                 # Stash usage before the length check and parse/validate below,
                 # which may raise locally even though the provider charged for
@@ -545,7 +548,7 @@ class LiteLLMLLM(LLMInterface):
                     set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
                     response = await asyncio.wait_for(
                         self._acompletion(**call_kwargs),
-                        timeout=self.timeout,
+                        timeout=effective_request_timeout(self.timeout),
                     )
                 # Stash usage before the tool-call argument parse below, which
                 # can raise json.JSONDecodeError locally even though the provider

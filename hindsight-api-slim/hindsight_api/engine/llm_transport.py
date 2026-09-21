@@ -21,6 +21,9 @@ exactly ``llm_timeout`` and the logs could not say which phase was stuck.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import aiohttp
 
@@ -43,6 +46,77 @@ _MESSAGE_CAP = 200
 
 # Returned when an error wraps no transport-level cause.
 _NO_CAUSE = "<no cause>"
+
+# Floor on the per-request deadline of the LLM call in flight, set by a caller that
+# knows the call is legitimately long. Reflect's final synthesis is the case that
+# motivated it (issue #4568): its prompt is 30-90k tokens of tool results and takes
+# 5-48 s on a healthy provider, while the tool-calling turns before it answer in
+# 1-5 s. One fixed per-call deadline cannot fit both -- the 30 s reflect default killed
+# healthy synthesis calls, and a value that fits synthesis lets one stalled tool turn
+# outlive the caller -- so the deadline follows the prompt instead.
+#
+# It is a *floor*, not a replacement: :func:`effective_request_timeout` can only
+# lengthen the configured deadline. An operator's explicit ``HINDSIGHT_API_*_LLM_TIMEOUT``
+# is therefore never cut below what they set, and a background refresh running the same
+# agent under a 2700 s deadline keeps it. A ContextVar rather than a new ``call()``
+# argument: the caller holds an ``LLMProvider`` -- an ``LLMConfig``, a multi-LLM chain,
+# or a bare provider class -- and every one of those signatures would have to grow the
+# argument; the request-context / usage / queue-wait plumbing in ``llm_trace.py``
+# already crosses the same boundary this way.
+_request_timeout_floor_ctx: ContextVar[float | None] = ContextVar("hindsight_llm_request_timeout_floor", default=None)
+
+
+@contextmanager
+def request_timeout_floor(seconds: float | None) -> Iterator[None]:
+    """Arm a deadline floor for the LLM calls made inside the block; ``None`` arms nothing.
+
+    Scoped to the block so a floor computed for one large prompt cannot leak into the
+    next, smaller call on the same task.
+    """
+    token = _request_timeout_floor_ctx.set(seconds)
+    try:
+        yield
+    finally:
+        _request_timeout_floor_ctx.reset(token)
+
+
+def effective_request_timeout(configured: float) -> float:
+    """The deadline a provider arms for this call: ``configured``, lengthened to the floor if one is set."""
+    floor = _request_timeout_floor_ctx.get()
+    if floor is None:
+        return configured
+    return max(configured, floor)
+
+
+class RequestDeadlineExceeded:
+    """Marker base for provider errors that mean "the per-request deadline expired".
+
+    Some providers cannot raise a ``TimeoutError`` for that: Codex's runaway-stream
+    error must stay an ``aiohttp.ClientPayloadError`` so the transport retry ladder
+    classifies it as transient. Mixing this marker in lets
+    :func:`is_request_deadline_error` recognise it without importing the provider.
+    It carries no state, so it cannot conflict with the exception base's layout.
+    """
+
+
+def is_request_deadline_error(exc: BaseException) -> bool:
+    """Whether ``exc`` (or anything in its ``__cause__`` chain) is a per-request deadline expiry.
+
+    Covers the three shapes the providers produce: a bare ``TimeoutError`` (asyncio's
+    ``wait_for``/``timeout``, Gemini, LiteLLM, Cursor), an SDK error raised ``from`` an
+    ``httpx.TimeoutException`` (OpenAI-compatible, Anthropic), and a provider error
+    carrying the :class:`RequestDeadlineExceeded` marker (Codex). Only ``__cause__`` is
+    followed: ``__context__`` would also pick up an unrelated timeout that happened to
+    be in flight when a different error was raised.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, (TimeoutError, httpx.TimeoutException, RequestDeadlineExceeded)):
+            return True
+        seen.add(id(current))
+        current = current.__cause__
+    return False
 
 
 def build_sdk_timeout(total: float) -> httpx.Timeout:

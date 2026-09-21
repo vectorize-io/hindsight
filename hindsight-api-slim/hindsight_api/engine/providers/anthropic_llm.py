@@ -19,7 +19,7 @@ from typing import Any, Callable
 from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error, effective_request_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -246,6 +246,19 @@ class AnthropicLLM(LLMInterface):
             logger.error(f"Anthropic connection verification failed: {e}")
             raise RuntimeError(f"Failed to verify Anthropic connection: {e}") from e
 
+    def _client_for_call(self) -> "AsyncAnthropic":
+        """The SDK client armed with this call's deadline.
+
+        Same shape as the OpenAI-compatible provider: the timeout is baked into the
+        client, so a per-call deadline floor (reflect's large synthesis prompt, issue
+        #4568) is applied through a ``with_options`` view sharing the connection pool.
+        """
+        configured = self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+        effective = effective_request_timeout(configured)
+        if effective == configured:
+            return self._client
+        return self._client.with_options(timeout=build_sdk_timeout(effective))
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -352,7 +365,7 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    response = await self._client_for_call().messages.create(**call_params)
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_anthropic_response(response))
@@ -619,7 +632,7 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    response = await self._client_for_call().messages.create(**call_params)
                 stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls

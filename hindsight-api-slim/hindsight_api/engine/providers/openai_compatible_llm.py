@@ -53,7 +53,12 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_aiohttp_timeout, build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import (
+    build_aiohttp_timeout,
+    build_sdk_timeout,
+    describe_transport_error,
+    effective_request_timeout,
+)
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
@@ -1088,6 +1093,22 @@ class OpenAICompatibleLLM(LLMInterface):
         if self.provider == "minimax":
             extra_body.setdefault("thinking", {"type": "disabled"})
 
+    def _client_for_call(self) -> AsyncOpenAI:
+        """The SDK client armed with this call's deadline.
+
+        The configured timeout is baked into ``self._client`` at construction. A
+        caller that set a per-call deadline floor (reflect's large synthesis prompt,
+        issue #4568) gets a view of the same client with the longer timeout via
+        ``with_options`` -- it shares the connection pool -- and every other call
+        keeps the hot path untouched.
+        """
+        if not self.timeout:
+            return self._client
+        effective = effective_request_timeout(self.timeout)
+        if effective == self.timeout:
+            return self._client
+        return self._client.with_options(timeout=build_sdk_timeout(effective))
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -1254,7 +1275,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 if response_format is not None:
                     async with attempt_context() if attempt_context is not None else nullcontext():
                         set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                        response = await self._client.chat.completions.create(**call_params)
+                        response = await self._client_for_call().chat.completions.create(**call_params)
                     # Stash usage before parse/validate, which may raise locally
                     # even though the provider charged for these tokens (#2387).
                     stash_response_usage(_usage_from_openai_response(response))
@@ -1334,7 +1355,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 else:
                     async with attempt_context() if attempt_context is not None else nullcontext():
                         set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                        response = await self._client.chat.completions.create(**call_params)
+                        response = await self._client_for_call().chat.completions.create(**call_params)
                     stash_response_usage(_usage_from_openai_response(response))
                     result, first_choice = _content_or_error(
                         response,
@@ -1663,7 +1684,7 @@ class OpenAICompatibleLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.chat.completions.create(**call_params)
+                    response = await self._client_for_call().chat.completions.create(**call_params)
 
                 message = response.choices[0].message
                 finish_reason = response.choices[0].finish_reason

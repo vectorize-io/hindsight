@@ -24,6 +24,7 @@ from google.genai import types as genai_types
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_transport import effective_request_timeout
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -534,6 +535,9 @@ class GeminiLLM(LLMInterface):
         last_exception = None
         # Separate from `max_retries`, which is the API-error ladder — see
         # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        # Resolved once per call: a caller-set deadline floor (reflect's large synthesis
+        # prompt, issue #4568) lengthens the configured deadline for this call only.
+        request_timeout = effective_request_timeout(self._request_timeout)
         timeout_retries_left = _TIMEOUT_RETRIES
 
         for attempt in range(max_retries + 1):
@@ -546,7 +550,7 @@ class GeminiLLM(LLMInterface):
                             contents=gemini_contents,
                             config=generation_config,
                         ),
-                        timeout=self._request_timeout,
+                        timeout=request_timeout,
                     )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
@@ -772,11 +776,11 @@ class GeminiLLM(LLMInterface):
                 if timeout_retries_left > 0 and attempt < max_retries:
                     timeout_retries_left -= 1
                     logger.warning(
-                        f"Gemini call hit its {self._request_timeout}s deadline with no response; "
+                        f"Gemini call hit its {request_timeout}s deadline with no response; "
                         f"retrying ({timeout_retries_left} left)"
                     )
                     continue
-                logger.error(f"Gemini call hit its {self._request_timeout}s deadline; giving up")
+                logger.error(f"Gemini call hit its {request_timeout}s deadline; giving up")
                 raise
 
             except Exception as e:
@@ -937,6 +941,9 @@ class GeminiLLM(LLMInterface):
         last_exception = None
         # Separate from `max_retries`, which is the API-error ladder — see
         # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
+        # Resolved once per call: a caller-set deadline floor (reflect's large synthesis
+        # prompt, issue #4568) lengthens the configured deadline for this call only.
+        request_timeout = effective_request_timeout(self._request_timeout)
         timeout_retries_left = _TIMEOUT_RETRIES
         for attempt in range(max_retries + 1):
             try:
@@ -952,7 +959,7 @@ class GeminiLLM(LLMInterface):
                             contents=active_contents,
                             config=config,
                         ),
-                        timeout=self._request_timeout,
+                        timeout=request_timeout,
                     )
                 stash_response_usage(_usage_from_gemini_response(response))
 
@@ -1115,11 +1122,11 @@ class GeminiLLM(LLMInterface):
                 if timeout_retries_left > 0 and attempt < max_retries:
                     timeout_retries_left -= 1
                     logger.warning(
-                        f"Gemini tool call hit its {self._request_timeout}s deadline with no response; "
+                        f"Gemini tool call hit its {request_timeout}s deadline with no response; "
                         f"retrying ({timeout_retries_left} left)"
                     )
                     continue
-                logger.error(f"Gemini tool call hit its {self._request_timeout}s deadline; giving up")
+                logger.error(f"Gemini tool call hit its {request_timeout}s deadline; giving up")
                 raise
 
             except Exception as e:

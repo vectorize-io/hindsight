@@ -39,7 +39,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_aiohttp_timeout
+from hindsight_api.engine.llm_transport import RequestDeadlineExceeded, build_aiohttp_timeout, effective_request_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
@@ -179,12 +179,14 @@ def _raise_codex_quota_defer(
     )
 
 
-class CodexRunawayStreamError(aiohttp.ClientPayloadError):
+class CodexRunawayStreamError(RequestDeadlineExceeded, aiohttp.ClientPayloadError):
     """The backend streamed past the deadline or the body-size ceiling.
 
     Deliberately an ``aiohttp.ClientPayloadError``: a runaway stream is a
     transport-level failure, so ``call()`` retries it with backoff alongside every
     other ``aiohttp.ClientError`` and ``remote_retry`` classifies it as transient.
+    The ``RequestDeadlineExceeded`` marker is what lets reflect recognise it as a
+    deadline expiry and answer with a 504 that names the setting (issue #4568).
     """
 
 
@@ -821,10 +823,18 @@ class CodexLLM(LLMInterface):
         A 4xx/5xx is raised as :class:`UpstreamHTTPError` with its body already read,
         so callers classify on ``status_code`` and log ``body``.
         """
-        deadline = asyncio.timeout(self._request_timeout)
+        # A caller-set deadline floor (reflect's large synthesis prompt, issue #4568)
+        # lengthens this call's wall deadline and, with it, the per-phase socket
+        # timeouts: a backend prefilling 90k tokens can stay silent for longer than the
+        # configured read timeout. The per-request timeout is passed on every call
+        # because aiohttp reads ``timeout=None`` as "no timeout", not "session default".
+        request_timeout = effective_request_timeout(self._request_timeout)
+        deadline = asyncio.timeout(request_timeout)
         try:
             async with deadline:
-                async with self._session.get().post(url, json=payload, headers=headers) as response:
+                async with self._session.get().post(
+                    url, json=payload, headers=headers, timeout=build_aiohttp_timeout(request_timeout)
+                ) as response:
                     await raise_for_status(response)
                     yield response
         except TimeoutError as e:
@@ -833,7 +843,7 @@ class CodexLLM(LLMInterface):
             if not deadline.expired():
                 raise
             raise CodexRunawayStreamError(
-                f"Codex response exceeded the {self._request_timeout:g}s deadline "
+                f"Codex response exceeded the {request_timeout:g}s deadline "
                 f"(HINDSIGHT_API_LLM_TIMEOUT or its per-operation override)"
             ) from e
 
