@@ -30,9 +30,11 @@ T = TypeVar("T")
 
 # Read from the environment rather than urllib's getproxies(), which on macOS and
 # Windows also returns the OS proxy settings: a laptop with a system proxy must not
-# silently route the API's upstream calls through it. aiohttp reads the same
+# silently route the API's upstream calls through it. aiohttp reads the same two
 # variables itself once trust_env is on; this only decides whether to turn it on.
-_PROXY_ENV_VARS = ("http_proxy", "https_proxy", "all_proxy")
+# ALL_PROXY is deliberately absent: aiohttp's proxies_from_env() drops it, so acting
+# on it would pay trust_env's per-request cost for a proxy it will never use.
+_PROXY_ENV_VARS = ("http_proxy", "https_proxy")
 
 
 def proxy_env_is_set() -> bool:

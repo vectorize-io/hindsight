@@ -1486,16 +1486,21 @@ these on the process (pod env, systemd unit, shell) before it starts.
 
 Three things to know:
 
-- **The proxy URL itself must be `http://`.** An `https://` proxy URL is ignored (with a
-  warning), and `ALL_PROXY` / SOCKS proxies are not supported. This is the underlying HTTP
-  client's limitation, not a Hindsight one.
+- **The proxy URL itself must be `http://`.** On the API's own HTTP calls (embeddings,
+  rerankers, parsers, gateways reached directly) an `https://` proxy URL is ignored with a
+  warning, and `ALL_PROXY` / SOCKS is dropped. Provider SDKs that bring their own HTTP client
+  (OpenAI, Anthropic) do read `ALL_PROXY`, so don't rely on it either way — set `HTTP_PROXY`
+  and `HTTPS_PROXY`.
 - **Put local endpoints in `NO_PROXY`.** Nothing is exempted automatically — not even
-  `localhost`. A deployment that sets `HTTP_PROXY` and also runs a local Ollama, LM Studio,
-  llama.cpp or TEI must list those hosts in `NO_PROXY`, or their calls are sent to the proxy.
-  (The built-in llama.cpp server Hindsight spawns itself is always contacted directly.)
+  `localhost` or `127.0.0.1`. A deployment that sets `HTTP_PROXY` and also runs a local
+  Ollama, LM Studio, llama.cpp or TEI must list those hosts in `NO_PROXY`, or their calls
+  are sent to the proxy. This includes the llama.cpp server Hindsight spawns itself: the
+  readiness probe is always direct, but the completions that follow go through the OpenAI
+  SDK and will honour the proxy.
 - **Credentials in `~/.netrc` are applied too**, to the destination host, not just the proxy.
-  If a netrc entry matches a provider host, it overrides the `Authorization` header Hindsight
-  would have sent. Remove the entry, or point `NETRC` at a file without it.
+  A netrc entry matching a provider host does not override the `Authorization` header
+  Hindsight sends — the call fails outright with `Cannot combine AUTHORIZATION header with
+  AUTH argument`. Remove the entry, or point `NETRC` at a file without it.
 
 Webhook delivery is the one caller that ignores all of this on purpose: its SSRF guard
 validates the address it resolved, and a proxy would contact one that was never checked.

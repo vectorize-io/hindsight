@@ -172,19 +172,32 @@ def test_every_production_session_decides_about_the_proxy():
     only direct constructions are checked here.
     """
     package = pathlib.Path(hindsight_api.__file__).parent
-    # aiohttp_session.py IS the shared decision; llamacpp probes its own child process.
+    repo = package.parents[1]
+    # The server package plus the extensions, which is where the supabase session that
+    # reached an external endpoint without following the proxy was found.
+    roots = [package, repo / "hindsight-extensions"]
+    # aiohttp_session.py IS the shared decision, so it has nothing to defer to.
     exempt = {package / "engine" / "aiohttp_session.py"}
     missing = []
-    for path in package.rglob("*.py"):
-        if path in exempt:
+    seen = 0
+    for root in roots:
+        # The extensions live beside the package in the repo, but not in an installed
+        # copy of it; skipping a root that isn't there is why `seen` is asserted below.
+        if not root.is_dir():
             continue
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        for path in root.rglob("*.py"):
+            # Each extension carries its own .venv; only their own source counts.
+            if path in exempt or any(part in {"tests", ".venv", "build"} for part in path.parts):
                 continue
-            target = ast.unparse(node.func)
-            if target not in ("aiohttp.ClientSession", "ClientSession"):
-                continue
-            if not any(kw.arg == "trust_env" for kw in node.keywords):
-                missing.append(f"{path.relative_to(package)}:{node.lineno} {target}")
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                target = ast.unparse(node.func)
+                if target not in ("aiohttp.ClientSession", "ClientSession"):
+                    continue
+                seen += 1
+                if not any(kw.arg == "trust_env" for kw in node.keywords):
+                    missing.append(f"{path.relative_to(repo)}:{node.lineno} {target}")
     assert missing == [], "sessions with no explicit trust_env decision: " + ", ".join(missing)
+    assert seen >= 4, f"only {seen} sessions found — the scan is looking in the wrong place"
