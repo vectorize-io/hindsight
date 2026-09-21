@@ -208,3 +208,19 @@ def test_oversized_conversation_turn_fragments_drop_lone_surrogates():
     for chunk in chunks:
         chunk.encode()  # raises on a lone surrogate
     assert "\ud83d" not in "".join(chunks)
+
+
+def test_conversation_chunks_keep_escaped_del_characters():
+    """Only the surrogate range is stripped — DEL (U+007F) must round-trip.
+
+    ``ensure_ascii=False`` emits DEL raw, so a sanitizer wider than the surrogate
+    range would rewrite chunk text that used to encode fine, changing its hash and
+    its boundaries for every already-stored document that contains one.
+    """
+    del_char = chr(0x7F)
+    turns = [{"role": "user", "content": "x" * 60 + " tail " + del_char} for _ in range(3)]
+
+    chunks = chunk_text(json.dumps(turns), max_chars=150)
+
+    assert all(del_char in chunk for chunk in chunks)
+    assert [json.loads(chunk) for chunk in chunks] == [[turn] for turn in turns]

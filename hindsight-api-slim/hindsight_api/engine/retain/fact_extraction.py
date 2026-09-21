@@ -869,6 +869,11 @@ def chunk_text(
     )
 
 
+#: Anything left in the surrogate range after ``json.loads`` is unpaired — a valid pair
+#: decoded to a single astral character.
+_LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
 def _dump_turns(turns: Any) -> str:
     """Serialize conversation turns, dropping unpaired surrogates.
 
@@ -877,8 +882,12 @@ def _dump_turns(turns: Any) -> str:
     ingress sanitizer (it only sees the escape) and then crashes every UTF-8 encode
     downstream: chunk hashing, embedding, the Postgres insert. Paired surrogates are
     already a single astral character after ``json.loads``, so emoji survive.
+
+    Strips the surrogate range only, not the wider ingress sanitizer: that also drops
+    DEL, which ``ensure_ascii=False`` emits raw, and rewriting it here would change the
+    text — and so the hash and boundaries — of every stored chunk that contains one.
     """
-    return _sanitize_text(json.dumps(turns, ensure_ascii=False)) or ""
+    return _LONE_SURROGATE_RE.sub("", json.dumps(turns, ensure_ascii=False))
 
 
 def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limit: int) -> Iterator[str]:
