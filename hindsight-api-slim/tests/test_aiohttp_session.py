@@ -118,3 +118,16 @@ async def test_raise_for_status_keeps_body_and_is_classified():
 def test_aiohttp_connection_errors_are_transient():
     assert is_transient_remote_error(aiohttp.ClientConnectionError("reset"))
     assert is_transient_remote_error(aiohttp.ServerTimeoutError("read timed out"))
+
+
+@pytest.mark.asyncio
+async def test_sessions_honour_proxy_env_by_default_but_webhooks_do_not():
+    from hindsight_api.webhooks.url_guard import GuardedWebhookClient, parse_allowlist
+
+    holder = LoopLocalSession(timeout=per_phase_timeout(5.0))
+    assert holder.get().trust_env is True
+    await holder.close()
+
+    guarded = GuardedWebhookClient(parse_allowlist([]))
+    assert guarded._sessions.get().trust_env is False
+    await guarded._sessions.close()

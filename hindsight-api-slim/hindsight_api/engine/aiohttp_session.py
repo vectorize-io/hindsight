@@ -133,6 +133,12 @@ class LoopLocalSession:
     Construct it anywhere (no loop needed); call :meth:`get` from inside a coroutine.
     Every instance is registered so :func:`close_loop_sessions` can close them all at
     shutdown — providers and rerankers have no close hook of their own.
+
+    ``trust_env`` is on by default, as it was under httpx: a deployment behind an
+    egress proxy configures it the standard way (``HTTPS_PROXY``/``HTTP_PROXY``/
+    ``NO_PROXY``, and ``.netrc``) rather than through Hindsight settings. Pass
+    ``trust_env=False`` where the destination must be exactly the one validated
+    (webhook delivery).
     """
 
     def __init__(
@@ -141,10 +147,12 @@ class LoopLocalSession:
         timeout: aiohttp.ClientTimeout,
         headers: Mapping[str, str] | None = None,
         connector_factory: Callable[[], aiohttp.BaseConnector] | None = None,
+        trust_env: bool = True,
     ) -> None:
         self._timeout = timeout
         self._headers = dict(headers) if headers else None
         self._connector_factory = connector_factory
+        self._trust_env = trust_env
         self._sessions: LoopLocal[aiohttp.ClientSession] = LoopLocal(
             self._new_session, discard=_discard_session_of_closed_loop
         )
@@ -153,7 +161,12 @@ class LoopLocalSession:
 
     def _new_session(self) -> aiohttp.ClientSession:
         connector = self._connector_factory() if self._connector_factory else None
-        return aiohttp.ClientSession(timeout=self._timeout, headers=self._headers, connector=connector)
+        return aiohttp.ClientSession(
+            timeout=self._timeout,
+            headers=self._headers,
+            connector=connector,
+            trust_env=self._trust_env,
+        )
 
     def get(self) -> aiohttp.ClientSession:
         session = self._sessions.get()

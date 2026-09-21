@@ -63,7 +63,7 @@ class LlamaParseParser(FileParser):
 
         # One session per conversion: parsers have no close hook to release a
         # long-lived one, and a conversion is a rare, multi-second polling job.
-        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0)) as session:
+        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0), trust_env=True) as session:
             return await self._convert(session, file_data, filename, content_type)
 
     async def _convert(self, session: aiohttp.ClientSession, file_data: bytes, filename: str, content_type: str) -> str:

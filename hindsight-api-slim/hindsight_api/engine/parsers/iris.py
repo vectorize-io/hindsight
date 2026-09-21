@@ -68,7 +68,7 @@ class IrisParser(FileParser):
 
         # One session per conversion: a rare call, and the parser is built at startup
         # possibly off the serving loop, so it does not hold a long-lived one.
-        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0)) as client:
+        async with aiohttp.ClientSession(timeout=per_phase_timeout(120.0, connect=30.0), trust_env=True) as client:
             # Step 1: Request a presigned upload URL
             async with client.post(
                 f"{_IRIS_BASE_URL}/org/{self._org_id}/files",
