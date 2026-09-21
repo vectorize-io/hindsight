@@ -75,6 +75,9 @@ async def _run_recall(
     engine.query_analyzer = object()
     engine._cross_encoder_reranker = _Reranker()
     engine._authenticate_tenant = AsyncMock()
+    # Recall 404s for a bank that was never created (#4442); this engine has no
+    # database behind it, so the existence check is stubbed along with auth.
+    engine._require_bank_exists = AsyncMock()
 
     async def generate_embeddings_batch(*_args: object, **_kwargs: object) -> list[list[float]]:
         return [[0.1, 0.2, 0.3]]
