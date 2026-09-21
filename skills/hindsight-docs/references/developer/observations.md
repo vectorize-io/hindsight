@@ -68,15 +68,17 @@ By default, consolidation processes **all** unconsolidated memories in a bank. Y
 
 ```python
 # Consolidate only memories tagged with user:alice
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"]]
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(observation_scopes=[["user:alice"]]),
 )
 
 # Consolidate memories for alice OR the engineering team
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"], ["team:engineering"]]
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(
+        observation_scopes=[["user:alice"], ["team:engineering"]]
+    ),
 )
 ```
 
@@ -243,7 +245,7 @@ To wipe all consolidated knowledge and start over:
 
 ```python
 # Clear all observations for a bank
-client.clear_observations(bank_id="my-bank")
+await client.banks.clear_observations(bank_id=BANK_ID)
 ```
 
 This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch.

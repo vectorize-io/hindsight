@@ -84,7 +84,7 @@ and everything else inherits from the server/tenant defaults.
 
 The complete, always-current list is the template JSON
 Schema; each field means the same thing it does in
-[Configuration](../configuration.md). The most commonly used ones:
+[Configuration](../configuration.mdx). The most commonly used ones:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -238,7 +238,39 @@ curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/import" \
 ### Go
 
 ```go
-# Section 'import-template' not found in api/bank-templates.go
+template := map[string]interface{}{
+	"version": "1",
+	"bank": map[string]interface{}{
+		"retain_mission":      "Extract customer issues, resolutions, and sentiment.",
+		"enable_observations": true,
+		"observations_mission": "Track recurring customer pain points.",
+	},
+	"mental_models": []map[string]interface{}{
+		{
+			"id":           "sentiment-overview",
+			"name":         "Customer Sentiment Overview",
+			"source_query": "What is the overall sentiment trend?",
+			"trigger":      map[string]interface{}{"refresh_after_consolidation": true},
+		},
+	},
+	"directives": []map[string]interface{}{
+		{
+			"name":     "Acknowledge frustration",
+			"content":  "Always acknowledge frustration before offering solutions.",
+			"priority": 10,
+		},
+	},
+}
+
+body, _ := json.Marshal(template)
+resp, _ := http.Post(
+	apiURL+"/v1/default/banks/my-bank/import",
+	"application/json",
+	bytes.NewReader(body),
+)
+defer resp.Body.Close()
+respBody, _ := io.ReadAll(resp.Body)
+fmt.Println(string(respBody))
 ```
 
 ### Behavior
@@ -292,7 +324,14 @@ curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/import?dry_run=true" \
 ### Go
 
 ```go
-# Section 'import-dry-run' not found in api/bank-templates.go
+resp, _ = http.Post(
+	apiURL+"/v1/default/banks/my-bank/import?dry_run=true",
+	"application/json",
+	bytes.NewReader(body),
+)
+defer resp.Body.Close()
+dryRunBody, _ := io.ReadAll(resp.Body)
+fmt.Println(string(dryRunBody))
 ```
 
 Returns what *would* happen (which config would be applied, which mental models would be created) without making any changes. Returns HTTP 400 with a detailed error message if the manifest is invalid.
@@ -330,7 +369,10 @@ curl "$HINDSIGHT_URL/v1/default/banks/my-bank/export"
 ### Go
 
 ```go
-# Section 'export-template' not found in api/bank-templates.go
+resp, _ = http.Get(apiURL + "/v1/default/banks/my-bank/export")
+defer resp.Body.Close()
+exported, _ := io.ReadAll(resp.Body)
+fmt.Println(string(exported))
 ```
 
 The exported manifest only includes config fields that were explicitly set as per-bank overrides — not the fully resolved config (which includes server/tenant defaults). This means the exported manifest is portable: importing it into a new bank only overrides the fields that were intentionally customized.
@@ -387,7 +429,18 @@ curl -X POST "$HINDSIGHT_URL/v1/default/banks/new-bank/import" \
 ### Go
 
 ```go
-# Section 'export-reimport' not found in api/bank-templates.go
+// Export from source bank
+resp, _ = http.Get(apiURL + "/v1/default/banks/source-bank/export")
+defer resp.Body.Close()
+srcExported, _ := io.ReadAll(resp.Body)
+
+// Import into a new bank
+resp, _ = http.Post(
+	apiURL+"/v1/default/banks/new-bank/import",
+	"application/json",
+	bytes.NewReader(srcExported),
+)
+defer resp.Body.Close()
 ```
 
 ## JSON Schema
@@ -423,7 +476,10 @@ curl "$HINDSIGHT_URL/v1/bank-template-schema"
 ### Go
 
 ```go
-# Section 'get-schema' not found in api/bank-templates.go
+resp, _ = http.Get(apiURL + "/v1/bank-template-schema")
+defer resp.Body.Close()
+schema, _ := io.ReadAll(resp.Body)
+fmt.Println(string(schema))
 ```
 
 The static schema is also available at bank-template-schema.json.

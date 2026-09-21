@@ -1,42 +1,38 @@
----
-sidebar_position: 1
----
+#!/usr/bin/env python3
+"""
+Python SDK page examples for Hindsight (docs/sdks/python.mdx).
+Run: python examples/api/python-sdk.py
+"""
+import os
 
-# Python Client
+import requests
 
-Official HTTP client for the Hindsight API. Use this when you have a Hindsight server already running — locally, in Docker, or as a managed service — and you want a typed Python client to talk to it.
+HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
 
-If you want to **embed and run a Hindsight server in your Python process** (no external server required), see [Embedded Python (hindsight-all)](./hindsight-all.md) instead.
+# =============================================================================
+# Doc Examples
+# =============================================================================
 
-## Installation
-
-```bash
-pip install hindsight-client
-```
-
-## Quick Start
-
-```python
+# [docs:quickstart]
 from hindsight_client import Hindsight
 
 client = Hindsight(base_url="http://localhost:8888")
 
 # Retain a memory
-client.retain(bank_id="my-bank", content="Alice works at Google")
+client.retain(bank_id="python-sdk-bank", content="Alice works at Google")
 
 # Recall memories
-results = client.recall(bank_id="my-bank", query="What does Alice do?")
+results = client.recall(bank_id="python-sdk-bank", query="What does Alice do?")
 for r in results.results:
     print(r.text)
 
 # Reflect - generate a contextual answer
-answer = client.reflect(bank_id="my-bank", query="Tell me about Alice")
+answer = client.reflect(bank_id="python-sdk-bank", query="Tell me about Alice")
 print(answer.text)
-```
+# [/docs:quickstart]
 
-## Client Initialization
 
-```python
+# [docs:client-init]
 from hindsight_client import Hindsight
 
 client = Hindsight(
@@ -46,37 +42,31 @@ client = Hindsight(
 )
 
 # Core operations
-client.retain(bank_id="test", content="Hello world")
-results = client.recall(bank_id="test", query="Hello")
+client.retain(bank_id="python-sdk-test", content="Hello world")
+results = client.recall(bank_id="python-sdk-test", query="Hello")
 
-# Organized API namespaces
-client.banks.create(bank_id="test", name="Test Bank")
-models = client.mental_models.list(bank_id="test")
-directives = client.directives.list(bank_id="test")
-memories = client.memories.list(bank_id="test")
-```
+# Bank, mental model, directive and memory helpers
+client.create_bank(bank_id="python-sdk-test", name="Test Bank")
+models = client.list_mental_models(bank_id="python-sdk-test")
+directives = client.list_directives(bank_id="python-sdk-test")
+memories = client.list_memories(bank_id="python-sdk-test")
+# [/docs:client-init]
 
-## Core Operations
 
-### Version and Feature Checks
-
-```python
+# [docs:get-version]
 version = client.get_version()
 
 print(version.api_version)
 
 if not version.features.mcp:
     raise RuntimeError("This server does not expose the MCP endpoint")
-```
+# [/docs:get-version]
 
-The async client method is available as `await client.aget_version()`.
 
-### Retain (Store Memory)
-
-```python
+# [docs:retain]
 # Simple
 client.retain(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     content="Alice works at Google as a software engineer",
 )
 
@@ -84,7 +74,7 @@ client.retain(
 from datetime import datetime
 
 client.retain(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     content="Alice got promoted",
     context="career update",
     timestamp=datetime(2024, 1, 15),
@@ -92,13 +82,12 @@ client.retain(
     metadata={"source": "slack"},
     retain_async=False,  # Set True for background processing
 )
-```
+# [/docs:retain]
 
-### Retain Batch
 
-```python
+# [docs:retain-batch]
 client.retain_batch(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     items=[
         {"content": "Alice works at Google", "context": "career"},
         {"content": "Bob is a data scientist", "context": "career"},
@@ -106,14 +95,13 @@ client.retain_batch(
     document_id="conversation_001",
     retain_async=False,  # Set True for background processing
 )
-```
+# [/docs:retain-batch]
 
-### Recall (Search)
 
-```python
-# Simple - returns list of RecallResult
+# [docs:recall]
+# Simple - returns a RecallResponse
 results = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
 )
 
@@ -122,20 +110,19 @@ for r in results.results:
 
 # With options
 results = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
     types=["world", "observation"],  # Filter by fact type
     max_tokens=4096,
     budget="high",  # low, mid, or high
 )
-```
+# [/docs:recall]
 
-### Recall with Chunks
 
-```python
+# [docs:recall-chunks]
 # Returns RecallResponse with source chunks
 response = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
     types=["world", "experience"],
     budget="mid",
@@ -147,30 +134,27 @@ response = client.recall(
 print(f"Found {len(response.results)} memories")
 for r in response.results:
     print(f"  - {r.text}")
-    if r.chunks:
-        print(f"    Source: {r.chunks[0].text[:100]}...")
-```
+    chunk = (response.chunks or {}).get(r.chunk_id)
+    if chunk:
+        print(f"    Source: {chunk.text[:100]}...")
+# [/docs:recall-chunks]
 
-### Reflect (Generate Response)
 
-```python
+# [docs:reflect]
 answer = client.reflect(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What should I know about Alice?",
     budget="low",  # low, mid, or high
     context="preparing for a meeting",
 )
 
 print(answer.text)  # Generated response
-```
+# [/docs:reflect]
 
-## Bank Management
 
-### Create Bank
-
-```python
+# [docs:create-bank]
 client.create_bank(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     name="Assistant",
     mission="You're a helpful AI assistant - keep track of user preferences and conversation history.",
     disposition={
@@ -179,25 +163,23 @@ client.create_bank(
         "empathy": 3,       # 1-5: detached to empathetic
     },
 )
-```
+# [/docs:create-bank]
 
-### List Memories
 
-```python
+# [docs:list-memories]
 client.list_memories(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     type="world",  # Optional: filter by type
     search_query="Alice",  # Optional: text search
     limit=100,
     offset=0,
 )
-```
+# [/docs:list-memories]
 
-## Async Support
+client.close()
 
-All methods have async versions prefixed with `a`:
 
-```python
+# [docs:async]
 import asyncio
 from hindsight_client import Hindsight
 
@@ -205,29 +187,37 @@ async def main():
     client = Hindsight(base_url="http://localhost:8888")
 
     # Async retain
-    await client.aretain(bank_id="my-bank", content="Hello world")
+    await client.aretain(bank_id="python-sdk-bank", content="Hello world")
 
     # Async recall
-    results = await client.arecall(bank_id="my-bank", query="Hello")
-    for r in results:
+    results = await client.arecall(bank_id="python-sdk-bank", query="Hello")
+    for r in results.results:
         print(r.text)
 
     # Async reflect
-    answer = await client.areflect(bank_id="my-bank", query="What did I say?")
+    answer = await client.areflect(bank_id="python-sdk-bank", query="What did I say?")
     print(answer.text)
 
-    client.close()
+    await client.aclose()
 
 asyncio.run(main())
-```
+# [/docs:async]
 
-## Context Manager
 
-```python
+# [docs:context-manager]
 from hindsight_client import Hindsight
 
 with Hindsight(base_url="http://localhost:8888") as client:
-    client.retain(bank_id="my-bank", content="Hello")
-    results = client.recall(bank_id="my-bank", query="Hello")
+    client.retain(bank_id="python-sdk-bank", content="Hello")
+    results = client.recall(bank_id="python-sdk-bank", query="Hello")
 # Client automatically closed
-```
+# [/docs:context-manager]
+
+
+# =============================================================================
+# Cleanup (not shown in docs)
+# =============================================================================
+requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/python-sdk-bank")
+requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/python-sdk-test")
+
+print("python-sdk.py: All examples passed")

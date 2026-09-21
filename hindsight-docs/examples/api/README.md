@@ -20,7 +20,7 @@ This directory contains runnable example scripts that serve as the source of tru
 | `documents.py/mjs` | documents.md | Document CRUD examples |
 | `reflections.py` | reflections.md | Reflections CRUD examples |
 | `main-methods.py` | main-methods.md | Core method examples |
-| `cli-reference.sh` | cli.md | CLI command examples |
+| `cli-reference.sh` | cli.mdx | CLI command examples |
 
 ## Running Examples
 

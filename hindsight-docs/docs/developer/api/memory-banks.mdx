@@ -387,11 +387,20 @@ A mission only means something once you can see the prompt it lands in. `POST /v
 
 The operation is the whole request. Everything that shapes the prompt is read from the bank — its resolved config, profile and directives — and the runtime data an operation would be given is a fixed bracketed placeholder:
 
-```bash
-curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
-  -H "Content-Type: application/json" \
-  -d '{"operation": "retain"}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="prompts-preview" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="prompts-preview" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="prompts-preview" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="prompts-preview" language="go" />
+</TabItem>
+</Tabs>
 
 For `retain`, add `"strategy": "<name>"` to render under one of the bank's named retain strategies. Omit it and the bank's `retain_default_strategy` applies — exactly as it does for a retain that names none — so what you see is what retain would send. The response echoes the strategy that applied in `strategy`, and lists the bank's strategy names in `strategies` so a picker needs no second call.
 
@@ -653,19 +662,22 @@ Webhooks travel with `include_bank_config`. When copying a bank whose webhooks p
 
 `POST /v1/default/banks/{bank_id}/transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive). Returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# Whole bank, memories + config, no history
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export"
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-export" language="go" />
+</TabItem>
+</Tabs>
 
-# Just the memories
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?include_bank_config=false"
-
-# Specific documents (a document subset carries no bank-level sections)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?document_id=doc-1&document_id=doc-2"
-```
+A document subset must also pass `include_bank_config=false` (and leave `include_history` off). Bank-level sections cannot be scoped to documents, so the server rejects that combination with `400`.
 
 ### Import
 
@@ -676,15 +688,20 @@ curl -X POST -H "Authorization: Bearer $API_KEY" \
 | `restore` (default) | Writes a whole bank into `target_bank_id`, which **must not already exist**. This is how a bank is moved to another instance, or copied under a new id. |
 | `merge` | Folds the archive's documents into `{bank_id}`. `document_conflict` decides what happens to document ids that already exist: `skip` (default), `replace`, `new-id`. |
 
-```bash
-# Restore a bank under a new id
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/import?target_bank_id=my-bank-copy"
-
-# Merge an archive's documents into an existing bank
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/transfer/import?mode=merge&document_conflict=replace"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-import" language="go" />
+</TabItem>
+</Tabs>
 
 The include flags apply here too, and can only narrow: they restore a subset of what the archive holds, never more.
 
@@ -696,11 +713,20 @@ A restore carries the operations log as history, not as work: anything still in 
 
 `POST /v1/default/banks/{bank_id}/clone` — copy a bank into a new one in a single call, without handling an archive yourself. This is the export and import above run back to back on this instance: nothing is re-extracted and no LLM is called, so the clone's facts are exactly the source's, re-embedded with the same model.
 
-```bash
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/agent-42/clone?target_bank_id=agent-43"
-# -> {"operation_id": "…", "status": "pending"}
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="clone-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="clone-bank" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="clone-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="clone-bank" language="go" />
+</TabItem>
+</Tabs>
 
 | Query param | Default | Description |
 |-------------|---------|-------------|
@@ -727,23 +753,20 @@ Move documents — and the facts already extracted from them — between banks *
 
 `POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# 1. Submit the export (whole bank; add ?document_id=… to scope it)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
-# -> {"operation_id": "…", "status": "pending"}
-
-# 2. Poll until completed
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{
-#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
-#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
-
-# 3. Download the archive
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-export" language="go" />
+</TabItem>
+</Tabs>
 
 | Query param | Description |
 |-------------|-------------|
@@ -760,15 +783,20 @@ The archive lives as long as its export **operation record** — indefinitely by
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
 
-```bash
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/document-transfer?on_conflict=replace"
-# -> {"operation_id": "…", "status": "pending"}
-
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{"documents_imported":3,"facts_imported":42,"observations_imported":5,...}}
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-import" language="go" />
+</TabItem>
+</Tabs>
 
 `on_conflict` controls what happens when a document id already exists in the target bank:
 

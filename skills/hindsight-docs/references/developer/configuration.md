@@ -1,3 +1,4 @@
+
 # Configuration
 
 Complete reference for configuring Hindsight services through environment variables.
@@ -534,10 +535,9 @@ export HINDSIGHT_API_LLM_PROVIDER=none
 # Consolidation/observations are disabled
 ```
 
-:::tip OpenAI Codex, Claude Code & Vertex AI Setup
+> **💡 OpenAI Codex, Claude Code & Vertex AI Setup**
+>
 For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claude Code** (Claude Pro/Max), and **Vertex AI** (Google Cloud), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
-:::
-
 ### SuperGrok OAuth (`xai-oauth`)
 
 `HINDSIGHT_API_LLM_PROVIDER=xai-oauth` authenticates with a SuperGrok subscription via
@@ -670,12 +670,11 @@ member its own budget with `HINDSIGHT_API_LLM_<n>_MAX_RETRIES`.
 
 The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB) into `~/.hindsight/models`. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
 
-:::warning Not available in the Docker image
+> **⚠️ Not available in the Docker image**
+>
 The published `ghcr.io/vectorize-io/hindsight` image deliberately leaves llama.cpp out, so `HINDSIGHT_API_LLM_PROVIDER=llamacpp` cannot run there — it fails immediately with a message telling you so.
 
 For local inference in Docker, run llama.cpp as its own container and point Hindsight at its OpenAI-compatible API with `HINDSIGHT_API_LLM_PROVIDER=openai` and `HINDSIGHT_API_LLM_BASE_URL`. A ready-to-run setup is in [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
-:::
-
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_LLAMACPP_MODEL_PATH` | Path to a GGUF model file. If not set, auto-downloads `gemma-4-E2B-it-Q4_K_M` from HuggingFace. | Auto-download |
@@ -698,12 +697,11 @@ export HINDSIGHT_API_LLAMACPP_NO_GRAMMAR=true  # faster, less reliable JSON
 export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"
 ```
 
-:::note
+> **📝 Note**
+>
 The llama.cpp server is shared across all LLM operations (retain, reflect, consolidation). Set `HINDSIGHT_API_LLM_MAX_CONCURRENT=2` to allow retain and consolidation to run concurrently without blocking each other.
 
 Auto-downloaded models land in `~/.hindsight/models`. Keep that directory on persistent storage — if it is discarded between restarts, every restart re-downloads the full model.
-:::
-
 ### Per-Operation LLM Configuration
 
 Different memory operations have different requirements. **Retain** (fact extraction) benefits from models with strong structured output capabilities, while **Reflect** (reasoning/response generation) can use lighter, faster models. Configure separate LLM models for each operation to optimize for cost and performance.
@@ -770,13 +768,12 @@ budget on a reasoning chain, and does not halve interactive decode speed by runn
 alongside it. Every field falls back to its `REFLECT_LLM_*` counterpart, which in turn falls
 back to the global `LLM_*` — set none of them and behaviour is exactly as before.
 
-:::tip When to Use Per-Operation Config
+> **💡 When to Use Per-Operation Config**
+>
 - **Retain**: Use models with strong structured output (e.g., GPT-4o, Claude) for accurate fact extraction
 - **Reflect**: Use faster/cheaper models (e.g., GPT-4o-mini, Groq) for reasoning and response generation
 - **Mental model refresh**: On shared/local hardware, point it at a no-think or cheaper hosted model so the background job cannot destabilise interactive reflect
 - **Recall**: Does not use LLM (pure retrieval), so no configuration needed
-:::
-
 **Example: Separate Models for Retain and Reflect**
 
 ```bash
@@ -813,7 +810,8 @@ export HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF=2.0  # Start at 2s instead of 1s
 export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1min
 ```
 
-:::note Per-operation concurrency composes with the global cap
+> **📝 Per-operation concurrency composes with the global cap**
+>
 `HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT`,
 `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT`, and
 `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT` add an extra cap that applies *on top of*
@@ -830,8 +828,6 @@ reflect on shared hardware.
 Unlike the per-operation timeout and retry/backoff knobs, the `*_LLM_MAX_CONCURRENT`
 caps are process-global semaphores read from the environment once at startup. They are
 server-level only (not overridable per tenant/bank) and a change requires a restart.
-:::
-
 ### Embeddings
 
 | Variable | Description | Default |
@@ -904,7 +900,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 
 Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides. The ONNX settings above are also static, matching the existing `embeddings_local_*` settings.
 
-:::note Models that treat searches and stored text differently
+> **📝 Models that treat searches and stored text differently**
+>
 
 Some embedding models are trained to see a short instruction in front of a search, and nothing (or a different instruction) in front of the text being stored. With the `local` provider, Hindsight applies whichever instructions the model itself ships with — you don't configure anything. The default `BAAI/bge-small-en-v1.5` ships none, so nothing changes for existing deployments; `Qwen/Qwen3-Embedding-*` ships one for searches only, which is what makes those models retrieve accurately.
 
@@ -913,8 +910,6 @@ The rare case to watch for is a model that also instructs the **stored** side. S
 Most providers can't discover those instructions the way `local` does. A remote endpoint that takes plain text and returns a vector — `tei`, `litellm`, `litellm-sdk`, and anything behind an OpenAI-compatible `/embeddings` URL (`llama-server`, `infinity-emb`, vLLM, ...) — only ever receives the text, so you supply the instructions yourself with `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` and `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX`. Leaving them unset sends the text unchanged, which is what the symmetric hosted models expect.
 
 Two providers need nothing and ignore both settings: `local` (applies the model's own prompts) and `zeroentropy` (tells the API which side it is embedding). The `onnx` provider has its own pair, `HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX` / `..._PASSAGE_PREFIX`, which default to the E5 instructions.
-
-:::
 
 #### Local ONNX embeddings
 
@@ -936,7 +931,6 @@ MODEL_ID=intfloat/multilingual-e5-small
 MODEL_DIR=models/intfloat__multilingual-e5-small
 
 uv run --project hindsight-api-slim --extra local-onnx python - <<'PY'
-import os
 from huggingface_hub import snapshot_download
 
 snapshot_download(
@@ -1008,14 +1002,12 @@ export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
 export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
 ```
 
-:::warning
+> **⚠️ Warning**
+>
 Do not mix embeddings from different models in the same vector index. Switching from `local` to `onnx`, or changing ONNX models, requires re-embedding existing memories/documents even when the vector dimensions happen to match. For example, `BAAI/bge-small-en-v1.5` and `intfloat/multilingual-e5-small` both produce 384-dimensional vectors, but their embedding spaces are not semantically comparable.
-:::
-
-:::warning
+> **⚠️ Warning**
+>
 The default ONNX query/document prefixes (`query: ` and `passage: `) are for E5 models. Clear both prefix variables for non-E5 models such as MiniLM or BGE, otherwise Hindsight will prepend E5-style text to models that were not trained with that format.
-:::
-
 #### Common Pitfall: Provider-Specific Embedding Env Var Names
 
 Embedding environment variables include a provider segment in the key name:
@@ -1032,10 +1024,9 @@ For example, when `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai`:
 
 This differs from LLM variables, which follow `HINDSIGHT_API_LLM_{PARAMETER}` without a provider segment.
 
-:::warning
+> **⚠️ Warning**
+>
 If embedding keys are misnamed, Hindsight may fall back to default OpenAI embedding settings (for example, `text-embedding-3-small`) and fail with auth errors against the wrong endpoint.
-:::
-
 #### DeepSeek and Embeddings
 
 DeepSeek is supported as an **LLM** provider, but it does **not** expose an embeddings endpoint. If your LLM is DeepSeek, use a different embedding provider (for example `local`, `openai`, `cohere`, or `google`).
@@ -1143,7 +1134,8 @@ For `litellm-sdk`, if you set `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMEN
 
 For `zeroentropy`, zembed-1 supports `2560`, `1280`, `640`, `320`, `160`, `80`, and `40` dimensions. ZeroEntropy's API default is `2560`; Hindsight defaults to `1280` so the provider works with the default pgvector HNSW index. Use `2560` with a vector extension that supports higher-dimensional indexes, such as DiskANN/pgvectorscale or ScaNN.
 
-:::warning Dimension Changes
+> **⚠️ Dimension Changes**
+>
 Once memories are stored, you cannot change the embedding dimension without losing data. If you need to switch to a model with different dimensions:
 
 1. **Empty database**: The schema is adjusted automatically on startup
@@ -1157,8 +1149,6 @@ Supported OpenAI embedding dimensions:
 Google's `gemini-embedding-001` produces 3072 dimensions natively but supports configurable output dimensionality. Set `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` to control the output size (default: 768).
 
 ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, `320`, `160`, `80`, and `40`. Hindsight defaults to `1280` for this provider.
-:::
-
 ### Reranker
 
 | Variable | Description | Default |
@@ -1224,7 +1214,8 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE` | Passages scored per FlashRank forward pass. Each pass allocates attention tensors sized `batch × heads × seq²`, and FlashRank pads a batch to its longest passage, so raising this raises peak memory sharply on long candidates. Lower it if the reranker is the memory ceiling on a large bank. | `32` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
-:::note Apple Silicon: the local providers run on CPU
+> **📝 Apple Silicon: the local providers run on CPU**
+>
 
 PyTorch's MPS (Metal) backend is never used for the local embeddings or reranker
 models. It caches a kernel and allocator pool per input tensor shape and never releases
@@ -1234,8 +1225,6 @@ and concurrent inference aborts the process with a Metal validation assertion. T
 flags that used to opt in have been removed; setting them now logs a warning and does
 nothing. For GPU reranking on Apple Silicon use `HINDSIGHT_API_RERANKER_PROVIDER=jina-mlx`.
 CUDA and Intel XPU are unaffected and still auto-select.
-
-:::
 
 #### Reranker failover chain
 
@@ -1292,7 +1281,8 @@ Notes:
 - The indexed members are credential fields — never returned by the bank-config API, and
   server-level only (not per-bank configurable).
 
-:::tip Sizing a TEI reranker
+> **💡 Sizing a TEI reranker**
+>
 
 TEI reserves one slot per text in a rerank request and rejects the request outright
 once its pool is full, so start it with at least
@@ -1306,8 +1296,6 @@ text-embeddings-router --max-concurrent-requests 2048 ...
 Below that threshold, heavy recall traffic makes the reranker reject work it has the
 capacity to do. Rejections are retried with backoff, so an undersized pool shows up as
 slower recall rather than errors.
-
-:::
 
 ```bash
 # Local (default) - uses SentenceTransformers CrossEncoder
@@ -1456,10 +1444,9 @@ The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface
 
 `mlx` is Apple's Metal framework, so the `local-ml` extra only installs it on Apple Silicon — its Linux build is CPU-only and slower than the `local` provider. Selecting `jina-mlx` elsewhere fails at startup unless you install `mlx`/`mlx-lm` yourself.
 
-:::note License
+> **📝 License**
+>
 `jina-reranker-v3-mlx` is licensed under CC BY-NC 4.0. Contact Jina AI for commercial usage.
-:::
-
 ### Authentication
 
 By default, Hindsight runs without authentication. For production deployments, enable API key authentication using the built-in tenant extension:
@@ -1501,10 +1488,9 @@ They arrive in `RequestContext.extra_headers`, keyed by lower-cased name, on bot
 
 A listed header that arrives **more than once** is dropped (with a warning) rather than resolved to one of its values, so a duplicate can never silently override the value your proxy injected. Headers forwarded this way are only as trustworthy as the proxy in front of Hindsight: list a header only if that proxy sets it and strips any client-supplied copy. The setting is server-level and cannot be overridden per tenant or bank.
 
-:::tip Custom Authentication
+> **💡 Custom Authentication**
+>
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.
-:::
-
 ### Server
 
 | Variable | Description | Default |
@@ -1670,7 +1656,7 @@ Configured together, the bank behaves like a conventional vector store: chunks i
 search out, no LLM on either path. Set both sides in one call:
 
 ```bash
-curl -X PUT "$HINDSIGHT_API_URL/v1/default/banks/my-bank" \
+curl -X PUT "$HINDSIGHT_API_URL/v1/default/banks/plain-retrieval-bank" \
   -H "Authorization: Bearer $HINDSIGHT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1762,13 +1748,12 @@ a provider that rejects one fails the retain with its own error, which is more
 informative than a guess made at the ingress. Bytes are served back under the
 Content-Type the caller declared.
 
-:::warning
+> **⚠️ Warning**
+>
 Because the declared type is served verbatim, a bank writer who retains active
 content (an SVG or an HTML file) can have it execute in the dataplane's origin
 when it is fetched. Treat write access to a bank as equivalent to being able to
 host content on that origin.
-:::
-
 What happens to the bytes:
 
 - They are hashed (sha256) and stored **content-addressed** under the document
@@ -1997,10 +1982,10 @@ Then specify the strategy at retain time:
 
 ```python
 # Uses default strategy ("conversations")
-client.retain(bank_id, items=[{"content": "Alice joined the team today"}])
+client.retain_batch(bank_id, items=[{"content": "Alice joined the team today"}])
 
 # Explicitly use document strategy
-client.retain(bank_id, items=[{"content": "...document text..."}], strategy="documents")
+client.retain_batch(bank_id, items=[{"content": "...document text...", "strategy": "documents"}])
 ```
 
 If no `strategy` is specified in a retain call, `retain_default_strategy` is used. If neither is set, the bank/global config applies directly.
@@ -2244,10 +2229,9 @@ export HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY=base64encodedkey==
 | `gcs` | Production, GCP deployments | Supports ADC for keyless auth |
 | `azure` | Production, Azure deployments | Uses account key auth |
 
-:::tip Production Recommendation
+> **💡 Production Recommendation**
+>
 For production deployments, use `s3`, `gcs`, or `azure` to avoid storing large binary files in your PostgreSQL database. Set `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN=true` (the default) to delete files after memory extraction, which minimizes storage costs.
-:::
-
 ### Observations (Experimental) {#observations}
 
 Observations are deduplicated, evidence-grounded knowledge consolidated from multiple facts. Each observation tracks its supporting memories and a proof count, and is refined — not overwritten — when new evidence arrives.
@@ -2276,7 +2260,8 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | `HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE` | Maximum number of observations allowed per tag scope. When the limit is reached, consolidation will only update or delete existing observations — no new ones are created. Applies per tag scope (e.g., per-tag when using `per_tag` observation scopes). Observations with no tags are not subject to this limit. `-1` = unlimited. Configurable per bank. | `-1` |
 | `HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS` | Per-scope overrides of `MAX_OBSERVATIONS_PER_SCOPE`, as a JSON array of `{"scope": [tag-globs], "limit": int}` rules. Each `scope` is a list of [fnmatch](https://docs.python.org/3/library/fnmatch.html) globs; a consolidation scope matches under *exact cover* — every tag must be matched by a glob and every glob must match a tag, so `["shared"]` matches the scope `{shared}` but not `{run_1, shared}`. The first matching rule wins; scopes that match no rule fall back to `MAX_OBSERVATIONS_PER_SCOPE`. Example: `[{"scope": ["shared"], "limit": -1}, {"scope": ["run_*", "shared"], "limit": 50}]` keeps the `{shared}` scope unlimited while capping each `{run_*, shared}` scope at 50. Configurable per bank. | - |
 
-:::note Disabling a sweep stops scheduling, not execution
+> **📝 Disabling a sweep stops scheduling, not execution**
+>
 
 Background work runs in two independent stages, and the interval knobs above only
 govern the first:
@@ -2306,8 +2291,6 @@ This matters when isolating a workload for benchmarking or debugging: with only
 the intervals zeroed, a queued consolidation or retain can still run alongside
 whatever you are measuring and be attributed to it.
 
-:::
-
 #### Customizing observations: when to use what
 
 | Goal | Use |
@@ -2321,14 +2304,13 @@ By default, observations are durable, specific beliefs consolidated from memorie
 
 Set `HINDSIGHT_API_OBSERVATIONS_MISSION` to replace this definition entirely. Write a plain-language description of what observations should be for your use case. The LLM will use this instead of the default rules when deciding what to create or update. Leave it unset to keep the server default.
 
-:::tip When to use observations_mission
+> **💡 When to use observations_mission**
+>
 Use it when the default durable-knowledge behavior doesn't match your use case. Common scenarios:
 - You want **broader event summaries** rather than isolated facts
 - You want observations **grouped by time period** (weekly, monthly)
 - You want a **different granularity** (one observation per project rather than per fact)
 - You have a **domain-specific** notion of what's worth remembering
-:::
-
 **Example: Weekly event summaries**
 
 ```bash
@@ -2370,7 +2352,7 @@ These knobs control the recall tool the reflect agent runs (including when refre
 
 #### Disposition
 
-Disposition traits control how the bank reasons during reflect operations. Each trait is on a scale of 1–5. These are hierarchical — they can be overridden per bank via the [config API](./configuration.md#hierarchical-configuration).
+Disposition traits control how the bank reasons during reflect operations. Each trait is on a scale of 1–5. These are hierarchical — they can be overridden per bank via the [config API](#hierarchical-configuration).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -2409,7 +2391,7 @@ This can also be overridden per bank via the [config API](#hierarchical-configur
 
 ```bash
 # Restrict a specific bank to read-only MCP access
-curl -X PATCH http://localhost:8888/v1/default/banks/my-bank/config \
+curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
   -H "Content-Type: application/json" \
   -d '{"updates": {"mcp_enabled_tools": ["recall"]}}'
 ```
@@ -2463,7 +2445,8 @@ Configuration for background task processing. By default, the API processes task
 
 Terminal operations use one coherent retention window for the entire row. Hindsight does not scrub the task payload when an operation finishes: failed and cancelled operations need it for retry, while `include_payload=true` on completed operations is an explicit debugging surface. Keeping payload, result metadata, progress, and status together also avoids partial operation histories. Once a terminal row's `updated_at` is older than the configured window, the background maintenance loop prunes it in bounded per-schema batches, alongside the other scheduled sweeps. PostgreSQL only — the maintenance loop does not run on Oracle. Pending and processing rows are never pruned by this cleanup.
 
-:::note Worker slot reservations are a floor, not a cap
+> **📝 Worker slot reservations are a floor, not a cap**
+>
 `..._RESERVED_SLOTS` reserves a guaranteed *minimum* number of slots (a floor) for an operation type within `WORKER_MAX_SLOTS`, so a saturated pool can't starve it. It is **not** a per-type maximum. The sum of all reservations must not exceed `WORKER_MAX_SLOTS` (startup raises `ValueError` otherwise). Remaining capacity (`WORKER_MAX_SLOTS - sum of reservations`) forms a **shared pool** usable by any type on a first-come basis, and a type whose reservation is full **overflows into the shared pool** — so a type's real ceiling is `WORKER_MAX_SLOTS`, regardless of its reservation.
 
 Example: `MAX_SLOTS=10`, `CONSOLIDATION_RESERVED_SLOTS=2`, `RETAIN_RESERVED_SLOTS=3`, `REFRESH_MENTAL_MODEL_RESERVED_SLOTS=2` → shared pool = `10 - (2+3+2) = 3`.
@@ -2471,9 +2454,8 @@ Example: `MAX_SLOTS=10`, `CONSOLIDATION_RESERVED_SLOTS=2`, `RETAIN_RESERVED_SLOT
 With the defaults (`MAX_SLOTS=10`, `CONSOLIDATION_RESERVED_SLOTS=2`, all other reservations `0`), 2 slots are always reserved for consolidation and the remaining 8 form the shared pool; consolidation may still overflow the shared pool up to 10. Set `CONSOLIDATION_RESERVED_SLOTS=0` to release its reserved capacity into the shared pool. Consolidation's bank-serialization constraint (no two consolidation tasks for the same bank concurrently) is preserved regardless of which pool claims the slot.
 
 The legacy `..._MAX_SLOTS` env vars are a deprecated alias for `..._RESERVED_SLOTS` — despite the name they set the reservation floor, never a ceiling. They still work but log a warning; migrate to `..._RESERVED_SLOTS`.
-:::
-
-:::note Consolidation bank priority
+> **📝 Consolidation bank priority**
+>
 `HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY` controls which banks' consolidation tasks are claimed first when a slot becomes available. Format: comma-separated `bank-pattern:priority` pairs where higher numbers mean higher priority. Patterns support `*` as a wildcard; a bare `*` is the catch-all default for unlisted banks (defaults to `1` if omitted).
 
 Example:
@@ -2482,8 +2464,6 @@ HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY="shadow-*:10,staging-*:5,*:1"
 ```
 
 This ensures `shadow-*` banks are always consolidated before others, even if their tasks were submitted later. Useful for deployments with asymmetric bank sizes where a large bank might be starved by many small banks cycling through limited slots. Bank-serialization (max one concurrent consolidation per bank) is preserved regardless of priority. When unset, consolidation tasks are claimed in `created_at` order (default behavior).
-:::
-
 ### Performance Optimization
 
 | Variable | Description | Default |
@@ -2526,10 +2506,9 @@ For a server handling many concurrent requests, lower values (down to `1`) favor
 | `HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS` | Comma-separated hosts or IP/CIDR ranges permitted as webhook destinations in addition to public addresses. Private, loopback, and link-local ranges (including the cloud metadata address) are blocked unless listed here. | - (public only) |
 | `HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY` | Return the raw upstream response body in the delivery-history API. Off by default to avoid exposing internal response contents; the delivery status code is always returned. | `false` |
 
-:::warning Webhook destinations are SSRF-guarded
+> **⚠️ Webhook destinations are SSRF-guarded**
+>
 Because webhook URLs are caller-supplied, the delivery worker refuses to send to private, loopback, or link-local addresses (e.g. `169.254.169.254`, `127.0.0.1`, `10.0.0.0/8`) by default, and it does not return upstream response bodies to callers. Use `HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS` to allow specific internal destinations (such as `127.0.0.1` for local testing), and `HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY=true` only if you trust those destinations and need the response body for debugging.
-:::
-
 ### Audit Logging
 
 Audit logging captures mutating operations (retain, recall, reflect, bank config updates, [Memory Defense](memory-defense/index.md) redact/block actions, etc.) into an `audit_log` table, queryable via the `/audit-logs` endpoint.
@@ -2582,7 +2561,8 @@ a large multi-tenant deployment **the cadences are the knob that matters**.
 | `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` | How often expired terminal operation rows are pruned. See [Distributed Workers](#distributed-workers) for the retention window and batch size. `0` disables the job. | `900` |
 | `HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS` | Upper bound on a random delay applied before a process runs its **first** maintenance tick. Every job is due on that first tick, so without an offset a fleet started together — a deploy or rolling restart — runs every sweep in every process at the same instant. `0` disables the jitter for a deterministic start. | `60` |
 
-:::tip Tuning for many tenants
+> **💡 Tuning for many tenants**
+>
 
 At a few hundred tenants the defaults are irrelevant. At tens of thousands, the
 per-tick discovery scan dominates, and the jobs whose retention is counted in
@@ -2590,8 +2570,6 @@ per-tick discovery scan dominates, and the jobs whose retention is counted in
 `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` and
 `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` first — they are the two most
 frequent sweeps — and keep the jitter enabled so restarts don't align the fleet.
-
-:::
 
 ### Programmatic Configuration
 
@@ -2919,7 +2897,7 @@ class CustomTenantExtension(TenantExtension):
 
 ```bash
 # Update retention settings for a bank
-curl -X PATCH http://localhost:8888/v1/default/banks/my-bank/config \
+curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
   -H "Content-Type: application/json" \
   -d '{
     "updates": {
@@ -2932,10 +2910,10 @@ curl -X PATCH http://localhost:8888/v1/default/banks/my-bank/config \
 # Note: retain_extraction_mode must be "custom" to use retain_custom_instructions
 
 # View resolved config (respects permissions)
-curl http://localhost:8888/v1/default/banks/my-bank/config
+curl http://localhost:8888/v1/default/banks/config-demo-bank/config
 
 # Reset to defaults
-curl -X DELETE http://localhost:8888/v1/default/banks/my-bank/config
+curl -X DELETE http://localhost:8888/v1/default/banks/config-demo-bank/config
 ```
 
 **Security Notes:**

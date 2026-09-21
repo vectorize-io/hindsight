@@ -1,6 +1,4 @@
----
-sidebar_position: 5
----
+
 
 # Multilingual Support
 
@@ -32,13 +30,13 @@ When you retain content in any language, Hindsight extracts and stores facts in 
 ### Example: Chinese Content
 
 ```python
-from hindsight import Hindsight
+from hindsight_client import Hindsight
 
-hindsight = Hindsight()
+hindsight = Hindsight(base_url=HINDSIGHT_URL)
 
 # Retain Chinese content
 hindsight.retain(
-    bank_id="user-123",
+    bank_id="multilingual-user",
     content="""
     张伟是一位资深软件工程师，在腾讯工作了五年。
     他专门研究分布式系统，并领导了公司微服务架构的开发。
@@ -48,7 +46,7 @@ hindsight.retain(
 
 # Query in Chinese - get Chinese results
 results = hindsight.recall(
-    bank_id="user-123",
+    bank_id="multilingual-user",
     query="告诉我关于张伟的信息"
 )
 
@@ -61,7 +59,7 @@ results = hindsight.recall(
 
 ```python
 hindsight.retain(
-    bank_id="user-123",
+    bank_id="multilingual-user",
     content="""
     田中さんはソフトウェアエンジニアで、東京のスタートアップで働いています。
     彼女はPythonとTypeScriptが得意で、毎日コードレビューをしています。
@@ -71,7 +69,7 @@ hindsight.retain(
 
 # Query in Japanese
 results = hindsight.recall(
-    bank_id="user-123",
+    bank_id="multilingual-user",
     query="田中さんについて教えてください"
 )
 ```
@@ -87,20 +85,20 @@ The `reflect` operation also respects the input language, generating thoughtful 
 ```python
 # Store facts about team members (in Chinese)
 hindsight.retain(
-    bank_id="team-eval",
+    bank_id="multilingual-team-eval",
     content="张伟是一位优秀的软件工程师，完成了五个重大项目。他总是按时交付，代码整洁有良好的文档。",
     context="绩效评估"
 )
 
 hindsight.retain(
-    bank_id="team-eval",
+    bank_id="multilingual-team-eval",
     content="李明最近加入团队。他错过了第一个截止日期，代码有很多bug。",
     context="绩效评估"
 )
 
 # Reflect in Chinese
 result = hindsight.reflect(
-    bank_id="team-eval",
+    bank_id="multilingual-team-eval",
     query="谁是更可靠的工程师？"
 )
 
@@ -118,7 +116,7 @@ Hindsight handles mixed-language content gracefully, preserving both languages w
 
 ```python
 hindsight.retain(
-    bank_id="user-123",
+    bank_id="multilingual-user",
     content="""
     王芳在Google北京办公室工作，她是一名高级产品经理。
     之前她在Microsoft和Amazon工作过。

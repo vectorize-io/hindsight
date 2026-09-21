@@ -88,7 +88,16 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model' not found in api/mental-models.go
+// Create a mental model (runs reflect in background)
+result, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Team Communication Preferences",
+		SourceQuery: "How does the team prefer to communicate?",
+		Tags:        []string{"team", "communication"},
+	}).Execute()
+
+// Returns an operation_id — check operations endpoint for completion
+fmt.Printf("Operation ID: %s\n", result.GetOperationId())
 ```
 
 ### Parameters
@@ -149,7 +158,16 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-with-id' not found in api/mental-models.go
+// Create a mental model with a specific custom ID
+mmID := "communication-policy"
+resultWithID, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Id:          *hindsight.NewNullableString(&mmID),
+		Name:        "Communication Policy",
+		SourceQuery: "What are the team's communication guidelines?",
+	}).Execute()
+
+fmt.Printf("Created with custom ID: %s\n", resultWithID.GetOperationId())
 ```
 
 > **💡 Tip**
@@ -350,7 +368,19 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-with-trigger' not found in api/mental-models.go
+// Create a mental model with automatic refresh enabled
+refreshTrue := true
+result2, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Project Status",
+		SourceQuery: "What is the current project status?",
+		Trigger: &hindsight.MentalModelTriggerInput{
+			RefreshAfterConsolidation: &refreshTrue,
+		},
+	}).Execute()
+
+// This mental model will automatically refresh when observations are updated
+fmt.Printf("Operation ID: %s\n", result2.GetOperationId())
 ```
 
 ### When to Use Automatic Refresh
@@ -402,7 +432,13 @@ hindsight mental-model list "$BANK_ID"
 ### Go
 
 ```go
-# Section 'list-mental-models' not found in api/mental-models.go
+// List all mental models in a bank. The list returns metadata by default;
+// Detail("content") adds source_query/content/trigger.
+mentalModels, _, _ := client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
+
+for _, mm := range mentalModels.GetItems() {
+	fmt.Printf("- %s: %s\n", mm.GetName(), mm.GetSourceQuery())
+}
 ```
 
 ---
@@ -412,7 +448,15 @@ hindsight mental-model list "$BANK_ID"
 ### Python
 
 ```python
-# Section 'get-mental-model' not found in api/mental-models.py
+# Get a specific mental model
+mental_model = client.get_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Name: {mental_model.name}")
+print(f"Content: {mental_model.content}")
+print(f"Last refreshed: {mental_model.last_refreshed_at}")
 ```
 
 ### Node.js
@@ -429,13 +473,19 @@ console.log(`Last refreshed: ${mentalModel.last_refreshed_at}`);
 ### CLI
 
 ```bash
-# Section 'get-mental-model' not found in api/mental-models.sh
+# Get a specific mental model
+hindsight mental-model get "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'get-mental-model' not found in api/mental-models.go
+// Get a specific mental model
+mentalModel, _, _ := client.MentalModelsAPI.GetMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Name: %s\n", mentalModel.GetName())
+fmt.Printf("Content: %s\n", mentalModel.GetContent())
+fmt.Printf("Last refreshed: %s\n", mentalModel.GetLastRefreshedAt())
 ```
 
 ### Detail Levels
@@ -453,15 +503,57 @@ The two endpoints default differently:
 - **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
 - **Get** defaults to `full`. You already named the one model you want.
 
-```bash
+### Python
+
+```python
 # List: metadata only, the default (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
+client.list_mental_models(bank_id=BANK_ID)
 
 # List with content but without provenance chains (opt-in)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+client.list_mental_models(bank_id=BANK_ID, detail="content")
 
 # Get one model — full detail is the default here
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
+client.get_mental_model(bank_id=BANK_ID, mental_model_id=mental_model_id)
+```
+
+### Node.js
+
+```javascript
+// List: metadata only, the default (smallest response)
+await client.listMentalModels(BANK_ID);
+
+// List with content but without provenance chains (opt-in)
+await client.listMentalModels(BANK_ID, { detail: 'content' });
+
+// Get one model — full detail is the default here
+await client.getMentalModel(BANK_ID, mentalModelId);
+```
+
+### CLI
+
+```bash
+# The CLI has no --detail flag; use the HTTP API
+# List: metadata only, the default (smallest response)
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models"
+
+# List with content but without provenance chains (opt-in)
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+
+# Get one model — full detail is the default here
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models/$MENTAL_MODEL_ID"
+```
+
+### Go
+
+```go
+// List: metadata only, the default (smallest response)
+client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Execute()
+
+// List with content but without provenance chains (opt-in)
+client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
+
+// Get one model — full detail is the default here
+client.MentalModelsAPI.GetMentalModel(ctx, mmBankID, mentalModelID).Execute()
 ```
 
 The `detail` parameter is available on the `get_mental_model` MCP tool. The
@@ -501,7 +593,13 @@ Re-run the source query to update the mental model with current knowledge:
 ### Python
 
 ```python
-# Section 'refresh-mental-model' not found in api/mental-models.py
+# Refresh a mental model to update with current knowledge
+result = client.refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Refresh operation ID: {result.operation_id}")
 ```
 
 ### Node.js
@@ -516,13 +614,17 @@ console.log(`Refresh operation ID: ${refreshResult.operation_id}`);
 ### CLI
 
 ```bash
-# Section 'refresh-mental-model' not found in api/mental-models.sh
+# Refresh a mental model to update with current knowledge
+hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'refresh-mental-model' not found in api/mental-models.go
+// Refresh a mental model to update with current knowledge
+refreshResult, _, _ := client.MentalModelsAPI.RefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Refresh operation ID: %s\n", refreshResult.GetOperationId())
 ```
 
 Refreshing is useful when:
@@ -553,9 +655,47 @@ watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry ru
 reads exactly the window the next real refresh will, and repeating it reads that same
 window again.
 
+### Python
+
+```python
+# Preview what a refresh would do, without writing anything
+preview = client.dry_run_refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Mode: {preview.effective_mode}, would persist: {preview.would_persist}")
+print(preview.diff)
+```
+
+### Node.js
+
+```javascript
+// Preview what a refresh would do, without writing anything
+const preview = await client.dryRunRefreshMentalModel(BANK_ID, mentalModelId);
+
+console.log(`Mode: ${preview.effective_mode}, would persist: ${preview.would_persist}`);
+console.log(preview.diff);
+```
+
+### CLI
+
 ```bash
-curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
-  -H "Content-Type: application/json" -d '{}'
+# Preview what a refresh would do, without writing anything
+hindsight mental-model dry-run-refresh "$BANK_ID" "$MENTAL_MODEL_ID"
+```
+
+### Go
+
+```go
+// Preview what a refresh would do, without writing anything
+preview, _, err := client.MentalModelsAPI.DryRunRefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+if err != nil {
+	panic(err)
+}
+
+fmt.Printf("Mode: %s, would persist: %v\n", preview.GetEffectiveMode(), preview.GetWouldPersist())
+fmt.Println(preview.GetDiff())
 ```
 
 The response answers the questions the stored document can't:
@@ -592,10 +732,51 @@ the time you notice a bad document, the run that produced it is gone.
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that
 model — scheduled ones included — under `reflect_response.trace`:
 
+### Python
+
+```python
+# Record how every refresh (scheduled ones too) reached its result
+client.update_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id,
+    trigger={"mode": "delta", "keep_trace": True}
+)
+```
+
+### Node.js
+
+```javascript
+// Record how every refresh (scheduled ones too) reached its result
+await client.updateMentalModel(BANK_ID, mentalModelId, {
+    trigger: { mode: 'delta', keepTrace: true },
+});
+```
+
+### CLI
+
 ```bash
-curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
+# Record how every refresh (scheduled ones too) reached its result
+hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+  --trigger-mode delta \
+  --trigger-keep-trace true
+```
+
+### Go
+
+```go
+// Record how every refresh (scheduled ones too) reached its result
+mode := "delta"
+keepTrace := true
+_, _, err = client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+	UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+		Trigger: *hindsight.NewNullableMentalModelTriggerInput(&hindsight.MentalModelTriggerInput{
+			Mode:      &mode,
+			KeepTrace: &keepTrace,
+		}),
+	}).Execute()
+if err != nil {
+	panic(err)
+}
 ```
 
 Only the latest refresh's trace is kept, and it is recorded even when a refresh
@@ -648,7 +829,19 @@ This is useful for delta-mode models that have accumulated drift over many incre
 ### Python
 
 ```python
-# Section 'clear-mental-model' not found in api/mental-models.py
+# Clear a mental model's content, then refresh for a full re-synthesis
+client.clear_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+# Trigger a fresh full rebuild
+result = client.refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Full refresh operation ID: {result.operation_id}")
 ```
 
 ### Node.js
@@ -666,13 +859,23 @@ console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
 ### CLI
 
 ```bash
-# Section 'clear-mental-model' not found in api/mental-models.sh
+# Clear a mental model's content, then refresh for a full re-synthesis
+curl -s -X POST "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/mental-models/${MENTAL_MODEL_ID}/clear"
+
+# Trigger a fresh full rebuild
+hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'clear-mental-model' not found in api/mental-models.go
+// Clear a mental model's content, then refresh for a full re-synthesis
+client.MentalModelsAPI.ClearMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+// Trigger a fresh full rebuild
+fullRefreshResult, _, _ := client.MentalModelsAPI.RefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Full refresh operation ID: %s\n", fullRefreshResult.GetOperationId())
 ```
 
 The clear operation is synchronous and resets the content to an empty string. The model's configuration (name, source query, trigger settings) is preserved. Since the content is now empty, the next `/refresh` call will always perform a full regeneration — even if the model's trigger mode is set to `delta`.
@@ -689,7 +892,15 @@ Update the mental model's name:
 ### Python
 
 ```python
-# Section 'update-mental-model' not found in api/mental-models.py
+# Update a mental model's metadata
+updated = client.update_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id,
+    name="Updated Team Communication Preferences",
+    trigger={"refresh_after_consolidation": True}  # Enable auto-refresh
+)
+
+print(f"Updated name: {updated.name}")
 ```
 
 ### Node.js
@@ -698,7 +909,7 @@ Update the mental model's name:
 // Update a mental model's metadata
 const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
     name: 'Updated Team Communication Preferences',
-    trigger: { refresh_after_consolidation: true },
+    trigger: { refreshAfterConsolidation: true },
 });
 
 console.log(`Updated name: ${updated.name}`);
@@ -707,13 +918,26 @@ console.log(`Updated name: ${updated.name}`);
 ### CLI
 
 ```bash
-# Section 'update-mental-model' not found in api/mental-models.sh
+# Update a mental model's metadata
+hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+  --name "Updated Team Communication Preferences"
 ```
 
 ### Go
 
 ```go
-# Section 'update-mental-model' not found in api/mental-models.go
+// Update a mental model's metadata
+newName := "Updated Team Communication Preferences"
+refreshAfter := true
+updated, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+	UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+		Name: *hindsight.NewNullableString(&newName),
+		Trigger: *hindsight.NewNullableMentalModelTriggerInput(&hindsight.MentalModelTriggerInput{
+			RefreshAfterConsolidation: &refreshAfter,
+		}),
+	}).Execute()
+
+fmt.Printf("Updated name: %s\n", updated.GetName())
 ```
 
 ---
@@ -723,7 +947,11 @@ console.log(`Updated name: ${updated.name}`);
 ### Python
 
 ```python
-# Section 'delete-mental-model' not found in api/mental-models.py
+# Delete a mental model
+client.delete_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
 ```
 
 ### Node.js
@@ -736,13 +964,15 @@ await client.deleteMentalModel(BANK_ID, mentalModelId);
 ### CLI
 
 ```bash
-# Section 'delete-mental-model' not found in api/mental-models.sh
+# Delete a mental model
+hindsight mental-model delete "$BANK_ID" "$MENTAL_MODEL_ID" -y
 ```
 
 ### Go
 
 ```go
-# Section 'delete-mental-model' not found in api/mental-models.go
+// Delete a mental model
+client.MentalModelsAPI.DeleteMentalModel(ctx, mmBankID, mentalModelID).Execute()
 ```
 
 ---
@@ -831,7 +1061,21 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-tags-match' not found in api/mental-models.go
+// Override how the model's tags filter source memories on refresh.
+// A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
+// use "any" when your memories are tagged narrowly (one topic each), so the
+// refresh reads any memory carrying at least one of the model's tags.
+result3, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Current Projects",
+		SourceQuery: "Which projects is the user currently working on?",
+		Tags:        []string{"projects", "mental-model"},
+		Trigger: &hindsight.MentalModelTriggerInput{
+			TagsMatch: *hindsight.NewNullableString(hindsight.PtrString("any")),
+		},
+	}).Execute()
+
+fmt.Printf("Operation ID: %s\n", result3.GetOperationId())
 ```
 
 The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.
@@ -860,7 +1104,15 @@ Every time a mental model's content changes (via refresh or manual update), the 
 ### Python
 
 ```python
-# Section 'get-mental-model-history' not found in api/mental-models.py
+# Get the change history of a mental model
+history = client.get_mental_model_history(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+for entry in history:
+    print(f"Changed at: {entry['changed_at']}")
+    print(f"Previous content: {entry['previous_content']}")
 ```
 
 ### Node.js
@@ -878,13 +1130,24 @@ for (const entry of history) {
 ### CLI
 
 ```bash
-# Section 'get-mental-model-history' not found in api/mental-models.sh
+# Get the change history of a mental model
+hindsight mental-model history "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'get-mental-model-history' not found in api/mental-models.go
+// Get the change history of a mental model
+history, _, _ := client.MentalModelsAPI.GetMentalModelHistory(ctx, mmBankID, mentalModelID).Execute()
+
+if entries, ok := history.([]interface{}); ok {
+	for _, entry := range entries {
+		if e, ok := entry.(map[string]interface{}); ok {
+			fmt.Printf("Changed at: %v\n", e["changed_at"])
+			fmt.Printf("Previous content: %v\n", e["previous_content"])
+		}
+	}
+}
 ```
 
 ### Response

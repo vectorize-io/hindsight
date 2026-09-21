@@ -124,7 +124,7 @@ uv run run-amb --dataset longmemeval --split s -- --category single-session-user
 
 ### Core Engine (hindsight-api-slim/hindsight_api/engine/)
 - `memory_engine.py`: Main orchestrator for retain/recall/reflect operations
-- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code, GitHub Copilot, DeepSeek, Fireworks, Codex (openai-codex), xAI (xai-oauth), Llama.cpp, Nous, etc. (See `hindsight-docs/docs/developer/configuration.md` for full provider lists)
+- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code, GitHub Copilot, DeepSeek, Fireworks, Codex (openai-codex), xAI (xai-oauth), Llama.cpp, Nous, etc. (See `hindsight-docs/docs/developer/configuration.mdx` for full provider lists)
 - `embeddings.py`: Embedding generation supporting local (SentenceTransformers) and standalone/remote providers (in-process: onnx; remote: tei, openai, cohere, zeroentropy, litellm, google, etc.)
 - `cross_encoder.py`: Reranking supporting local (CrossEncoder) and standalone/remote providers (in-process: flashrank, jina-mlx; remote: tei, cohere, siliconflow, zeroentropy, litellm, google, alibaba, etc.)
 - `entity_resolver.py`: Entity extraction and normalization
@@ -437,7 +437,7 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
    value = config.my_static_field
    ```
 
-5. **Documentation** (`hindsight-docs/docs/developer/configuration.md`):
+5. **Documentation** (`hindsight-docs/docs/developer/configuration.mdx`):
    - Add to appropriate section table with Variable, Description, Default
    - Mark if it's hierarchical (can be overridden per-bank)
 
@@ -489,7 +489,7 @@ Common server settings:
 - `HINDSIGHT_CP_DATAPLANE_API_URL`: Control Plane backend URL (default: `http://localhost:8888`)
 
 LLM settings:
-- `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, deepseek, groq, minimax, ollama, lmstudio, fireworks, openai-codex, xai-oauth, etc. (See `hindsight-docs/docs/developer/configuration.md` for full provider lists)
+- `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, deepseek, groq, minimax, ollama, lmstudio, fireworks, openai-codex, xai-oauth, etc. (See `hindsight-docs/docs/developer/configuration.mdx` for full provider lists)
 - `HINDSIGHT_API_LLM_API_KEY`: API key for providers that require one
 - `HINDSIGHT_API_LLM_MODEL`: Model name (defaults are provider-specific)
 

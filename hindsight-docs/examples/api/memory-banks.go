@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 )
@@ -101,6 +103,165 @@ func main() {
 	// Remove all bank-level overrides, reverting to server defaults
 	client.BanksAPI.ResetBankConfig(ctx, "my-bank").Execute()
 	// [/docs:reset-bank-config]
+
+	// =============================================================================
+	// Prompt preview and bank transfer
+	// =============================================================================
+	transferBanks := []string{"transfer-go", "transfer-go-copy", "transfer-go-other", "transfer-go-clone"}
+	deleteBanks := func(ids []string) {
+		for _, bankID := range ids {
+			req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/default/banks/%s", apiURL, bankID), nil)
+			http.DefaultClient.Do(req)
+		}
+	}
+	must := func(err error) {
+		if err != nil {
+			panic(err)
+		}
+	}
+	deleteBanks(transferBanks)
+	// Chunks mode stores text verbatim, so no LLM call is needed.
+	_, _, err := client.BanksAPI.CreateOrUpdateBank(ctx, "transfer-go").
+		CreateBankRequest(hindsight.CreateBankRequest{}).Execute()
+	must(err)
+	_, _, err = client.BanksAPI.UpdateBankConfig(ctx, "transfer-go").
+		BankConfigUpdate(hindsight.BankConfigUpdate{
+			Updates: map[string]interface{}{"retain_extraction_mode": "chunks"},
+		}).Execute()
+	must(err)
+	resp, err := http.Post(apiURL+"/v1/default/banks/transfer-go/memories", "application/json", strings.NewReader(
+		`{"items": [{"content": "Alice leads the payments team.", "document_id": "doc-1"},
+		            {"content": "Bob moved to the Berlin office.", "document_id": "doc-2"}]}`))
+	must(err)
+	if resp.StatusCode != 200 {
+		panic(fmt.Sprintf("retain failed: %d", resp.StatusCode))
+	}
+	_, _, err = client.BanksAPI.CreateOrUpdateBank(ctx, "transfer-go-other").
+		CreateBankRequest(hindsight.CreateBankRequest{}).Execute()
+	must(err)
+	waitFor := func(bankID, operationID string) *hindsight.OperationStatusResponse {
+		for i := 0; i < 120; i++ {
+			st, _, err := client.OperationsAPI.GetOperationStatus(ctx, bankID, operationID).Execute()
+			must(err)
+			switch st.Status {
+			case "completed":
+				return st
+			case "failed", "cancelled":
+				panic(fmt.Sprintf("operation %s %s", operationID, st.Status))
+			}
+			time.Sleep(time.Second)
+		}
+		panic("operation " + operationID + " did not finish")
+	}
+	countDocs := func(bankID string) int32 {
+		docs, _, err := client.DocumentsAPI.ListDocuments(ctx, bankID).Execute()
+		must(err)
+		return docs.Total
+	}
+
+	// [docs:prompts-preview]
+	preview, _, err := client.BanksAPI.PreviewPrompt(ctx, "my-bank").
+		PromptPreviewRequest(hindsight.PromptPreviewRequest{Operation: hindsight.PtrString("retain")}).
+		Execute()
+	for _, message := range preview.Messages {
+		fmt.Println(message.Role, len(message.Blocks))
+	}
+	// [/docs:prompts-preview]
+	must(err)
+
+	// [docs:transfer-export]
+	// Whole bank, memories + config, no history
+	whole, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").Execute()
+
+	// Just the memories
+	memoriesOnly, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").
+		IncludeBankConfig(false).Execute()
+
+	// Specific documents (a document subset carries no bank-level sections)
+	subset, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").
+		DocumentId([]string{"doc-1", "doc-2"}).IncludeBankConfig(false).Execute()
+
+	// Each returns an operation id: poll it, then download result_metadata["storage_key"]
+	fmt.Println(whole.OperationId, memoriesOnly.OperationId, subset.OperationId)
+	// [/docs:transfer-export]
+	must(err)
+	waitFor("transfer-go", memoriesOnly.OperationId)
+	waitFor("transfer-go", subset.OperationId)
+	exported := waitFor("transfer-go", whole.OperationId)
+	archive, _, err := client.DocumentTransferAPI.
+		DownloadFile(ctx, exported.ResultMetadata["storage_key"].(string)).Execute()
+	must(err)
+	archivePath := archive.Name()
+
+	// [docs:transfer-import]
+	// Restore a bank under a new id
+	file, _ := os.Open(archivePath) // the ZIP downloaded from the export
+	restore, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go").
+		File(file).TargetBankId("transfer-go-copy").Execute()
+	// The restore is recorded against the bank in the URL — poll it there
+	status, _, err := client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", restore.OperationId).Execute()
+
+	// Merge an archive's documents into an existing bank
+	file, _ = os.Open(archivePath)
+	merge, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go-other").
+		File(file).Mode("merge").DocumentConflict("replace").Execute()
+	// [/docs:transfer-import]
+	must(err)
+	_ = status
+	waitFor("transfer-go", restore.OperationId)
+	waitFor("transfer-go-other", merge.OperationId)
+	if n := countDocs("transfer-go-copy"); n != 2 {
+		panic(fmt.Sprintf("restore copied %d documents", n))
+	}
+
+	// [docs:clone-bank]
+	clone, _, err := client.BankTransferAPI.CloneBank(ctx, "transfer-go").
+		TargetBankId("transfer-go-clone").Execute()
+	// The operation is recorded against the source bank
+	status, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", clone.OperationId).Execute()
+	// [/docs:clone-bank]
+	must(err)
+	waitFor("transfer-go", clone.OperationId)
+	if n := countDocs("transfer-go-clone"); n != 2 {
+		panic(fmt.Sprintf("clone copied %d documents", n))
+	}
+
+	// [docs:document-export]
+	// 1. Submit the export (whole bank; add .DocumentId([]string{...}) to scope it)
+	export, _, err := client.DocumentTransferAPI.ExportDocuments(ctx, "transfer-go").Execute()
+
+	// 2. Poll until completed
+	var done *hindsight.OperationStatusResponse
+	for {
+		done, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", export.OperationId).Execute()
+		if err != nil || done.Status == "completed" || done.Status == "failed" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	// 3. Download the archive (the client saves it to a temp file)
+	zipFile, _, err := client.DocumentTransferAPI.
+		DownloadFile(ctx, done.ResultMetadata["storage_key"].(string)).Execute()
+	// [/docs:document-export]
+	must(err)
+	if done.Status != "completed" {
+		panic("document export " + done.Status)
+	}
+
+	// [docs:document-import]
+	file, _ = os.Open(zipFile.Name())
+	imported, _, err := client.DocumentTransferAPI.ImportDocuments(ctx, "transfer-go-other").
+		File(file).OnConflict("replace").Execute()
+
+	status, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go-other", imported.OperationId).Execute()
+	// status.ResultMetadata -> {"documents_imported": 3, "facts_imported": 42, "observations_imported": 5, ...}
+	// [/docs:document-import]
+	must(err)
+	waitFor("transfer-go-other", imported.OperationId)
+	os.Remove(archivePath)
+	os.Remove(zipFile.Name())
+	deleteBanks(transferBanks)
 
 	// =============================================================================
 	// Cleanup (not shown in docs)
