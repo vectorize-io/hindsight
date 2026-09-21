@@ -45,6 +45,10 @@ def _make_cross_encoder(predict_return: list[float]):
     ce.predict = AsyncMock(return_value=predict_return)
     ce.provider_name = "local"
     ce.initialize = AsyncMock()
+    # Set explicitly: an AsyncMock answers every unset attribute with a truthy Mock,
+    # so leaving this out would make the fake claim it prunes and silently drop any
+    # candidate scoring 0.0.
+    ce.prunes_candidates = False
     return ce
 
 
