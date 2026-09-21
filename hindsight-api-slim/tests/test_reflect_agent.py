@@ -15,7 +15,9 @@ import pytest
 
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from hindsight_api.engine.llm_transport import _request_timeout_floor_ctx
 from hindsight_api.engine.reflect.agent import (
+    ReflectLLMDeadlineError,
     ReflectNoAnswerError,
     ReflectToolCallError,
     ReflectToolExecutionError,
@@ -407,6 +409,9 @@ class TestReflectAgentMocked:
             reflect_prompt_cache_enabled=False,
             reflect_max_completion_tokens=None,
             llm_temperature_reflect=0.17,
+            # A stub config must say so explicitly: the agent does arithmetic on the
+            # deadline fields, which a bare MagicMock attribute cannot survive.
+            reflect_llm_timeout_adaptive=False,
         )
         monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
         mock_functions["search_mental_models_fn"].return_value = {
@@ -464,6 +469,9 @@ class TestReflectAgentMocked:
             reflect_prompt_cache_enabled=False,
             reflect_max_completion_tokens=None,
             llm_temperature_reflect=0.17,
+            # A stub config must say so explicitly: the agent does arithmetic on the
+            # deadline fields, which a bare MagicMock attribute cannot survive.
+            reflect_llm_timeout_adaptive=False,
         )
         monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
         mock_functions["search_mental_models_fn"].return_value = {
@@ -1473,6 +1481,184 @@ class TestReflectAgentMocked:
         assert all(tool_use_id for tool_use_id in tool_use_ids), tool_use_ids
         assert len(set(tool_use_ids)) == 2, tool_use_ids
         assert [m["tool_call_id"] for m in messages if m.get("role") == "tool"] == tool_use_ids
+
+
+class TestReflectDeadlineFloor:
+    """Reflect's per-call LLM deadline follows the prompt, and an expiry names the knob (#4568)."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content="Synthesised answer",
+                usage=TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions(self):
+        return {
+            "search_mental_models_fn": AsyncMock(
+                return_value={
+                    "mental_models": [{"id": "mm-1", "name": "Prefs", "content": "x" * 4000, "is_stale": True}]
+                }
+            ),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "y" * 4000}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @staticmethod
+    def _stub_config(monkeypatch, *, adaptive: bool, reflect_llm_timeout: float | None = None) -> None:
+        config = MagicMock(
+            reflect_prompt_cache_enabled=False,
+            reflect_max_completion_tokens=None,
+            llm_temperature_reflect=0.17,
+            reflect_llm_timeout_adaptive=adaptive,
+            reflect_llm_timeout=reflect_llm_timeout,
+            llm_timeout=120.0,
+        )
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
+
+    @staticmethod
+    def _tool_call(call_id: str, name: str, **arguments) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id=call_id, name=name, arguments={"reason": "r", "query": "q", **arguments})],
+            finish_reason="tool_calls",
+        )
+
+    async def _run(self, mock_llm, mock_functions):
+        return await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="where do we stand?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="high",
+            max_iterations=6,
+            **mock_functions,
+        )
+
+    @staticmethod
+    def _recording(side_effects: list, seen: list[float | None]):
+        """A ``call``/``call_with_tools`` double that notes the armed floor at call time."""
+        queue = list(side_effects)
+
+        async def _call(**kwargs):
+            seen.append(_request_timeout_floor_ctx.get())
+            nxt = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(nxt, BaseException):
+                raise nxt
+            return nxt
+
+        return _call
+
+    @pytest.mark.asyncio
+    async def test_every_llm_call_runs_under_a_floor_that_grows_with_the_prompt(
+        self, mock_llm, mock_functions, monkeypatch
+    ):
+        """Tool turns and the final synthesis are all armed; the floor rises as tool results accumulate."""
+        self._stub_config(monkeypatch, adaptive=True)
+        tool_floors: list[float | None] = []
+        synthesis_floors: list[float | None] = []
+        mock_llm.call_with_tools.side_effect = self._recording(
+            [
+                self._tool_call("1", "search_mental_models"),
+                self._tool_call("2", "search_observations"),
+                self._tool_call("3", "recall"),
+                LLMToolCallResult(tool_calls=[], finish_reason="stop", content=""),  # stop -> forced synthesis
+            ],
+            tool_floors,
+        )
+        mock_llm.call.side_effect = self._recording([mock_llm.call.return_value], synthesis_floors)
+
+        await self._run(mock_llm, mock_functions)
+
+        assert len(tool_floors) == 4
+        assert all(isinstance(f, float) for f in tool_floors)
+        assert tool_floors[0] >= 30.0
+        # Each turn appends the previous tool result to the prompt, so the deadline grows.
+        assert tool_floors == sorted(tool_floors) and tool_floors[-1] > tool_floors[0], tool_floors
+        assert all(f <= 120.0 for f in tool_floors)
+        assert len(synthesis_floors) == 1 and isinstance(synthesis_floors[0], float)
+        assert synthesis_floors[0] >= tool_floors[0]
+        # Nothing leaks past the calls.
+        assert _request_timeout_floor_ctx.get() is None
+
+    @pytest.mark.asyncio
+    async def test_a_fixed_operator_deadline_arms_no_floor(self, mock_llm, mock_functions, monkeypatch):
+        self._stub_config(monkeypatch, adaptive=False, reflect_llm_timeout=180.0)
+        tool_floors: list[float | None] = []
+        synthesis_floors: list[float | None] = []
+        mock_llm.call_with_tools.side_effect = self._recording(
+            [
+                self._tool_call("1", "search_mental_models"),
+                LLMToolCallResult(tool_calls=[], finish_reason="stop", content=""),
+            ],
+            tool_floors,
+        )
+        mock_llm.call.side_effect = self._recording([mock_llm.call.return_value], synthesis_floors)
+
+        await self._run(mock_llm, mock_functions)
+
+        assert tool_floors == [None, None]
+        assert synthesis_floors == [None]
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_expiry_becomes_a_reflect_error_naming_the_setting(
+        self, mock_llm, mock_functions, monkeypatch
+    ):
+        """After the loop's own retry, the provider's bare TimeoutError is re-raised with the knob in the message."""
+        self._stub_config(monkeypatch, adaptive=True)
+        mock_llm.call_with_tools.side_effect = TimeoutError()
+
+        with pytest.raises(ReflectLLMDeadlineError) as excinfo:
+            await self._run(mock_llm, mock_functions)
+
+        assert isinstance(excinfo.value.__cause__, TimeoutError)
+        message = str(excinfo.value)
+        assert "HINDSIGHT_API_REFLECT_LLM_TIMEOUT" in message
+        assert "scales with the prompt" in message
+        assert "HINDSIGHT_API_LLM_TIMEOUT=120s" in message
+
+    @pytest.mark.asyncio
+    async def test_the_message_reports_a_fixed_deadline_when_the_operator_set_one(
+        self, mock_llm, mock_functions, monkeypatch
+    ):
+        self._stub_config(monkeypatch, adaptive=False, reflect_llm_timeout=45.0)
+        mock_llm.call_with_tools.side_effect = TimeoutError()
+
+        with pytest.raises(ReflectLLMDeadlineError) as excinfo:
+            await self._run(mock_llm, mock_functions)
+
+        assert "fixed 45s deadline" in str(excinfo.value)
+        assert "raise HINDSIGHT_API_REFLECT_LLM_TIMEOUT" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_expiry_in_the_final_synthesis_is_translated_too(
+        self, mock_llm, mock_functions, monkeypatch
+    ):
+        """The synthesis call is the one that outran 30s in #4568; it has no retry loop of its own."""
+        self._stub_config(monkeypatch, adaptive=True)
+        mock_llm.call_with_tools.side_effect = [
+            self._tool_call("1", "search_mental_models"),
+            LLMToolCallResult(tool_calls=[], finish_reason="stop", content=""),
+        ]
+        mock_llm.call.side_effect = TimeoutError()
+
+        with pytest.raises(ReflectLLMDeadlineError):
+            await self._run(mock_llm, mock_functions)
+
+    @pytest.mark.asyncio
+    async def test_other_provider_errors_are_not_relabelled(self, mock_llm, mock_functions, monkeypatch):
+        self._stub_config(monkeypatch, adaptive=True)
+        mock_llm.call_with_tools.side_effect = RuntimeError("provider is down")
+
+        with pytest.raises(RuntimeError, match="provider is down"):
+            await self._run(mock_llm, mock_functions)
 
 
 class TestContextOverflowHelpers:

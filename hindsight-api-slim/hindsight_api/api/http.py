@@ -226,7 +226,12 @@ from hindsight_api.engine.mental_model_refresh import (
     RefreshMentalModelOperationDetails,
 )
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError, ReflectToolExecutionError
+from hindsight_api.engine.reflect import (
+    ReflectLLMDeadlineError,
+    ReflectNoAnswerError,
+    ReflectToolCallError,
+    ReflectToolExecutionError,
+)
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
     DryRunExtractionResult,
@@ -6247,6 +6252,12 @@ def _register_routes(app: FastAPI):
             # store as a real answer (#2894). Returning the failure lets them retry.
             logger.warning("Reflect retrieval failure in bank %s: %s", bank_id, e)
             raise HTTPException(status_code=500, detail=str(e))
+        except ReflectLLMDeadlineError as e:
+            # One LLM call inside reflect outran its per-request deadline, retries
+            # included. A gateway timeout, not an internal error: the server is
+            # healthy and the message names the setting to change (issue #4568).
+            logger.error("LLM deadline in /v1/default/banks/%s/reflect: %s", bank_id, e)
+            raise HTTPException(status_code=504, detail=str(e))
         except TimeoutError as e:
             logger.error("Timeout in /v1/default/banks/%s/reflect: %s", bank_id, e)
             raise HTTPException(

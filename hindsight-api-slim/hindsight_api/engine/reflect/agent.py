@@ -15,10 +15,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
-from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
+from ...config import (
+    DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+    DEFAULT_RECALL_MAX_TOKENS,
+    DEFAULT_REFLECT_LLM_TIMEOUT,
+    DEFAULT_REFLECT_LLM_TIMEOUT_PER_1K_PROMPT_TOKENS,
+    get_config,
+)
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
-from ..llm_transport import describe_llm_error
+from ..llm_transport import describe_llm_error, is_request_deadline_error, request_timeout_floor
 from .models import (
     DirectiveInfo,
     LengthRewrite,
@@ -180,6 +186,17 @@ class ReflectToolCallError(RuntimeError):
     mimic a ``done`` payload. Rather than salvage that untooled text -- and risk
     surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
     switch to a tool-calling-capable model/transport.
+    """
+
+
+class ReflectLLMDeadlineError(RuntimeError):
+    """An LLM call inside reflect exceeded its per-request deadline, retries included.
+
+    Raised in place of the provider's own error so the failure names the knob. The
+    provider errors do not: Gemini's is a bare ``TimeoutError`` that stringifies to
+    nothing, Codex's names ``HINDSIGHT_API_LLM_TIMEOUT`` "or its per-operation
+    override" without saying which, and both reached the client as a bare 500
+    (issue #4568). The HTTP layer maps this one to a 504 with the message intact.
     """
 
 
@@ -403,6 +420,59 @@ OUTPUT:"""
         return StructuredOutputResult(error=f"{type(e).__name__}: {e}")
 
 
+def scaled_reflect_deadline(prompt_tokens: int, *, base: float, per_1k_tokens: float, ceiling: float) -> float:
+    """``base`` plus ``per_1k_tokens`` per 1,000 prompt tokens, capped at ``ceiling`` and never below ``base``.
+
+    The lower bound matters when the ceiling (the global deadline) is set below the
+    reflect base: the cap must not invert the two and hand a call less than the base.
+    """
+    scaled = base + per_1k_tokens * (max(prompt_tokens, 0) / 1000.0)
+    return max(base, min(scaled, ceiling))
+
+
+def _reflect_timeout_floor(prompt_tokens: int) -> float | None:
+    """Per-call deadline floor for a reflect LLM call over ``prompt_tokens``, or ``None`` when fixed.
+
+    ``None`` when the operator set ``HINDSIGHT_API_REFLECT_LLM_TIMEOUT`` (or an explicit
+    global deadline): every call then runs under that fixed value. Otherwise the
+    ``DEFAULT_REFLECT_LLM_TIMEOUT`` base is lengthened for this call's prompt, so a
+    healthy synthesis over 60-90k tokens of tool results is not killed at 30s and then
+    retried into the same wall (issue #4568). The provider applies it as a floor, so a
+    longer configured deadline -- a refresh group's 2700s, say -- still wins.
+    """
+    config = get_config()
+    if not config.reflect_llm_timeout_adaptive:
+        return None
+    return scaled_reflect_deadline(
+        prompt_tokens,
+        base=DEFAULT_REFLECT_LLM_TIMEOUT,
+        per_1k_tokens=DEFAULT_REFLECT_LLM_TIMEOUT_PER_1K_PROMPT_TOKENS,
+        ceiling=config.llm_timeout,
+    )
+
+
+def _deadline_error_message(cause: BaseException) -> str:
+    """The operator-facing text for :class:`ReflectLLMDeadlineError`: what expired, and which knob moves it."""
+    config = get_config()
+    if config.reflect_llm_timeout_adaptive:
+        remedy = (
+            f"Reflect's default deadline scales with the prompt ({DEFAULT_REFLECT_LLM_TIMEOUT:g}s plus "
+            f"{DEFAULT_REFLECT_LLM_TIMEOUT_PER_1K_PROMPT_TOKENS:g}s per 1,000 prompt tokens, capped at "
+            f"HINDSIGHT_API_LLM_TIMEOUT={config.llm_timeout:g}s). HINDSIGHT_API_REFLECT_LLM_TIMEOUT gives "
+            "every reflect call one fixed, larger deadline instead."
+        )
+    else:
+        fixed = config.reflect_llm_timeout if config.reflect_llm_timeout is not None else config.llm_timeout
+        remedy = (
+            f"Reflect calls run under a fixed {fixed:g}s deadline; raise HINDSIGHT_API_REFLECT_LLM_TIMEOUT "
+            "(or HINDSIGHT_API_LLM_TIMEOUT, which reflect inherits when set)."
+        )
+    return (
+        f"An LLM call inside reflect exceeded its per-request deadline, retries included: "
+        f"{describe_llm_error(cause)}. {remedy}"
+    )
+
+
 def _count_messages_tokens(messages: list[dict[str, Any]]) -> int:
     """Estimate the token count of the messages list using the configured encoding."""
     total = 0
@@ -550,6 +620,14 @@ async def run_reflect_agent(
             cache_tasks=cache_tasks,
             **kwargs,
         )
+    except Exception as e:
+        # A deadline expiry arrives here as the provider's own error (a bare
+        # TimeoutError, Codex's runaway-stream error, an SDK timeout) once the
+        # provider's retries and the loop's own retry have both given up. Re-raise
+        # it as the reflect error that names the knob and maps to a 504 (#4568).
+        if is_request_deadline_error(e):
+            raise ReflectLLMDeadlineError(_deadline_error_message(e)) from e
+        raise
     finally:
         if incremental_caching and provider_impl is not None:
             _spawn_cache_cleanup(provider_impl, cache_session_id, cache_tasks, reflect_id)
@@ -825,15 +903,18 @@ async def _run_reflect_agent_inner(
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.time()
-        call_result = await llm_config.call(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            scope="reflect",
-            temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
-            max_completion_tokens=completion_cap,
-        )
+        with request_timeout_floor(
+            _reflect_timeout_floor(count_prompt_tokens(system_prompt) + count_prompt_tokens(prompt))
+        ):
+            call_result = await llm_config.call(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                scope="reflect",
+                temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
+                max_completion_tokens=completion_cap,
+            )
         response = call_result.content
         usage = call_result.usage
         llm_duration = int((time.time() - llm_start) * 1000)
@@ -1069,7 +1150,10 @@ async def _run_reflect_agent_inner(
             if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
                 ct_kwargs["cached_prefix"] = rolling_cache_name
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
-            result = await llm_config.call_with_tools(**ct_kwargs)
+            # ``estimated_tokens`` is this iteration's prompt size from the context
+            # guard above; the per-call deadline follows it (#4568).
+            with request_timeout_floor(_reflect_timeout_floor(estimated_tokens)):
+                result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
             queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors = 0
@@ -1554,15 +1638,18 @@ async def _rewrite_to_length_budget(
         )
         rewrite_user = f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}"
 
-    call_result = await llm_config.call(
-        messages=[
-            {"role": "system", "content": rewrite_system},
-            {"role": "user", "content": rewrite_user},
-        ],
-        scope="reflect",
-        temperature=get_config().llm_temperature_reflect,
-        max_completion_tokens=get_config().reflect_max_completion_tokens,
-    )
+    with request_timeout_floor(
+        _reflect_timeout_floor(count_prompt_tokens(rewrite_system) + count_prompt_tokens(rewrite_user))
+    ):
+        call_result = await llm_config.call(
+            messages=[
+                {"role": "system", "content": rewrite_system},
+                {"role": "user", "content": rewrite_user},
+            ],
+            scope="reflect",
+            temperature=get_config().llm_temperature_reflect,
+            max_completion_tokens=get_config().reflect_max_completion_tokens,
+        )
     rewritten = call_result.content
     rewrite_usage = call_result.usage
     if document is not None:

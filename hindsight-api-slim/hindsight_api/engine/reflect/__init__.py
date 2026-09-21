@@ -10,6 +10,7 @@ The reflect agent uses an iterative loop with tools to:
 from .agent import (
     DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
     ReflectAgentResult,
+    ReflectLLMDeadlineError,
     ReflectNoAnswerError,
     ReflectToolCallError,
     ReflectToolExecutionError,
@@ -25,6 +26,7 @@ __all__ = [
     "ReflectAgentResult",
     "ReflectToolCallError",
     "ReflectNoAnswerError",
+    "ReflectLLMDeadlineError",
     "ReflectToolExecutionError",
     "ReflectAction",
     "ReflectActionBatch",
