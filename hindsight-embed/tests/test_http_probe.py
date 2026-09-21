@@ -67,6 +67,25 @@ class TestProbe:
             resp = asyncio.run(aprobe_get(f"{stub.base_url}/api/health", read_timeout=2.0))
         assert resp == ProbeResponse(status_code=200, text='{"status": "ok"}')
 
+    def test_leaves_the_callers_event_loop_untouched(self):
+        """``asyncio.run`` clears the calling thread's current loop; a probe must not.
+
+        A sync caller that keeps a long-lived aiohttp session across calls — e.g.
+        hindsight-client's ``_run_async`` under the Hermes memory plugin — would
+        otherwise build a fresh loop for its next call and hit the old session
+        with "Timeout context manager should be used inside a task".
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with serve(reply(200, {"status": "ok"})) as stub:
+                probe_get(f"{stub.base_url}/health", read_timeout=2.0)
+            assert asyncio.get_event_loop() is loop
+            assert not loop.is_closed()
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
 
 class TestPortHealthOk:
     """DaemonEmbedManager._port_health_ok: only Hindsight's initialized payload counts."""
