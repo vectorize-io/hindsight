@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import Any, Final, cast
 
 from .db_utils import acquire_with_retry
@@ -124,8 +125,16 @@ def trigram_similarity(a: str, b: str) -> float:
 _MIN_TOKEN_SIMILARITY: Final[float] = 0.6
 
 
+@lru_cache(maxsize=100_000)
 def _tokens_match(a: str, b: str) -> bool:
-    """Whether two words are plausibly the same word — equal, an abbreviation of, or a near-miss."""
+    """Whether two words are plausibly the same word — equal, an abbreviation of, or a near-miss.
+
+    Memoized because the in-batch caller is quadratic in names and its pairs overwhelmingly repeat
+    the same words: 250 names of the shape "Acme Corporation Subsidiary 0001" produce 31k similar
+    pairs whose word comparisons are 90% duplicates, and caching them takes that filtering pass from
+    ~1.0s to ~0.27s of un-yielded CPU. Pure function of two short strings, so the cache is only a
+    speed-up; the bound is there to keep a pathological bank from growing it without limit.
+    """
     return a == b or a.startswith(b) or b.startswith(a) or SequenceMatcher(None, a, b).ratio() >= _MIN_TOKEN_SIMILARITY
 
 
@@ -1093,6 +1102,15 @@ class EntityResolver:
         Richardson" / "Dr Jane Richardson" is 0.65, comfortably over the 0.5 in-batch bar. Without
         the word check two people who share a surname become one entity when they are named in the
         same retain and stay two when they are not.
+
+        The word check runs on the pairs the trigram join returned, not inside it, so
+        ``_find_intrabatch_similar_pairs`` keeps its pure-Jaccard contract. That costs a second pass
+        over those pairs, which matters only where this pass is already at its worst: 250 names that
+        are all alike produce ~31k pairs, and checking them adds ~0.27s to the ~34ms join — ~1.0s
+        before ``_tokens_match`` was memoized. One more reason not to raise
+        ``_INTRABATCH_MAX_NAMES`` on the distinct-name numbers alone. If that tail ever needs to
+        come down, run the check inside the union-find instead, only for pairs whose roots differ —
+        same clusters, ~12x fewer checks on that shape.
         """
         rep_by_lower: dict[str, str] = {}
         count_by_lower: dict[str, int] = {}
@@ -1116,7 +1134,7 @@ class EntityResolver:
         pairs = [
             pair
             for pair in _find_intrabatch_similar_pairs(list(rep_by_lower.values()), self._intrabatch_merge_similarity)
-            if _tokens_are_compatible(pair.name_a.lower(), pair.name_b.lower())
+            if _tokens_are_compatible(pair.name_a, pair.name_b)
         ]
         if not pairs:
             return {}
