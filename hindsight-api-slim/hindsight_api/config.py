@@ -1185,9 +1185,24 @@ DEFAULT_LLM_HTTP_LOG_LEVEL = "WARNING"
 # retried (see _TIMEOUT_RETRIES in providers/gemini_llm.py), so what has to fit inside a
 # caller's patience is deadline x attempts, and 30x3 = 90s does. A first pass at 60s did not:
 # CI logs showed reflect calls answering in 1-4s but stalling on roughly a quarter of
-# attempts, so two stalls in a row landed right back on 120s. The headroom over a healthy
-# call is still an order of magnitude.
+# attempts, so two stalls in a row landed right back on 120s.
+#
+# That 1-4s figure holds for the tool-calling turns, whose prompts are small. It does not
+# hold for the final synthesis: its prompt is the accumulated tool results -- 30-90k tokens
+# on a real bank -- and a healthy provider took 5-48s over it, so a flat 30s killed healthy
+# calls and then retried the same 90k-token prompt into the same wall (issue #4568). The
+# default therefore scales with the prompt: this base plus
+# DEFAULT_REFLECT_LLM_TIMEOUT_PER_1K_PROMPT_TOKENS per 1,000 prompt tokens, capped at the
+# global llm_timeout (reflect/agent.py: scaled_reflect_deadline). A small tool turn still
+# gets ~30s; a 60k-token synthesis gets 90s. An explicit HINDSIGHT_API_REFLECT_LLM_TIMEOUT
+# (or an explicit global) switches the scaling off and fixes every call at that value --
+# the operator said what reflect gets.
 DEFAULT_REFLECT_LLM_TIMEOUT = 30.0  # seconds
+# Seconds added to the reflect deadline base per 1,000 prompt tokens when the deadline is
+# the adaptive default. 1s per 1k tokens is roughly 2-3x the prefill cost observed in
+# #4568 (88k tokens took 38s, 63k tokens 19s) -- the same order of headroom the 30s base
+# leaves over a 1-4s tool turn.
+DEFAULT_REFLECT_LLM_TIMEOUT_PER_1K_PROMPT_TOKENS = 1.0  # seconds
 DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<bank_id>
 
 # Codex credentials directory (None = CODEX_HOME, else ~/.codex)
@@ -2335,7 +2350,9 @@ def _resolve_reflect_llm_timeout() -> float | None:
     * ``HINDSIGHT_API_LLM_TIMEOUT`` set — the operator chose a global deadline
       deliberately, so reflect inherits it rather than being quietly capped below it.
     * neither — ``DEFAULT_REFLECT_LLM_TIMEOUT``, which is shorter than the global
-      default because reflect answers a waiting caller (see that constant).
+      default because reflect answers a waiting caller (see that constant). In this
+      case only, the value is a *base* the agent lengthens per call for large prompts;
+      :func:`_reflect_llm_timeout_is_adaptive` reports it.
 
     The middle case is why this is not simply a different default on the field: the
     per-operation overrides mean "inherit unless set", and silently ignoring an
@@ -2347,6 +2364,17 @@ def _resolve_reflect_llm_timeout() -> float | None:
     if os.getenv(ENV_LLM_TIMEOUT):
         return None
     return DEFAULT_REFLECT_LLM_TIMEOUT
+
+
+def _reflect_llm_timeout_is_adaptive() -> bool:
+    """Whether reflect's deadline is the prompt-scaled default rather than an operator's fixed value.
+
+    True exactly in the third case of :func:`_resolve_reflect_llm_timeout`: neither the
+    reflect override nor the global deadline is set, so ``DEFAULT_REFLECT_LLM_TIMEOUT`` is
+    a base the agent lengthens per call for large prompts (issue #4568). An explicit value
+    in either variable is honoured as a fixed per-call deadline.
+    """
+    return not os.getenv(ENV_REFLECT_LLM_TIMEOUT) and not os.getenv(ENV_LLM_TIMEOUT)
 
 
 def _parse_llm_router_config(env_var: str) -> dict | None:
@@ -3053,6 +3081,10 @@ class HindsightConfig:
     reflect_llm_initial_backoff: float | None
     reflect_llm_max_backoff: float | None
     reflect_llm_timeout: float | None
+    # True when reflect_llm_timeout is the prompt-scaled default (no explicit reflect or
+    # global deadline); False fixes every reflect call at reflect_llm_timeout (#4568).
+    # Static: a server-level deadline policy, not a per-bank knob.
+    reflect_llm_timeout_adaptive: bool = field(default=False, kw_only=True)
     reflect_llm_litellmrouter_config: dict | None
     reflect_llm_reasoning_effort: str | None
     reflect_llm_extra_body: dict | None
@@ -4237,6 +4269,7 @@ class HindsightConfig:
             if os.getenv(ENV_REFLECT_LLM_MAX_BACKOFF)
             else None,
             reflect_llm_timeout=_resolve_reflect_llm_timeout(),
+            reflect_llm_timeout_adaptive=_reflect_llm_timeout_is_adaptive(),
             reflect_llm_litellmrouter_config=_parse_llm_router_config(ENV_REFLECT_LLM_LITELLMROUTER_CONFIG),
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
             reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
