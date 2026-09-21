@@ -414,7 +414,13 @@ function BankSelectorInner() {
   const updateFileMeta = (
     index: number,
     field:
-      "context" | "timestamp" | "document_id" | "tags" | "metadata" | "strategy" | "advancedTab",
+      | "context"
+      | "timestamp"
+      | "document_id"
+      | "tags"
+      | "metadata"
+      | "strategy"
+      | "advancedTab",
     value: string
   ) => {
     setFilesMetadata((prev) => prev.map((m, i) => (i === index ? { ...m, [field]: value } : m)));
@@ -1588,7 +1594,11 @@ function BankSelectorInner() {
                             onValueChange={(v) =>
                               setDocObservationScopes(
                                 v as
-                                  "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
+                                  | "per_tag"
+                                  | "combined"
+                                  | "all_combinations"
+                                  | "custom"
+                                  | "shared"
                               )
                             }
                           >

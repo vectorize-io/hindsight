@@ -4,7 +4,15 @@ import type { Auth, AuthToken } from "./auth.gen";
 import type { BodySerializer, QuerySerializer, QuerySerializerOptions } from "./bodySerializer.gen";
 
 export type HttpMethod =
-  "connect" | "delete" | "get" | "head" | "options" | "patch" | "post" | "put" | "trace";
+  | "connect"
+  | "delete"
+  | "get"
+  | "head"
+  | "options"
+  | "patch"
+  | "post"
+  | "put"
+  | "trace";
 
 export type Client<
   RequestFn = never,

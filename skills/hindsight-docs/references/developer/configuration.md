@@ -1477,6 +1477,17 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
 | `HINDSIGHT_API_STARTUP_WAIT_SECONDS` | **Docker image only.** How long the container waits for the API to answer `/health` before it stops and restarts. Raising `HINDSIGHT_API_MODEL_INIT_TIMEOUT` above the default raises this wait too, so a slow first-time model download is not cut short; set this to override the wait on its own. | `300`, or `HINDSIGHT_API_MODEL_INIT_TIMEOUT` + 30s when that is longer |
 
+### Egress proxy
+
+Outbound calls (LLM providers and gateways, remote embeddings and rerankers, document
+parsers) follow the standard proxy environment variables — `HTTP_PROXY`, `HTTPS_PROXY`,
+`NO_PROXY` — plus `.netrc` credentials. There is no Hindsight-specific proxy setting:
+set these on the process (pod env, systemd unit, shell) and every upstream call goes
+through the proxy.
+
+Webhook delivery is the one exception: it ignores the proxy variables on purpose, because
+its SSRF guard validates the address it resolved and a proxy would contact a different one.
+
 ### Retrieval
 
 | Variable | Description | Default |
