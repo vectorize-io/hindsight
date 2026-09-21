@@ -164,7 +164,10 @@ def test_no_proxy_env_means_no_per_request_env_lookup(monkeypatch):
 
 
 def test_every_production_session_decides_about_the_proxy():
-    """Each ``aiohttp.ClientSession`` says whether it follows the proxy env vars.
+    """Every server-side ``aiohttp.ClientSession`` says whether it follows the proxy env vars.
+
+    Server-side is the API package and the extensions it loads; the SDK clients and the
+    LiteLLM callback run in someone else's process and are not covered here.
 
     A new client that forgets is the failure this guards: it silently gets aiohttp's
     ``trust_env=False`` and bypasses the proxy, which is exactly how the migration
