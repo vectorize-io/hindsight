@@ -499,8 +499,12 @@ PYEMBED
 # It reuses step 6's bank rather than making its own: step 6 drops that bank on
 # entry, so whatever this step leaves behind is cleaned at the start of the next
 # run and the script stays re-runnable against a persistent pg0 data directory.
+#
+# Run in a subshell with `set +e`: exit 3 below means "loaded fine, round-trip
+# skipped for want of a key", which must not trip `set -e` and must not print the
+# same closing line as a full run.
 echo "--- [7/7] Exercising the plugin's MemoryProvider surface ---"
-"$VENV_PY" - <<'PYPROVIDER'
+(set +e; "$VENV_PY" - <<'PYPROVIDER'
 import json
 import os
 import sys
@@ -528,8 +532,11 @@ print(f"    ✓ initialize() and {len(tools)} tools registered")
 
 if not os.environ.get("HERMES_COMPAT_LLM_API_KEY"):
     print("    ⓘ skipping the retain/recall round-trip — no HERMES_COMPAT_LLM_API_KEY set")
+    print("      (the provider loaded and registered its tools; the turn itself was not exercised)")
     provider.shutdown()
-    sys.exit(0)
+    # 3, not 0: the caller prints a different closing line for a partial run, so a
+    # credential-less fork PR never reports a round-trip that did not happen.
+    sys.exit(3)
 
 try:
     # Auto-retain: what the post-turn hook calls on every exchange.
@@ -567,7 +574,14 @@ finally:
     provider.shutdown()
     print("    ✓ shutdown()")
 PYPROVIDER
-echo "✓ The plugin round-trips a turn through Hermes' MemoryProvider contract"
+) && provider_status=0 || provider_status=$?
+if [ "$provider_status" = "0" ]; then
+    echo "✓ The plugin round-trips a turn through Hermes' MemoryProvider contract"
+elif [ "$provider_status" = "3" ]; then
+    echo "✓ The plugin loads and registers its tools (round-trip skipped: no LLM key)"
+else
+    exit "$provider_status"
+fi
 
 echo ""
 echo "=== PASS: hermes-agent@$HERMES_REF is compatible with this Hindsight ==="
