@@ -189,3 +189,22 @@ def test_conversation_chunks_keep_paired_surrogate_emoji():
     chunks = chunk_text(json.dumps(turns), max_chars=150)
     assert len(chunks) > 1
     assert all("\U0001f600" in chunk for chunk in chunks)
+
+
+def test_oversized_conversation_turn_fragments_drop_lone_surrogates():
+    """A turn too large to keep whole is fragmented — the fragments must encode too.
+
+    Distinct path from the packing case above: an oversized turn is serialized on its
+    own and split as text, so it reaches the reader through a different serialization
+    than a turn that shares a chunk.
+    """
+    turn = {"role": "user", "content": "y" * 400 + " hi \\ud83d"}
+    text = json.dumps([turn]).replace("\\\\ud83d", "\\ud83d")
+    assert "\\ud83d" in text  # the ASCII escape, as the client sent it
+
+    chunks = chunk_text(text, max_chars=150)
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        chunk.encode()  # raises on a lone surrogate
+    assert "\ud83d" not in "".join(chunks)
