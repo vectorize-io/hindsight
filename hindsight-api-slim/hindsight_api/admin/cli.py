@@ -1007,8 +1007,9 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
     old_prefix = bank_storage_prefix(old_id, schema)
     new_prefix = bank_storage_prefix(new_id, schema)
     # Only the native backend needs a pool; building one unconditionally keeps
-    # this from branching on the storage type.
-    pool = await asyncpg.create_pool(db_url, min_size=1, max_size=2)
+    # this from branching on the storage type. Resolved like _admin_connect does,
+    # so a pg0:// URL reaches the embedded server it already started.
+    pool = await asyncpg.create_pool(await resolve_database_url(db_url), min_size=1, max_size=2)
     try:
         storage = create_file_storage(
             storage_type=HindsightConfig.from_env().file_storage_type,
