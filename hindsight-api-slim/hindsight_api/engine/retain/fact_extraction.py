@@ -869,6 +869,18 @@ def chunk_text(
     )
 
 
+def _dump_turns(turns: Any) -> str:
+    """Serialize conversation turns, dropping unpaired surrogates.
+
+    ``json.loads`` decodes an ASCII ``\\udXXX`` escape — half an emoji a client cut
+    at a UTF-16 boundary — into a real lone surrogate, which slips past the retain
+    ingress sanitizer (it only sees the escape) and then crashes every UTF-8 encode
+    downstream: chunk hashing, embedding, the Postgres insert. Paired surrogates are
+    already a single astral character after ``json.loads``, so emoji survive.
+    """
+    return _sanitize_text(json.dumps(turns, ensure_ascii=False)) or ""
+
+
 def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limit: int) -> Iterator[str]:
     """
     Chunk a conversation array at turn boundaries, preserving complete turns.
@@ -889,13 +901,13 @@ def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limi
         nonlocal current_chunk, current_size, emitted
         if current_chunk:
             emitted = True
-            yield json.dumps(current_chunk, ensure_ascii=False)
+            yield _dump_turns(current_chunk)
             current_chunk = []
             current_size = 2  # Reset to "[]"
 
     for turn in turns:
         # Estimate size of this turn when serialized (with comma separator)
-        turn_json = json.dumps(turn, ensure_ascii=False)
+        turn_json = _dump_turns(turn)
         turn_unit_size = len(turn_json)
         turn_size = turn_unit_size + 1  # +1 for comma
 
@@ -924,7 +936,7 @@ def _iter_conversation_chunks(turns: list[dict], max_chars: int, structured_limi
     yield from _flush()
 
     if not emitted:
-        yield json.dumps(turns, ensure_ascii=False)
+        yield _dump_turns(turns)
 
 
 def _iter_nonblank_lines(text: str) -> Iterator[str]:
