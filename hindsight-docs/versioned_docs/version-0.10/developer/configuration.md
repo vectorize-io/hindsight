@@ -1751,7 +1751,7 @@ Anthropic has distinct image and document blocks, OpenAI has `image_url` and fil
 parts — so carrying your own distinction through means the conversion never has to
 guess from the media type alone.
 
-This is distinct from [`POST /files/retain`](#file-conversion), which converts a
+This is distinct from [`POST /files/retain`](#file-processing), which converts a
 whole file to markdown as its **own** document — still the right tool for scanned
 PDFs and office documents when you want them parsed rather than looked at, but it
 separates the content from the prose around it.
@@ -1814,7 +1814,7 @@ Two things will refuse the retain outright, both with `422`, rather than droppin
 attachments silently:
 
 - The retain LLM is not vision-capable, or Hindsight cannot tell that it is. See
-  [`HINDSIGHT_API_LLM_VISION`](#llm-configuration).
+  [`HINDSIGHT_API_LLM_VISION`](#llm-provider).
 - `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`. The batch path builds provider
   request bodies directly and never sees the interleaved content.
 
@@ -2039,8 +2039,8 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
-| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | Enable the [document export](./api/memory-banks.mdx#document-export--import) endpoint (`GET /document-transfer`) | `true` |
-| `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | Enable the [document import](./api/memory-banks.mdx#document-export--import) endpoint (`POST /document-transfer`) | `true` |
+| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | Enable the [document export](./api/memory-banks.mdx#document-export--import-superseded) endpoint (`GET /document-transfer`) | `true` |
+| `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | Enable the [document import](./api/memory-banks.mdx#document-export--import-superseded) endpoint (`POST /document-transfer`) | `true` |
 | `HINDSIGHT_API_FILE_PARSER` | Server-side default parser or fallback chain (comma-separated, e.g. `iris,markitdown`) | `markitdown` |
 | `HINDSIGHT_API_FILE_PARSER_ALLOWLIST` | Comma-separated list of parsers clients are allowed to request. If not set, all registered parsers are allowed. | — |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |

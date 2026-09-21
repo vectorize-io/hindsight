@@ -141,3 +141,21 @@ async def test_recall_reads_its_config_through_the_cache(memory: MemoryEngine, r
         "get_bank_config forced an uncached bank-config read; recall and retain call this per "
         "request, so that is a pool acquire on every one of them"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_bank_stops_reading_as_existing(memory: MemoryEngine, request_context):
+    """A restore or clone into a freshly deleted id checks existence through the cache, so a stale
+    entry refuses it with "already exists" for the whole TTL."""
+    from hindsight_api.engine.retain import bank_utils
+
+    bank_id = _bank("cache_delete")
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+    backend = await memory._get_backend()
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is not None
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None, (
+        "the cached profile survived the bank's deletion"
+    )

@@ -247,11 +247,11 @@ not all of them.
 - If that model cannot read images — or if Hindsight cannot tell, which is the
   case for gateway backends serving mixed catalogues — the retain is refused
   with `422` rather than dropping the attachment silently. See
-  [`HINDSIGHT_API_LLM_VISION`](configuration.md#llm-configuration).
+  [`HINDSIGHT_API_LLM_VISION`](configuration.md#llm-provider).
 - Batch retain (`HINDSIGHT_API_RETAIN_BATCH_ENABLED`) cannot carry attachments,
   and also refuses with `422`.
 
-This is different from [`POST /files/retain`](configuration.md#file-conversion),
+This is different from [`POST /files/retain`](configuration.md#file-processing),
 which converts a whole file to markdown as its **own** document. That is still the
 right tool for a scanned report you want parsed — but it separates the file from
 the prose that referred to it, which is exactly what inline attachments avoid.

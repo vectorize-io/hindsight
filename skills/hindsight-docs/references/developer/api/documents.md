@@ -298,6 +298,9 @@ await sdk.updateDocument({
 ```bash
 # Replace tags with new values (comma-separated)
 hindsight document update "$BANK_ID" notes-2024-03-15 --tags team-a,team-b
+
+# Remove all tags (make document visible everywhere)
+hindsight document update "$BANK_ID" notes-2024-03-15 --tags ""
 ```
 
 ### Go
@@ -311,6 +314,12 @@ if err != nil {
 	log.Fatalf("Failed to update document: %v", err)
 }
 fmt.Printf("Updated: %v\n", updateResult.GetSuccess())
+
+// Remove all tags (make document visible everywhere). Pass an empty slice, not nil:
+// a nil slice is left out of the request, and the server rejects an update with no tags.
+client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{Tags: []string{}}).
+	Execute()
 ```
 
 > **ℹ️ Observations are re-consolidated**

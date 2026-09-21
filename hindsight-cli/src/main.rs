@@ -740,9 +740,10 @@ enum DocumentCommands {
         /// Document ID
         document_id: String,
 
-        /// New tag list (comma-separated). Triggers observation invalidation + re-consolidation.
+        /// New tag list (comma-separated); `--tags ""` removes every tag. Triggers observation
+        /// invalidation + re-consolidation.
         #[arg(long, value_delimiter = ',')]
-        tags: Vec<String>,
+        tags: Option<Vec<String>>,
     },
 }
 
@@ -1753,12 +1754,14 @@ fn run() -> Result<()> {
                 document_id,
                 tags,
             } => {
-                let tag_opt = if tags.is_empty() { None } else { Some(tags) };
+                // `--tags ""` parses as one empty tag; drop blanks so it clears the set
+                // instead of storing "".
+                let tags = tags.map(|t| t.into_iter().filter(|tag| !tag.is_empty()).collect());
                 commands::document::update(
                     &client,
                     &bank_id,
                     &document_id,
-                    tag_opt,
+                    tags,
                     verbose,
                     output_format,
                 )

@@ -11346,6 +11346,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
         await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+        if delete_bank_profile:
+            # The cached profile/config rows too: otherwise the bank reads as existing for up to the
+            # cache TTL, and a restore or clone into the same id is refused with "already exists".
+            from .bank_info_cache import invalidate as _invalidate_bank_info
+
+            await _invalidate_bank_info(bank_id)
 
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)

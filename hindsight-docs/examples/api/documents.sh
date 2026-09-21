@@ -42,7 +42,14 @@ hindsight document get "$BANK_ID" notes-2024-03-15
 # [docs:document-update-tags]
 # Replace tags with new values (comma-separated)
 hindsight document update "$BANK_ID" notes-2024-03-15 --tags team-a,team-b
+
+# Remove all tags (make document visible everywhere)
+hindsight document update "$BANK_ID" notes-2024-03-15 --tags ""
 # [/docs:document-update-tags]
+
+# The empty value must clear the set, not store one "" tag.
+TAGS=$(curl -sf "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/documents/notes-2024-03-15" | jq -c '.tags')
+[ "$TAGS" = "[]" ] || { echo "expected no tags, got $TAGS"; exit 1; }
 
 # [docs:document-list]
 # List all documents
