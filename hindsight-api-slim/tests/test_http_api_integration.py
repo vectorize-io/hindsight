@@ -652,15 +652,10 @@ async def test_delete_bank(api_client):
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id not in bank_ids
 
-    # Stats should show zero data (profile auto-creates empty bank)
+    # Reads now 404, the same as for a bank that never existed. The process caches bank rows, so
+    # this also checks the delete dropped that entry instead of leaving the bank readable.
     response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
-    assert response.status_code == 200
-    stats = response.json()
-    assert stats["total_nodes"] == 0
-    assert stats["total_documents"] == 0
-
-    # Clean up the auto-created empty bank
-    await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
