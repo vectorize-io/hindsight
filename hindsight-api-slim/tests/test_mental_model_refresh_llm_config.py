@@ -8,7 +8,7 @@ diverge; unset, it must stay *literally* the reflect config so nothing changes.
 import pytest
 
 from hindsight_api import MemoryEngine
-from hindsight_api.config import clear_config_cache, get_config
+from hindsight_api.config import DEFAULT_LLM_TIMEOUT, DEFAULT_REFLECT_LLM_TIMEOUT, clear_config_cache, get_config
 from hindsight_api.engine.llm_wrapper import _scope_to_operation
 
 BASE_ENV = {
@@ -135,3 +135,21 @@ def test_refresh_scopes_get_their_own_concurrency_bucket():
     for scope in ("refresh_mental_model", "dry_run_refresh_mental_model", "mental_model_delta_ops"):
         assert _scope_to_operation(scope) == "mental_model_refresh"
     assert _scope_to_operation("reflect_tool_call") == "reflect"
+
+
+def test_refresh_group_falls_back_to_the_global_deadline_when_reflect_uses_its_adaptive_default(
+    engine_env, monkeypatch
+):
+    """A refresh has no waiting caller and synthesises over whole mental models (#4568).
+
+    Reflect's 30s is a *base* the agent lengthens per call; a refresh group that set a
+    model but no timeout used to inherit that base as a fixed value. It now inherits
+    the global deadline, while an explicit reflect deadline still flows through
+    (``test_unset_fields_fall_back_to_reflect_not_global`` above).
+    """
+    monkeypatch.delenv("HINDSIGHT_API_REFLECT_LLM_TIMEOUT", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_LLM_TIMEOUT", raising=False)
+    engine = engine_env(HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL="refresh-model")
+
+    assert engine._reflect_llm_config.timeout == DEFAULT_REFLECT_LLM_TIMEOUT
+    assert engine._mental_model_refresh_llm_config.timeout == DEFAULT_LLM_TIMEOUT

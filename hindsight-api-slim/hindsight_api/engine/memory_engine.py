@@ -2359,7 +2359,17 @@ class MemoryEngine(MemoryEngineInterface):
         retain_call_defaults = _op_defaults("retain_")
         reflect_call_defaults = _op_defaults("reflect_")
         consolidation_call_defaults = _op_defaults("consolidation_")
-        mental_model_refresh_call_defaults = _op_defaults("mental_model_refresh_", fallback=reflect_call_defaults)
+        # The refresh inherits reflect's *settings*, not reflect's short default: a
+        # background refresh has no waiting caller and synthesises over whole mental
+        # models, so when reflect's deadline is the adaptive 30s base the refresh falls
+        # back to the global deadline instead (issue #4568). An explicit
+        # HINDSIGHT_API_REFLECT_LLM_TIMEOUT still flows through, as documented.
+        refresh_fallback = (
+            replace(reflect_call_defaults, timeout=config.llm_timeout)
+            if config.reflect_llm_timeout_adaptive
+            else reflect_call_defaults
+        )
+        mental_model_refresh_call_defaults = _op_defaults("mental_model_refresh_", fallback=refresh_fallback)
 
         # Initialize LLM configuration (default, used as fallback)
         _default_base_llm = LLMConfig(
