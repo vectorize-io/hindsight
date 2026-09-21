@@ -303,6 +303,11 @@ class EmbeddingStub:
 class RerankStub:
     """Relevance from the same lexical model, so ranking stays self-consistent."""
 
+    #: Which level the TypeSafe cut question answers, as an index into the
+    #: provider's CUT_LEVELS. 0 keeps only the best candidate; a story raises it to
+    #: keep more. Ignored by the Cohere-shaped /rerank endpoint, which has no cut.
+    cut_level: int = 0
+
     def score(self, query: str, document: str) -> float:
         from .lexical import lexical_relevance
 
@@ -337,9 +342,11 @@ class Stubs:
     """
 
     def reset(self) -> None:
-        """Between tests. The embedding and rerank stubs are pure, so only the
-        rulebook and the rejection log carry state worth clearing."""
+        """Between tests. The embedding stub is pure; the rerank stub is pure apart
+        from the cut level a story may have raised, which has to go back to its
+        default or it leaks into whatever runs next."""
         self.llm.reset()
+        self.rerank.cut_level = RerankStub.cut_level
         self.rejected_requests.clear()
         self.webhooks.clear()
 

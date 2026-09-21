@@ -7,6 +7,7 @@ even know it exists. Three environment variables point the real server here:
     HINDSIGHT_API_LLM_BASE_URL                  -> /v1/chat/completions
     HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL    -> /v1/embeddings
     HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL -> /rerank
+    HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL     -> /v1/systemone
 
 Which means the tests exercise the production provider code for real — the
 OpenAI client, the JSON-repair path, the retry and rate-limit handling, the
@@ -25,7 +26,7 @@ from fastapi.responses import JSONResponse
 
 from .lexical import EMBEDDING_DIMENSION
 from .rulebook import ChatRequest, ReceivedWebhook, Stubs
-from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank
+from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank, validate_systemone
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,44 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             ReceivedWebhook(headers={k.lower(): v for k, v in request.headers.items()}, body=await request.json())
         )
         return JSONResponse({"received": True})
+
+    @app.post("/v1/systemone")
+    async def systemone(request: Request) -> JSONResponse:
+        """TypeSafe's typed-question endpoint.
+
+        Two question types reach it. A ``choice`` whose options are the candidates
+        is the ranking: every option gets a probability, and they sum to 1, so the
+        stub scores each option's text lexically and normalises. A ``score`` is the
+        cut: its answer is a level, and the rulebook decides which one.
+        """
+        body = await request.json()
+        validate_systemone(body)
+
+        answers = {}
+        for question_id, question in body["questions"].items():
+            if question["type"] == "choice":
+                criteria = question["criteria"]
+                scores = {
+                    key: stubs.rerank.score(body["state"], text if isinstance(text, str) else str(text))
+                    for key, text in criteria.items()
+                }
+                total = sum(scores.values()) or 1.0
+                probabilities = {key: value / total for key, value in scores.items()}
+                best = max(probabilities, key=lambda key: probabilities[key])
+                answers[question_id] = {
+                    "type": "choice",
+                    "choice": best,
+                    "probabilities": probabilities,
+                    "confidence": probabilities[best],
+                }
+            else:
+                answers[question_id] = {
+                    "type": "score",
+                    "score": float(stubs.rerank.cut_level),
+                    "legend": dict(enumerate(question["criteria"])),
+                    "confidence": 0.9,
+                }
+        return JSONResponse({"model": body.get("model", "stub"), "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
 
     @app.post("/rerank")
     async def rerank(request: Request) -> JSONResponse:

@@ -188,6 +188,40 @@ def validate_rerank(body: dict[str, Any]) -> None:
             raise RequestRejected(f"documents[{index}] must be a string")
 
 
+SYSTEMONE_FIELDS = frozenset({"model", "state", "questions"})
+# TypeSafe's documented ceiling. A pool above it must be split by the caller, and a
+# stub that accepted 300 options would hide exactly that bug.
+SYSTEMONE_MAX_OPTIONS = 255
+
+
+def validate_systemone(body: dict[str, Any]) -> None:
+    _reject_unknown(body, SYSTEMONE_FIELDS, "systemone")
+
+    if not body.get("state"):
+        raise RequestRejected("'state' must be a non-empty string")
+
+    questions = body.get("questions")
+    if not isinstance(questions, dict) or not questions:
+        raise RequestRejected("'questions' must be a non-empty object")
+
+    for question_id, question in questions.items():
+        kind = question.get("type")
+        if kind not in {"choice", "score", "noul"}:
+            raise RequestRejected(f"questions.{question_id}.type must be choice, score or noul")
+        if not question.get("instructions"):
+            raise RequestRejected(f"questions.{question_id}.instructions must be a non-empty string")
+        criteria = question.get("criteria")
+        if kind == "choice":
+            if not isinstance(criteria, dict) or len(criteria) < 2:
+                raise RequestRejected(f"questions.{question_id}.criteria must map 2 or more options")
+            if len(criteria) > SYSTEMONE_MAX_OPTIONS:
+                raise RequestRejected(
+                    f"questions.{question_id}.criteria has {len(criteria)} options, over the {SYSTEMONE_MAX_OPTIONS} limit"
+                )
+        elif kind == "score" and (not isinstance(criteria, list) or len(criteria) < 2):
+            raise RequestRejected(f"questions.{question_id}.criteria must list 2 or more levels")
+
+
 def _reject_unknown(body: dict[str, Any], allowed: frozenset[str], endpoint: str) -> None:
     unknown = sorted(set(body) - allowed)
     if unknown:
