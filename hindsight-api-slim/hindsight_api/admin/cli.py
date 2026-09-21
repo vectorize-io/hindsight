@@ -24,6 +24,7 @@ from ..engine.memories import get_memories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
+from ..engine.storage import bank_storage_prefix, create_file_storage
 from ..engine.transfer import TransferScope, export_bank
 from ..engine.vector_index_health import (
     BankIndexResult,
@@ -986,10 +987,71 @@ async def _move_bank_rows(
     return moved
 
 
+async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, old_id: str, new_id: str) -> int:
+    """Re-key the bank's stored files, now that its rows carry the new id.
+
+    A file's key spells the bank id (``bank_storage_prefix``), and no column move
+    reaches inside a key: left alone, the bank's bytes stay under the old prefix,
+    where neither the download route nor ``delete_bank``'s sweep — both of which
+    look under the bank's *current* prefix — can reach them. The sweep missing
+    them is the leak (#4502): on S3 or GCS the bank goes and its bytes stay, still
+    billed.
+
+    Copy first, repoint the row, and only then drop the old prefix, so an
+    interrupted move leaves every row pointing at bytes that exist.
+
+    ponytail: copies through this process, one object at a time. A server-side
+    copy (S3 CopyObject) or, on the native backend, an UPDATE of file_storage
+    would move bytes without reading them — worth it if renames get big or common.
+    """
+    old_prefix = bank_storage_prefix(old_id, schema)
+    new_prefix = bank_storage_prefix(new_id, schema)
+    # Only the native backend needs a pool; building one unconditionally keeps
+    # this from branching on the storage type.
+    pool = await asyncpg.create_pool(db_url, min_size=1, max_size=2)
+    try:
+        storage = create_file_storage(
+            storage_type=HindsightConfig.from_env().file_storage_type,
+            pool_getter=lambda: pool,
+            schema=schema,
+        )
+        # starts_with, not LIKE: key segments are percent-encoded, so a prefix can
+        # contain '%' and would read as a wildcard.
+        rows = await conn.fetch(
+            f"SELECT 'attachments' AS table_name, storage_key AS key FROM {_fq_table('attachments', schema)} "
+            f"WHERE bank_id = $1 AND starts_with(storage_key, $2) "
+            f"UNION ALL "
+            f"SELECT 'documents', file_storage_key FROM {_fq_table('documents', schema)} "
+            f"WHERE bank_id = $1 AND file_storage_key IS NOT NULL AND starts_with(file_storage_key, $2)",
+            new_id,
+            old_prefix,
+        )
+        columns = {"attachments": "storage_key", "documents": "file_storage_key"}
+        for row in rows:
+            new_key = new_prefix + row["key"][len(old_prefix) :]
+            await storage.store(file_data=await storage.retrieve(row["key"]), key=new_key)
+            column = columns[row["table_name"]]
+            await conn.execute(
+                f"UPDATE {_fq_table(row['table_name'], schema)} SET {column} = $1 WHERE {column} = $2",
+                new_key,
+                row["key"],
+            )
+        # The originals, plus whatever else the bank left under the old prefix:
+        # export and import archives, which no row names and which their
+        # operation can produce again.
+        try:
+            await storage.delete_prefix(old_prefix)
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"Warning: could not clear the old prefix {old_prefix} ({exc}); its files are now orphans.")
+        return len(rows)
+    finally:
+        await pool.close()
+
+
 async def _run_rename_bank(
     db_url: str, schema: str, old_bank_id: str, new_bank_id: str, *, dry_run: bool
 ) -> dict[str, int]:
-    """Rename the bank, then rebuild its per-bank vector indexes.
+    """Rename the bank, then move its stored files and rebuild its vector indexes.
 
     Those indexes are partial on a ``bank_id`` literal, so after the rename they
     cover nothing; the reconcile sees the stale predicate and rebuilds them
@@ -1001,6 +1063,9 @@ async def _run_rename_bank(
     conn = await _admin_connect(db_url)
     try:
         moved = await _rename_bank(conn, schema, old_bank_id, new_bank_id, dry_run=dry_run)
+        if not dry_run:
+            files = await _move_bank_files(conn, db_url, schema, old_bank_id, new_bank_id)
+            typer.echo(f"Stored files: {files} re-keyed under the new bank id")
         index_clause = _vector_index_clause()
         if not dry_run and index_clause is not None:
             result = await reconcile_bank_vector_indexes(conn, schema, new_bank_id, index_clause)
