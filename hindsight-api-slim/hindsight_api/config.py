@@ -725,6 +725,7 @@ ENV_OTEL_SERVICE_NAME = "HINDSIGHT_API_OTEL_SERVICE_NAME"
 ENV_OTEL_DEPLOYMENT_ENVIRONMENT = "HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT"
 ENV_METRICS_INCLUDE_BANK_ID = "HINDSIGHT_API_METRICS_INCLUDE_BANK_ID"
 ENV_METRICS_BACKLOG_ENABLED = "HINDSIGHT_API_METRICS_BACKLOG_ENABLED"
+ENV_METRICS_INCLUDE_TENANT = "HINDSIGHT_API_METRICS_INCLUDE_TENANT"
 
 # Runtime-stall observability (loop watchdog + DB pool acquire instrumentation)
 ENV_LOOP_WATCHDOG_ENABLED = "HINDSIGHT_API_LOOP_WATCHDOG_ENABLED"
@@ -1914,6 +1915,7 @@ DEFAULT_OTEL_SERVICE_NAME = "hindsight-api"
 DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT = "development"
 DEFAULT_METRICS_INCLUDE_BANK_ID = False  # Disabled by default to avoid high-cardinality OTel metric growth
 DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic per-schema COUNT queries
+DEFAULT_METRICS_INCLUDE_TENANT = False  # Disabled by default to avoid high-cardinality OTel metric growth
 
 # Runtime-stall observability defaults. Both are cheap and on by default: the
 # watchdog is a single background thread pinging the loop; the DB-pool acquire
@@ -3454,6 +3456,7 @@ class HindsightConfig:
     otel_deployment_environment: str
     metrics_include_bank_id: bool
     metrics_backlog_enabled: bool
+    metrics_include_tenant: bool
 
     # Runtime-stall observability (static, server-level only)
     loop_watchdog_enabled: bool
@@ -5138,6 +5141,8 @@ class HindsightConfig:
             metrics_include_bank_id=os.getenv(ENV_METRICS_INCLUDE_BANK_ID, str(DEFAULT_METRICS_INCLUDE_BANK_ID)).lower()
             in ("true", "1", "yes"),
             metrics_backlog_enabled=os.getenv(ENV_METRICS_BACKLOG_ENABLED, str(DEFAULT_METRICS_BACKLOG_ENABLED)).lower()
+            in ("true", "1", "yes"),
+            metrics_include_tenant=os.getenv(ENV_METRICS_INCLUDE_TENANT, str(DEFAULT_METRICS_INCLUDE_TENANT)).lower()
             in ("true", "1", "yes"),
             # Runtime-stall observability (static, server-level only)
             loop_watchdog_enabled=os.getenv(ENV_LOOP_WATCHDOG_ENABLED, str(DEFAULT_LOOP_WATCHDOG_ENABLED)).lower()
