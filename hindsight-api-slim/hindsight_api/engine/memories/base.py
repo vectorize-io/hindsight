@@ -314,6 +314,26 @@ class ScanPage:
 
 
 @dataclass
+class BankWriteTime:
+    """When one bank was last written, as the store records it."""
+
+    bank_id: str
+    last_write_at: datetime
+
+
+@dataclass
+class BankWritePage:
+    """One page of :meth:`MemoriesExtension.list_banks_by_write`, newest-written first.
+
+    Same shape as :class:`ScanPage`: ``next_page_token`` is a position and is empty exactly when
+    the walk is exhausted.
+    """
+
+    banks: list[BankWriteTime] = field(default_factory=list)
+    next_page_token: str = ""
+
+
+@dataclass
 class RetainDocumentPart:
     """One consumer batch's worth of a document: its chunk texts and the facts extracted from them.
 
@@ -1237,9 +1257,7 @@ class MemoriesExtension(Extension, ABC):
                 out[bank_id] = counts
         return out
 
-    async def list_banks_by_write(
-        self, *, limit: int = 100, page_token: str = ""
-    ) -> "tuple[list[tuple[str, datetime]], str]":
+    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = "") -> "BankWritePage":
         """One page of this store's banks, most recently written first, plus the next cursor.
 
         The ORDER over a bank list, which is the part a store owning the memories has to supply.
@@ -1249,17 +1267,16 @@ class MemoriesExtension(Extension, ABC):
         page already ordered, so the caller hydrates the rows it will show rather than ranking the
         whole tenant to find them.
 
-        Each element is ``(bank_id, last_write_at)``. It is an ordering, not a listing: names,
-        settings and everything else about a bank stay wherever they live, and the caller joins
-        them onto this page.
+        It is an ordering, not a listing: names, settings and everything else about a bank stay
+        wherever they live, and the caller joins them onto this page.
 
-        ``("", ...)`` — an empty cursor — starts at the most recently written bank; the returned
-        cursor is empty exactly when the walk is exhausted.
+        An empty ``page_token`` starts at the most recently written bank; the returned
+        ``next_page_token`` is empty exactly when the walk is exhausted.
 
         Empty by default, and that is a meaningful answer: a store with no ordering of its own
         leaves the caller's SQL ordering in place rather than replacing it with a worse one.
         """
-        return [], ""
+        return BankWritePage(banks=[], next_page_token="")
 
     async def last_write_at_many(self, *, bank_ids: "list[str]") -> "dict[str, datetime]":
         """When each bank was last written — ``{bank_id: datetime}``, for many banks at once.

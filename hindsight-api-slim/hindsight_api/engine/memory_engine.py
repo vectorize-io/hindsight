@@ -14963,19 +14963,14 @@ class MemoryEngine(MemoryEngineInterface):
             # No filter, so the page can be cut before the rows are read: the order comes from the
             # store, already sorted, and Postgres fills the page by id. O(page) rather than
             # O(total banks) — see `bank_utils.list_banks_page`.
-            page, total = await bank_utils.list_banks_page(
+            bank_page = await bank_utils.list_banks_page(
                 self._backend, limit=limit, offset=offset, search_query=search_query
             )
+            page, total = bank_page.banks, bank_page.total
         # Per-bank work below is done for the returned page only — the SQL fact count, a
         # live store count for banks whose memories live outside SQL, plus config resolution.
         await bank_utils.apply_sql_fact_counts(self._backend, page)
         await bank_utils.apply_store_fact_counts(page)
-        # The store's own write and ingestion times, for the PAGE. `last_write_at` is read strongly
-        # here while the ORDER came from the store's catalog (as of each bank's last fold), so a
-        # just-written bank shows the right time while sitting one slot low until it folds.
-        # `last_document_at` never ordered anything, and asking for it across the whole tenant was
-        # half the cost this endpoint used to pay.
-        await bank_utils.apply_store_write_times(page)
         # Overlay resolved bank config (reflect_mission + disposition_*) on top of the
         # legacy banks.disposition / banks.mission columns, mirroring get_bank_profile so
         # the list and get paths return identical disposition + mission for a bank.

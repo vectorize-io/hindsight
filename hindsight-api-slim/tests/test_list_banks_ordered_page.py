@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import hindsight_api.engine.memories as memories_mod
+from hindsight_api.engine.memories.base import BankWritePage, BankWriteTime
 from hindsight_api.models import RequestContext
 
 _NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
@@ -49,12 +50,12 @@ class _OrderingStore:
         # Newest first, so earlier positions are more recent.
         return _NOW - timedelta(minutes=self._order.index(bank_id))
 
-    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = ""):
+    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = "") -> BankWritePage:
         self.page_requests.append((limit, page_token))
         start = int(page_token) if page_token else 0
-        rows = [(b, self._when(b)) for b in self._order[start : start + limit]]
+        rows = [BankWriteTime(bank_id=b, last_write_at=self._when(b)) for b in self._order[start : start + limit]]
         nxt = str(start + limit) if start + limit < len(self._order) else ""
-        return rows, nxt
+        return BankWritePage(banks=rows, next_page_token=nxt)
 
     async def last_write_at_many(self, *, bank_ids: list[str]) -> dict:
         self.write_time_calls.append(list(bank_ids))
@@ -240,9 +241,9 @@ async def test_a_router_that_declares_store_owned_false_still_gets_the_ordered_p
 class _NoOrderingStore(_OrderingStore):
     """A store with no ordering of its own — the Postgres default's behaviour."""
 
-    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = ""):
+    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = "") -> BankWritePage:
         self.page_requests.append((limit, page_token))
-        return [], ""
+        return BankWritePage()
 
 
 @pytest.mark.asyncio
@@ -293,6 +294,54 @@ async def test_the_sql_fact_count_skips_banks_the_store_owns(memory, monkeypatch
     finally:
         for name in names:
             await memory.delete_bank(name, request_context=request_context)
+
+
+class _OrdersButOwnsNothing(_OrderingStore):
+    """A store that can order banks but keeps none of their memories — the mixed-tenant shape.
+
+    The ordered path is chosen by asking the store for a page, so a SQL-owned bank can be paged
+    through it. Its `last_write_at` then has to come from the same SQL columns the ranking path
+    reads, which is what this fake exists to check.
+    """
+
+    def store_owned_for(self, bank_id: str) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_a_sql_owned_bank_keeps_the_write_time_its_facts_give_it(memory, request_context, monkeypatch):
+    """`last_write_at` must count facts, not just documents, on the ordered path too.
+
+    A fact written outside a retain — consolidation, curation, import — bumps `memory_units` and
+    nothing else, so a page that reads only `documents` reports a bank as last written when its
+    document was. The ranking path takes the newest of both; the paged join has to agree, or the
+    same bank shows two different times depending on which path served the request.
+    """
+    bank_id = f"lastfact_{datetime.now(timezone.utc).timestamp()}"
+    pool = await memory._get_pool()
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "xyzabc123 !@# a slice"}],
+            document_id="session-1",
+            request_context=request_context,
+        )
+        # Forged directly: a fact newer than every document is what consolidation leaves behind,
+        # and no public write produces it in a test without running one.
+        forged = datetime.now(timezone.utc) + timedelta(hours=1)
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE memory_units SET updated_at = $1 WHERE bank_id = $2", forged, bank_id)
+
+        monkeypatch.setattr(memories_mod, "get_memories", lambda: _OrdersButOwnsNothing([bank_id]))
+        page = await memory.list_banks(limit=50, offset=0, request_context=request_context)
+        entry = next(b for b in page["banks"] if b["bank_id"] == bank_id)
+        assert entry["last_write_at"] is not None, "the bank reads as never written"
+        assert datetime.fromisoformat(entry["last_write_at"]) == forged, (
+            f"last_write_at ignored the fact write: {entry['last_write_at']} != {forged.isoformat()}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
