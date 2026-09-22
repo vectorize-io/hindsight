@@ -7,6 +7,7 @@ import json
 import logging
 import unicodedata
 import uuid
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict
@@ -718,6 +719,13 @@ async def list_banks_page(pool, *, limit: int, offset: int, search_query: str | 
     time — so the two agree about where such a bank belongs. Merging two sorted streams costs the
     page, not the tenant.
 
+    That agreement assumes a tenant's memories all live in one place: whichever store answers here
+    owns every bank in it. A tenant with BOTH store-owned and Postgres-owned banks would break it,
+    because a Postgres-owned bank is absent from the store stream and would then be placed by its
+    creation time while :func:`list_banks` places it by its newest document or fact write. No
+    deployment mixes the two; a deployment that starts to must key the creation stream off those
+    same two columns rather than off `created_at`.
+
     Falls back to :func:`list_banks` whenever the merge cannot be trusted to page correctly:
 
       * a store that returns no ordering of its own. Then the write times are SQL columns, the
@@ -791,32 +799,40 @@ async def _merge_ordered_bank_ids(pool, store, want: int, first: "BankWritePage"
 
     That skip relies on a write never predating its bank's creation, which is what makes the store
     stream win the race for any bank it knows. A bank the store does NOT know is placed by creation
-    time — the same fallback :func:`list_banks` uses, so the two orders agree.
+    time — the same fallback :func:`list_banks` uses, so the two orders agree. The one shape that
+    breaks the invariant is an import or transfer, which stamps `created_at` now while the store
+    carries the source's older write time: such a bank sorts by its arrival here and by its original
+    write on the ranking path.
+
+    Closed explicitly: the merge stops as soon as the page is full, leaving the store stream
+    suspended at a `yield`, and an async generator finalised by the garbage collector instead
+    complains about it at shutdown.
     """
-    store_pages = _store_write_stream(store, first)
     created = await _banks_by_created(pool, want)
 
     out: list[str] = []
     seen: set[str] = set()
-    s_head = await anext(store_pages, None)
-    c_idx = 0
-    while len(out) < want:
-        c_head = created[c_idx] if c_idx < len(created) else None
-        # Whichever head is newer, with the store winning a tie — a bank it knows is placed at its
-        # write time, which is the better key. Each branch tests its own head for None rather than
-        # breaking out first, so the types narrow and a head can never be read after it runs out.
-        if s_head is not None and (c_head is None or s_head.last_write_at >= c_head.last_write_at):
-            bank_id = s_head.bank_id
-            s_head = await anext(store_pages, None)
-        elif c_head is not None:
-            bank_id = c_head.bank_id
-            c_idx += 1
-        else:
-            break
-        if bank_id in seen:
-            continue
-        seen.add(bank_id)
-        out.append(bank_id)
+    async with aclosing(_store_write_stream(store, first)) as store_pages:
+        s_head = await anext(store_pages, None)
+        c_idx = 0
+        while len(out) < want:
+            c_head = created[c_idx] if c_idx < len(created) else None
+            # Whichever head is newer, with the store winning a tie — a bank it knows is placed at
+            # its write time, which is the better key. Each branch tests its own head for None
+            # rather than breaking out first, so the types narrow and a head is never read after it
+            # has run out.
+            if s_head is not None and (c_head is None or s_head.last_write_at >= c_head.last_write_at):
+                bank_id = s_head.bank_id
+                s_head = await anext(store_pages, None)
+            elif c_head is not None:
+                bank_id = c_head.bank_id
+                c_idx += 1
+            else:
+                break
+            if bank_id in seen:
+                continue
+            seen.add(bank_id)
+            out.append(bank_id)
     return out
 
 
@@ -851,7 +867,10 @@ async def _banks_by_created(pool, want: int) -> "list[BankWriteTime]":
     banks_table = fq_table("banks")
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
-            f"SELECT bank_id, created_at FROM {banks_table} ORDER BY created_at DESC NULLS LAST LIMIT $1",
+            # `bank_id` breaks ties: banks created in one batch share a `created_at`, and without a
+            # tiebreaker Postgres may order them differently for the page-1 LIMIT than for the
+            # page-2 one, which shows up as a bank on both pages or on neither.
+            f"SELECT bank_id, created_at FROM {banks_table} ORDER BY created_at DESC NULLS LAST, bank_id DESC LIMIT $1",
             want,
         )
     return [BankWriteTime(bank_id=r["bank_id"], last_write_at=_as_utc(r["created_at"]) or _UNIX_EPOCH) for r in rows]
@@ -1040,11 +1059,13 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
     from ..memories import get_memories
 
     store = get_memories()
-    sql_owned = [b["bank_id"] for b in banks if not store.store_owned_for(b["bank_id"])]
     # Zeroed up front so a store-owned bank still carries a number if the store cannot be reached
     # for its real one — which is what this function left behind for them before it stopped asking.
+    sql_owned = set()
     for bank in banks:
         bank["fact_count"] = 0
+        if not store.store_owned_for(bank["bank_id"]):
+            sql_owned.add(bank["bank_id"])
     if not sql_owned:
         return
     async with acquire_with_retry(pool) as conn:
@@ -1055,8 +1076,11 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
             WHERE bank_id = ANY($1)
             GROUP BY bank_id
             """,
-            sql_owned,
+            list(sql_owned),
         )
     counts = {row["bank_id"]: row["fact_count"] for row in rows}
+    # Only the SQL-owned ones: a store-owned bank keeps the zero above for `apply_store_fact_counts`
+    # to replace, rather than being re-zeroed here by a query that never asked about it.
     for bank in banks:
-        bank["fact_count"] = counts.get(bank["bank_id"], 0)
+        if bank["bank_id"] in sql_owned:
+            bank["fact_count"] = counts.get(bank["bank_id"], 0)

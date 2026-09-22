@@ -1270,6 +1270,12 @@ class MemoriesExtension(Extension, ABC):
         It is an ordering, not a listing: names, settings and everything else about a bank stay
         wherever they live, and the caller joins them onto this page.
 
+        **Scoped to the calling tenant.** This is the only method here that LISTS bank ids rather
+        than being handed them — every other one (:meth:`last_write_at_many`,
+        :meth:`count_memories_many`, …) is tenant-scoped by construction, through the ids its
+        caller passes in. An id from outside the tenant has no row in that tenant's ``banks``
+        table, so it consumes a slot of the page and hands the caller a short one.
+
         An empty ``page_token`` starts at the most recently written bank; the returned
         ``next_page_token`` is empty exactly when the walk is exhausted.
 

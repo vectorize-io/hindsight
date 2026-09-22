@@ -21,7 +21,15 @@ import hindsight_api.engine.memories as memories_mod
 from hindsight_api.engine.memories.base import BankWritePage, BankWriteTime
 from hindsight_api.models import RequestContext
 
-_NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
+#: The store's write times, anchored ahead of the run rather than at a fixed date.
+#:
+#: The merge places a bank at the newer of its store write time and its `created_at`, which is
+#: right: a write cannot predate the bank it wrote to. A fixed literal quietly breaks that — these
+#: banks are created NOW, so a literal in the past makes creation the newer key and the list comes
+#: back in creation order, with nothing about the store's ordering under test any more. That is
+#: exactly what happened: a hardcoded 2026-09-22 12:00 UTC passed locally before noon and failed in
+#: CI at 12:36. Anchoring it forward keeps the store the newer key on every machine and any day.
+_NOW = datetime.now(timezone.utc) + timedelta(hours=1)
 
 
 class _OrderingStore:
