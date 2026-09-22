@@ -156,13 +156,15 @@ _spec.loader.exec_module(plugin)
 
 
 class FakeResult:
-    def __init__(self, text: str):
+    def __init__(self, text: str, tags=None):
         self.text = text
+        self.tags = tags
 
 
 class FakeRecallResponse:
     def __init__(self, texts):
-        self.results = [FakeResult(t) for t in texts]
+        # An entry is a plain string, or a (text, tags) pair when the test needs tags.
+        self.results = [FakeResult(*t) if isinstance(t, tuple) else FakeResult(t) for t in texts]
 
 
 class FakeReflectResponse:

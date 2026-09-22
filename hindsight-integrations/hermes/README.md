@@ -108,6 +108,7 @@ Config file: `~/.hermes/hindsight/config.json`
 | `recall_tags` | — | Tags to filter when searching memories |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
+| `recall_tag_prefixes` | — | Tag prefixes whose value is shown before each recalled memory, e.g. `conf:` renders `[confidential] <text>`. Comma-separated string or JSON list. Recall otherwise hands the model the memory text alone, so a tag the agent is meant to reason about is invisible to it; only the requested prefixes are surfaced, since bookkeeping tags would spend the `recall_max_tokens` budget for nothing. One bracket per prefix — `/` separates several values of the same dimension, so a consolidated observation spanning two levels reads `[internal/confidential]`. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
 | `recall_indicator` | `true` | Show a `👁️ Hindsight — recalled N memories` status line when auto-recall injects memory. Turn off for customer-facing agents. |
