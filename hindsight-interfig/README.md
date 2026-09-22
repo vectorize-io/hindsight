@@ -42,7 +42,7 @@ The docs site sets the `--fig-*` colors for its light and dark themes in `hindsi
 ## Gallery
 
 `npm run dev` opens the gallery. Every file in `figures/` is one figure: add a file and it shows up.
-Edits reload live. `npm test` runs the geometry tests.
+Edits reload live. `npm test` runs the unit tests.
 
 Use a figure in the docs:
 

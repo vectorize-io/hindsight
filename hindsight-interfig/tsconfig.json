@@ -6,8 +6,10 @@
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
   },
-  "include": ["src", "demo", "figures"],
-  "exclude": ["src/*.test.ts"]
+  "include": ["src", "demo", "figures"]
 }
