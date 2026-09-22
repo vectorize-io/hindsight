@@ -5521,7 +5521,16 @@ def _register_routes(app: FastAPI):
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
         worker_metrics = getattr(app.state, "worker_metrics", None)
-        metrics_data = worker_metrics.render() if worker_metrics is not None else generate_latest()
+        # Render off the event loop. generate_latest() (and WorkerMetrics.render, which also does
+        # blocking file I/O) are synchronous, and serialization cost scales with metric cardinality
+        # -- on a large registry it takes seconds. Awaiting it inline blocks the asyncio loop for
+        # that whole duration, so /health, WebSocket handshakes, and every other request this worker
+        # is handling stall until the scrape completes. Offloading to a worker thread keeps the loop
+        # servicing requests no matter how big the registry grows; both render paths are thread-safe
+        # (generate_latest is designed to be scraped off-thread, and WorkerMetrics.render only reads
+        # a registry + per-worker snapshot files).
+        render = worker_metrics.render if worker_metrics is not None else generate_latest
+        metrics_data = await asyncio.to_thread(render)
         return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get(
