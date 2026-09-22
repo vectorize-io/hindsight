@@ -1237,6 +1237,30 @@ class MemoriesExtension(Extension, ABC):
                 out[bank_id] = counts
         return out
 
+    async def list_banks_by_write(
+        self, *, limit: int = 100, page_token: str = ""
+    ) -> "tuple[list[tuple[str, datetime]], str]":
+        """One page of this store's banks, most recently written first, plus the next cursor.
+
+        The ORDER over a bank list, which is the part a store owning the memories has to supply.
+        ``last_write_at_many`` answers the same question one bank at a time, and a list ordered by
+        it therefore has to ask about EVERY bank before it can cut page 1 — O(total banks) per
+        request, which on a large tenant is the entire cost of the endpoint. This hands back the
+        page already ordered, so the caller hydrates the rows it will show rather than ranking the
+        whole tenant to find them.
+
+        Each element is ``(bank_id, last_write_at)``. It is an ordering, not a listing: names,
+        settings and everything else about a bank stay wherever they live, and the caller joins
+        them onto this page.
+
+        ``("", ...)`` — an empty cursor — starts at the most recently written bank; the returned
+        cursor is empty exactly when the walk is exhausted.
+
+        Empty by default, and that is a meaningful answer: a store with no ordering of its own
+        leaves the caller's SQL ordering in place rather than replacing it with a worse one.
+        """
+        return [], ""
+
     async def last_write_at_many(self, *, bank_ids: "list[str]") -> "dict[str, datetime]":
         """When each bank was last written — ``{bank_id: datetime}``, for many banks at once.
 

@@ -688,6 +688,192 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
     return result
 
 
+async def list_banks_page(pool, *, limit: int, offset: int, search_query: str | None = None) -> "tuple[list, int]":
+    """One page of banks, most recently written first, WITHOUT ranking every bank to find it.
+
+    :func:`list_banks` reads the whole tenant because the order depends on a value only the store
+    has: it asks for every bank's write time, sorts, and throws away all but a page. That is
+    O(total banks) per request — 60-75 s on a tenant with 27,315 banks, and the endpoint's entire
+    cost. The work is not the sorting, it is fetching N sort keys to produce 100 rows.
+
+    A store that can hand back its banks ALREADY ordered removes the need to. The page is then a
+    merge of two streams that are each already sorted:
+
+      * the store's banks, newest-written first, cursor-paged;
+      * this tenant's banks by ``created_at``, newest first, off a SQL index.
+
+    A bank the store has never recorded (never written, or written but not yet folded) comes from
+    the second stream and keeps the same fallback key :func:`list_banks` gives it — its creation
+    time — so the two agree about where such a bank belongs. Merging two sorted streams costs the
+    page, not the tenant.
+
+    Falls back to :func:`list_banks` whenever the merge cannot be trusted to page correctly:
+
+      * a store that does not own the memories. Then the write times are SQL columns, the ordering
+        is already one indexed query, and there is nothing a store stream could add — a merge
+        against an empty stream would silently reorder such a tenant by CREATION time;
+      * a search, which matches on ``bank_id`` and ``name``. Those live only in SQL, so the store
+        cannot apply it and its stream would be the wrong set. A search narrows to few rows anyway,
+        which is where ranking them all is cheap.
+
+    Returns ``(page, total)``. ``total`` counts the banks matching the search, before paging.
+    """
+    from ..memories import get_memories
+
+    store = get_memories()
+    if search_query or not getattr(store, "store_owned", False):
+        banks = await list_banks(pool, search_query=search_query)
+        return banks[offset : offset + limit], len(banks)
+
+    # How many rows the merge must produce before it can cut the page. Offset paging over an
+    # ordered walk necessarily reaches the offset — but it reaches it by walking the ORDER, not by
+    # ranking the tenant, so page 1 (the page that is actually requested) costs one page.
+    want = offset + limit
+    if want <= 0:
+        total = await _count_banks(pool)
+        return [], total
+
+    try:
+        ordered_ids = await _merge_ordered_bank_ids(pool, store, want)
+    except Exception as e:  # noqa: BLE001 - the list must render even if the ordering cannot
+        logger.warning(f"Could not page banks by write time ({e}); ranking the tenant instead")
+        banks = await list_banks(pool, search_query=search_query)
+        return banks[offset : offset + limit], len(banks)
+
+    page_ids = ordered_ids[offset : offset + limit]
+    rows = await _bank_rows(pool, page_ids)
+    total = await _count_banks(pool)
+    return rows, total
+
+
+async def _merge_ordered_bank_ids(pool, store, want: int) -> list[str]:
+    """The first `want` bank ids, newest-written first, merging the store's order with SQL's.
+
+    Both inputs are already sorted, so this takes whichever head is newer and never sorts anything.
+    A bank the store names is emitted at its WRITE time; the same bank reached later through the
+    creation-ordered stream is skipped, because it has already been placed at the better key.
+
+    That skip relies on a write never predating its bank's creation, which is what makes the store
+    stream win the race for any bank it knows. A bank the store does NOT know is placed by creation
+    time — the same fallback :func:`list_banks` uses, so the two orders agree.
+    """
+    store_pages = _store_write_stream(store)
+    created = await _banks_by_created(pool, want)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    s_head = await anext(store_pages, None)
+    c_idx = 0
+    while len(out) < want:
+        c_head = created[c_idx] if c_idx < len(created) else None
+        if s_head is None and c_head is None:
+            break
+        take_store = c_head is None or (s_head is not None and s_head[1] >= c_head[1])
+        if take_store:
+            bank_id = s_head[0]
+            s_head = await anext(store_pages, None)
+        else:
+            bank_id = c_head[0]
+            c_idx += 1
+        if bank_id in seen:
+            continue
+        seen.add(bank_id)
+        out.append(bank_id)
+    return out
+
+
+async def _store_write_stream(store):
+    """The store's banks as one continuous newest-written-first stream, page by page.
+
+    A generator rather than a list so the merge pulls only the pages it needs: a page-1 request
+    consumes one store page however many banks the tenant has.
+    """
+    token = ""
+    while True:
+        rows, token = await store.list_banks_by_write(limit=100, page_token=token)
+        for bank_id, when in rows:
+            yield bank_id, _as_utc(when)
+        if not token:
+            return
+
+
+async def _banks_by_created(pool, want: int) -> "list[tuple[str, datetime]]":
+    """The `want` most recently CREATED banks, newest first — the other half of the merge.
+
+    Bounded by `want`: this is the stream that places banks the store has no write time for, and
+    only the head of it can reach the page.
+    """
+    banks_table = fq_table("banks")
+    async with acquire_with_retry(pool) as conn:
+        rows = await conn.fetch(
+            f"SELECT bank_id, created_at FROM {banks_table} ORDER BY created_at DESC NULLS LAST LIMIT $1",
+            want,
+        )
+    return [(r["bank_id"], _as_utc(r["created_at"]) or _UNIX_EPOCH) for r in rows]
+
+
+async def _count_banks(pool) -> int:
+    banks_table = fq_table("banks")
+    async with acquire_with_retry(pool) as conn:
+        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {banks_table}")
+    return int(row["n"]) if row else 0
+
+
+async def _bank_rows(pool, bank_ids: "list[str]") -> list:
+    """The page's rows, in the order `bank_ids` gives — one query, by id.
+
+    This is the join that FILLS a page rather than deciding one, which is the whole difference: it
+    reads the rows that will be shown, not every row in the tenant. `fact_count` is left at 0 and
+    filled by the page overlays, exactly as :func:`list_banks` leaves it.
+    """
+    if not bank_ids:
+        return []
+    banks_table = fq_table("banks")
+    docs_table = fq_table("documents")
+    async with acquire_with_retry(pool) as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT b.bank_id, b.name, b.disposition, b.mission, b.created_at, b.updated_at,
+                   d.last_document_at, d.last_document_write_at
+            FROM {banks_table} b
+            LEFT JOIN (
+                SELECT bank_id,
+                       MAX(created_at) AS last_document_at,
+                       MAX(updated_at) AS last_document_write_at
+                FROM {docs_table}
+                WHERE bank_id = ANY($1::text[])
+                GROUP BY bank_id
+            ) d ON d.bank_id = b.bank_id
+            WHERE b.bank_id = ANY($1::text[])
+            """,
+            bank_ids,
+        )
+    by_id = {}
+    for row in rows:
+        disposition_data = row["disposition"]
+        if isinstance(disposition_data, str):
+            disposition_data = json.loads(disposition_data)
+        created_at = _as_utc(row["created_at"])
+        updated_at = _as_utc(row["updated_at"])
+        last_doc = _as_utc(row["last_document_at"])
+        write_times = [t for t in (_as_utc(row["last_document_write_at"]),) if t]
+        last_write = max(write_times) if write_times else None
+        by_id[row["bank_id"]] = {
+            "bank_id": row["bank_id"],
+            "name": row["name"],
+            "disposition": disposition_data,
+            "mission": row["mission"] or "",
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "fact_count": 0,
+            "last_document_at": last_doc.isoformat() if last_doc else None,
+            "last_write_at": last_write.isoformat() if last_write else None,
+        }
+    # In the store's order, and only rows that still exist: a bank deleted between the ordering and
+    # this read drops out rather than surfacing as a blank row.
+    return [by_id[b] for b in bank_ids if b in by_id]
+
+
 async def _apply_store_last_write(banks: list[dict], sort_keys: "dict[str, datetime]") -> None:
     """Fill `last_write_at` (and the sort key) from the store, for banks SQL cannot answer for.
 
@@ -745,6 +931,56 @@ async def _apply_store_last_write(banks: list[dict], sort_keys: "dict[str, datet
             continue
         bank["last_write_at"] = when.isoformat()
         sort_keys[bank["bank_id"]] = when
+
+
+async def apply_store_write_times(banks: list[dict]) -> None:
+    """Fill `last_write_at` and `last_document_at` from the store, for the PAGE being returned.
+
+    Page-scoped, and that is the fix rather than a detail. These same two calls used to run over
+    every bank in the tenant, because the list was ORDERED by `last_write_at` and could not cut a
+    page until it had them all. With the order coming from the store already sorted, they are what
+    they always should have been: an overlay on the hundred rows about to be shown.
+
+    `strong=True` is affordable again for the same reason — it is per-namespace work, fine for a
+    page and not for 27,315 banks.
+
+    The two are asked separately because they are different questions: `last_document_at` is
+    INGESTION time and must not move when an existing document is re-retained, while `last_write_at`
+    must. Reporting one under both names makes a rewrite read as a new document.
+
+    Gathered rather than sequential, with `return_exceptions` so one failing does not discard the
+    other's answer. A bank the store has no time for is left exactly as it was — absent means
+    "unknown", never "the epoch".
+    """
+    from ..memories import get_memories
+
+    store = get_memories()
+    external = [b for b in banks if store.store_owned_for(b["bank_id"])]
+    if not external:
+        return
+    ids = [b["bank_id"] for b in external]
+    try:
+        times_r, doc_times_r = await asyncio.gather(
+            store.last_write_at_many(bank_ids=ids),
+            store.last_document_at_many(bank_ids=ids),
+            return_exceptions=True,
+        )
+    except Exception as e:  # noqa: BLE001 - these are a nicety; the page itself must still render
+        logger.warning(f"Store cannot report write times for {len(external)} bank(s): {e}")
+        return
+    times = {} if isinstance(times_r, BaseException) else times_r
+    doc_times = {} if isinstance(doc_times_r, BaseException) else doc_times_r
+    if isinstance(times_r, BaseException):
+        logger.warning(f"Could not read last_write_at from the store: {times_r}")
+    if isinstance(doc_times_r, BaseException):
+        logger.warning(f"Could not read last_document_at from the store: {doc_times_r}")
+    for bank in external:
+        when = times.get(bank["bank_id"])
+        if when is not None:
+            bank["last_write_at"] = when.isoformat()
+        doc_when = doc_times.get(bank["bank_id"])
+        if doc_when is not None:
+            bank["last_document_at"] = doc_when.isoformat()
 
 
 async def apply_store_fact_counts(banks: list[dict]) -> None:

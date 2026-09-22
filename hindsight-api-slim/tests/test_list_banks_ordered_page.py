@@ -1,0 +1,223 @@
+"""The bank list is ordered by a store that can order, and costs the PAGE rather than the tenant.
+
+A store owning the memories leaves ``documents`` / ``memory_units`` empty, so SQL has no write time
+to sort on. The list used to recover it by asking the store for EVERY bank's write time, sorting in
+Python, and returning a hundred rows — O(total banks) per request, and on a large tenant the whole
+cost of the endpoint.
+
+These assert the property that replaces it: the ORDER comes from the store already sorted, and the
+number of banks the store is asked about does not grow with the tenant.
+
+Runs via: uv run pytest tests/test_list_banks_ordered_page.py -v
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+import hindsight_api.engine.memories as memories_mod
+from hindsight_api.models import RequestContext
+
+_NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class _OrderingStore:
+    """A store that owns its memories and can hand back its banks already ordered.
+
+    Duck-typed rather than a MemoriesExtension subclass, so it answers only what these paths reach —
+    and so a page that reached an inherited default instead of the seam would fail rather than
+    quietly pass.
+    """
+
+    #: What gates the ordered path. A store that does not own the memories has its write times in
+    #: SQL already, and must keep the SQL ordering.
+    store_owned = True
+
+    def __init__(self, order: list[str]):
+        #: Newest-written first, which is the contract of `list_banks_by_write`.
+        self._order = order
+        #: Every page request, so a test can assert the walk stopped rather than swept.
+        self.page_requests: list[tuple[int, str]] = []
+        self.write_time_calls: list[list[str]] = []
+
+    def store_owned_for(self, bank_id: str) -> bool:
+        return True
+
+    def _when(self, bank_id: str) -> datetime:
+        # Newest first, so earlier positions are more recent.
+        return _NOW - timedelta(minutes=self._order.index(bank_id))
+
+    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = ""):
+        self.page_requests.append((limit, page_token))
+        start = int(page_token) if page_token else 0
+        rows = [(b, self._when(b)) for b in self._order[start : start + limit]]
+        nxt = str(start + limit) if start + limit < len(self._order) else ""
+        return rows, nxt
+
+    async def last_write_at_many(self, *, bank_ids: list[str]) -> dict:
+        self.write_time_calls.append(list(bank_ids))
+        return {b: self._when(b) for b in bank_ids if b in self._order}
+
+    async def last_document_at_many(self, *, bank_ids: list[str]) -> dict:
+        return {}
+
+    async def count_memories_many(self, *, bank_ids: list[str], strong: bool = False) -> dict:
+        return {b: {"world": 1} for b in bank_ids}
+
+    async def ensure_bank_storage(self, bank_id: str) -> None:
+        return None
+
+    async def drop_bank_storage(self, bank_id: str) -> None:
+        return None
+
+    async def count_documents(self, *, bank_id: str) -> int:
+        return 0
+
+    # Below: what the fixture TEARDOWN reaches. This fake is duck-typed rather than a
+    # MemoriesExtension subclass — it inherits no defaults — and `delete_bank` routes through the
+    # store for a bank the store owns.
+    async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict:
+        return {}
+
+    async def list_entities(self, *, conn, fq_table, bank_id: str, search=None, limit=100, offset=0) -> dict:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+    async def delete_observations(self, *, conn, fq_table, bank_id: str) -> None:
+        return None
+
+
+async def _make_banks(memory, request_context, names: list[str]) -> None:
+    for name in names:
+        await memory.ensure_bank_profile(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_list_follows_the_store_order(memory, monkeypatch):
+    """The page is in the store's order, not in creation order.
+
+    The banks are CREATED in one order and written in another, so a list that fell back to
+    `created_at` — the thing that happens when the store's ordering is ignored — produces a
+    different, recognisable sequence rather than accidentally passing.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    created_order = ["ord_a", "ord_b", "ord_c", "ord_d"]
+    # Written newest-first in an order unrelated to creation.
+    write_order = ["ord_c", "ord_a", "ord_d", "ord_b"]
+
+    store = _OrderingStore(write_order)
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, created_order)
+        page = await memory.list_banks(limit=10, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"] if b["bank_id"] in write_order]
+        assert got == write_order, f"the list must follow the store's write order, got {got}"
+    finally:
+        for name in created_order:
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_list_asks_the_store_about_the_page_not_the_tenant(memory, monkeypatch):
+    """The cost property, asserted structurally rather than as a latency number.
+
+    What made the endpoint 60-75 s was asking for every bank's write time before it could sort. The
+    guard is that the strong per-bank read now covers the returned PAGE only — so a tenant ten times
+    larger costs the same page.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    names = [f"pg_bank_{i:02}" for i in range(12)]
+
+    store = _OrderingStore(list(reversed(names)))
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, names)
+        page = await memory.list_banks(limit=3, offset=0, request_context=request_context)
+
+        assert len(page["banks"]) == 3
+        # The per-namespace strong read is the expensive one; it must see the page, never the set.
+        assert store.write_time_calls, "the page's write times were never read"
+        for call in store.write_time_calls:
+            assert len(call) <= 3, f"strong write-time read covered {len(call)} banks, not the page"
+    finally:
+        for name in names:
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_bank_the_store_has_no_write_time_for_still_appears(memory, monkeypatch):
+    """A never-written bank must not fall out of its own list.
+
+    It has no row in the store — never written, or written but not yet folded — so it comes from
+    the creation-ordered half of the merge. Dropping it would make a brand-new bank invisible until
+    something wrote to it, which is precisely when someone goes looking for it.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    written = "merge_written"
+    unwritten = "merge_unwritten"
+
+    # The store knows only the written one.
+    store = _OrderingStore([written])
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, [written, unwritten])
+        page = await memory.list_banks(limit=50, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"]]
+        assert written in got, "the written bank is missing"
+        assert unwritten in got, "a bank the store has no write time for vanished from the list"
+    finally:
+        for name in (written, unwritten):
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_paging_the_list_sees_every_bank_exactly_once(memory, monkeypatch):
+    """No bank is repeated across pages and none is skipped at a seam.
+
+    The page size deliberately does not divide the bank count, so the last page is short and the
+    seams fall mid-stream — where an off-by-one in the merge shows up.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    names = [f"seam_bank_{i:02}" for i in range(10)]
+
+    store = _OrderingStore(list(reversed(names)))
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, names)
+        seen: list[str] = []
+        for offset in range(0, 12, 4):
+            page = await memory.list_banks(limit=4, offset=offset, request_context=request_context)
+            seen.extend(b["bank_id"] for b in page["banks"] if b["bank_id"] in names)
+        assert sorted(seen) == sorted(names), f"paging lost or repeated a bank: {seen}"
+    finally:
+        for name in names:
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_search_still_ranks_and_filters(memory, monkeypatch):
+    """Search matches on bank_id and name, which live only in SQL.
+
+    The store cannot apply it, so the search path keeps the SQL ordering rather than paging a store
+    stream that is the wrong set. Asserted because the fallback is easy to break silently: a search
+    that quietly returned the unfiltered page would look like a working list.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    names = ["find_me_alpha", "find_me_beta", "unrelated_gamma"]
+
+    store = _OrderingStore(list(reversed(names)))
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, names)
+        page = await memory.list_banks(search_query="find_me", limit=50, offset=0, request_context=request_context)
+        got = sorted(b["bank_id"] for b in page["banks"])
+        assert got == ["find_me_alpha", "find_me_beta"], f"search returned {got}"
+    finally:
+        for name in names:
+            await memory.delete_bank(name, request_context=request_context)
