@@ -1,6 +1,6 @@
 # interfig
 
-Lives in this repo and is used from source by `hindsight-docs` (and later the control plane). It is never published or built.
+Lives in this repo and is used from source by `hindsight-docs`. It is never published or built.
 
 Interactive, animated flow figures for React. You describe the boxes, how they nest, and the edges.
 interfig lays them out, draws the arrows, and plays each "step" as a packet moving along the edges.
@@ -9,13 +9,15 @@ interfig lays them out, draws the arrows, and plays each "step" as a packet movi
 import { Flow } from '@vectorize-io/interfig';
 
 <Flow
-  layout={{ children: [
-    { id: 'app', label: 'Your App', children: [{ id: 'agent', label: 'AI Agent' }] },
-    { id: 'api', label: 'API Server' },
-  ] }}
+  layout={{
+    children: [
+      { id: 'app', label: 'Your App', children: [{ id: 'agent', label: 'AI Agent' }] },
+      { id: 'api', label: 'API Server' },
+    ],
+  }}
   edges={[{ id: 'retain', from: 'agent', to: 'api', label: 'retain' }]}
   steps={[{ label: 'retain()', caption: 'Store a memory', flow: ['retain'] }]}
-/>
+/>;
 ```
 
 - `layout` — a tree. A group has `children` (and optional `label`, `direction: 'row' | 'column'`, `gap`, `align`). Only groups with a `label` get a frame. Anything else is a box: `{ id, label, sub?, shape?: 'decision' | 'store', lines?, width? }` (a content card grows to fit the most any step shows in it; `lines` is a minimum, `width` fixes its width) (decision = diamond, store = database cylinder: use it for data at rest, plain boxes for what processes it).
@@ -35,13 +37,7 @@ Figures wider than their container shrink to fit (down to half size, then scroll
 
 ## Docusaurus (dark mode)
 
-```css
-/* src/css/custom.css */
-.interfig { --fig-accent: var(--ifm-color-primary); }
-[data-theme='dark'] .interfig {
-  --fig-fg: #e3e3e3; --fig-muted: #9aa0a6; --fig-bg: #1b1b1d; --fig-surface: #242526; --fig-border: #3a3b3c;
-}
-```
+The docs site sets the `--fig-*` colors for its light and dark themes in `hindsight-docs/src/css/custom.css` (search for `interfig`).
 
 ## Gallery
 
@@ -51,7 +47,7 @@ Edits reload live. `npm test` runs the geometry tests.
 Use a figure in the docs:
 
 ```mdx
-import {Flow} from '@vectorize-io/interfig';
+import { Flow } from '@vectorize-io/interfig';
 import whatHindsightDoes from '@vectorize-io/interfig/figures/what-hindsight-does';
 
 <Flow {...whatHindsightDoes.props} />

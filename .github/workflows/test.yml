@@ -140,6 +140,7 @@ jobs:
             - 'hindsight-docs/static/openapi.json'
           interfig:
             - 'hindsight-interfig/**'
+            - 'scripts/docs_skill_figures.py'
           docker:
             - 'docker/**'
           helm:
@@ -1459,8 +1460,15 @@ jobs:
     - name: Typecheck (library and figures)
       run: npm run typecheck --workspace=@vectorize-io/interfig
 
+    - name: Check formatting
+      run: npm run format:check --workspace=@vectorize-io/interfig
+
     - name: Test
       run: npm test --workspace=@vectorize-io/interfig
+
+    # The docs skill turns each figure into its narration by reading the figure files.
+    - name: Check every figure renders as text for the docs skill
+      run: python3 scripts/docs_skill_figures.py --check-all
 
   build-docs:
     needs: [detect-changes]
@@ -1496,8 +1504,12 @@ jobs:
     - name: Install dependencies
       run: npm ci --workspace=hindsight-docs
 
+    # Include the unreleased docs/ tree too: without it CI only builds the released
+    # snapshots, and a broken page under docs/ would surface only at release time.
     - name: Build docs
       run: npm run build --workspace=hindsight-docs
+      env:
+        INCLUDE_CURRENT_VERSION: 'true'
 
   test-rust-cli:
     needs: [detect-changes]

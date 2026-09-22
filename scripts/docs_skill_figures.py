@@ -6,6 +6,9 @@ figure becomes its step-by-step narration (the `say` lines the figure plays), gr
 
 Usage: python3 docs_skill_figures.py <source page> <generated page>
 The source page supplies the imports; the generated page is rewritten in place.
+
+       python3 docs_skill_figures.py --check-all
+renders every figure and fails if one no longer reads cleanly (CI runs this).
 """
 
 import re
@@ -18,6 +21,7 @@ ANY_INTERFIG_IMPORT = re.compile(r"^import .* from '@vectorize-io/interfig[^']*'
 FLOW = re.compile(r"<Flow \{\.\.\.(\w+)\.props\} />")
 STRING = r"'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)\""
 STEP = re.compile(r"^\s*label: (?:" + STRING + r"),\s*\n(?:\s*caption:.*\n)?\s*flow:", re.MULTILINE)
+FLOW_KEY = re.compile(r"^\s*flow:", re.MULTILINE)
 SAY = re.compile(r"\bsay: (?:" + STRING + r")")
 TITLE = re.compile(r"^\s*title: (?:" + STRING + r"),", re.MULTILINE)
 
@@ -33,13 +37,21 @@ def figure_to_markdown(figure_file: Path) -> str:
     title_match = TITLE.search(source)
     title = _text(title_match) if title_match else figure_file.stem
     steps = list(STEP.finditer(source))
-    if not steps:
-        # The regexes follow the figures' prettier layout; fail loudly rather than emit an empty walk-through.
-        raise SystemExit(f"{figure_file}: no steps found — did the figure format change?")
+    # The regexes follow the figures' prettier layout (`label`, optional `caption`, then `flow`). A step
+    # written another way would be skipped and its narration merged into the previous one: fail instead.
+    if not steps or len(steps) != len(FLOW_KEY.findall(source)):
+        raise SystemExit(f"{figure_file}: found {len(steps)} steps but {len(FLOW_KEY.findall(source))} `flow:` keys")
+    says_per_step = [
+        [
+            _text(m)
+            for m in SAY.finditer(source, step.end(), steps[i + 1].start() if i + 1 < len(steps) else len(source))
+        ]
+        for i, step in enumerate(steps)
+    ]
+    if not all(says_per_step):
+        raise SystemExit(f"{figure_file}: a step has no narration (`say`) to show")
     lines = [f"**Figure: {title}.** An animated diagram on the docs site; its narration, step by step:", ""]
-    for i, step in enumerate(steps):
-        end = steps[i + 1].start() if i + 1 < len(steps) else len(source)
-        says = [_text(m) for m in SAY.finditer(source, step.end(), end)]
+    for step, says in zip(steps, says_per_step):
         lines.append(f"- **{_text(step)}**")
         lines += [f"  {n}. {say}" for n, say in enumerate(says, 1)]
     return "\n".join(lines)
@@ -52,5 +64,10 @@ def render(source_page: str, generated: str) -> str:
 
 
 if __name__ == "__main__":
-    src, dest = Path(sys.argv[1]), Path(sys.argv[2])
-    dest.write_text(render(src.read_text(), dest.read_text()))
+    if sys.argv[1:] == ["--check-all"]:
+        for figure in sorted(FIGURES.glob("*.ts")):
+            figure_to_markdown(figure)
+        print(f"docs_skill_figures: {len(list(FIGURES.glob('*.ts')))} figures render")
+    else:
+        src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+        dest.write_text(render(src.read_text(), dest.read_text()))
