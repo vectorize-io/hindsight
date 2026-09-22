@@ -465,6 +465,8 @@ SDK client where an async one exists, a sync call pushed into `to_thread` /
 
 If the diff touches `hindsight-docs/docs/**`, look for new or changed fenced blocks (```` ```python ````, ```` ```bash ````, ```` ```typescript ````, ```` ```go ````, …) that call Hindsight: SDK client methods, `hindsight <cmd>` CLI commands, or `curl` to `/v1/...`. Each must be a `<CodeSnippet>` backed by a section in `hindsight-docs/examples/api/` (see Documentation Code Examples). Also check the example file actually exercises the call (not just prints it) and cleans up its banks. Flag an inline API example as a **must fix**.
 
+The live `/developer/...` URLs serve the latest snapshot in `hindsight-docs/versioned_docs/version-<latest>/`, not `docs/` (that is `/developer/next/`); a release syncs `docs/` into it. A docs fix meant to be live before the next release must be copied into that snapshot too.
+
 ### 11d. Check concurrency primitives
 
 See "Concurrency" above. Grep the diff:

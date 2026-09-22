@@ -342,16 +342,20 @@ The two endpoints default differently:
 - **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
 - **Get** defaults to `full`. You already named the one model you want.
 
-```bash
-# List: metadata only, the default (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
-
-# List with content but without provenance chains (opt-in)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
-
-# Get one model — full detail is the default here
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="mental-model-detail" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="mental-model-detail" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="mental-model-detail" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="mental-model-detail" language="go" />
+</TabItem>
+</Tabs>
 
 The `detail` parameter is available on the `get_mental_model` MCP tool. The
 `list_mental_models` MCP tool does not take it: it always returns metadata
@@ -432,10 +436,20 @@ watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry ru
 reads exactly the window the next real refresh will, and repeating it reads that same
 window again.
 
-```bash
-curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
-  -H "Content-Type: application/json" -d '{}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="dry-run-refresh" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="dry-run-refresh" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="dry-run-refresh" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="dry-run-refresh" language="go" />
+</TabItem>
+</Tabs>
 
 The response answers the questions the stored document can't:
 
@@ -472,11 +486,20 @@ the time you notice a bad document, the run that produced it is gone.
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that
 model — scheduled ones included — under `reflect_response.trace`:
 
-```bash
-curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="keep-trace" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="keep-trace" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="keep-trace" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="keep-trace" language="go" />
+</TabItem>
+</Tabs>
 
 Only the latest refresh's trace is kept, and it is recorded even when a refresh
 fails — which is when it matters most, since a failed refresh leaves nothing else
