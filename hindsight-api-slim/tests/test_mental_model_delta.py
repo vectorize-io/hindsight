@@ -1370,8 +1370,6 @@ class TestDeltaRefreshPlumbing:
 
         monkeypatch.setattr(memory, "update_mental_model", recording_update)
 
-        monkeypatch.setattr(memory, "update_mental_model", recording_update)
-
         # A fact in scope, so the delta window is not empty and the run reaches
         # the structured-output branch instead of short-circuiting on
         # "no new facts".
