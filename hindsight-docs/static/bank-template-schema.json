@@ -368,8 +368,25 @@
             }
           ],
           "default": null,
-          "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
+          "description": "DEPRECATED \u2014 use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
           "title": "Observation Scope Limits"
+        },
+        "consolidation_strategies": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-scope consolidation settings: [{\"scopes\": [{\"tags\": [\"company:*\"]}], \"observations_mission\": \"Record only generalized trends.\", \"max_observations_per_scope\": 20}]. Each strategy lists the scopes it claims \u2014 a scope is a list of fnmatch tag-globs, and a consolidation pass is claimed when any of the strategy's patterns matches its tags. Each pattern is {\"tags\": [...], \"tags_match\": ...}; \"tags_match\" is \"all\" (default) \u2014 the scope has every tag in the pattern, other tags allowed \u2014 or \"exact\" \u2014 the scope has exactly the pattern's tags and no others. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset \u2014 and every scope no strategy claims \u2014 uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief.",
+          "title": "Consolidation Strategies"
         },
         "reflect_source_facts_max_tokens": {
           "anyOf": [

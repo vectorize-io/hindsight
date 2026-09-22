@@ -627,9 +627,17 @@ export type BankTemplateConfig = {
   /**
    * Observation Scope Limits
    *
-   * Per-scope overrides of max_observations_per_scope: [{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.
+   * DEPRECATED — use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.
    */
   observation_scope_limits?: Array<{
+    [key: string]: unknown;
+  }> | null;
+  /**
+   * Consolidation Strategies
+   *
+   * Per-scope consolidation settings: [{"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only generalized trends.", "max_observations_per_scope": 20}]. Each strategy lists the scopes it claims — a scope is a list of fnmatch tag-globs, and a consolidation pass is claimed when any of the strategy's patterns matches its tags. Each pattern is {"tags": [...], "tags_match": ...}; "tags_match" is "all" (default) — the scope has every tag in the pattern, other tags allowed — or "exact" — the scope has exactly the pattern's tags and no others. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset — and every scope no strategy claims — uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief.
+   */
+  consolidation_strategies?: Array<{
     [key: string]: unknown;
   }> | null;
   /**
@@ -1277,6 +1285,53 @@ export type ConsolidationResponse = {
 };
 
 /**
+ * ConsolidationStrategiesPreview
+ *
+ * Which existing observation scopes each consolidation strategy would apply to.
+ */
+export type ConsolidationStrategiesPreview = {
+  /**
+   * Strategies
+   */
+  strategies: Array<StrategyPreview>;
+  default: DefaultScopesPreview;
+  /**
+   * Scopes Scanned
+   *
+   * Distinct scopes the preview was computed over
+   */
+  scopes_scanned: number;
+  /**
+   * Complete
+   *
+   * False when the bank has more distinct scopes than the preview scans; counts are then lower bounds
+   */
+  complete: boolean;
+};
+
+/**
+ * ConsolidationStrategiesPreviewRequest
+ *
+ * A draft consolidation_strategies value to preview against existing scopes.
+ */
+export type ConsolidationStrategiesPreviewRequest = {
+  /**
+   * Strategies
+   *
+   * Draft consolidation_strategies value
+   */
+  strategies: Array<{
+    [key: string]: unknown;
+  }>;
+  /**
+   * Sample Limit
+   *
+   * Example scopes returned per rule
+   */
+  sample_limit?: number;
+};
+
+/**
  * CreateBankRequest
  *
  * Request model for creating/updating a bank.
@@ -1603,6 +1658,26 @@ export type CreateWebhookRequest = {
    * HTTP delivery configuration (method, timeout, headers, params)
    */
   http_config?: WebhookHttpConfig;
+};
+
+/**
+ * DefaultScopesPreview
+ *
+ * The scopes no strategy claims — they consolidate under the bank-wide settings.
+ */
+export type DefaultScopesPreview = {
+  /**
+   * Match Count
+   */
+  match_count: number;
+  /**
+   * Observation Count
+   */
+  observation_count: number;
+  /**
+   * Samples
+   */
+  samples: Array<StrategyScopePreview>;
 };
 
 /**
@@ -5978,6 +6053,90 @@ export type SourceFactsIncludeOptions = {
 };
 
 /**
+ * StrategyPreview
+ *
+ * Preview of one strategy, aligned by position with the request.
+ */
+export type StrategyPreview = {
+  /**
+   * Active
+   *
+   * False when the server would ignore this strategy (no usable rule, or no setting)
+   */
+  active: boolean;
+  /**
+   * Claimed Count
+   *
+   * Existing scopes this strategy actually applies to
+   */
+  claimed_count: number;
+  /**
+   * Rules
+   *
+   * One entry per rule, aligned with the request
+   */
+  rules: Array<StrategyRulePreview>;
+};
+
+/**
+ * StrategyRulePreview
+ *
+ * What one rule (one entry of a strategy's `scopes`) matches among existing scopes.
+ */
+export type StrategyRulePreview = {
+  /**
+   * Match Count
+   *
+   * Existing scopes this rule matches
+   */
+  match_count: number;
+  /**
+   * Taken Count
+   *
+   * Of those, how many an earlier strategy wins, so this one has no effect
+   */
+  taken_count: number;
+  /**
+   * Observation Count
+   *
+   * Observations across the matching scopes
+   */
+  observation_count: number;
+  /**
+   * Samples
+   *
+   * The most populous matching scopes, up to sample_limit
+   */
+  samples: Array<StrategyScopePreview>;
+};
+
+/**
+ * StrategyScopePreview
+ *
+ * One existing observation scope in a consolidation-strategy preview.
+ */
+export type StrategyScopePreview = {
+  /**
+   * Tags
+   *
+   * The scope's tags (sorted)
+   */
+  tags: Array<string>;
+  /**
+   * Count
+   *
+   * Observations in this scope
+   */
+  count: number;
+  /**
+   * Handled By
+   *
+   * Index of the strategy that actually applies to this scope (the first that claims it), or null when no strategy does and Default applies
+   */
+  handled_by: number | null;
+};
+
+/**
  * TagGroupAnd
  *
  * Compound AND group: all child filters must match.
@@ -9969,6 +10128,48 @@ export type ListObservationScopesResponses = {
 
 export type ListObservationScopesResponse =
   ListObservationScopesResponses[keyof ListObservationScopesResponses];
+
+export type PreviewConsolidationStrategiesData = {
+  body: ConsolidationStrategiesPreviewRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/consolidation-strategies/preview";
+};
+
+export type PreviewConsolidationStrategiesErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type PreviewConsolidationStrategiesError =
+  PreviewConsolidationStrategiesErrors[keyof PreviewConsolidationStrategiesErrors];
+
+export type PreviewConsolidationStrategiesResponses = {
+  /**
+   * Successful Response
+   */
+  200: ConsolidationStrategiesPreview;
+};
+
+export type PreviewConsolidationStrategiesResponse =
+  PreviewConsolidationStrategiesResponses[keyof PreviewConsolidationStrategiesResponses];
 
 export type RecoverConsolidationData = {
   body?: never;

@@ -39,6 +39,7 @@ list_document_chunks = "UI-only endpoint for the control plane document detail d
 # Observation scope enumeration powers the control-plane scope filter/clusters;
 # not a useful end-user CLI command.
 list_observation_scopes = "UI-only endpoint for the control plane observation scope filter"
+preview_consolidation_strategies = "UI-only endpoint for the control plane consolidation strategy editor"
 
 # Reprocess triggers an async retain re-run; exposed in the control plane UI only.
 reprocess_document = "UI-only endpoint for the control plane document detail dialog"

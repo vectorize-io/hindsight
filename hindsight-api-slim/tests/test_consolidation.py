@@ -3251,3 +3251,61 @@ async def test_create_observation_populates_search_vector_native(memory, request
     assert row["search_vector"] is not None, "search_vector must be populated for BM25 retrieval under native backend"
 
     await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_consolidation_strategy_source_facts_limits_reach_the_scope_recall(memory: MemoryEngine, request_context):
+    """A consolidation strategy's source-facts token limits apply to its scope's pass.
+
+    The limits are consumed by the related-observation recall, which used to resolve
+    the bank config on its own — so a per-scope override would have been silently
+    ignored there while the mission beside it applied. This runs a real fan-out
+    consolidation and checks what each scope's recall was actually given.
+    """
+    bank_id = f"test-strategy-sf-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    bank_defaults = await memory._config_resolver.resolve_full_config(bank_id, request_context)
+    await memory.update_bank_config(
+        bank_id,
+        {
+            "consolidation_strategies": [
+                {
+                    "scopes": [{"tags": ["company:*"]}],
+                    "consolidation_source_facts_max_tokens": 777,
+                    "consolidation_source_facts_max_tokens_per_observation": 77,
+                }
+            ]
+        },
+        request_context=request_context,
+    )
+
+    try:
+        with patch.object(memory, "recall_async", wraps=memory.recall_async) as mock_recall:
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[
+                    {
+                        "content": "Dana met the Northwind founders; they are moving to open-weight models.",
+                        "tags": ["user:dana", "company:acme"],
+                        "observation_scopes": [["user:dana"], ["company:acme"]],
+                    }
+                ],
+                request_context=request_context,
+            )
+
+        limits_by_scope = {
+            tuple(call.kwargs["tags"]): (
+                call.kwargs["max_source_facts_tokens"],
+                call.kwargs["max_source_facts_tokens_per_observation"],
+            )
+            for call in mock_recall.call_args_list
+            if call.kwargs.get("fact_type") == ["observation"] and call.kwargs.get("tags")
+        }
+
+        assert limits_by_scope[("company:acme",)] == (777, 77)
+        assert limits_by_scope[("user:dana",)] == (
+            bank_defaults.consolidation_source_facts_max_tokens,
+            bank_defaults.consolidation_source_facts_max_tokens_per_observation,
+        ), "a scope no strategy claims keeps the bank-wide limits"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

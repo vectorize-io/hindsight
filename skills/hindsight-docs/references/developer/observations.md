@@ -216,6 +216,69 @@ Set `observations_mission` via the [bank config API](api/memory-banks.md#observa
 
 ---
 
+## Consolidation Strategies
+
+The mission, the observation cap and the source-facts token limits apply to every scope in the bank. **Consolidation strategies** (`consolidation_strategies`) let specific scopes use their own instead.
+
+This is what makes one bank work across several audiences. Say each memory is tagged with its author, their team and the company, and retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]`. Each scope builds its own observations. But with a single mission, the company-wide scope gets the same detail as Dana's own — names, deal sizes, anything said in confidence — just visible to more people. A strategy fixes that:
+
+```json
+[
+  {
+    "scopes": [{"tags": ["company:*"]}],
+    "observations_mission": "This scope is shared with the whole company. Record only general, industry-level trends. Never name a specific company, person, deal size or funding stage.",
+    "max_observations_per_scope": 20
+  },
+  {
+    "scopes": [{"tags": ["team:*"]}],
+    "observations_mission": "Record decisions the team must act on."
+  }
+]
+```
+
+With that in place, Dana's scope keeps "Acme Robotics signed a 3-year lease for a 4,000 GPU cluster", while the company scope gets "Companies are leasing GPU clusters to run open-weight models".
+
+How a strategy is matched:
+
+- **`scopes`** is a list of alternatives. Each is `{"tags": [...], "tags_match": "all" | "exact"}`, where `tags` are [fnmatch](https://docs.python.org/3/library/fnmatch.html) patterns (`*` matches any text). A strategy applies to a consolidation scope when **any** of its alternatives matches it (OR); the tags inside one alternative must all be present (AND).
+- **`tags_match`**, set per alternative, decides whether other tags are allowed:
+
+  | `tags_match` | `{"tags": ["company:*", "team:*"]}` matches… | …but not |
+  |---|---|---|
+  | `"all"` *(default)* | `{company:acme, team:exec}`, `{user:dana, team:exec, company:acme}` | `{company:acme}` (no team) |
+  | `"exact"` | `{company:acme, team:exec}` only | `{user:dana, team:exec, company:acme}` (extra `user:` tag) |
+
+  Because the mode is per alternative, one strategy can mix them — `[{"tags": ["company:*"], "tags_match": "exact"}, {"tags": ["team:*"]}]` claims scopes that are *only* a company, or that have a team among other tags. To match *any one* of several tags, give each its own alternative: `[{"tags": ["company:*"]}, {"tags": ["team:*"]}]`. Excluding a tag ("has a company but no user") is not expressible.
+
+  Remember that a strategy matches **observation scopes** — the tag sets consolidation groups observations under, set by [`observation_scopes`](./api/retain#observation_scopes) at retain time — not the tags of individual memories. A memory tagged with a user, a team and a company but retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]` produces three single-tag scopes, none of which has both a company and a team.
+- **What a strategy can set:** `observations_mission`, `max_observations_per_scope`, `consolidation_source_facts_max_tokens` and `consolidation_source_facts_max_tokens_per_observation`. Every one is optional.
+- **Anything a strategy leaves unset, and every scope no strategy matches,** uses the bank-wide value. The control plane shows these bank-wide values as the **Default** strategy.
+
+### When two strategies match the same scope
+
+**The first one in the list wins, whole.** Exactly one strategy applies to a scope. List order is priority order — left to right in the control plane's tabs.
+
+The strategies are never mixed. If the winning strategy leaves a setting empty, that setting comes from **Default**, not from a later strategy that also matches. For example, with:
+
+```json
+[
+  {"scopes": [{"tags": ["company:acme"]}], "max_observations_per_scope": 5},
+  {"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only general trends."}
+]
+```
+
+the scope `company:acme` gets a cap of 5 and the **bank-wide mission**, not "Record only general trends". The second strategy still applies to every other `company:*` scope. To give `company:acme` both, put both settings on the first strategy.
+
+To see which strategy a scope uses, open the strategy in the control plane: next to each matching scope, it shows whether this strategy wins it or an earlier one does.
+
+A strategy that sets nothing is ignored: it matches no scope and doesn't block later ones.
+
+Each scope is consolidated in its own LLM call, so one scope's mission never reaches another scope's call.
+
+Set `consolidation_strategies` in the control plane (bank **Configuration → Observations**), via the [bank config API](api/memory-banks.md#observations-configuration), or with the [`HINDSIGHT_API_CONSOLIDATION_STRATEGIES`](configuration.md#observations) environment variable. It replaces the older `observation_scope_limits`, which still works but is checked only after the strategies.
+
+---
+
 ## Observation Lifecycle & Invalidation
 
 ### When Memories Are Deleted

@@ -1558,6 +1558,21 @@ export class ControlPlaneClient {
    * consolidated with. Returns every distinct scope (tag order normalized) with
    * the number of observations in it; the empty tag list is the global scope.
    */
+  /** Which existing observation scopes each draft consolidation strategy would
+   *  apply to — computed by the server with consolidation's own matching. */
+  async previewConsolidationStrategies(
+    bankId: string,
+    strategies: Record<string, unknown>[],
+    sampleLimit = 5
+  ) {
+    return this.fetchApi<ConsolidationStrategiesPreview>(
+      bankApi(bankId, "/consolidation-strategies/preview"),
+      { method: "POST", body: JSON.stringify({ strategies, sample_limit: sampleLimit }) },
+      // Runs as the user types; a transient failure must not toast on every keystroke.
+      { suppressErrorToast: true }
+    );
+  }
+
   async listObservationScopes(bankId: string, params?: { limit?: number; offset?: number }) {
     const query = new URLSearchParams();
     if (params?.limit !== undefined) query.append("limit", String(params.limit));
@@ -2355,3 +2370,26 @@ export class ControlPlaneClient {
 
 // Export singleton instance
 export const client = new ControlPlaneClient();
+
+// ============= CONSOLIDATION STRATEGY PREVIEW =============
+
+export interface StrategyScopePreview {
+  tags: string[];
+  count: number;
+  /** Index of the strategy that actually applies, or null for Default. */
+  handled_by: number | null;
+}
+
+export interface StrategyRulePreview {
+  match_count: number;
+  taken_count: number;
+  observation_count: number;
+  samples: StrategyScopePreview[];
+}
+
+export interface ConsolidationStrategiesPreview {
+  strategies: { active: boolean; claimed_count: number; rules: StrategyRulePreview[] }[];
+  default: { match_count: number; observation_count: number; samples: StrategyScopePreview[] };
+  scopes_scanned: number;
+  complete: boolean;
+}

@@ -218,6 +218,9 @@ import type {
   LlmRequestStatsResponses,
   MetricsEndpointMetricsGetData,
   MetricsEndpointMetricsGetResponses,
+  PreviewConsolidationStrategiesData,
+  PreviewConsolidationStrategiesErrors,
+  PreviewConsolidationStrategiesResponses,
   PreviewPromptData,
   PreviewPromptErrors,
   PreviewPromptResponses,
@@ -1495,6 +1498,27 @@ export const listObservationScopes = <ThrowOnError extends boolean = false>(
     ListObservationScopesErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/observations/scopes", ...options });
+
+/**
+ * Preview consolidation strategies
+ *
+ * Report which of the bank's existing observation scopes each consolidation strategy would apply to, for a draft `consolidation_strategies` value (nothing is saved). Uses the same matching and first-strategy-wins rule as consolidation. Scans up to 10,000 distinct scopes; `complete` is false beyond that and the counts are lower bounds. Scopes with no observations yet do not exist and are not counted.
+ */
+export const previewConsolidationStrategies = <ThrowOnError extends boolean = false>(
+  options: Options<PreviewConsolidationStrategiesData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    PreviewConsolidationStrategiesResponses,
+    PreviewConsolidationStrategiesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/consolidation-strategies/preview",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Recover failed consolidation

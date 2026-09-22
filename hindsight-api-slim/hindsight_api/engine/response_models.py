@@ -653,3 +653,50 @@ class MentalModel(BaseModel):
     summary: str | None = Field(None, description="Generated summary based on relevant facts")
     summary_updated_at: str | None = Field(None, description="ISO format date when summary was last updated")
     created_at: str = Field(description="ISO format date when the mental model was created")
+
+
+class StrategyScopePreview(BaseModel):
+    """One existing observation scope in a consolidation-strategy preview."""
+
+    tags: list[str] = Field(description="The scope's tags (sorted)")
+    count: int = Field(description="Observations in this scope")
+    handled_by: int | None = Field(
+        description="Index of the strategy that actually applies to this scope (the first that claims it), "
+        "or null when no strategy does and Default applies"
+    )
+
+
+class StrategyRulePreview(BaseModel):
+    """What one rule (one entry of a strategy's `scopes`) matches among existing scopes."""
+
+    match_count: int = Field(description="Existing scopes this rule matches")
+    taken_count: int = Field(description="Of those, how many an earlier strategy wins, so this one has no effect")
+    observation_count: int = Field(description="Observations across the matching scopes")
+    samples: list[StrategyScopePreview] = Field(description="The most populous matching scopes, up to sample_limit")
+
+
+class StrategyPreview(BaseModel):
+    """Preview of one strategy, aligned by position with the request."""
+
+    active: bool = Field(description="False when the server would ignore this strategy (no usable rule, or no setting)")
+    claimed_count: int = Field(description="Existing scopes this strategy actually applies to")
+    rules: list[StrategyRulePreview] = Field(description="One entry per rule, aligned with the request")
+
+
+class DefaultScopesPreview(BaseModel):
+    """The scopes no strategy claims — they consolidate under the bank-wide settings."""
+
+    match_count: int
+    observation_count: int
+    samples: list[StrategyScopePreview]
+
+
+class ConsolidationStrategiesPreview(BaseModel):
+    """Which existing observation scopes each consolidation strategy would apply to."""
+
+    strategies: list[StrategyPreview]
+    default: DefaultScopesPreview
+    scopes_scanned: int = Field(description="Distinct scopes the preview was computed over")
+    complete: bool = Field(
+        description="False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
+    )

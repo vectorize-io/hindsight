@@ -16,6 +16,7 @@ NOTE: Observations are distinct from mental models (pinned reflections).
 """
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -60,7 +61,7 @@ if TYPE_CHECKING:
     from ...api.http import RequestContext
     from ..memories.base import StoredMemory
     from ..memory_engine import MemoryEngine
-    from ..response_models import MemoryFact, RecallResult
+    from ..response_models import ConsolidationStrategiesPreview, MemoryFact, RecallResult
 
 logger = logging.getLogger(__name__)
 
@@ -989,6 +990,9 @@ async def _count_observations_for_scope(
 class _ScopeLimitRule:
     """One ``observation_scope_limits`` rule: a scope pattern -> an observation cap.
 
+    DEPRECATED — superseded by :class:`_ConsolidationStrategy`, which carries the
+    mission too. Still honoured, but consulted only after the strategies.
+
     ``globs`` is a tuple of fnmatch tag-globs describing one consolidation scope.
     A concrete scope (the set of ``fact_tags`` for a consolidation pass) matches
     under *exact cover*: every tag is matched by some glob AND every glob matches
@@ -1049,20 +1053,219 @@ def _scope_matches_globs(globs: tuple[str, ...], tags: list[str]) -> bool:
     return True
 
 
+# Settings a consolidation strategy may override, in addition to the scopes it
+# claims. Kept to what actually varies per audience: the brief, how many
+# observations the scope may hold, and how much source evidence each consolidation
+# call is shown. Everything else stays bank-wide.
+_STRATEGY_INT_SETTINGS = (
+    "max_observations_per_scope",
+    "consolidation_source_facts_max_tokens",
+    "consolidation_source_facts_max_tokens_per_observation",
+)
+
+
+def _scope_contains_globs(globs: tuple[str, ...], tags: list[str]) -> bool:
+    """Containment match: every glob matches some tag; extra tags are allowed.
+
+    ``("company:*", "team:*")`` matches ``{company:acme, team:exec}`` and
+    ``{user:dana, team:exec, company:acme}``, but not ``{company:acme}``. The
+    untagged scope never matches, as with :func:`_scope_matches_globs`.
+    """
+    return bool(tags) and all(any(fnmatchcase(t, g) for t in tags) for g in globs)
+
+
+# How one scope pattern of a strategy matches a consolidation scope. Named after
+# the `tags_match` values recall already uses, so the vocabulary is the same:
+#   "all"   — the scope has all of the pattern's tags; other tags are allowed.
+#   "exact" — the scope has exactly the pattern's tags and nothing else.
+# "any" is deliberately absent: a strategy's patterns are already alternatives
+# (any one matching claims the scope), so "any of these tags" is written as one
+# pattern per tag.
+_STRATEGY_TAGS_MATCH = {"all": _scope_contains_globs, "exact": _scope_matches_globs}
+_DEFAULT_STRATEGY_TAGS_MATCH = "all"
+
+
+@dataclass(frozen=True)
+class _ScopePattern:
+    """One alternative in a strategy's ``scopes``: tag-globs plus how they match.
+
+    The mode is per pattern, not per strategy, so one strategy can mix them —
+    "exactly ``company:*``" OR "``team:*``, other tags allowed". A first version
+    had a single ``tags_match`` for the whole strategy, which forced a second
+    strategy (with duplicated settings) to express that.
+
+    ``"all"`` is the default because the common case is a scope retained with all
+    of a memory's tags together (``observation_scopes`` default ``combined``) —
+    ``{user:dana, team:exec, company:acme}`` — which a "company and team" pattern
+    should claim. The deprecated ``observation_scope_limits`` stays exact-only.
+    """
+
+    tags: tuple[str, ...]
+    tags_match: str = _DEFAULT_STRATEGY_TAGS_MATCH
+
+    def matches(self, fact_tags: list[str]) -> bool:
+        return _STRATEGY_TAGS_MATCH[self.tags_match](self.tags, fact_tags)
+
+
+def _parse_scope_pattern(raw: Any) -> _ScopePattern | None:
+    """``{"tags": [...], "tags_match": "all" | "exact"}`` -> pattern, or None.
+
+    Malformed patterns are dropped (see :func:`_parse_consolidation_strategies`).
+    An unknown mode falls back to the default rather than dropping the pattern —
+    same "never take consolidation down" rule as the rest.
+    """
+    if not isinstance(raw, dict):
+        return None
+    tags = raw.get("tags")
+    if not isinstance(tags, list) or not tags or not all(isinstance(g, str) and g for g in tags):
+        return None
+    tags_match = raw.get("tags_match")
+    if tags_match not in _STRATEGY_TAGS_MATCH:
+        tags_match = _DEFAULT_STRATEGY_TAGS_MATCH
+    return _ScopePattern(tags=tuple(tags), tags_match=tags_match)
+
+
+@dataclass(frozen=True)
+class _ConsolidationStrategy:
+    """One ``consolidation_strategies`` entry: the scopes it claims -> settings.
+
+    ``scopes`` are alternatives: a concrete scope (the ``fact_tags`` of one
+    consolidation pass) is claimed when *any* pattern matches it, each under its
+    own ``tags_match`` (see :class:`_ScopePattern`). Listing several is what lets
+    one strategy serve several scopes without being written out per scope.
+
+    Each setting is optional; ``None`` means "this strategy does not override
+    it" and the bank-wide value (the "Default" strategy in the control plane)
+    applies.
+    """
+
+    scopes: tuple[_ScopePattern, ...]
+    observations_mission: str | None = None
+    max_observations_per_scope: int | None = None
+    consolidation_source_facts_max_tokens: int | None = None
+    consolidation_source_facts_max_tokens_per_observation: int | None = None
+
+    def claims(self, fact_tags: list[str]) -> bool:
+        return any(pattern.matches(fact_tags) for pattern in self.scopes)
+
+
+def _parse_consolidation_strategies(raw: Any) -> list[_ConsolidationStrategy]:
+    """Parse the raw ``consolidation_strategies`` config into ordered strategies.
+
+    Defensive for the same reason as :func:`_parse_scope_limit_rules`: the config
+    round-trips as JSON through env and the bank-config API, so a malformed entry
+    (or a malformed setting or pattern within an otherwise valid entry) is dropped
+    rather than raised. An entry naming no usable scope, or ending up overriding
+    nothing, is dropped entirely. List order is preserved: it is the priority
+    order — see :func:`_strategy_for_scope`.
+    """
+    if not isinstance(raw, list):
+        return []
+    strategies: list[_ConsolidationStrategy] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        raw_scopes = entry.get("scopes")
+        if not isinstance(raw_scopes, list):
+            continue
+        scopes = tuple(p for p in (_parse_scope_pattern(scope) for scope in raw_scopes) if p is not None)
+        if not scopes:
+            continue
+        mission = entry.get("observations_mission")
+        if not isinstance(mission, str) or not mission.strip():
+            mission = None
+        ints: dict[str, int] = {}
+        for name in _STRATEGY_INT_SETTINGS:
+            value = entry.get(name)
+            # bool is an int subclass — reject True/False masquerading as a number.
+            if isinstance(value, int) and not isinstance(value, bool):
+                ints[name] = value
+        if mission is None and not ints:
+            continue
+        strategies.append(_ConsolidationStrategy(scopes=scopes, observations_mission=mission, **ints))
+    return strategies
+
+
+def _strategies_for(config: Any) -> list[_ConsolidationStrategy]:
+    return _parse_consolidation_strategies(getattr(config, "consolidation_strategies", None))
+
+
+def _strategy_for_scope(config: Any, fact_tags: list[str]) -> _ConsolidationStrategy | None:
+    """The one consolidation strategy that applies to a scope, if any.
+
+    **The first strategy in list order that claims the scope wins, whole.** When
+    two strategies both claim a scope (``["company:*"]`` and
+    ``["company:acme"]``, say), only the earlier one applies — its settings, and
+    for anything it leaves unset, the bank-wide value. A later strategy never
+    fills in the earlier one's gaps.
+
+    That is a deliberate change from the first version, which resolved each
+    setting separately (mission from the first strategy that set one, cap from
+    the first that set one). That let two strategies silently blend on one scope,
+    so nobody could tell which strategy a scope was actually using; with one
+    winner, the control plane can show it.
+
+    A strategy that sets nothing is dropped at parse time, so it never claims a
+    scope and never hides a later one.
+    """
+    return next((s for s in _strategies_for(config) if s.claims(fact_tags)), None)
+
+
 def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
     """Resolve the observation cap for one concrete consolidation scope.
 
-    The first rule in ``observation_scope_limits`` whose pattern exact-covers
-    ``fact_tags`` wins; otherwise falls back to the bank-wide
-    ``max_observations_per_scope``. Wildcards live only here, matched against the
-    already-resolved concrete tags — the SQL count stays exact and indexed.
+    The winning strategy's cap (see :func:`_strategy_for_scope`) if it sets one;
+    otherwise the deprecated ``observation_scope_limits``, same matching; otherwise
+    the bank-wide ``max_observations_per_scope``. Wildcards live only here,
+    matched against the already-resolved concrete tags — the SQL count stays
+    exact and indexed.
     """
     if config is None:
         return -1
-    for rule in _parse_scope_limit_rules(config.observation_scope_limits):
-        if _scope_matches_globs(rule.globs, fact_tags):
-            return rule.limit
+    strategy = _strategy_for_scope(config, fact_tags)
+    if strategy is not None and strategy.max_observations_per_scope is not None:
+        return strategy.max_observations_per_scope
+    for limit_rule in _parse_scope_limit_rules(config.observation_scope_limits):
+        if _scope_matches_globs(limit_rule.globs, fact_tags):
+            return limit_rule.limit
     return config.max_observations_per_scope
+
+
+def _config_for_scope(config: Any, fact_tags: list[str]) -> Any:
+    """The bank config as one consolidation scope sees it.
+
+    The winning strategy's settings (see :func:`_strategy_for_scope` — first
+    claiming strategy wins, whole) over the bank-wide ones. The cap also honours
+    the deprecated ``observation_scope_limits`` (see :func:`_effective_scope_limit`).
+
+    Returning a whole config — rather than one resolver per setting, as the first
+    version did for the mission and cap — is what lets every downstream reader
+    (the related-observation recall that applies the source-facts token limits,
+    the prompt that carries the mission) pick up the scope's values without being
+    told about strategies. Same idea as ``apply_strategy`` for retain strategies.
+    Shallow copy + setattr rather than ``dataclasses.replace`` so it also works on
+    the lightweight config stand-ins tests pass in.
+
+    Safe because each resolved scope gets its own LLM call — see the pass loop's
+    ``obs_tags_override`` — so one scope's settings never reach another's call.
+    """
+    if config is None:
+        return None
+    scoped = copy.copy(config)
+    strategy = _strategy_for_scope(config, fact_tags)
+    if strategy is not None:
+        for name in (
+            "observations_mission",
+            "consolidation_source_facts_max_tokens",
+            "consolidation_source_facts_max_tokens_per_observation",
+        ):
+            value = getattr(strategy, name)
+            if value is not None:
+                setattr(scoped, name, value)
+    # The cap resolves separately: it also has to consult the deprecated
+    # observation_scope_limits.
+    scoped.max_observations_per_scope = _effective_scope_limit(config, fact_tags)
+    return scoped
 
 
 def _build_response_model(
@@ -2202,6 +2405,20 @@ async def _process_memory_batch(
     # Map the source memories this batch consumes onto the consolidation trace.
     record_source_memory_ids([str(m["id"]) for m in memories])
 
+    # Determine effective tag scope for observations.
+    # When obs_tags_override is set, use it; otherwise use the memory's own tags.
+    if obs_tags_override is not None:
+        fact_tags = obs_tags_override
+    else:
+        # All memories in the batch share the same tag set (enforced by batching)
+        fact_tags = memories[0].get("tags") or [] if memories else []
+
+    # Everything below — the related-observation recall, the cap, the prompt — reads
+    # the config as this scope sees it, so a consolidation strategy claiming the
+    # scope applies to the whole pass. Resolved before the recall because the recall
+    # applies the source-facts token limits a strategy may override.
+    config = _config_for_scope(config, fact_tags)
+
     # 1. Parallel recalls — one per fact
     # When obs_tags_override is set, use it as the observation scope for all facts.
     t0 = time.time()
@@ -2213,6 +2430,7 @@ async def _process_memory_batch(
             query=m["text"],
             request_context=request_context,
             tags=observation_scope_tags if observation_scope_tags is not None else (m.get("tags") or []),
+            config=config,
         )
         for m in memories
     ]
@@ -2241,14 +2459,6 @@ async def _process_memory_batch(
                 union_observations.append(obs)
         if recall_result.source_facts:
             union_source_facts.update(recall_result.source_facts)
-
-    # Determine effective tag scope for observations.
-    # When obs_tags_override is set, use it; otherwise use the memory's own tags.
-    if obs_tags_override is not None:
-        fact_tags = obs_tags_override
-    else:
-        # All memories in the batch share the same tag set (enforced by batching)
-        fact_tags = memories[0].get("tags") or [] if memories else []
 
     # 2b. Compute remaining observation slots for this scope (if limit configured).
     # The cap is resolved per-scope: an observation_scope_limits rule may override
@@ -2907,6 +3117,7 @@ async def _find_related_observations(
     query: str,
     request_context: "RequestContext",
     tags: list[str] | None = None,
+    config: Any = None,
 ) -> "RecallResult":
     """
     Find observations related to the given query using optimized recall.
@@ -2927,7 +3138,12 @@ async def _find_related_observations(
     # max_tokens naturally limits how many observations are returned
     from ...tracing import get_tracer, is_tracing_enabled
 
-    config = await memory_engine._config_resolver.resolve_full_config(bank_id, request_context)
+    # The consolidation pass hands in the config already resolved for its scope, so
+    # a consolidation strategy's source-facts token limits reach this recall.
+    # Resolving the bank config here instead (as this function used to always do)
+    # would silently ignore them.
+    if config is None:
+        config = await memory_engine._config_resolver.resolve_full_config(bank_id, request_context)
 
     # SECURITY: Use all_strict matching if tags provided to prevent cross-scope consolidation
     tags_match = "all_strict" if tags else "any"
@@ -3444,3 +3660,99 @@ async def _apply_create_observation(
     logger.debug(f"Created observation {observation_id} from {len(source_memory_ids)} memories (tags: {obs_tags})")
 
     return {"action": "created", "observation_id": str(created_id), "tags": obs_tags}
+
+
+def preview_consolidation_strategies(
+    raw_strategies: list[Any],
+    scopes: list[tuple[list[str], int]],
+    *,
+    sample_limit: int,
+    complete: bool,
+) -> "ConsolidationStrategiesPreview":
+    """Which of ``scopes`` (``(tags, observation_count)``, most populous first) each
+    strategy would apply to — using the same parsing, matching and
+    first-strategy-wins rule consolidation uses, so the control plane never
+    re-implements them.
+
+    Aligned by position with ``raw_strategies``: a strategy the server would drop
+    (no usable rule, or nothing set) keeps its slot, marked inactive, because the
+    editor shows the list as typed. Each strategy is parsed on its own for that
+    reason — parsing the list at once would shift every index after a dropped one.
+    Pure: no I/O, so the endpoint's cost is the one scope query plus this loop.
+    """
+    from ..response_models import (
+        ConsolidationStrategiesPreview,
+        DefaultScopesPreview,
+        StrategyPreview,
+        StrategyRulePreview,
+        StrategyScopePreview,
+    )
+
+    parsed = [(_parse_consolidation_strategies([entry]) or [None])[0] for entry in raw_strategies]
+
+    # Match every rule against every scope exactly once, then derive both the
+    # per-rule counts and each scope's winner from those hit sets. Matching twice
+    # (once for winners via Strategy.claims, once per rule) doubled the work, and
+    # this runs on the event loop as the user types. A strategy claims a scope when
+    # any of its *valid* rules hits it — the same thing Strategy.claims computes.
+    rule_patterns: list[list[_ScopePattern | None]] = []
+    rule_hits: list[list[list[int]]] = []
+    for entry in raw_strategies:
+        raw_rules = entry.get("scopes") if isinstance(entry, dict) else None
+        patterns = [_parse_scope_pattern(raw_rule) for raw_rule in (raw_rules if isinstance(raw_rules, list) else [])]
+        rule_patterns.append(patterns)
+        rule_hits.append(
+            [
+                [k for k, (tags, _) in enumerate(scopes) if pattern.matches(tags)] if pattern is not None else []
+                for pattern in patterns
+            ]
+        )
+
+    winners: list[int | None] = [None] * len(scopes)
+    for i, strategy in enumerate(parsed):
+        if strategy is None:
+            continue
+        for hits in rule_hits[i]:
+            for k in hits:
+                if winners[k] is None:
+                    winners[k] = i
+    # A scope is won by the *earliest* claiming strategy; iterating strategies in
+    # order and never overwriting gives exactly that.
+
+    def sample(indices: list[int]) -> list[StrategyScopePreview]:
+        return [
+            StrategyScopePreview(tags=scopes[k][0], count=scopes[k][1], handled_by=winners[k])
+            for k in indices[:sample_limit]
+        ]
+
+    strategies: list[StrategyPreview] = []
+    for i in range(len(raw_strategies)):
+        rules: list[StrategyRulePreview] = []
+        for pattern, hits in zip(rule_patterns[i], rule_hits[i]):
+            rules.append(
+                StrategyRulePreview(
+                    match_count=len(hits),
+                    taken_count=sum(1 for k in hits if winners[k] != i),
+                    observation_count=sum(scopes[k][1] for k in hits),
+                    samples=sample(hits),
+                )
+            )
+        strategies.append(
+            StrategyPreview(
+                active=parsed[i] is not None,
+                claimed_count=sum(1 for winner in winners if winner == i),
+                rules=rules,
+            )
+        )
+
+    unclaimed = [k for k, winner in enumerate(winners) if winner is None]
+    return ConsolidationStrategiesPreview(
+        strategies=strategies,
+        default=DefaultScopesPreview(
+            match_count=len(unclaimed),
+            observation_count=sum(scopes[k][1] for k in unclaimed),
+            samples=sample(unclaimed),
+        ),
+        scopes_scanned=len(scopes),
+        complete=complete,
+    )

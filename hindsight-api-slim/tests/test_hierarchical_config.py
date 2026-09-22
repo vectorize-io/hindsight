@@ -137,6 +137,7 @@ async def test_hierarchical_fields_categorization():
     assert "retain_strategies" in configurable
     assert "max_observations_per_scope" in configurable
     assert "observation_scope_limits" in configurable
+    assert "consolidation_strategies" in configurable
     assert "reflect_source_facts_max_tokens" in configurable
     assert "llm_gemini_safety_settings" in configurable
     assert "mcp_enabled_tools" in configurable
@@ -154,7 +155,7 @@ async def test_hierarchical_fields_categorization():
     assert "reflect_default_options" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 50
+    assert len(configurable) == 51
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

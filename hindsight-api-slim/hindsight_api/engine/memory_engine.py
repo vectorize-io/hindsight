@@ -583,6 +583,7 @@ from .reflect.structured_doc import StructuredDocument
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
+    ConsolidationStrategiesPreview,
     DryRunExtractionResult,
     EntityState,
     LLMCallTrace,
@@ -11477,6 +11478,43 @@ class MemoryEngine(MemoryEngineInterface):
             logger.warning(f"Failed to invalidate bank stats cache after clearing observations for bank {bank_id}: {e}")
 
         return {"deleted_count": count or 0}
+
+    # Distinct scopes a consolidation-strategy preview scans. Past this the preview
+    # reports complete=False and its counts become lower bounds, rather than making
+    # an editor that re-previews as the user types scan an unbounded set.
+    _STRATEGY_PREVIEW_SCOPE_CAP = 10_000
+
+    async def preview_consolidation_strategies(
+        self,
+        bank_id: str,
+        strategies: list[Any],
+        *,
+        sample_limit: int = 5,
+        request_context: "RequestContext",
+    ) -> "ConsolidationStrategiesPreview":
+        """Which existing observation scopes each consolidation strategy would apply to.
+
+        ``strategies`` is a draft ``consolidation_strategies`` value — typically the
+        one being edited, not yet saved. Nothing is written. The matching and the
+        first-strategy-wins rule are the consolidator's own
+        (``preview_consolidation_strategies``), so the answer is exactly what the
+        next consolidation would do for the scopes that exist now. Scopes with no
+        observations yet do not exist and cannot be previewed.
+
+        Authentication and bank checks go through :meth:`list_observation_scopes`.
+        """
+        from .consolidation.consolidator import preview_consolidation_strategies
+
+        listing = await self.list_observation_scopes(
+            bank_id, limit=self._STRATEGY_PREVIEW_SCOPE_CAP, offset=0, request_context=request_context
+        )
+        scopes = [(list(scope["tags"]), int(scope["count"])) for scope in listing["scopes"]]
+        return preview_consolidation_strategies(
+            strategies,
+            scopes,
+            sample_limit=sample_limit,
+            complete=listing["total"] <= len(scopes),
+        )
 
     async def list_observation_scopes(
         self,

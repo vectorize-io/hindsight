@@ -53,6 +53,8 @@ hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
 hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
+hindsight_client_api/models/consolidation_strategies_preview.py
+hindsight_client_api/models/consolidation_strategies_preview_request.py
 hindsight_client_api/models/content.py
 hindsight_client_api/models/content_any_of_inner.py
 hindsight_client_api/models/create_bank_request.py
@@ -63,6 +65,7 @@ hindsight_client_api/models/create_mental_model_request.py
 hindsight_client_api/models/create_mental_model_response.py
 hindsight_client_api/models/create_page_request.py
 hindsight_client_api/models/create_webhook_request.py
+hindsight_client_api/models/default_scopes_preview.py
 hindsight_client_api/models/delete_document_response.py
 hindsight_client_api/models/delete_operation_response.py
 hindsight_client_api/models/delete_response.py
@@ -179,6 +182,9 @@ hindsight_client_api/models/retain_response.py
 hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/run_setting_model.py
 hindsight_client_api/models/source_facts_include_options.py
+hindsight_client_api/models/strategy_preview.py
+hindsight_client_api/models/strategy_rule_preview.py
+hindsight_client_api/models/strategy_scope_preview.py
 hindsight_client_api/models/tag_group_and_input.py
 hindsight_client_api/models/tag_group_and_output.py
 hindsight_client_api/models/tag_group_leaf.py

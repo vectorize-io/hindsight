@@ -229,6 +229,7 @@ from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError, ReflectToolExecutionError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
+    ConsolidationStrategiesPreview,
     DryRunExtractionResult,
     MemoryFact,
     MinScores,
@@ -2231,6 +2232,16 @@ class ObservationScope(BaseModel):
     count: int = Field(description="Number of observations that live under this scope")
 
 
+class ConsolidationStrategiesPreviewRequest(BaseModel):
+    """A draft consolidation_strategies value to preview against existing scopes."""
+
+    # Same free-form shape as the consolidation_strategies config field: the
+    # preview must accept exactly what the editor is about to save, malformed
+    # entries included, and report them as inactive rather than reject them.
+    strategies: list[dict[str, Any]] = Field(description="Draft consolidation_strategies value")
+    sample_limit: int = Field(default=5, ge=0, le=50, description="Example scopes returned per rule")
+
+
 class ObservationScopesResponse(BaseModel):
     """Response model for the observation scopes enumeration endpoint."""
 
@@ -3698,11 +3709,34 @@ class BankTemplateConfig(BaseModel):
     observation_scope_limits: list[dict[str, Any]] | None = Field(
         default=None,
         description=(
+            "DEPRECATED — use consolidation_strategies, which carries the mission too. "
+            "Still honoured, but consulted only after consolidation_strategies. "
             "Per-scope overrides of max_observations_per_scope: "
             '[{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of '
             "fnmatch tag-globs; a consolidation scope matches under exact cover "
             "(every tag matched by a glob and every glob matched by a tag). The first "
             "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+        ),
+    )
+    consolidation_strategies: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Per-scope consolidation settings: "
+            '[{"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only generalized '
+            'trends.", "max_observations_per_scope": 20}]. Each strategy lists the scopes '
+            "it claims — a scope is a list of fnmatch tag-globs, and a consolidation pass "
+            "is claimed when any of the strategy's patterns matches its tags. Each pattern is "
+            '{"tags": [...], "tags_match": ...}; "tags_match" is "all" (default) — the scope has '
+            'every tag in the pattern, other tags allowed — or "exact" — the scope has '
+            "exactly the pattern's tags and no others. A strategy may set any of "
+            "observations_mission, max_observations_per_scope, "
+            "consolidation_source_facts_max_tokens and "
+            "consolidation_source_facts_max_tokens_per_observation; each is optional. "
+            "Exactly one strategy applies to a scope: the first in the list that claims it. "
+            "Whatever that strategy leaves unset — and every scope no strategy claims — "
+            "uses the bank-wide value; a later strategy never fills the gaps. "
+            "Supersedes observation_scope_limits. Lets one bank be federated across "
+            "user/team/company tag scopes, each consolidating under its own brief."
         ),
     )
     reflect_source_facts_max_tokens: int | None = Field(
@@ -9004,6 +9038,41 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/observations/scopes")
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/consolidation-strategies/preview",
+        response_model=ConsolidationStrategiesPreview,
+        summary="Preview consolidation strategies",
+        description=(
+            "Report which of the bank's existing observation scopes each consolidation strategy would "
+            "apply to, for a draft `consolidation_strategies` value (nothing is saved). Uses the same "
+            "matching and first-strategy-wins rule as consolidation. Scans up to 10,000 distinct scopes; "
+            "`complete` is false beyond that and the counts are lower bounds. Scopes with no observations "
+            "yet do not exist and are not counted."
+        ),
+        operation_id="preview_consolidation_strategies",
+        tags=["Memory"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    async def api_preview_consolidation_strategies(
+        bank_id: str,
+        request: ConsolidationStrategiesPreviewRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Preview a draft consolidation_strategies value against existing scopes."""
+        try:
+            return await app.state.memory.preview_consolidation_strategies(
+                bank_id,
+                request.strategies,
+                sample_limit=request.sample_limit,
+                request_context=request_context,
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"POST /v1/default/banks/{bank_id}/consolidation-strategies/preview")
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidation/recover",

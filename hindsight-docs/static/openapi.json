@@ -5972,6 +5972,78 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/consolidation-strategies/preview": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Preview consolidation strategies",
+        "description": "Report which of the bank's existing observation scopes each consolidation strategy would apply to, for a draft `consolidation_strategies` value (nothing is saved). Uses the same matching and first-strategy-wins rule as consolidation. Scans up to 10,000 distinct scopes; `complete` is false beyond that and the counts are lower bounds. Scopes with no observations yet do not exist and are not counted.",
+        "operationId": "preview_consolidation_strategies",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsolidationStrategiesPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationStrategiesPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/consolidation/recover": {
       "post": {
         "tags": [
@@ -8680,7 +8752,23 @@
               }
             ],
             "title": "Observation Scope Limits",
-            "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+            "description": "DEPRECATED \u2014 use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+          },
+          "consolidation_strategies": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Strategies",
+            "description": "Per-scope consolidation settings: [{\"scopes\": [{\"tags\": [\"company:*\"]}], \"observations_mission\": \"Record only generalized trends.\", \"max_observations_per_scope\": 20}]. Each strategy lists the scopes it claims \u2014 a scope is a list of fnmatch tag-globs, and a consolidation pass is claimed when any of the strategy's patterns matches its tags. Each pattern is {\"tags\": [...], \"tags_match\": ...}; \"tags_match\" is \"all\" (default) \u2014 the scope has every tag in the pattern, other tags allowed \u2014 or \"exact\" \u2014 the scope has exactly the pattern's tags and no others. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset \u2014 and every scope no strategy claims \u2014 uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief."
           },
           "reflect_source_facts_max_tokens": {
             "anyOf": [
@@ -9644,6 +9732,66 @@
         "title": "ConsolidationResponse",
         "description": "Response model for consolidation trigger endpoint."
       },
+      "ConsolidationStrategiesPreview": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyPreview"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "default": {
+            "$ref": "#/components/schemas/DefaultScopesPreview"
+          },
+          "scopes_scanned": {
+            "type": "integer",
+            "title": "Scopes Scanned",
+            "description": "Distinct scopes the preview was computed over"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete",
+            "description": "False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies",
+          "default",
+          "scopes_scanned",
+          "complete"
+        ],
+        "title": "ConsolidationStrategiesPreview",
+        "description": "Which existing observation scopes each consolidation strategy would apply to."
+      },
+      "ConsolidationStrategiesPreviewRequest": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "Draft consolidation_strategies value"
+          },
+          "sample_limit": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Sample Limit",
+            "description": "Example scopes returned per rule",
+            "default": 5
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies"
+        ],
+        "title": "ConsolidationStrategiesPreviewRequest",
+        "description": "A draft consolidation_strategies value to preview against existing scopes."
+      },
       "CreateBankRequest": {
         "properties": {
           "name": {
@@ -10204,6 +10352,33 @@
         ],
         "title": "CreateWebhookRequest",
         "description": "Request model for registering a webhook."
+      },
+      "DefaultScopesPreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "DefaultScopesPreview",
+        "description": "The scopes no strategy claims \u2014 they consolidate under the bank-wide settings."
       },
       "DeleteDocumentResponse": {
         "properties": {
@@ -17340,6 +17515,109 @@
         "type": "object",
         "title": "SourceFactsIncludeOptions",
         "description": "Options for including source facts for observation-type results."
+      },
+      "StrategyPreview": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "False when the server would ignore this strategy (no usable rule, or no setting)"
+          },
+          "claimed_count": {
+            "type": "integer",
+            "title": "Claimed Count",
+            "description": "Existing scopes this strategy actually applies to"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyRulePreview"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "One entry per rule, aligned with the request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "claimed_count",
+          "rules"
+        ],
+        "title": "StrategyPreview",
+        "description": "Preview of one strategy, aligned by position with the request."
+      },
+      "StrategyRulePreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count",
+            "description": "Existing scopes this rule matches"
+          },
+          "taken_count": {
+            "type": "integer",
+            "title": "Taken Count",
+            "description": "Of those, how many an earlier strategy wins, so this one has no effect"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "description": "Observations across the matching scopes"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples",
+            "description": "The most populous matching scopes, up to sample_limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "taken_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "StrategyRulePreview",
+        "description": "What one rule (one entry of a strategy's `scopes`) matches among existing scopes."
+      },
+      "StrategyScopePreview": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The scope's tags (sorted)"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Observations in this scope"
+          },
+          "handled_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handled By",
+            "description": "Index of the strategy that actually applies to this scope (the first that claims it), or null when no strategy does and Default applies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags",
+          "count",
+          "handled_by"
+        ],
+        "title": "StrategyScopePreview",
+        "description": "One existing observation scope in a consolidation-strategy preview."
       },
       "TagGroupAnd-Input": {
         "properties": {
