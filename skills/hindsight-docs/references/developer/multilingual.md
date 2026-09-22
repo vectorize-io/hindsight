@@ -6,13 +6,26 @@ Hindsight automatically detects the language of your input and responds in the s
 
 ## How It Works
 
-```mermaid
-graph LR
-    A[Chinese Input] --> B[Language Detection]
-    B --> C[Extract Facts in Chinese]
-    C --> D[Chinese Entities]
-    D --> E[Chinese Response]
-```
+**Figure: Multilingual Support.** An animated diagram on the docs site; its narration, step by step:
+
+- **retain()**
+  1. Your agent retains Chinese text that mentions English company names.
+  2. There is no separate language detector. The LLM is told to write facts in the language of the input, and to keep names as they are.
+  3. Facts are stored in Chinese. 王芳 stays 王芳, not “Wang Fang”, and Google stays Google.
+  4. Indexing is where language matters. The default embedding model and keyword index are English-only; pick a multilingual model and a tokenizer that can split Chinese.
+  5. Stored, in the language it came in.
+- **recall()**
+  1. A query in Chinese.
+  2. The multilingual embeddings match by meaning; the tokenizer lets the exact name 王芳 match as a word.
+  3. Both point to the Chinese facts. The reranker that then orders them is English-only by default too, so pick a multilingual one.
+  4. The facts come back exactly as stored. Nothing was translated on the way.
+- **reflect()**
+  1. A question in Chinese.
+  2. Reflect searches the bank like before…
+  3. …through the same indexes…
+  4. …and finds both facts.
+  5. The answer is written in the language of the question.
+  6. To force one language everywhere instead, set HINDSIGHT_API_LLM_OUTPUT_LANGUAGE.
 
 When you retain content or reflect on a query, Hindsight:
 

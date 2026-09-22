@@ -11,15 +11,26 @@ See [Mental Models](../mental-models) for the concepts behind this API.
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+**Figure: Mental Models (API).** An animated diagram on the docs site; its narration, step by step:
+
+- **create()**
+  1. You create a mental model: a name, the question it answers, and when it should refresh.
+  2. The API saves it right away. Its content does not exist yet.
+  3. The content is written in the background. The response is an operation id you can poll.
+  4. A refresh is a reflect run on the source query. It reads observations first…
+  5. …then raw facts, to check the details.
+  6. It writes the document and stores it with the memories it is based on.
+- **auto refresh**
+  1. Later, your agent retains a new fact. Consolidation picks it up.
+  2. It writes an observation about Carol.
+  3. Before queueing a refresh, consolidation checks that the model’s scope holds a memory newer than the last one it read. If not, no refresh runs and no LLM is spent.
+  4. In delta mode it reads only the new memories, and answers with small edits instead of a rewrite.
+  5. Lines no edit touches are copied byte for byte. Only Carol’s line is added.
+- **reflect()**
+  1. Now your agent asks a question.
+  2. Reflect searches mental models first, by meaning. Team overview matches, and it is up to date.
+  3. It covers the question, so the agent can answer from it. If it were stale or off topic, the agent would go on to observations and raw facts.
+  4. The answer comes back, citing the mental model it used.
 
 ### Why Use Mental Models?
 
@@ -296,6 +307,23 @@ Two strategies are available for how a refresh produces the new content:
 - **`full`** *(default)* — every refresh regenerates the entire content from scratch. Simple and predictable: the LLM synthesises a fresh document from the retrieved memories. Best when the document is short, when you want every refresh to potentially restructure the output, or when you're not yet sure what the final shape should be.
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
+
+**Figure: Refresh modes: full vs delta.** An animated diagram on the docs site; its narration, step by step:
+
+- **full**
+  1. Full is the default. Every refresh writes the whole document again.
+  2. It reads everything in the model’s scope, old and new.
+  3. The LLM writes a fresh document. Carol is in, but untouched sections come back reworded too, and small drifts add up over many refreshes.
+- **delta**
+  1. Delta edits the document instead of rewriting it.
+  2. It only reads memories newer than the last one the previous refresh saw.
+  3. A second LLM call compares the new findings with the current sections and answers with edit operations, not a document.
+  4. The operation is applied. Every section it does not touch is copied through byte for byte, and the watermark moves to Sep.
+- **delta falls back**
+  1. Delta needs something stable to edit. Here the source query was changed.
+  2. The topic moved, so the old structure may no longer fit. The refresh falls back to a full rewrite. The same happens when the model has no content yet.
+  3. It reads the whole scope, like full mode…
+  4. …and writes a new document for the new question. The next refresh can edit this one in delta mode again.
 
 #### How delta mode works
 

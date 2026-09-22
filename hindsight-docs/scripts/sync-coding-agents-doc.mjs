@@ -15,6 +15,9 @@
  *     so images render on npm and GitHub, but on the docs site those same URLs pin every image to
  *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
  *     which is exactly when you are trying to look at it.
+ *   - A `<!-- figure: coding-agents -->` line becomes the interactive figure (`<Flow>` from
+ *     hindsight-interfig), imported at the top. The README keeps an invisible comment there, since a
+ *     React component renders on neither GitHub nor npm.
  *   - The `skill:begin` / `skill:end` markers are dropped. They tell the integration's
  *     scripts/build-skill.mjs which regions the companion skill copies; MDX has no HTML comments,
  *     so leaving them in would fail the docs build outright.
@@ -65,6 +68,7 @@ function build() {
     // Region markers for the companion-skill generator — invalid syntax in MDX, and meaningless
     // to a reader of the docs site either way.
     .replace(/^<!--\s*skill:(?:begin|end)[^>]*-->\n?/gm, '')
+    .replace(/^<!--\s*figure: coding-agents\s*-->$/m, '<Flow {...codingAgents.props} />')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
     // Our own absolute URLs -> site-relative. Assets so the page uses THIS build's static
@@ -75,7 +79,10 @@ function build() {
     .replace(/https:\/\/hindsight\.vectorize\.io\/([^\s"')]+)/g, '/$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return `${FRONTMATTER}\n${body}\n`;
+  const imports = body.includes('<Flow ')
+    ? "import {Flow} from '@vectorize-io/interfig';\nimport codingAgents from '@vectorize-io/interfig/figures/coding-agents';\n\n"
+    : '';
+  return `${FRONTMATTER}\n${imports}${body}\n`;
 }
 
 const generated = build();

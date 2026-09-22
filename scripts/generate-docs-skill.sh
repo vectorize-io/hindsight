@@ -51,6 +51,14 @@ process_file() {
         print_info "Copying: $rel_path"
         cp "$src_file" "$dest_file"
     fi
+    render_figures "$src_file" "$dest_file"
+}
+
+# Interactive figures (<Flow {...x.props} />) become their step-by-step narration.
+render_figures() {
+    if grep -q '<Flow ' "$2"; then
+        python3 "$ROOT_DIR/scripts/docs_skill_figures.py" "$1" "$2"
+    fi
 }
 
 # Convert MDX to Markdown by:
@@ -238,6 +246,7 @@ process_reference_tree() {
             cp "$file" "$dest"
             normalize_markdown_file "$dest"
         fi
+        render_figures "$file" "$dest"
         print_info "Included $label: $rel"
     done
 }

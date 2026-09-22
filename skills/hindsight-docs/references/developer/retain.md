@@ -2,19 +2,33 @@
 sidebar_position: 2
 ---
 
+
 # Retain: How Hindsight Stores Memories
 
 When you call `retain()`, Hindsight transforms conversations and documents into structured, searchable memories that preserve meaning and context.
 
 ## What Retain Does
 
-```mermaid
-graph LR
-    A[Your Content] --> B[Extract Facts]
-    B --> C[Identify Entities]
-    C --> D[Build Connections]
-    D --> E[Memory Bank]
-```
+**Figure: What Retain Does.** An animated diagram on the docs site; its narration, step by step:
+
+- **new facts**
+  1. You send content, a context that says who is speaking, and when it was said.
+  2. The original is kept as a document and split into chunks, so the exact passage can be handed back later.
+  3. An LLM reads each chunk and pulls out facts with what, when, where, who and why. It keeps the reason, not just the event. Each fact is embedded right away.
+  4. Entity resolution decides who each name is. It compares each name with the entities the bank already has. Neither is known yet, so both become new entities.
+  5. Entities are stored once, and every fact that mentions them points to them.
+  6. The facts are world facts: Bob is talking about Alice, not about the agent. Each keeps two times: when it happened and when Hindsight learned it.
+  7. Finally the facts are linked: through shared entities, closeness in time, similar meaning (from the embeddings), and cause and effect.
+  8. retain() is done. Observations are built from these facts later, in the background.
+- **same person, new name**
+  1. Two months later, Bob mentions “Alice C.”
+  2. Same path: stored as a new document, split into chunks…
+  3. …and read by the LLM. The fact names “Alice C.”, a name the bank has never seen.
+  4. The name is close to Alice Chen, and the same fact names the Zurich office she is already linked to. Together that is enough: same person.
+  5. No new entity is created: this mention of “Alice C.” counts as Alice Chen.
+  6. The fact keeps its own wording, but it points to Alice Chen, so it joins everything else about her. Ask about Alice later and you get all of it.
+  7. Its entity link ties it to the three facts from January.
+  8. Done: one more fact about the same Alice.
 
 ---
 

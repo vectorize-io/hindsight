@@ -22,6 +22,7 @@ jobs:
       clients-rust: ${{ steps.filter.outputs.clients-rust }}
       clients-go: ${{ steps.filter.outputs.clients-go }}
       control-plane: ${{ steps.filter.outputs.control-plane }}
+      interfig: ${{ steps.filter.outputs.interfig }}
       cli: ${{ steps.filter.outputs.cli }}
       docker: ${{ steps.filter.outputs.docker }}
       helm: ${{ steps.filter.outputs.helm }}
@@ -137,6 +138,8 @@ jobs:
             # Same reason as clients-rust above: the CLI compiles against the
             # progenitor-generated client, so an OpenAPI change alone can break it.
             - 'hindsight-docs/static/openapi.json'
+          interfig:
+            - 'hindsight-interfig/**'
           docker:
             - 'docker/**'
           helm:
@@ -1430,6 +1433,34 @@ jobs:
           kill $SERVER_PID 2>/dev/null || true
           exit 1
         fi
+
+  test-interfig:
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.interfig == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    # Node 22 runs the .ts tests directly (type stripping); the docs build compiles the figures themselves.
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci --workspace=@vectorize-io/interfig
+
+    - name: Typecheck (library and figures)
+      run: npm run typecheck --workspace=@vectorize-io/interfig
+
+    - name: Test
+      run: npm test --workspace=@vectorize-io/interfig
 
   build-docs:
     needs: [detect-changes]
@@ -5645,6 +5676,7 @@ jobs:
       - test-google-adk-integration
       - test-roo-code-integration
       - build-control-plane
+      - test-interfig
       - build-docs
       - test-rust-cli
       - lint-helm-chart

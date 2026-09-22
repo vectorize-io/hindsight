@@ -2,6 +2,7 @@
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
+
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
 (**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
@@ -13,6 +14,33 @@ project-specific decision that isn't in the code at all — a rounding rule, a r
 tie-break policy. Those decisions live in git history and past conversations. This package puts them
 in front of the agent at the moment it starts working, and keeps a curated set of **knowledge pages**
 (architecture, conventions, in-flight initiatives) that future sessions start from.
+
+**Figure: Coding Agents.** An animated diagram on the docs site; its narration, step by step:
+
+- **first session**
+  1. You open a session in a repo. There is no setup command: the plugin’s SessionStart hook does the work.
+  2. It picks the repo’s bank — one per repository, shared by every agent and every worktree — and finds it empty.
+  3. Every session start launches the backfill in the background; it only does what is missing, so the session is never blocked. A cold bank also gets a codebase survey by a headless agent (re-run every 20 commits).
+  4. Its first job configures the bank and creates the repo’s knowledge pages, each a question about this project. They start empty.
+  5. It reads the agent’s own past conversations in this repo, and the commit messages of the last 300 commits.
+  6. Each conversation becomes one document (skipped if already there); the commit history becomes one document, replaced when HEAD moves. Full diffs are opt-in (gitIngest: "full").
+  7. The server extracts facts and labels the durable ones for the page they belong to: a decision, a convention, a component…
+  8. Consolidation merges them into observations — one set per repo, whichever agent wrote the facts.
+  9. Each page is written from the memories labelled for it, and keeps itself current on an hourly schedule (each page on its own minute, only when something changed).
+- **first prompt**
+  1. On the first prompt of a session, the prompt hook fetches memory for the task at hand. (A session on an existing bank also got the page roster and a tool guide at start.)
+  2. By default it runs one bounded reflect over the bank. "pages" searches the knowledge pages and "recall" recalls memories instead — both retrieval-only.
+  3. The answer lands in the agent’s context before it starts, once per session. On a bank with no history or pages yet, it waits for the second prompt instead.
+- **while working**
+  1. Mid-task the agent pulls memory itself through MCP tools. Pages are not pushed every turn; the page roster and tool guide are re-injected every 10 turns.
+  2. Page search ranks the pages and returns a snippet of each — fast, and visible as a tool call. hindsight_read_knowledge_page opens one in full.
+  3. hindsight_reflect goes deeper when pages are not enough; capture_initiative turns a new plan into its own page.
+- **each reply**
+  1. Every time the agent finishes a reply, the Stop hook reads the transcript and takes the turns it has not written yet.
+  2. They are appended to the session’s document (its first reply created it), tagged with the agent that wrote it — that is where the control plane’s agent logo comes from.
+  3. The new turns are extracted like everything else…
+  4. …consolidated into the repo’s beliefs…
+  5. …and the next scheduled refresh edits the page, so the next session starts from it.
 
 [View Changelog →](../../changelog/integrations/coding-agents.md)
 

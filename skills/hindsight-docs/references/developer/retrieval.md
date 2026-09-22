@@ -2,25 +2,22 @@
 sidebar_position: 3
 ---
 
+
 # Recall: How Hindsight Retrieves Memories
 
 When you call `recall()`, Hindsight uses multiple search strategies in parallel to find the most relevant memories, regardless of how you phrase your query.
 
-```mermaid
-graph LR
-    Q[Query] --> S[Semantic]
-    Q --> K[Keyword]
-    Q --> G[Graph]
-    Q --> T[Temporal]
+**Figure: Multi-Strategy Retrieval (TEMPR).** An animated diagram on the docs site; its narration, step by step:
 
-    S --> RRF[RRF Fusion]
-    K --> RRF
-    G --> RRF
-    T --> RRF
-
-    RRF --> CE[Cross-Encoder]
-    CE --> R[Results]
-```
+- **recall()**
+  1. recall() gets a query. Nothing is decided yet about which kind of search fits it best, so every arm that applies runs.
+  2. Each arm searches its own index: meaning (vectors), exact words (BM25), the entity graph, and time. “March 2026” becomes a date range; a query with no date skips the time arm.
+  3. All four point into the same memories. Each arm returns its own ranked list, and facts and observations compete in every one. The mark shows how many arms found each.
+  4. RRF fusion merges the lists by rank, not raw score: a memory found near the top by several arms beats one found by a single arm.
+  5. The top candidates (up to 300) go to a cross-encoder, which reads the query and each memory together and scores how well they match.
+  6. Small multiplicative boosts nudge the score: recent memories, memories inside the asked time range, and observations backed by more evidence.
+  7. Results are packed best-first until max_tokens is used up. Only the memory text counts toward the budget.
+  8. The agent gets a short, ranked list it can put straight into its prompt.
 
 ---
 

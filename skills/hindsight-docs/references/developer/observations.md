@@ -4,15 +4,24 @@
 
 After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
-```mermaid
-graph LR
-    A[New Facts] --> B[Consolidation Engine]
-    B --> C{Existing Observation?}
-    C -->|Yes| D[Refine Observation]
-    C -->|No| E[Create Observation]
-    D --> F[Observations]
-    E --> F
-```
+**Figure: Observation Consolidation.** An animated diagram on the docs site; its narration, step by step:
+
+- **refine**
+  1. A new fact lands. Until it is consolidated, observation searches are flagged stale, so reflect checks them against the raw facts.
+  2. Consolidation runs in the background after retain. For each new fact it recalls related observations, only within the same tag scope.
+  3. One LLM call sees the new facts next to those observations and decides, facet by facet: create, update or delete.
+  4. Before anything is written, each new or rewritten observation is compared with its closest neighbours. Only a near-identical one gets a merge-or-keep check.
+  5. The observation is rewritten with the fact attached as evidence, so its proof count goes up. The previous wording is kept in history.
+  6. The same write marks the fact consolidated, so the observation is fresh again.
+- **contradict**
+  1. Now a fact that contradicts what the bank believes.
+  2. A change of state is not a reason to delete. The LLM updates the belief so it records what changed, with dates when it has them.
+  3. The observation now tells the whole journey, not just “prefers Vue”. It rests on all three facts, and both older versions stay in history.
+- **something new**
+  1. A fact about something the bank has no belief on yet.
+  2. Nothing covers this facet, so the LLM creates a new observation instead of bending an unrelated one.
+  3. The near-duplicate check keeps it: different facets stay separate observations.
+  4. The new observation starts with one source. It will gain evidence as more facts repeat it.
 
 ---
 

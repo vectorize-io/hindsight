@@ -7,6 +7,9 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
+import {Flow} from '@vectorize-io/interfig';
+import codingAgents from '@vectorize-io/interfig/figures/coding-agents';
+
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
 (**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
@@ -18,6 +21,8 @@ project-specific decision that isn't in the code at all — a rounding rule, a r
 tie-break policy. Those decisions live in git history and past conversations. This package puts them
 in front of the agent at the moment it starts working, and keeps a curated set of **knowledge pages**
 (architecture, conventions, in-flight initiatives) that future sessions start from.
+
+<Flow {...codingAgents.props} />
 
 [View Changelog →](/changelog/integrations/coding-agents)
 
