@@ -1316,6 +1316,96 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_failed_refresh_does_not_stamp_the_source_query(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        monkeypatch,
+    ):
+        """A failed refresh must not record the query it ran with.
+
+        ``_preserve_and_fail`` promises to write "no content, no structured
+        document and no watermark" — and it keeps both timestamps where they
+        were — but it also stamped ``last_refreshed_source_query``. The
+        consumer reads that column to decide full-vs-delta:
+
+            use_delta = last_refreshed_source_query is None or
+                        last_refreshed_source_query == source_query
+
+        so a run that failed on a *changed* query left behind the new value,
+        and the retry looked like a topic that had already been processed:
+        it ran as a delta against a document generated from the old query,
+        found nothing new, and reported success. Every later refresh did the
+        same, so the model served old-query content under the new query for
+        good.
+        """
+        bank_id = f"test-mm-query-stamp-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nExisting.\n",
+            trigger={
+                "mode": "delta",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {"summary": {"type": "string"}},
+                    "required": ["summary"],
+                },
+            },
+            request_context=request_context,
+        )
+
+        # Record what the failure path writes. Wrapping rather than replacing
+        # keeps the rest of the persist working, so the run reaches the end.
+        real_update = memory.update_mental_model
+        stamped: list[str | None] = []
+
+        async def recording_update(*args, **kwargs):
+            stamped.append(kwargs.get("last_refreshed_source_query"))
+            return await real_update(*args, **kwargs)
+
+        monkeypatch.setattr(memory, "update_mental_model", recording_update)
+
+        monkeypatch.setattr(memory, "update_mental_model", recording_update)
+
+        # A fact in scope, so the delta window is not empty and the run reaches
+        # the structured-output branch instead of short-circuiting on
+        # "no new facts".
+        patch_reflect(
+            memory,
+            text="# Team\n\nRegenerated.\n",
+            facts=[{"id": "obs-new", "text": "some new fact", "type": "observation", "context": None}],
+        )
+
+        # The structured-output extraction cannot satisfy the configured schema,
+        # which is the refresh_failed_structured_output branch of
+        # _preserve_and_fail.
+        async def bad_structured_call(*, messages, **kwargs):
+            raise RuntimeError("structured extraction unavailable")
+
+        monkeypatch.setattr(memory._reflect_llm_config, "call", bad_structured_call)
+        stub_refresh_has_sources(monkeypatch, memory)
+
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        assert stamped, "the refresh never reached a persist path"
+        assert stamped[-1] is None, (
+            "A failed refresh stamped the query it ran with, so the retry looks "
+            "already-processed and runs as a delta against a document generated "
+            "from the old query."
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_all_ops_skipped_preserves_document_and_raises(
         self,
         memory: MemoryEngine,

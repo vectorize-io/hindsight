@@ -18104,8 +18104,12 @@ class MemoryEngine(MemoryEngineInterface):
                 and no watermark — leaving ``last_memory_seen_at`` where it was, so a
                 retry re-reads the same window instead of skipping past the facts
                 this run failed on, and leaving ``last_refreshed_at`` where it was,
-                because no refresh finished. Then raise, because a caller that is
-                told nothing assumes the document was refreshed.
+                because no refresh finished. ``last_refreshed_source_query`` stays
+                behind too: it is the column that decides full-vs-delta, so stamping
+                it with the query a failed run used would make the retry look like a
+                topic that was already processed and run as a delta against a
+                document generated from the old query. Then raise, because a caller
+                that is told nothing assumes the document was refreshed.
                 """
                 logger.warning(f"[MENTAL_MODELS] Refresh for {mental_model_id} failed ({reason}); {detail}")
                 reflect_response_payload["refresh_skipped"] = reason
@@ -18114,7 +18118,6 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     mental_model_id,
                     reflect_response=reflect_response_payload,
-                    last_refreshed_source_query=run.source_query,
                     request_context=request_context,
                 )
                 # ``refresh_skipped`` above is only readable until the next refresh
