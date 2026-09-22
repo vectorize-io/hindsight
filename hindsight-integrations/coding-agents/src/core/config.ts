@@ -226,7 +226,7 @@ export interface RawConfig {
   /** Let the plugin shape the bank's own configuration — the retain strategies it writes under,
    *  the `knowledge` entity-label group, and (on a bank that has none) the missions (default true).
    *
-   *  Writing is strictly ADDITIVE: the plugin adds what the bank does not already define and never
+   *  Writing is ADDITIVE: the plugin adds what the bank does not already define and never
    *  overwrites an existing value, so an edit made in the control plane survives (#3927) — except
    *  the extraction mode of its own strategies, which follows `retainExtractionMode`. Set false
    *  to keep it out of the bank's configuration entirely — for a bank you shape yourself, or share

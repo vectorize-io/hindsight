@@ -484,7 +484,8 @@ export class HindsightClient {
     } else {
       // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
       // and then belong to whoever set them (#2492), and every other field is added only where the
-      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
+      // bank is silent (#3927) — bar the extraction mode of the plugin's own strategies, which is
+      // re-synced to `extractionMode` (#4560). A reset just deleted the bank, so there is nothing to read.
       const manifest = codingBankManifest(
         opts.reset ? undefined : await this.readBankOverrides(),
         opts.extractionMode
