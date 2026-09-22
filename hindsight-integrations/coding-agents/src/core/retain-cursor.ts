@@ -74,6 +74,8 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
+  /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
+  appendSupported?: boolean;
   /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
   /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns

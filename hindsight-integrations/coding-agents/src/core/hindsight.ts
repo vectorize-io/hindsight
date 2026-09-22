@@ -19,6 +19,7 @@ import {
   pageTriggerDrifted,
   pageTriggerFor,
   pageTriggerPatch,
+  type RetainExtractionMode,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -452,7 +453,8 @@ export class HindsightClient {
 
   /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
    *  entity labels), then seed knowledge pages when the server supports them. Both halves are
-   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
+   *  idempotent and ADDITIVE — nothing the bank already says is overwritten (#3927), bar the
+   *  extraction mode of the plugin's own strategies, which follows its config (#4560) — so
    *  the deepen engine can re-run this every pass. Creates the bank if missing; legacy servers
    *  continue with the template-only path.
    *
@@ -469,6 +471,8 @@ export class HindsightClient {
       /** Pages of the user's own to seed alongside them — see RawConfig.customPages. */
       customPages?: CustomPagesConfig;
       manage?: boolean;
+      /** Extraction mode for the plugin's own strategies — see RawConfig.retainExtractionMode. */
+      extractionMode?: RetainExtractionMode;
     } = {}
   ): Promise<void> {
     if (opts.reset) {
@@ -481,7 +485,10 @@ export class HindsightClient {
       // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
       // and then belong to whoever set them (#2492), and every other field is added only where the
       // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
-      const manifest = codingBankManifest(opts.reset ? undefined : await this.readBankOverrides());
+      const manifest = codingBankManifest(
+        opts.reset ? undefined : await this.readBankOverrides(),
+        opts.extractionMode
+      );
       if (!manifest) {
         this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
       } else {

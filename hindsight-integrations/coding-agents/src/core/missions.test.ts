@@ -337,7 +337,7 @@ describe("codingBankManifest (#3927)", () => {
   it("never deletes a strategy the user defined, nor reverts their edits to ours", () => {
     const mine = {
       ...RETAIN_STRATEGIES,
-      // The user made the conversation strategy concise and small; that is theirs to decide.
+      // The user rewrote the conversation strategy's mission; that is theirs to decide.
       conversation: { retain_mission: "MINE", retain_extraction_mode: "concise" },
       mycustom: { retain_chunk_size: 500 },
     };
@@ -345,6 +345,37 @@ describe("codingBankManifest (#3927)", () => {
     expect(bankOf({ reflect_mission: "seeded", retain_strategies: mine })).not.toHaveProperty(
       "retain_strategies"
     );
+  });
+
+  it("re-syncs the extraction mode of the plugin's own strategies to the configured one (#4560)", () => {
+    // A bank seeded by a release that defaulted to verbose, plus a user tweak and a user strategy.
+    const seeded = Object.fromEntries(
+      Object.entries(RETAIN_STRATEGIES).map(([n, d]) => [
+        n,
+        d.retain_extraction_mode === "custom" ? d : { ...d, retain_extraction_mode: "verbose" },
+      ])
+    );
+    const current = {
+      ...seeded,
+      conversation: { ...seeded.conversation, retain_chunk_size: 500 },
+      mycustom: { retain_extraction_mode: "verbose" },
+    };
+    const strategies = bankOf({ reflect_mission: "seeded", retain_strategies: current })!
+      .retain_strategies as Record<string, Record<string, unknown>>;
+    for (const name of ["git", "gitlog", "conversation", "document"])
+      expect(strategies[name].retain_extraction_mode).toBe("concise");
+    // Only the mode moves: the user's other edits, their own strategy and the survey stay put.
+    expect(strategies.conversation.retain_chunk_size).toBe(500);
+    expect(strategies.mycustom).toEqual({ retain_extraction_mode: "verbose" });
+    expect(strategies.survey).toEqual(RETAIN_STRATEGIES.survey);
+
+    // An explicit choice is honoured the same way, and seeds a new bank with it.
+    const verbose = codingBankManifest(
+      { reflect_mission: "seeded", retain_strategies: RETAIN_STRATEGIES },
+      "verbose"
+    )!.bank.retain_strategies as Record<string, Record<string, unknown>>;
+    expect(verbose.git.retain_extraction_mode).toBe("verbose");
+    expect(codingBankManifest(undefined, "chunks")!.bank.retain_extraction_mode).toBe("chunks");
   });
 
   it("leaves a bank that already carries the whole structure completely alone", () => {

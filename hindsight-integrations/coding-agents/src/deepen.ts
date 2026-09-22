@@ -167,6 +167,7 @@ async function main() {
       pages: cfg.pages,
       customPages: cfg.customPages,
       manage: cfg.manageBankConfig,
+      extractionMode: cfg.retainExtractionMode,
     });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
