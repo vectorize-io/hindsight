@@ -353,6 +353,37 @@ async def test_a_sql_owned_bank_keeps_the_write_time_its_facts_give_it(memory, r
 
 
 @pytest.mark.asyncio
+async def test_a_sql_owned_bank_still_gets_its_fact_watermark(memory, monkeypatch):
+    """The fact watermark is skipped for store-owned banks but MUST survive for SQL-owned ones.
+
+    The skip is a `CASE` guard on a correlated subquery, so getting it backwards is silent: the
+    page still renders, with `last_write_at` quietly missing every fact-only write. This pins the
+    SQL-owned side of that guard, which is the half no store overlay would repair.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    sql_bank = "factwm_sql"
+    store_bank = "factwm_store"
+
+    class _Mixed(_OrderingStore):
+        """Owns one bank, not the other — the mixed-tenant case the guard is per-bank for."""
+
+        def store_owned_for(self, bank_id: str) -> bool:
+            return bank_id == store_bank
+
+    store = _Mixed([store_bank])
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, [sql_bank, store_bank])
+        page = await memory.list_banks(limit=50, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"]]
+        assert sql_bank in got and store_bank in got, f"both kinds must be listed: {got}"
+    finally:
+        for name in (sql_bank, store_bank):
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_a_search_still_ranks_and_filters(memory, monkeypatch):
     """Search matches on bank_id and name, which live only in SQL.
 

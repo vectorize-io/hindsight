@@ -889,24 +889,52 @@ async def _bank_rows(pool, bank_ids: "list[str]") -> list:
     This is the join that FILLS a page rather than deciding one, which is the whole difference: it
     reads the rows that will be shown, not every row in the tenant. `fact_count` is left at 0 and
     filled by the page overlays, exactly as :func:`list_banks` leaves it.
+
+    **`memory_units` is not named at all unless some bank on the page keeps its memories there.**
+    That is about PLANNING, not rows. Each bank gets its own partial HNSW indexes on that table, so
+    a tenant with 27,315 banks has **82,795 indexes** on it; the planner considers them for any
+    query that mentions the table, whatever the query does. Measured on such a tenant, against a
+    `memory_units` holding **zero** rows: planning 975 ms, execution 0.05 ms — and `_bank_rows`
+    naming it twice cost **3.9 s of a 4.5 s** page.
+
+    So a guard on the COLUMN does not help, and neither does an empty id array: both still mention
+    the table. The join has to be absent from the SQL. When the page is entirely store-owned — the
+    normal case for such a tenant — it is, and the fact watermark is NULL for every row, which is
+    what it would have been anyway.
+
+    The term itself stays for banks that do keep memories in SQL: without it a fact-only write does
+    not move `last_write_at`, and the two list paths disagree.
     """
     if not bank_ids:
         return []
+    from ..memories import get_memories
+
+    store = get_memories()
+    sql_owned = [b for b in bank_ids if not store.store_owned_for(b)]
     banks_table = fq_table("banks")
     docs_table = fq_table("documents")
-    mu_table = fq_table("memory_units")
+    if sql_owned:
+        mu_table = fq_table("memory_units")
+        fact_select = "f.last_fact_at"
+        fact_join = f"""
+            LEFT JOIN (
+                SELECT bank_id, MAX(updated_at) AS last_fact_at
+                FROM {mu_table}
+                WHERE bank_id = ANY($2::text[])
+                GROUP BY bank_id
+            ) f ON f.bank_id = b.bank_id"""
+        params = (bank_ids, sql_owned)
+    else:
+        # Not `NULL::timestamptz` off a join that is simply empty — the table must not appear.
+        fact_select = "NULL::timestamptz AS last_fact_at"
+        fact_join = ""
+        params = (bank_ids,)
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
             f"""
             SELECT b.bank_id, b.name, b.disposition, b.mission, b.created_at, b.updated_at,
                    d.last_document_at, d.last_document_write_at,
-                   -- Same two terms :func:`list_banks` takes the newest of, so the two paths agree
-                   -- about a bank's `last_write_at`. Correlated off
-                   -- `idx_memory_units_bank_updated_at` and over the PAGE's ids only, so it is one
-                   -- index entry per returned row rather than the tenant-wide GROUP BY this
-                   -- endpoint used to pay for. Store-owned banks have no rows here and get their
-                   -- real time from the store overlay a moment later.
-                   (SELECT MAX(m.updated_at) FROM {mu_table} m WHERE m.bank_id = b.bank_id) AS last_fact_at
+                   {fact_select}
             FROM {banks_table} b
             LEFT JOIN (
                 SELECT bank_id,
@@ -915,10 +943,10 @@ async def _bank_rows(pool, bank_ids: "list[str]") -> list:
                 FROM {docs_table}
                 WHERE bank_id = ANY($1::text[])
                 GROUP BY bank_id
-            ) d ON d.bank_id = b.bank_id
+            ) d ON d.bank_id = b.bank_id{fact_join}
             WHERE b.bank_id = ANY($1::text[])
             """,
-            bank_ids,
+            *params,
         )
     by_id = {}
     for row in rows:
