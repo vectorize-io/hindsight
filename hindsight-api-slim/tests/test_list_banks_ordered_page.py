@@ -199,6 +199,75 @@ async def test_paging_the_list_sees_every_bank_exactly_once(memory, monkeypatch)
             await memory.delete_bank(name, request_context=request_context)
 
 
+class _RoutingStore(_OrderingStore):
+    """A router whose banks live in different backends.
+
+    It declares ``store_owned = False`` at the class level and answers per bank through
+    ``store_owned_for`` — the shape a real multi-backend deployment has. Gating the ordered path on
+    the class flag therefore sends an entirely store-owned tenant down the ranking path: correct
+    output, and the whole cost the ordered path exists to remove, with nothing failing to show it.
+    """
+
+    store_owned = False
+
+
+@pytest.mark.asyncio
+async def test_a_router_that_declares_store_owned_false_still_gets_the_ordered_path(memory, monkeypatch):
+    """The path is chosen by asking the store for a page, not by reading a flag off it.
+
+    Asserted on the ORDER rather than on latency: the ranking fallback also sorts by write time, so
+    the only visible difference between the two paths on a small fixture is which one ran. The store
+    is given an order unrelated to creation order, so following it proves the merge ran.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    created_order = ["rt_a", "rt_b", "rt_c", "rt_d"]
+    write_order = ["rt_c", "rt_a", "rt_d", "rt_b"]
+
+    store = _RoutingStore(write_order)
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, created_order)
+        page = await memory.list_banks(limit=10, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"] if b["bank_id"] in write_order]
+        assert got == write_order, f"a router must still get the store's order, got {got}"
+        assert store.page_requests, "the store was never asked for a page — the flag gated it out"
+    finally:
+        for name in created_order:
+            await memory.delete_bank(name, request_context=request_context)
+
+
+class _NoOrderingStore(_OrderingStore):
+    """A store with no ordering of its own — the Postgres default's behaviour."""
+
+    async def list_banks_by_write(self, *, limit: int = 100, page_token: str = ""):
+        self.page_requests.append((limit, page_token))
+        return [], ""
+
+
+@pytest.mark.asyncio
+async def test_a_store_with_no_ordering_keeps_the_sql_ordering(memory, monkeypatch):
+    """An empty store page must fall back, not merge against nothing.
+
+    Merging an empty stream would leave only the creation-ordered half, silently reordering a
+    Postgres-owned tenant by creation time while still looking like a working list.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    names = ["noord_a", "noord_b"]
+
+    store = _NoOrderingStore(names)
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, names)
+        page = await memory.list_banks(limit=10, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"] if b["bank_id"] in names]
+        assert sorted(got) == sorted(names), f"the list must still render every bank: {got}"
+    finally:
+        for name in names:
+            await memory.delete_bank(name, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_a_search_still_ranks_and_filters(memory, monkeypatch):
     """Search matches on bank_id and name, which live only in SQL.

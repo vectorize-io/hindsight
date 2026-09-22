@@ -709,19 +709,27 @@ async def list_banks_page(pool, *, limit: int, offset: int, search_query: str | 
 
     Falls back to :func:`list_banks` whenever the merge cannot be trusted to page correctly:
 
-      * a store that does not own the memories. Then the write times are SQL columns, the ordering
-        is already one indexed query, and there is nothing a store stream could add — a merge
-        against an empty stream would silently reorder such a tenant by CREATION time;
+      * a store that returns no ordering of its own. Then the write times are SQL columns, the
+        ordering is already one indexed query, and there is nothing a store stream could add — a
+        merge against an empty stream would silently reorder such a tenant by CREATION time;
       * a search, which matches on ``bank_id`` and ``name``. Those live only in SQL, so the store
         cannot apply it and its stream would be the wrong set. A search narrows to few rows anyway,
         which is where ranking them all is cheap.
+
+    The first of those is decided by ASKING the store for a page, not by reading a capability flag
+    off it. ``store_owned`` is the wrong question and answers it wrongly: a router whose banks live
+    in different backends declares ``store_owned = False`` at the class level and answers per bank
+    through ``store_owned_for``, so a flag check sends an entirely store-owned tenant down the
+    ranking path — correct output, and the whole cost this exists to remove. What the merge actually
+    needs to know is whether there is an ordering to merge, and the page it is about to consume is
+    the answer.
 
     Returns ``(page, total)``. ``total`` counts the banks matching the search, before paging.
     """
     from ..memories import get_memories
 
     store = get_memories()
-    if search_query or not getattr(store, "store_owned", False):
+    if search_query:
         banks = await list_banks(pool, search_query=search_query)
         return banks[offset : offset + limit], len(banks)
 
@@ -734,7 +742,13 @@ async def list_banks_page(pool, *, limit: int, offset: int, search_query: str | 
         return [], total
 
     try:
-        ordered_ids = await _merge_ordered_bank_ids(pool, store, want)
+        # The store's first page decides the path AND seeds the merge, so asking costs nothing
+        # extra: an empty page means this store has no ordering to contribute.
+        first_page, first_token = await store.list_banks_by_write(limit=_STORE_PAGE)
+        if not first_page:
+            banks = await list_banks(pool, search_query=search_query)
+            return banks[offset : offset + limit], len(banks)
+        ordered_ids = await _merge_ordered_bank_ids(pool, store, want, first_page, first_token)
     except Exception as e:  # noqa: BLE001 - the list must render even if the ordering cannot
         logger.warning(f"Could not page banks by write time ({e}); ranking the tenant instead")
         banks = await list_banks(pool, search_query=search_query)
@@ -746,7 +760,13 @@ async def list_banks_page(pool, *, limit: int, offset: int, search_query: str | 
     return rows, total
 
 
-async def _merge_ordered_bank_ids(pool, store, want: int) -> list[str]:
+#: Banks per store page. The merge consumes one page for a page-1 request however large the tenant.
+_STORE_PAGE = 100
+
+
+async def _merge_ordered_bank_ids(
+    pool, store, want: int, first_page: list, first_token: str
+) -> list[str]:
     """The first `want` bank ids, newest-written first, merging the store's order with SQL's.
 
     Both inputs are already sorted, so this takes whichever head is newer and never sorts anything.
@@ -757,7 +777,7 @@ async def _merge_ordered_bank_ids(pool, store, want: int) -> list[str]:
     stream win the race for any bank it knows. A bank the store does NOT know is placed by creation
     time — the same fallback :func:`list_banks` uses, so the two orders agree.
     """
-    store_pages = _store_write_stream(store)
+    store_pages = _store_write_stream(store, first_page, first_token)
     created = await _banks_by_created(pool, want)
 
     out: list[str] = []
@@ -782,19 +802,22 @@ async def _merge_ordered_bank_ids(pool, store, want: int) -> list[str]:
     return out
 
 
-async def _store_write_stream(store):
+async def _store_write_stream(store, first_page: list, first_token: str):
     """The store's banks as one continuous newest-written-first stream, page by page.
 
     A generator rather than a list so the merge pulls only the pages it needs: a page-1 request
     consumes one store page however many banks the tenant has.
+
+    The first page is handed in because the caller already fetched it to decide whether this store
+    orders at all; re-fetching it here would pay for that decision twice.
     """
-    token = ""
-    while True:
-        rows, token = await store.list_banks_by_write(limit=100, page_token=token)
+    for bank_id, when in first_page:
+        yield bank_id, _as_utc(when)
+    token = first_token
+    while token:
+        rows, token = await store.list_banks_by_write(limit=_STORE_PAGE, page_token=token)
         for bank_id, when in rows:
             yield bank_id, _as_utc(when)
-        if not token:
-            return
 
 
 async def _banks_by_created(pool, want: int) -> "list[tuple[str, datetime]]":
