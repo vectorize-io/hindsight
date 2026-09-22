@@ -2,10 +2,16 @@
 
 The LLM's job during a delta refresh is to emit a list of these operations,
 each targeting an existing section (by id) or a block inside one (by id).
-``apply_operations`` validates and applies each op in turn against a copy of
-the document; invalid ops (unknown ``section_id``, unknown ``block_id``, a
-block that lives in a different section) are dropped with a debug-friendly
-reason.
+There are two layers of validation here, and they answer differently:
+
+- **Shape** (``parse_delta_operation_list``): does the reply match the schema?
+  One op that does not refuses the whole reply, and ``request_delta_operations``
+  asks the model again with the errors quoted back. A reply written to a shape
+  the model invented is not repaired by keeping the parts that happened to fit.
+- **Reference** (``apply_operations``): does the op name something real? An
+  unknown ``section_id`` or ``block_id``, or a block that lives in a different
+  section, is dropped with a debug-friendly reason and the rest still apply —
+  the model addressed a document it misread, which the next refresh sees afresh.
 
 Sections and blocks not mentioned by any op are physically copied through
 unchanged — there is no LLM-mediated re-emission of unchanged text, so prose
@@ -43,7 +49,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
-from hindsight_api.engine.llm_wrapper import parse_llm_json
+from hindsight_api.engine.llm_wrapper import ConfiguredLLMProvider, parse_llm_json
 
 from .structured_doc import (
     Block,
@@ -62,6 +68,13 @@ logger = logging.getLogger(__name__)
 
 
 class _OpBase(BaseModel):
+    # Strict on purpose (#4443). An unknown field is not a harmless typo: the
+    # model that invented a key was writing to a shape it made up, so what it
+    # meant to say is as likely to be *in* that key as not, and accepting the op
+    # without it writes a partial edit while recording a clean refresh. The
+    # answer to a reply that does not follow the schema is to ask again with the
+    # error attached — see ``request_delta_operations`` — never to guess which
+    # half of it was load-bearing.
     model_config = ConfigDict(extra="forbid")
 
 
@@ -204,37 +217,50 @@ _BODY_FIELDS = ("text", "blocks")
 
 
 @dataclass(frozen=True)
-class ValidatedOperations:
-    """The surviving and rejected halves of one LLM operation list.
+class RejectedOperation:
+    """One operation the schema refused, and why.
 
-    Both halves are lists and both are non-empty in the interesting cases, so as a
-    bare tuple they were transposable without a type error — and the caller feeds
-    them to ``_finalize_operations``, which raises ``DeltaAllOpsInvalidError`` off
-    the *valid* half being empty while the *skipped* half is not. Swapped, a clean
-    refresh would abort and a fully-malformed one would be applied.
+    Carried out of validation rather than logged and dropped, because the text of
+    the rejection is what the retry sends back to the model: "operation 4 named an
+    unknown field ``block_id``" is actionable, "the reply was invalid" is not.
     """
 
-    valid: list[Operation]
-    skipped: list[dict[str, Any]]
+    index: int
+    op: Any
+    error: str
 
 
-def _validate_operations_list(raw_ops: Any) -> ValidatedOperations:
-    """Validate each operation independently; drop invalid ops instead of failing the batch."""
+def _validate_operations_list(raw_ops: Any) -> list[Operation]:
+    """Validate every operation, and refuse the batch if any one of them fails.
+
+    Strict by decision (#4443), where this used to drop the bad op and keep the
+    rest. A reply that does not match the schema is not a reply with one bad
+    line in it — the model was writing to a shape it invented, so an op it got
+    wrong is evidence about the ops around it, and applying those while silently
+    discarding this one writes a partial edit and reports a clean refresh. The
+    caller asks again with the errors attached instead.
+    """
     if not isinstance(raw_ops, list):
         raise TypeError(f"operations must be a list, got {type(raw_ops)!r}")
-    valid: list[Operation] = []
-    skipped: list[dict[str, Any]] = []
+    operations: list[Operation] = []
+    rejected: list[RejectedOperation] = []
     for i, item in enumerate(raw_ops):
         try:
-            valid.append(_OPERATION_ADAPTER.validate_python(item))
+            operations.append(_OPERATION_ADAPTER.validate_python(item))
         except ValidationError as exc:
-            skipped.append({"index": i, "op": item, "error": exc.errors(include_url=False)})
-            logger.warning(
-                "[STRUCTURED_DELTA] skipping invalid operation at index %s: %s",
-                i,
-                exc.errors(include_url=False),
+            # One line per pydantic error, in the words the model needs to fix it.
+            error = "; ".join(
+                f"{'.'.join(str(piece) for piece in e['loc']) or '(operation)'}: {e['msg']}"
+                for e in exc.errors(include_url=False)
             )
-    return ValidatedOperations(valid, skipped)
+            rejected.append(RejectedOperation(index=i, op=item, error=error))
+    if rejected:
+        for rejection in rejected:
+            logger.warning("[STRUCTURED_DELTA] rejected operation at index %s: %s", rejection.index, rejection.error)
+        raise DeltaOperationsInvalidError(
+            f"{len(rejected)} of {len(raw_ops)} delta operation(s) failed validation", rejected
+        )
+    return operations
 
 
 class DeltaOperationList(BaseModel):
@@ -244,30 +270,26 @@ class DeltaOperationList(BaseModel):
     operations: list[Operation] = Field(default_factory=list)
 
 
-class DeltaAllOpsInvalidError(ValueError):
-    """Raised when the model emitted operations but none survived validation.
+class DeltaOperationsInvalidError(ValueError):
+    """Raised when any operation in the model's reply failed validation.
 
-    Distinct from an empty ``operations`` array (a legitimate no-op): here every
-    op was malformed, so returning zero valid ops would make the caller apply
-    nothing while recording a clean refresh, silently dropping this refresh's
-    new facts.
+    Not a partial success: the whole reply is refused, because an op the model
+    got wrong says the reply was written to a shape it invented, and keeping the
+    survivors would write half an edit and record it as a clean refresh.
 
-    Raising does *not* buy a full rewrite — the caller catches it, records
-    ``delta_ops_failed`` and refuses to write, because the reflect candidate
-    covers only memories newer than the last refresh and writing it would drop
-    the rest of the document. So the document is preserved and the refresh is
-    reported as failed; the facts arrive on a later round. That makes every
-    raise here the cost of a discarded reflect call, which is why predictable
-    model spellings are absorbed in validation (see ``_coerce_block_texts``)
-    rather than left to fail.
+    The caller retries the call once with ``rejected`` fed back to the model
+    (``request_delta_operations``). If the second reply is bad too, the refresh
+    records ``delta_ops_failed`` and refuses to write: the reflect candidate
+    covers only memories newer than the last refresh, so writing it would drop
+    the rest of the document. The document is preserved, the facts arrive on a
+    later round, and the cost is the discarded reflect — which is why the
+    predictable model spellings that are *not* schema violations are absorbed in
+    validation instead (see ``_coerce_block_texts``).
     """
 
-
-def _finalize_operations(valid: list[Operation], skipped: list[dict[str, Any]]) -> DeltaOperationList:
-    """Build the result, but refuse a wholesale validation failure as a silent no-op."""
-    if skipped and not valid:
-        raise DeltaAllOpsInvalidError(f"all {len(skipped)} delta operation(s) failed validation")
-    return DeltaOperationList(operations=valid)
+    def __init__(self, message: str, rejected: list[RejectedOperation]) -> None:
+        super().__init__(message)
+        self.rejected = rejected
 
 
 def _extract_balanced_json_object(text: str) -> str | None:
@@ -304,16 +326,7 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
     if isinstance(raw, DeltaOperationList):
         return raw
     if isinstance(raw, dict):
-        ops_raw = raw.get("operations", [])
-        validated = _validate_operations_list(ops_raw)
-        valid, skipped = validated.valid, validated.skipped
-        if skipped:
-            logger.info(
-                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s) from dict payload",
-                len(valid),
-                len(skipped),
-            )
-        return _finalize_operations(valid, skipped)
+        return DeltaOperationList(operations=_validate_operations_list(raw.get("operations", [])))
 
     text = (raw or "").strip()
     if not text:
@@ -337,22 +350,91 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
             last_error = ValueError("delta payload must be an object with an operations array")
             continue
         try:
-            validated = _validate_operations_list(payload["operations"])
-            valid, skipped = validated.valid, validated.skipped
+            operations = _validate_operations_list(payload["operations"])
         except TypeError as exc:
             last_error = exc
             continue
-        if skipped:
-            logger.info(
-                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s)",
-                len(valid),
-                len(skipped),
-            )
-        return _finalize_operations(valid, skipped)
+        return DeltaOperationList(operations=operations)
 
     if last_error is not None:
         raise last_error
     return DeltaOperationList()
+
+
+# Asking the model ----------------------------------------------------------
+
+
+def _correction_prompt(error: Exception, rejected: list[RejectedOperation]) -> str:
+    """The follow-up turn: what was wrong, quoted, and what to send instead."""
+    lines = [
+        "That reply could not be used. Every operation is validated against the "
+        "schema, and the whole reply is refused when any one of them fails — so "
+        "nothing you sent has been applied.",
+        "",
+    ]
+    if rejected:
+        lines.append("What failed:")
+        for rejection in rejected:
+            lines.append(f"- operation at index {rejection.index}: {rejection.error}")
+            lines.append(f"  you sent: {json.dumps(rejection.op, ensure_ascii=False, default=str)[:600]}")
+    else:
+        lines.append(f"What failed: {error}")
+    lines += [
+        "",
+        "Send the COMPLETE list again — every operation you still intend, including "
+        "the ones that were fine — as a single JSON object with one key, "
+        "``operations``. Each operation carries exactly the keys its shape lists and "
+        "no others: no key you invented, no key borrowed from a different operation, "
+        "no key set to null to stand in for one it does not take. Emit no prose "
+        "outside the JSON object.",
+    ]
+    return "\n".join(lines)
+
+
+async def request_delta_operations(
+    llm: ConfiguredLLMProvider,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    scope: str,
+    **call_kwargs: Any,
+) -> DeltaOperationList:
+    """Ask the model for an operation list, and once more with the errors if it is refused.
+
+    Every delta-shaped call goes through here — the refresh's edit pass and the
+    retraction pass both — so a reply that misses the schema gets the same second
+    chance either way, and a new caller inherits it by construction.
+
+    The retry is worth making only because it changes the *input*: these calls run
+    at a fixed low temperature, and #3421 is the proof that re-sending an identical
+    prompt reproduces an identical bad reply, retry after retry. So the follow-up
+    turn quotes the operations that were refused and the reason for each, which is
+    the one thing the model can act on.
+
+    Exactly one retry. A third ask would repeat the second's input and so its
+    output; past that the caller's own failure path takes over — the document is
+    preserved and the task retries with a fresh reflect behind it, a better use
+    of the next attempt.
+
+    The retry APPENDS to the first request and never rewrites it, so the system
+    prompt and the whole document stay a byte-identical prefix and the provider's
+    prompt cache still covers them on the second call.
+    """
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+    first = await llm.call(messages=messages, scope=scope, **call_kwargs)
+    try:
+        return parse_delta_operation_list(first.content)
+    except (ValueError, TypeError) as exc:  # DeltaOperationsInvalidError and JSON errors are ValueErrors
+        rejected = exc.rejected if isinstance(exc, DeltaOperationsInvalidError) else []
+        logger.warning("[STRUCTURED_DELTA] %s reply refused (%s); asking again with the errors", scope, exc)
+        correction = _correction_prompt(exc, rejected)
+    retry_messages = [
+        *messages,
+        {"role": "assistant", "content": first.content or ""},
+        {"role": "user", "content": correction},
+    ]
+    second = await llm.call(messages=retry_messages, scope=scope, **call_kwargs)
+    return parse_delta_operation_list(second.content)
 
 
 # Application ---------------------------------------------------------------

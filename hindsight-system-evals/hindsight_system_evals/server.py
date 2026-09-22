@@ -20,6 +20,7 @@ import contextlib
 import os
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,14 +29,21 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "hindsight-api-slim"
 
-#: Its own pg0 instance. Sharing one with the developer's server (or with the
-#: system tests) means a run competes for connections and can be refused mid-way
-#: with "sorry, too many clients already".
-PG0_INSTANCE = "hindsight-system-evals"
+#: A pg0 instance of its own, and a NEW one per run.
+#:
+#: Sharing one with the developer's server (or with the system tests) means a run
+#: competes for connections and can be refused mid-way with "sorry, too many
+#: clients already". A *fixed* name has a second, more expensive failure: a
+#: previous run's banks are still in it, with their refresh and consolidation
+#: tasks still queued, so the worker claims them within seconds of starting and
+#: bills them to the provider key — one run paid for 268 requests and 5.9M tokens
+#: of work belonging to four banks it never created, against 56 of its own.
+#: Nothing here wants to inherit state, so nothing does.
+PG0_INSTANCE_PREFIX = "hindsight-system-evals-"
 
 
 def pg0_instance() -> str:
-    """The pg0 instance this server runs on.
+    """The pg0 instance a new server should run on.
 
     Read per call, NOT once at import: a caller that wants its own database sets
     ``HINDSIGHT_EVAL_PG0_INSTANCE`` before starting the server, and importing
@@ -43,8 +51,12 @@ def pg0_instance() -> str:
     would already have been frozen and the override would silently do nothing.
     That is not hypothetical: it shipped that way for one run, and the run was
     seen refreshing mental models belonging to two earlier runs' banks.
+
+    Without an override, every call names a fresh instance — see
+    ``PG0_INSTANCE_PREFIX`` for why no run may inherit another's.
     """
-    return os.getenv("HINDSIGHT_EVAL_PG0_INSTANCE") or PG0_INSTANCE
+    return os.getenv("HINDSIGHT_EVAL_PG0_INSTANCE") or f"{PG0_INSTANCE_PREFIX}{uuid.uuid4().hex[:8]}"
+
 
 SERVER_STARTUP_TIMEOUT = 180.0
 
@@ -54,6 +66,11 @@ class EvalServer:
     url: str
     log_path: Path
     _process: subprocess.Popen
+    pg0_instance: str = ""
+    #: Whether stop() deletes the instance. Only for one this module named: a
+    #: caller that chose its own via ``HINDSIGHT_EVAL_PG0_INSTANCE`` owns it, and
+    #: may still want to open it once the server is gone.
+    drop_pg0_on_stop: bool = False
 
     def logs(self) -> str:
         return self.log_path.read_text(encoding="utf-8", errors="replace")
@@ -64,6 +81,23 @@ class EvalServer:
             self._process.wait(timeout=30)
         if self._process.poll() is None:
             self._process.kill()
+        self._drop_pg0_instance()
+
+    def _drop_pg0_instance(self) -> None:
+        """Delete this run's database. A kept one is a bill, not a convenience.
+
+        Best-effort: a leftover instance costs disk, while raising here would
+        fail a session whose evals already passed. It is reported, not raised —
+        and `pg0 drop <name>` finishes the job by hand.
+        """
+        if not (self.pg0_instance and self.drop_pg0_on_stop):
+            return
+        import pg0
+
+        try:
+            pg0.Pg0(self.pg0_instance).drop(force=True)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print(f"warning: could not drop pg0 instance {self.pg0_instance}: {exc}")
 
 
 def free_port() -> int:
@@ -109,21 +143,25 @@ def provider_environment() -> dict[str, str]:
             "_API_KEY or, for vertexai, _VERTEXAI_SERVICE_ACCOUNT_KEY (HINDSIGHT_API_ equivalents "
             "also work). A stub cannot be used here: it would score the stub."
         )
-    if base_url := pick("LLM_BASE_URL"):
-        env["HINDSIGHT_API_LLM_BASE_URL"] = base_url
-    # Strict structured output changes what the model is even able to emit: every
-    # declared property becomes required, so a field the text gives no value for
-    # still has to carry one. That pressure is where a whole class of extraction
+    # Optional knobs that change what the model emits (a provider's thinking
+    # switch, the sampling temperature). A bug that only shows at temperature 0
+    # with thinking off cannot be reproduced unless these reach the server.
+    #
+    # Strict structured output belongs here for the same reason: every declared
+    # property becomes required, so a field the text gives no value for still has
+    # to carry one. That pressure is where a whole class of extraction
     # fabrications comes from (#4457), and it is off by default — so an eval that
     # cannot switch it on cannot reproduce the condition its own suite exists to
-    # measure. Passed through rather than inherited, like everything else here.
-    if strict := pick("LLM_STRICT_SCHEMA"):
-        env["HINDSIGHT_API_LLM_STRICT_SCHEMA"] = strict
+    # measure.
+    for suffix in ("LLM_BASE_URL", "LLM_EXTRA_BODY", "LLM_TEMPERATURE", "LLM_STRICT_SCHEMA"):
+        if value := pick(suffix):
+            env[f"HINDSIGHT_API_{suffix}"] = value
     return env
 
 
 def start_eval_server(*, log_path: Path) -> EvalServer:
     port = free_port()
+    instance = pg0_instance()
 
     env = os.environ.copy()
     # The repo .env is for the developer's own server. Left in place it would
@@ -135,7 +173,7 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
     env.update(provider_environment())
     env.update(
         {
-            "HINDSIGHT_API_DATABASE_URL": f"pg0://{pg0_instance()}",
+            "HINDSIGHT_API_DATABASE_URL": f"pg0://{instance}",
             "HINDSIGHT_API_HOST": "127.0.0.1",
             "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",
@@ -162,7 +200,13 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )
-    server = EvalServer(url=f"http://127.0.0.1:{port}", log_path=log_path, _process=process)
+    server = EvalServer(
+        url=f"http://127.0.0.1:{port}",
+        log_path=log_path,
+        _process=process,
+        pg0_instance=instance,
+        drop_pg0_on_stop=not os.getenv("HINDSIGHT_EVAL_PG0_INSTANCE"),
+    )
     _wait_until_healthy(server)
     return server
 

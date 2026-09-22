@@ -32,6 +32,20 @@ _OPERATION_PROMPTS = {
 
 _OP_SHAPE_RX = re.compile(r'\{"op":\s*"(\w+)"([^`]*)')
 
+#: A shape marked with this is a counter-example — "do NOT send this" — so it
+#: names fields the schema rejects on purpose, and asserting over it would fail
+#: the prompt for teaching exactly what we want it to teach.
+_COUNTER_EXAMPLE = "\u274c"
+
+
+def _instructed_shapes(prompt: str):
+    """Every op shape the prompt tells the model to SEND, counter-examples excluded."""
+    for match in _OP_SHAPE_RX.finditer(prompt):
+        line_start = prompt.rfind("\n", 0, match.start()) + 1
+        if _COUNTER_EXAMPLE in prompt[line_start : match.start()]:
+            continue
+        yield match.group(1), match.group(2)
+
 
 def _operation_models() -> dict[str, type]:
     import typing
@@ -48,7 +62,7 @@ class TestPromptsMatchTheSchema:
     def test_every_named_op_exists(self, prompt_name: str):
         """A prompt offering an op we do not implement wastes a whole refresh."""
         known = set(_operation_models())
-        named = {m.group(1) for m in _OP_SHAPE_RX.finditer(_OPERATION_PROMPTS[prompt_name])}
+        named = {op for op, _ in _instructed_shapes(_OPERATION_PROMPTS[prompt_name])}
         assert named, f"{prompt_name} documents no operations"
         assert named <= known, f"{prompt_name} offers unknown ops: {sorted(named - known)}"
 
@@ -61,8 +75,7 @@ class TestPromptsMatchTheSchema:
         """
         models = _operation_models()
         prompt = _OPERATION_PROMPTS[prompt_name]
-        for match in _OP_SHAPE_RX.finditer(prompt):
-            op_name, rest = match.group(1), match.group(2)
+        for op_name, rest in _instructed_shapes(prompt):
             shape = rest.split("``")[0]
             fields = set(re.findall(r'"(\w+)":', shape))
             allowed = set(models[op_name].model_fields)

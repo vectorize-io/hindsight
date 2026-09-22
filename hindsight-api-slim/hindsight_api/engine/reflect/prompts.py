@@ -1113,6 +1113,15 @@ ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "remove_section", "section_id": "..."}``
 - ``{"op": "replace_section_blocks", "section_id": "...", "blocks": ["...", "..."]}``
 - ``{"op": "rename_section", "section_id": "...", "new_heading": "..."}``
+- Each operation carries EXACTLY the keys shown on its line — no others. Do not
+  copy a key from another operation's shape, do not add a key of your own, and
+  do not emit a key with ``null`` to stand in for one the operation does not
+  take. ``append_block`` in particular has no ``block_id``: the id is minted
+  when the block lands, and it takes ``text``, never ``blocks``.
+  ❌ ``{"op": "append_block", "section_id": "members", "block_id": null, "text": "- Carol"}``
+  ✅ ``{"op": "append_block", "section_id": "members", "text": "- Carol"}``
+  ❌ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"], "blocks_note": "merged"}``
+  ✅ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"]}``
 
 BLOCK TEXT RULES
 - Every ``text`` (and every entry of ``blocks``) is ONE markdown fragment:
@@ -1418,6 +1427,12 @@ ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "remove_section", "section_id": "..."}``
 - ``{"op": "replace_block", "section_id": "...", "block_id": "...", "text": "..."}``
 - ``{"op": "replace_section_blocks", "section_id": "...", "blocks": ["...", "..."]}``
+
+Each operation carries EXACTLY the keys shown on its line — no others. Do not add
+a key of your own, and do not emit a key with ``null`` to stand in for one the
+operation does not take.
+❌ ``{"op": "remove_block", "section_id": "s", "block_id": "b1", "reason": "retracted"}``
+✅ ``{"op": "remove_block", "section_id": "s", "block_id": "b1"}``
 
 Blocks are addressed by ``block_id`` — the ``id`` printed beside each block in
 CURRENT DOCUMENT. Copy it exactly; never invent one, and never use a position.

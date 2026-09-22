@@ -969,8 +969,9 @@ class TestDeltaRefreshPlumbing:
         ``anyOf``, so the schema travels with the request.
 
         ``skip_validation`` must stay on: the raw JSON goes to
-        ``parse_delta_operation_list``, which drops a single malformed op instead
-        of failing the batch the way ``model_validate`` would.
+        ``parse_delta_operation_list``, which rejects the reply with the *reason*
+        for every refused operation, so the retry can quote it back to the model.
+        ``model_validate`` would raise before anything could be reported.
         """
         from hindsight_api.config import get_config
         from hindsight_api.engine.reflect.delta_ops import DeltaOperationList

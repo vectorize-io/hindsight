@@ -17536,7 +17536,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .reflect.delta_ops import (
             DeltaOperationList,
             apply_operations,
-            parse_delta_operation_list,
+            request_delta_operations,
         )
         from .reflect.prompts import (
             STRUCTURED_DELTA_SYSTEM_PROMPT,
@@ -17619,17 +17619,14 @@ class MemoryEngine(MemoryEngineInterface):
                             max_output_tokens=max(2048, int(doc_max_tokens * 1.5)),
                         )
                         unsay_llm = await _op_llm()
-                        unsay_call = await unsay_llm.call(
-                            messages=[
-                                {"role": "system", "content": STRUCTURED_RETRACTION_SYSTEM_PROMPT},
-                                {"role": "user", "content": unsay_prompt},
-                            ],
+                        unsay_ops = await request_delta_operations(
+                            unsay_llm,
+                            system_prompt=STRUCTURED_RETRACTION_SYSTEM_PROMPT,
+                            user_prompt=unsay_prompt,
+                            scope="mental_model_retraction_ops",
                             max_completion_tokens=get_config().reflect_max_completion_tokens,
                             temperature=get_config().llm_temperature_consolidation,
-                            scope="mental_model_retraction_ops",
                         )
-                        raw_unsay = unsay_call.content
-                        unsay_ops = parse_delta_operation_list(raw_unsay)
                         unsay_outcome = apply_operations(current_doc, unsay_ops.operations)
                         retraction_operations = MentalModelDeltaOperations(
                             applied=unsay_outcome.applied, skipped=unsay_outcome.skipped
@@ -17730,9 +17727,11 @@ class MemoryEngine(MemoryEngineInterface):
                 try:
                     # Structured-output call, following the retain extraction path:
                     # the schema is sent, ``strict_schema`` is resolved from reflect's
-                    # own flag, and ``skip_validation`` keeps the raw JSON so
-                    # ``parse_delta_operation_list`` still validates op-by-op (a single
-                    # malformed op is dropped, not the whole batch).
+                    # own flag, and ``skip_validation`` keeps the raw JSON so the
+                    # op-by-op parser sees it. A reply that misses the schema is
+                    # refused whole and asked for again with the errors attached —
+                    # ``request_delta_operations`` owns that, for this call and the
+                    # retraction pass alike.
                     #
                     # This was a text-mode call until #3901: pydantic renders the
                     # eight-op discriminated union as ``oneOf`` + ``discriminator``,
@@ -17752,20 +17751,17 @@ class MemoryEngine(MemoryEngineInterface):
                     # same decoupling reflect's synthesis got in #3365/#3389 — the
                     # document-length budget lives in the prompt (``max_output_tokens``
                     # above), never in the transport cap.
-                    delta_call = await delta_llm.call(
-                        messages=[
-                            {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
+                    op_list = await request_delta_operations(
+                        delta_llm,
+                        system_prompt=STRUCTURED_DELTA_SYSTEM_PROMPT,
+                        user_prompt=user_prompt,
+                        scope="mental_model_delta_ops",
                         response_format=DeltaOperationList,
                         strict_schema=get_config().llm_strict_schema_reflect,
-                        skip_validation=True,  # Get raw JSON; the op-by-op parser validates leniently
+                        skip_validation=True,  # Get raw JSON; the parser validates op-by-op
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
                         temperature=get_config().llm_temperature_consolidation,
-                        scope="mental_model_delta_ops",
                     )
-                    raw = delta_call.content
-                    op_list = parse_delta_operation_list(raw)
                     apply_outcome = apply_operations(current_doc, op_list.operations)
                     delta_operations = MentalModelDeltaOperations(
                         applied=apply_outcome.applied, skipped=apply_outcome.skipped

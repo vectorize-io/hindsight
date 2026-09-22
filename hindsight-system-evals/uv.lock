@@ -706,6 +706,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "hindsight-client" },
     { name = "httpx" },
+    { name = "pg0-embedded" },
     { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -719,6 +720,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "hindsight-client", editable = "../hindsight-clients/python" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pg0-embedded", specifier = ">=0.15.0" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
@@ -937,6 +939,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz", hash = "sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79", size = 313412, upload-time = "2026-08-04T18:15:28.737Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl", hash = "sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c", size = 129956, upload-time = "2026-08-04T18:15:27.159Z" },
+]
+
+[[package]]
+name = "pg0-embedded"
+version = "0.15.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/27/06c8bafacd1fc8536490c9bb9d6409648741962b3bedf6931fbaf3bfbfbc/pg0_embedded-0.15.2.tar.gz", hash = "sha256:f7181c10aa4db55d61fdc85eca927fb0bd0cb49b1fd5e9898f1606df53757fd4", size = 20216, upload-time = "2026-09-14T13:42:35.524Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/b4/d64bd24546b69ff3820cb8fb5771113a69ea5dfffa9aa4e0831a25425d46/pg0_embedded-0.15.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:cbfb988ef6ad39009835f7d1f734b6df5bc05db944050f932e08465bcc6bfe2d", size = 13048269, upload-time = "2026-09-14T13:42:15.489Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/68/8631a1587be4624e251cdd3e1326bdd51b08953eeec730b9036a956fc3b0/pg0_embedded-0.15.2-py3-none-macosx_15_0_x86_64.whl", hash = "sha256:27a4a6bba5bbe536fd948eab121686946ddce5fa7b2a5ecfdbb70ee9db0169bc", size = 13648542, upload-time = "2026-09-14T13:42:18.449Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/41/8a957e45dab89d7e3153566faa5be71d8f57147255b11830ec5777be6e30/pg0_embedded-0.15.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:aaf89e3c4cfe8affb87910f13dd1e8604596f5f3da7efff5a5eb812bd8b4437c", size = 29815702, upload-time = "2026-09-14T13:42:22.563Z" },
+    { url = "https://files.pythonhosted.org/packages/68/a6/835812a7c3f02cc86b99f99016e75d221438bdc795e6653e9e0668c09192/pg0_embedded-0.15.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:c55f43e36de626d4d1cd1ea2f8897e17779c3b5a38cba0107329a149dddfae18", size = 30409049, upload-time = "2026-09-14T13:42:26.963Z" },
+    { url = "https://files.pythonhosted.org/packages/06/1c/b819099b19cbe3687c7c705cf50bd35b7e78512156c99f5faf6c582d3861/pg0_embedded-0.15.2-py3-none-win_amd64.whl", hash = "sha256:1b47c938991243d938e28c7e1998c1298637fdb15c54ada6d853e02769d50d3e", size = 55111631, upload-time = "2026-09-14T13:42:33.162Z" },
 ]
 
 [[package]]

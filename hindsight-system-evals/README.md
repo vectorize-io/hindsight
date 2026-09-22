@@ -229,8 +229,19 @@ If your shell exports `PYTEST_ADDOPTS` with `-n` (the repo `.env` does), unset
 it: xdist is not installed here, and parallel evals against one server would
 compete for it anyway.
 
-The server runs on its own pg0 instance (`hindsight-system-evals`), so a run does
-not compete for connections with a developer's server or with the system tests.
+The server runs on a **fresh** pg0 instance per run (`hindsight-system-evals-<id>`),
+dropped when the session ends. Its own, so a run does not compete for connections
+with a developer's server or with the system tests — and a new one, because a
+reused database still holds the previous run's banks *and their queued refresh
+and consolidation tasks*. The worker claims those within seconds of starting and
+bills them to your provider key: one run spent 5.9M tokens on four banks it never
+created, against 0.8M of its own.
+
+Set `HINDSIGHT_EVAL_PG0_INSTANCE` to pick the instance yourself (the coding-agents
+runner does, one per run); one you named is yours, and is left in place.
+
+A crash can leave an instance behind. `pg0 list` shows them, `pg0 drop <name>`
+removes one.
 
 ## Debugging a failure
 
