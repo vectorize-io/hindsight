@@ -1046,11 +1046,24 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
     listing 365 banks aggregated millions of rows whatever the page size (#4468). Scoped to
     the page the count is a bounded index range per bank instead.
 
-    Banks whose memories live outside SQL have no rows here and stay at 0;
-    :func:`apply_store_fact_counts` runs after this one and overwrites them with the store's
-    live count.
+    Banks whose memories live outside SQL are NOT asked about at all. They have no rows here, so
+    the count would be 0, and :func:`apply_store_fact_counts` overwrites it a moment later with the
+    store's live number — the query is pure waste for them, and not a cheap one: counting 100
+    store-owned banks against a `memory_units` holding millions of another tenant's rows measured
+    **12.8 s** of a 13.5 s bank list, for a hundred zeroes that were then discarded.
+
+    A mixed page is the reason this is per bank rather than an early return: a tenant can have both
+    kinds, and the SQL-owned ones still need their count from here.
     """
     if not banks:
+        return
+    from ..memories import get_memories
+
+    store = get_memories()
+    sql_owned = [b["bank_id"] for b in banks if not store.store_owned_for(b["bank_id"])]
+    for bank in banks:
+        bank["fact_count"] = 0
+    if not sql_owned:
         return
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
@@ -1060,8 +1073,8 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
             WHERE bank_id = ANY($1)
             GROUP BY bank_id
             """,
-            [bank["bank_id"] for bank in banks],
+            sql_owned,
         )
     counts = {row["bank_id"]: row["fact_count"] for row in rows}
     for bank in banks:
-        bank["fact_count"] = counts.get(bank["bank_id"], 0)
+        bank["fact_count"] = counts.get(bank["bank_id"], bank["fact_count"])

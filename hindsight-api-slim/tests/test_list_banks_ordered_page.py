@@ -269,6 +269,33 @@ async def test_a_store_with_no_ordering_keeps_the_sql_ordering(memory, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_the_sql_fact_count_skips_banks_the_store_owns(memory, monkeypatch):
+    """A store-owned bank is never counted against `memory_units`.
+
+    It has no rows there, so the answer is always 0 and `apply_store_fact_counts` replaces it a
+    moment later — but the query still has to look, and on a large table that dominated the whole
+    endpoint. Asserted on the store's count SURVIVING, which is what a stray SQL overwrite would
+    destroy, and on the page rendering at all.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    names = ["sqlskip_a", "sqlskip_b"]
+
+    store = _OrderingStore(list(reversed(names)))
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    try:
+        await _make_banks(memory, request_context, names)
+        page = await memory.list_banks(limit=10, offset=0, request_context=request_context)
+        got = {b["bank_id"]: b["fact_count"] for b in page["banks"] if b["bank_id"] in names}
+        assert set(got) == set(names), f"both banks must be listed: {got}"
+        # 1 is what the fake store reports per bank; 0 would mean SQL overwrote it.
+        assert all(v == 1 for v in got.values()), f"the store's count must win: {got}"
+    finally:
+        for name in names:
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_a_search_still_ranks_and_filters(memory, monkeypatch):
     """Search matches on bank_id and name, which live only in SQL.
 
