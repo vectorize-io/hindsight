@@ -5,16 +5,18 @@ company tag scopes where each scope consolidates under its *own* settings — th
 company-wide scope can be told to record only generalized trends (and to keep
 fewer observations) while the per-user scope keeps the specifics.
 
-A strategy lists the ``scopes`` it claims, each scope a list of tag-globs, and
-claims a concrete scope when *any* of those patterns exact-covers it. When
-several strategies claim the same scope, the first in the list wins, whole —
-see "Two strategies claiming one scope" below. It
-supersedes the deprecated ``observation_scope_limits``, which is still honoured
-but consulted only afterwards. The exact-cover match itself is shared between the
-two — see ``test_observation_scope_limit_resolution.py`` for
-``_scope_matches_globs``. What is tested here is the parsing, multi-scope
-claiming, which strategy wins a contested scope, and the precedence over the
-deprecated field.
+A strategy lists rules (``scopes``: ``{"tags": [...], "tags_match": ...}``) and
+claims a concrete scope when *any* rule matches it: under ``"all"`` (default) the
+scope must carry every tag in the rule and may carry others; under ``"exact"``
+it must carry exactly those. When several strategies claim the same scope, the
+first in the list wins, whole — see "Two strategies claiming one scope" below.
+It supersedes the deprecated ``observation_scope_limits``, which is still
+honoured but consulted only afterwards; the "exact" matcher is shared with it
+(see ``test_observation_scope_limit_resolution.py`` for ``_scope_matches_globs``).
+
+What is tested here is the parsing, multi-rule claiming, the two match modes,
+which strategy wins a contested scope, and the precedence over the deprecated
+field.
 
 All deterministic — direct asserts, no LLM.
 """
@@ -144,8 +146,8 @@ def test_an_unusable_scope_is_dropped_but_its_siblings_survive():
 
 
 def test_one_strategy_claims_every_scope_it_lists():
-    """The reason scopes is a list of lists: a shared brief written once, applied
-    to several unrelated scope shapes."""
+    """The reason a strategy holds a list of rules: one brief, written once,
+    applied to several unrelated scope shapes."""
     config = _config(
         [{"scopes": [{"tags": ["company:*"]}, {"tags": ["org:*", "shared"]}], "observations_mission": GENERIC}]
     )
@@ -154,7 +156,7 @@ def test_one_strategy_claims_every_scope_it_lists():
     assert _mission(config, ["org:eng", "shared"]) == GENERIC
     assert _mission(config, ["user:dana"]) == BANK_MISSION
     assert _mission(config, ["org:eng"]) == BANK_MISSION, (
-        "exact cover still applies per scope: the 'shared' glob must match something"
+        "every tag in a rule must be on the scope: 'shared' is missing here"
     )
 
 

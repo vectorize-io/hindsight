@@ -19,9 +19,9 @@ export type ConsolidationSettings = Pick<
   | "consolidation_source_facts_max_tokens_per_observation"
 >;
 
-/** One `consolidation_strategies` entry: the scopes it claims, and their settings.
- *  A scope is a list of tag-globs; a strategy claims a consolidation pass when any
- *  of its scopes exact-covers the pass's tags. Every setting is optional. */
+/** One `consolidation_strategies` entry: the rules it claims scopes with, and
+ *  their settings. A strategy claims a consolidation pass when any rule matches
+ *  it (see `ScopePattern`). Every setting is optional. */
 export type ConsolidationStrategy = {
   /** Alternatives: the strategy claims a scope when any pattern matches it. */
   scopes: ScopePattern[];
@@ -182,12 +182,12 @@ export function scopesLabel(scopes: ScopePattern[], and = "and", or = "or"): str
     .join(` ${or} `);
 }
 
-/** Autocomplete for the scope editor: every tag already used by an observation
- *  scope in the bank, plus a `key:*` wildcard for each `key:value` tag — the
- *  pattern people almost always want ("every company", "every team"). */
-export function suggestedTags(existingScopes: string[][]): string[] {
+/** Autocomplete for the scope editor: the given tags (the editor passes the
+ *  bank's tag search results), plus a `key:*` wildcard for each `key:value` tag —
+ *  the pattern people almost always want ("every company", "every team"). */
+export function suggestedTags(tagGroups: string[][]): string[] {
   const out = new Set<string>();
-  for (const tags of existingScopes) {
+  for (const tags of tagGroups) {
     for (const tag of tags) {
       out.add(tag);
       const colon = tag.indexOf(":");
