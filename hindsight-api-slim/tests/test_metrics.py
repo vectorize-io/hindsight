@@ -271,6 +271,9 @@ class TestMetricsCollector:
         Regression for OTel metric blow-up on deployments with many tenant schemas: one series
         set per tenant, multiplied through every histogram bucket.
         """
+        from hindsight_api.config import DEFAULT_METRICS_INCLUDE_TENANT
+
+        assert DEFAULT_METRICS_INCLUDE_TENANT is False
         mock_config = MagicMock()
         mock_config.metrics_include_bank_id = False
         mock_config.metrics_include_tenant = False
