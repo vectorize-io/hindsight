@@ -18742,20 +18742,7 @@ class MemoryEngine(MemoryEngineInterface):
         raise; losing either write must not also swallow that exception, and the
         operation still carries the same reason in its typed ``details``.
         """
-        try:
-            backend = await self._get_backend()
-            async with acquire_with_retry(backend) as conn:
-                await conn.execute(
-                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
-                    "WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to stamp refresh failure on mental model {mental_model_id}: {e}")
         config = get_config()
-        if not config.enable_mental_model_history:
-            return
         content = json.dumps(
             {
                 "kind": _MM_HISTORY_KIND_FAILURE,
@@ -18767,16 +18754,26 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
-                await self._insert_mental_model_history_row(
-                    conn,
+                # Stamp first, on its own statement: it is the one that stops the
+                # automatic triggers, so it must land even if the audit row below
+                # (optional, and capped) cannot be written.
+                await conn.execute(
+                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
+                    "WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
-                    content,
-                    config.mental_model_history_max_entries,
-                    is_failure=True,
                 )
+                if config.enable_mental_model_history:
+                    await self._insert_mental_model_history_row(
+                        conn,
+                        bank_id,
+                        mental_model_id,
+                        content,
+                        config.mental_model_history_max_entries,
+                        is_failure=True,
+                    )
         except Exception as e:
-            logger.warning(f"Failed to record refresh failure history for mental model {mental_model_id}: {e}")
+            logger.warning(f"Failed to record refresh failure for mental model {mental_model_id}: {e}")
 
     async def clear_mental_model(
         self,

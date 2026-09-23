@@ -262,12 +262,12 @@ export function KnowledgeBaseView() {
     [selected, allNodes]
   );
 
-  // Read from the same tree node, for the same reason: a page whose refresh keeps
-  // failing stops rebuilding itself, and the header must not keep promising it will.
   // Same read the mental-model list does: a page whose refresh is still being
-  // retried is not paused yet, so the tree must not say it is (#4532).
+  // retried is not paused yet, so neither the tree nor the header may say it is.
   const refreshAttempts = useRefreshAttempts(currentBank, AUTO_REFRESH_MS);
 
+  // Read from the same tree node as the staleness above: a page whose refresh keeps
+  // failing stops rebuilding itself, and the header must not keep promising it will.
   const selectedRefreshFailedAt = useMemo(
     () =>
       selected

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { client, MentalModel, MentalModelDryRunRefreshResult } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { useRefreshAttempts } from "@/lib/use-refresh-attempts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -97,6 +98,9 @@ export type HistoryEntry = {
 };
 
 const isFailureEntry = (e: HistoryEntry) => e.kind === "refresh_failed";
+
+/** How often the modal re-reads the bank's in-flight refreshes; a retry gap is 60s. */
+const MODAL_ATTEMPT_POLL_MS = 12000;
 
 /** Consecutive attempts that failed the same way, as one entry on the timeline. */
 export type FailureGroup = { entry: HistoryEntry; attempts: number; oldest: string };
@@ -802,6 +806,9 @@ export function MentalModelDetailModal({
 }: MentalModelDetailModalProps) {
   const t = useTranslations("mentalModelDetailModal");
   const { currentBank } = useBank();
+  // Same source the list uses: while the worker still has attempts left the model
+  // is not paused yet, and the two surfaces must not disagree about that (#4532).
+  const refreshAttempts = useRefreshAttempts(currentBank, MODAL_ATTEMPT_POLL_MS);
   const [mentalModel, setMentalModel] = useState<MentalModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -820,6 +827,11 @@ export function MentalModelDetailModal({
     [history]
   );
   const failureGroups = useMemo(() => groupFailures(history ?? []), [history]);
+  // Paused is the end state, not the first failed attempt: while an attempt is
+  // still queued or running the worker has not given up on this model yet.
+  const refreshPaused = Boolean(
+    mentalModel?.last_refresh_failed_at && !refreshAttempts.has(mentalModel.id)
+  );
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<MentalModelDryRunRefreshResult | null>(null);
@@ -972,7 +984,7 @@ export function MentalModelDetailModal({
               {/* The auto-refresh promise is only true while refreshes work: a model
                   whose last one failed is skipped by its trigger until one succeeds,
                   so it says so here instead of showing a green badge (#4532). */}
-              {mentalModel?.last_refresh_failed_at ? (
+              {refreshPaused ? (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium">
                   <AlertTriangle className="w-3 h-3" />
                   {t("refreshPaused")}
@@ -1152,10 +1164,7 @@ export function MentalModelDetailModal({
                       <Spinner size="md" variant="jump" />
                     </div>
                   ) : (
-                    <RefreshErrorTimeline
-                      groups={failureGroups}
-                      paused={Boolean(mentalModel.last_refresh_failed_at)}
-                    />
+                    <RefreshErrorTimeline groups={failureGroups} paused={refreshPaused} />
                   )}
                 </TabsContent>
 

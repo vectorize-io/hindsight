@@ -64,12 +64,12 @@ import {
 import { NextRefresh } from "./next-refresh";
 import { StalenessBadge } from "./staleness-badge";
 import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attempts";
+import { FreshnessLine } from "./freshness-line";
+import { TagChip } from "@/components/ui/facet-chip";
 
 // How often the in-flight refreshes are re-read. A retry gap is 60s by default,
 // so this is fast enough to see one open and close without polling per row.
 const MENTAL_MODEL_POLL_MS = 12000;
-import { FreshnessLine } from "./freshness-line";
-import { TagChip } from "@/components/ui/facet-chip";
 
 interface ReflectResponseBasedOnFact {
   id: string;
