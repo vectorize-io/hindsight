@@ -58,18 +58,30 @@ export async function ingestChats(
     async (s, i) => {
       const id = s.id || `s${i}`;
       const stamp = opts.stampFor?.(id);
-      // each turn gets an ABSOLUTE timestamp: its own if provided, else synthesized from the real clock,
-      // staggered per session + 1 min/turn to preserve ordering. List order is CHRONOLOGICAL (a later
-      // chat can amend an earlier one), so the LAST session is the newest — the previous `NOW - i*1h`
-      // inverted recency and made an amendment rank older than the decision it superseded.
+      // List order is CHRONOLOGICAL (a later chat can amend an earlier one), so the LAST session is
+      // the newest — the previous `NOW - i*1h` inverted recency and made an amendment rank older than
+      // the decision it superseded. This synthetic stagger is therefore only a FALLBACK, for a
+      // transcript that carries no clocks of its own.
       const sessBase = NOW - (sessions.length - 1 - i) * 3600000;
-      const baseIso = new Date(sessBase).toISOString();
+      // A backfilled session keeps the clock it actually happened on. When the turns carry source
+      // timestamps, the document must not be dated to the import instead — an old session would
+      // surface as recent even though every turn inside it is dated correctly. The same anchor backs
+      // the turns that have no timestamp of their own, so the transcript can never contradict the
+      // document it belongs to.
+      const sourceTs = (s.turns || [])
+        .map((t) => t.timestamp)
+        .filter((v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)));
+      // The source value is kept verbatim — offset and precision included, the same way `t.timestamp`
+      // below is passed through. Only the numeric form is needed, to place the turns that carry no
+      // timestamp of their own on the session's timeline instead of the import's.
+      const anchorMs = sourceTs.length ? Date.parse(sourceTs[0]) : sessBase;
+      const baseIso = sourceTs.length ? sourceTs[0] : new Date(sessBase).toISOString();
       const turns = withRefId(
         `chat:${id}`,
         (s.turns || []).map((t, j) => ({
           role: t.role,
           content: t.text,
-          timestamp: t.timestamp || new Date(sessBase + (j + 1) * 60000).toISOString(),
+          timestamp: t.timestamp || new Date(anchorMs + (j + 1) * 60000).toISOString(),
         })),
         baseIso
       );
