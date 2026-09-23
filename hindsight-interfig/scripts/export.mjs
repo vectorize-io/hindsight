@@ -62,9 +62,14 @@ const playStep = (page, step, fast) =>
         const bar = document.querySelector('[role=tab][aria-selected=true] div');
         return bar ? parseFloat(bar.style.transform.slice(7)) || 0 : 0;
       };
-      for (let waited = 0; waited < 120_000; waited += 100) {
-        if (width() > 0.995) return;
-        await new Promise((r) => setTimeout(r, 100));
+      // The step is over when the line is full — or when it has dropped back, which means the
+      // figure already looped: at 2x the full moment can fall between two polls.
+      let prev = 0;
+      for (let waited = 0; waited < 120_000; waited += 50) {
+        const now = width();
+        if (now > 0.995 || (prev > 0.5 && now < prev - 0.2)) return;
+        prev = now;
+        await new Promise((r) => setTimeout(r, 50));
       }
       throw new Error(`step ${i} never finished`);
     },
