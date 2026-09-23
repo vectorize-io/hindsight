@@ -380,20 +380,25 @@ async def test_the_sweep_skips_a_schema_it_cannot_classify_instead_of_dying(memo
 
 
 async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_classify(
-    memory, request_context, monkeypatch
+    memory, request_context, monkeypatch, pg0_db_url
 ):
     """The operator-facing half: exit code and message, not just the return value.
 
     A sweep that could not look at a schema must not exit 0 — a zero would read as
-    "converged" while whole tenants still carry whatever they carried. And the
-    skipped-schema report must not displace the failed-index report: the two are
-    independent, the index names appear nowhere else, and raising on the first
-    swallowed them.
+    "converged" while whole tenants still carry whatever they carried.
+
+    Two things keep this from passing for the wrong reason, both learned the hard way
+    when it went green locally and red in CI. The DSN is pinned to the fixture's
+    database rather than left to ``HindsightConfig.from_env()``, which in CI resolved
+    somewhere the bank does not exist; and ``catch_exceptions=False`` means an
+    unexpected exception fails loudly instead of arriving as the exit code 1 this test
+    is looking for. ``typer.Exit`` is a SystemExit, so the real exit code still lands.
     """
     from typer.testing import CliRunner
 
     bank_id = f"test_so_exit_{uuid.uuid4().hex[:8]}"
     real_store = memories_mod.get_memories()
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", pg0_db_url)
     try:
         await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
@@ -402,7 +407,9 @@ async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_clas
             # In a thread: the command calls asyncio.run, which cannot nest inside this
             # test's running loop. set_memories is process-global, so the thread sees
             # the unanswerable store.
-            result = await asyncio.to_thread(CliRunner().invoke, cli.app, ["repair-bank", "--bank", bank_id])
+            result = await asyncio.to_thread(
+                CliRunner().invoke, cli.app, ["repair-bank", "--bank", bank_id], catch_exceptions=False
+            )
         finally:
             memories_mod.set_memories(real_store)
 
@@ -415,7 +422,7 @@ async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_clas
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch):
+def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch, pg0_db_url):
     """Failed index names and skipped schemas are independent; neither may hide the other.
 
     The bug this pins: the skipped-schemas branch used to ``raise Exit(1)`` before the
@@ -441,8 +448,13 @@ def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch):
 
     monkeypatch.setattr(cli, "_run_repair_bank", _fake_sweep)
     monkeypatch.setattr(cli, "_vector_index_clause", lambda: "USING hnsw (embedding vector_cosine_ops)")
+    # Pinned even though the sweep is faked: repair_bank still refuses on an empty
+    # database_url before it gets that far, and that refusal also exits 1 — which
+    # would satisfy this test's exit-code assertion without running the block it is
+    # about. catch_exceptions=False for the same reason.
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", pg0_db_url)
 
-    result = CliRunner().invoke(cli.app, ["repair-bank", "--all"])
+    result = CliRunner().invoke(cli.app, ["repair-bank", "--all"], catch_exceptions=False)
 
     assert result.exit_code == 1, result.output
     assert "idx_mu_emb_worl_dead" in result.output, f"failed index names were swallowed:\n{result.output}"
