@@ -3535,3 +3535,39 @@ class TestRefreshSkipsEmptyScope:
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_legacy_placeholder_siblings_are_not_sources_either(self, memory: MemoryEngine, request_context):
+        """The same bank-init shape, on a deployment upgraded mid-life.
+
+        Pages are created empty now, but a bank that pre-dates that still holds
+        "Generating content..." in every page that has not refreshed. Those are
+        unrefreshed pages by every other measure, and counting them as readable
+        siblings — merely because the column is not empty — re-opens #3875 for
+        exactly the banks the emptiness check protects.
+        """
+        bank_id = f"test-mm-siblings-legacy-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        pages = [
+            await memory.create_mental_model(
+                bank_id=bank_id,
+                name=f"Page {i}",
+                source_query=f"topic {i}",
+                content="Generating content...",
+                trigger={"exclude_mental_models": False},
+                request_context=request_context,
+            )
+            for i in range(3)
+        ]
+        calls = self._stub_reflect(memory)
+
+        for page in pages:
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=page["id"], request_context=request_context
+            )
+
+        assert calls == [], (
+            "a sibling still holding the legacy placeholder was counted as something "
+            "to reflect over, so every page ran a full reflect over an empty graph"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)

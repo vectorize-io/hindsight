@@ -23,9 +23,9 @@ below. The replacement is kept because ``--api-url`` can point this harness at
 either. Refreshing a placeholder page fails on the server's own guard — ``delta
 operations did not reach the document, and the reflect candidate covers only
 memories newer than the last refresh, so writing it would drop the rest of the
-document`` — because the page was created
-with a watermark and a placeholder body, and every prefilled memory is newer
-than that. The guard is right in general and unhelpful here, where the document
+document`` — because the page was created with a watermark and a placeholder
+body, and every prefilled memory is newer than that. The guard is right in
+general and unhelpful here, where the document
 it is protecting is the placeholder. A page created *after* the documents are in
 has no such history, so its first synthesis covers everything.
 
