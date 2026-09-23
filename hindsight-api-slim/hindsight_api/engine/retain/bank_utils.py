@@ -70,19 +70,25 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
     Asked per bank, not per deployment: a router can keep some banks in SQL and some
     in a store (:meth:`MemoriesExtension.store_owned_for`), and getting this backwards
     is silent — an SQL-owned bank without its index still recalls, just without ANN.
-    A store that cannot answer is treated as SQL-backed, which is the safe direction:
-    the bank keeps the index it would have had before this existed. Logged at debug
-    (the level the equivalent fallback in ``MemoryEngine._db_semaphore_for`` uses, and
-    all a per-bank-create path can afford) so the reason is recoverable when someone
-    goes looking: a router that throws re-arms #4615 silently otherwise.
+
+    **Raises rather than guessing when the store cannot answer**, because the two
+    callers want opposite fallbacks and only they know which:
+
+    * :func:`create_bank_vector_indexes` catches and builds. One bank's three unused
+      indexes cost almost nothing, and a bank that turns out to be SQL-owned without
+      them silently loses ANN. It also runs inside the bank-create transaction, where
+      an escaping exception would fail an ordinary first retain.
+    * :func:`~..vector_index_health.plan_bank_vector_indexes` lets it propagate. Its
+      fallback is the destructive one: a transient router blip partway through
+      ``repair-bank --all`` would classify every bank it failed on as SQL-backed and
+      rebuild all three indexes for each — re-arming #4615 at full scale, from a
+      command that then exits 0 and reads as a successful repair. Propagating instead
+      makes the write path log a warning and do nothing, and makes ``repair-bank``
+      report the schema as failed.
     """
     from ..memories import get_memories
 
-    try:
-        return get_memories().store_owned_for(bank_id)
-    except Exception as e:  # noqa: BLE001 — no store configured, or one that cannot answer, is SQL-backed
-        logger.debug("Store cannot say whether bank %s is store-owned (%s); treating it as SQL-backed", bank_id, e)
-        return False
+    return get_memories().store_owned_for(bank_id)
 
 
 async def create_bank_vector_indexes(
@@ -137,7 +143,23 @@ async def create_bank_vector_indexes(
     # calls this directly (#2645), and that path must skip them too. Last of the
     # three gates: it is the only one that reaches outside this process, so the
     # two local ones answer first for a deployment where it cannot matter.
-    if bank_indexes_are_store_owned(bank_id):
+    #
+    # A store that cannot answer is treated as SQL-backed. That is the safe
+    # direction HERE and only here: this runs inside the bank-create transaction,
+    # so an escaping exception fails an ordinary first retain, and the cost of
+    # guessing wrong is three unused indexes on one bank. The reconcile makes the
+    # opposite choice — see the docstring above.
+    try:
+        store_owned = bank_indexes_are_store_owned(bank_id)
+    except Exception as e:  # noqa: BLE001 — a store that cannot answer must not fail bank creation
+        logger.warning(
+            "Store cannot say whether bank %s is store-owned (%s); building its vector indexes as SQL-backed. "
+            "If this bank's memories live in the store, those indexes are empty and can be dropped.",
+            bank_id,
+            e,
+        )
+        store_owned = False
+    if store_owned:
         logger.debug("Skipping per-bank vector indexes for store-owned bank %s", bank_id)
         return
 

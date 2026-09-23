@@ -115,7 +115,10 @@ class BankIndexPlan:
     to_build: list[str] = field(default_factory=list)
     # Index names present in the catalog that this bank should no longer carry.
     to_drop: list[str] = field(default_factory=list)
-    # Indexes already present and healthy — reported, never touched.
+    # Indexes already present and healthy — reported, never touched. NOT filled for a
+    # bank whose memories a custom store owns: that plan is returned before the catalog
+    # is read at all, so such a bank reports 0 whether or not it still carries indexes
+    # (pg_indexes is where an operator reads that — see the admin-CLI docs).
     already_present: int = 0
 
     @property
@@ -262,7 +265,6 @@ async def plan_bank_vector_indexes(
     and a bank-scoped reconcile has no way to name them afterwards.
     """
     plan = BankIndexPlan(bank_id=bank_id)
-    qschema = _quote_identifier(schema)
 
     # A bank whose memories a custom store owns gets an EMPTY plan: nothing built,
     # and — just as deliberately — nothing dropped.
@@ -285,9 +287,22 @@ async def plan_bank_vector_indexes(
     # fill `already_present` for repair-bank's output — a counter, against two
     # queries per retain forever. `pg_indexes` is where an operator reads what a
     # store-owned bank still carries; see the admin-CLI docs.
+    #
+    # Deliberately NOT wrapped: a store that cannot answer must not be guessed at here.
+    # Guessing "SQL-backed" would have a transient router blip partway through
+    # `repair-bank --all` rebuild all three indexes for every bank it failed on. Letting
+    # it raise makes the write path log and do nothing, and the sweep report the schema
+    # as failed. bank_indexes_are_store_owned's docstring has the full asymmetry.
+    #
+    # `bank_id` alone, with no schema: that is the store interface's shape, and inside
+    # the API the schema is implied by the request context. `repair-bank --all` is the
+    # first caller to ask one process about many schemas, so a deployment where the same
+    # bank id exists in two tenant schemas with different backends would get one answer
+    # for both. No such router exists today; worth knowing before one does.
     if bank_indexes_are_store_owned(bank_id):
         return plan
 
+    qschema = _quote_identifier(schema)
     internal_id = await conn.fetchval(
         f"SELECT internal_id FROM {qschema}.banks WHERE bank_id = $1",  # noqa: S608 — schema is a quoted identifier
         bank_id,

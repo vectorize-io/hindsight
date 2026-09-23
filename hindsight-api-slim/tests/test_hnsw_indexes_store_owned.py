@@ -89,18 +89,41 @@ def store_owned():
         memories_mod.set_memories(previous)
 
 
+class _Unanswerable:
+    """The real store, except that the capability probe raises.
+
+    Delegates everything else rather than stubbing it: bank creation calls several
+    other store methods, and a fake thin enough to isolate the probe would fail on
+    those instead — testing the fake, not the fallback.
+    """
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def store_owned_for(self, bank_id: str) -> bool:
+        raise RuntimeError("router is unreachable")
+
+
 async def _bank_indexes(pool, bank_id: str) -> list[str]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT indexname
             FROM pg_indexes
-            WHERE tablename = 'memory_units'
+            WHERE schemaname = $1
+              AND tablename = 'memory_units'
               AND indexname LIKE 'idx_mu_emb_%'
-              AND indexdef LIKE $1
+              -- strpos, not LIKE: every bank id here contains underscores, which LIKE
+              -- reads as single-char wildcards. This is the same exact-match shape
+              -- _index_health uses in production.
+              AND strpos(indexdef, $2) > 0
             ORDER BY indexname
             """,
-            f"%bank_id = '{bank_id}'%",
+            _TEST_SCHEMA,
+            f"bank_id = '{bank_id}'",
         )
     return [row["indexname"] for row in rows]
 
@@ -144,23 +167,6 @@ async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request
     build the indexes, because a bank that turns out to be SQL-owned without them
     silently loses ANN, while three unused indexes on one bank cost almost nothing.
     """
-
-    class _Unanswerable:
-        """The real store, except that the capability probe raises.
-
-        Delegates everything else rather than stubbing it: bank creation calls several
-        other store methods, and a fake thin enough to isolate the probe would fail on
-        those instead — testing the fake, not the fallback.
-        """
-
-        def __init__(self, real):
-            self._real = real
-
-        def __getattr__(self, name):
-            return getattr(self._real, name)
-
-        def store_owned_for(self, bank_id: str) -> bool:
-            raise RuntimeError("router is unreachable")
 
     real_store = memories_mod.get_memories()
     bank_id = f"test_so_raises_{uuid.uuid4().hex[:8]}"
@@ -299,5 +305,38 @@ async def test_importing_a_bank_into_a_store_owned_deployment_creates_no_indexes
 
         indexes = await _bank_indexes(memory._pool, bank_id)
         assert indexes == [], f"import into a store-owned deployment must build no indexes, got: {indexes}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_repair_refuses_to_guess_when_the_store_cannot_answer(memory, request_context):
+    """The reconcile's fallback is the opposite of bank creation's, and must stay so.
+
+    Bank creation guesses SQL-backed when the probe raises, because its downside is
+    three unused indexes on one bank. Here the downside is the whole bug: a transient
+    router blip partway through ``repair-bank --all`` would classify every bank it
+    failed on as SQL-backed and rebuild all three indexes for each — 82,795 on the
+    tenant from #4615 — and the command would still exit 0, reading as a successful
+    repair. The only trace would be a log line, and the admin CLI logs at INFO.
+
+    So planning must RAISE rather than return a plan. That is what makes the sweep
+    report the schema as failed and the write path log and do nothing, instead of
+    quietly undoing the fix.
+    """
+    bank_id = f"test_so_blip_{uuid.uuid4().hex[:8]}"
+    real_store = memories_mod.get_memories()
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        memories_mod.set_memories(_Unanswerable(real_store))
+        try:
+            with pytest.raises(RuntimeError, match="router is unreachable"):
+                async with memory._pool.acquire() as conn:
+                    await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id)
+        finally:
+            memories_mod.set_memories(real_store)
+
+        # And nothing was built on the way out.
+        assert len(await _bank_indexes(memory._pool, bank_id)) == 3
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
