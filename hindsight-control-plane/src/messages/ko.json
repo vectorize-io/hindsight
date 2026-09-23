@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "최소 새로 고침 간격",
     "toastContentCleared": "멘탈 모델 본문 내용이 초기화되었습니다",
     "actionOpenDetail": "상세 보기",
-    "nextRefreshPaused": "새로 고침 실패로 일시 중지됨"
+    "nextRefreshPaused": "새로 고침 실패로 일시 중지됨",
+    "nextRefreshRetrying": "재시도 중, 다음 시도 {time}",
+    "nextRefreshRunning": "새로 고치는 중"
   },
   "cronPreview": {
     "invalid": "잘못된 cron 표현식",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "모델 범위에 새 기억이 유입되었습니다 (수동 갱신을 실행해 동기화하세요)",
     "inSyncTitle": "최신 상태입니다 (모델 범위 내에 추가된 새 기억이 없습니다)",
     "paused": "일시 중지",
-    "pausedTitle": "마지막 새로 고침이 실패하여 이 모델은 더 이상 자동으로 새로 고쳐지지 않습니다. 새로 고치면 다시 시작됩니다"
+    "pausedTitle": "마지막 새로 고침이 실패하여 이 모델은 더 이상 자동으로 새로 고쳐지지 않습니다. 새로 고치면 다시 시작됩니다",
+    "retrying": "재시도 중",
+    "retryingTitle": "마지막 시도가 실패했고 다음 시도가 대기 중입니다. 이번에도 실패하면 자동 새로 고침이 중지됩니다"
   }
 }

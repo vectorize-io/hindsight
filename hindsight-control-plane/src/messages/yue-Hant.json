@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "最短更新間隔",
     "toastContentCleared": "心智模型內容已經清空",
     "actionOpenDetail": "睇詳細",
-    "nextRefreshPaused": "重新整理失敗後暫停"
+    "nextRefreshPaused": "重新整理失敗後暫停",
+    "nextRefreshRetrying": "重試緊，下次嘗試{time}",
+    "nextRefreshRunning": "更新緊"
   },
   "cronPreview": {
     "invalid": "無效嘅 cron 運算式",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "此模型作用域內有新記憶 — 請重新整理以同步",
     "inSyncTitle": "此模型作用域內冇新記憶",
     "paused": "已暫停",
-    "pausedTitle": "上次重新整理失敗，呢個模型唔會再自動更新——手動重新整理就會恢復"
+    "pausedTitle": "上次重新整理失敗，呢個模型唔會再自動更新——手動重新整理就會恢復",
+    "retrying": "重試緊",
+    "retryingTitle": "上次嘗試失敗咗，下一次已經排緊隊——今次再失敗先會停止自動更新"
   }
 }

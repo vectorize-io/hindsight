@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "Intervalle minimal d'actualisation",
     "toastContentCleared": "Contenu du modèle mental effacé",
     "actionOpenDetail": "Ouvrir",
-    "nextRefreshPaused": "en pause après un échec"
+    "nextRefreshPaused": "en pause après un échec",
+    "nextRefreshRetrying": "nouvel essai, prochaine tentative {time}",
+    "nextRefreshRunning": "actualisation en cours"
   },
   "cronPreview": {
     "invalid": "Expression cron non valide",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "Nouvelles mémoires dans le périmètre (actualisez manuellement pour synchroniser)",
     "inSyncTitle": "Aucune nouvelle mémoire dans le périmètre de ce modèle",
     "paused": "En pause",
-    "pausedTitle": "La dernière actualisation a échoué : ce modèle ne s'actualise plus tout seul — actualisez-le pour reprendre"
+    "pausedTitle": "La dernière actualisation a échoué : ce modèle ne s'actualise plus tout seul — actualisez-le pour reprendre",
+    "retrying": "Nouvel essai",
+    "retryingTitle": "La dernière tentative a échoué et une autre est en file — les actualisations automatiques ne s'arrêtent que si celle-ci échoue aussi"
   }
 }

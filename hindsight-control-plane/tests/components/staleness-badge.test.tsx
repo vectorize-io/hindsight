@@ -43,6 +43,14 @@ describe("StalenessBadge", () => {
     expect(screen.getByText("paused")).toBeTruthy();
   });
 
+  it("says retrying, not paused, while an attempt is still queued", () => {
+    // The failure is stamped on the first failed attempt, while the worker still
+    // has retries left — calling that paused is wrong for those few minutes.
+    render(<StalenessBadge isStale={true} refreshFailedAt="2026-09-23T08:02:02Z" retrying />);
+    expect(screen.queryByText("paused")).toBeNull();
+    expect(screen.getByText("retrying")).toBeTruthy();
+  });
+
   it("renders nothing when staleness is unknown and nothing failed", () => {
     const { container } = render(<StalenessBadge isStale={null} />);
     expect(container.firstChild).toBeNull();

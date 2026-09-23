@@ -30,6 +30,9 @@ type TriggerLike = {
  * the mental-model list) have no room for a label and use the dot; headers and
  * detail panes use the labelled badge.
  *
+ * `retrying` outranks both: while the worker still has attempts left, the model
+ * is not paused yet, whatever the failure stamp says.
+ *
  * `refreshFailedAt` outranks staleness, in red: once a refresh has failed, the
  * automatic triggers leave the model alone until one succeeds (#4532), so "stale,
  * refreshes itself" would be a promise nothing is going to keep. It is the same
@@ -40,6 +43,7 @@ export function StalenessBadge({
   isStale,
   trigger,
   refreshFailedAt,
+  retrying = false,
   variant = "badge",
   className,
 }: {
@@ -47,28 +51,32 @@ export function StalenessBadge({
   trigger?: TriggerLike | null;
   /** ISO time of the last failed refresh, or null when the last one succeeded. */
   refreshFailedAt?: string | null;
+  /** True while a refresh attempt for this model is queued or running. */
+  retrying?: boolean;
   variant?: "badge" | "dot" | "inline";
   className?: string;
 }) {
   const t = useTranslations("staleness");
 
-  const paused = Boolean(refreshFailedAt);
+  const paused = Boolean(refreshFailedAt) && !retrying;
 
   // Null/undefined means the surface did not ask for staleness — render nothing
   // rather than guessing, so "unknown" never reads as "in sync". A paused model
   // still shows: that one is about the refresh, not about the data.
-  if (!paused && (isStale === null || isStale === undefined)) return null;
+  if (!paused && !retrying && (isStale === null || isStale === undefined)) return null;
 
   const selfHealing = Boolean(
     trigger?.refresh_cron?.trim() || trigger?.refresh_after_consolidation
   );
-  const title = paused
-    ? t("pausedTitle")
-    : !isStale
-      ? t("inSyncTitle")
-      : selfHealing
-        ? t("staleAutoTitle")
-        : t("staleManualTitle");
+  const title = retrying
+    ? t("retryingTitle")
+    : paused
+      ? t("pausedTitle")
+      : !isStale
+        ? t("inSyncTitle")
+        : selfHealing
+          ? t("staleAutoTitle")
+          : t("staleManualTitle");
 
   if (variant === "inline") {
     // Dot + label with no chip around it, for the freshness line: there the status
@@ -77,11 +85,13 @@ export function StalenessBadge({
       <span
         className={cn(
           "inline-flex items-center gap-1.5 font-medium",
-          paused
-            ? "text-red-600 dark:text-red-400"
-            : isStale
-              ? "text-amber-600 dark:text-amber-400"
-              : "text-emerald-600 dark:text-emerald-400",
+          retrying
+            ? "text-amber-600 dark:text-amber-400"
+            : paused
+              ? "text-red-600 dark:text-red-400"
+              : isStale
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-emerald-600 dark:text-emerald-400",
           className
         )}
         title={title}
@@ -89,10 +99,16 @@ export function StalenessBadge({
         <span
           className={cn(
             "w-1.5 h-1.5 rounded-full",
-            paused ? "bg-red-500" : isStale ? "bg-amber-500" : "bg-emerald-500"
+            retrying
+              ? "bg-amber-500"
+              : paused
+                ? "bg-red-500"
+                : isStale
+                  ? "bg-amber-500"
+                  : "bg-emerald-500"
           )}
         />
-        {paused ? t("paused") : isStale ? t("stale") : t("inSync")}
+        {retrying ? t("retrying") : paused ? t("paused") : isStale ? t("stale") : t("inSync")}
       </span>
     );
   }
@@ -102,7 +118,13 @@ export function StalenessBadge({
       <span
         className={cn(
           "w-1.5 h-1.5 rounded-full flex-shrink-0",
-          paused ? "bg-red-500" : isStale ? "bg-amber-500" : "bg-emerald-500",
+          retrying
+            ? "bg-amber-500"
+            : paused
+              ? "bg-red-500"
+              : isStale
+                ? "bg-amber-500"
+                : "bg-emerald-500",
           className
         )}
         title={title}
@@ -114,16 +136,18 @@ export function StalenessBadge({
     <span
       className={cn(
         "px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap",
-        paused
-          ? "bg-red-500/15 text-red-700 dark:text-red-400"
-          : isStale
-            ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-            : "bg-green-500/15 text-green-700 dark:text-green-400",
+        retrying || (!paused && isStale)
+          ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+          : paused
+            ? "bg-red-500/15 text-red-700 dark:text-red-400"
+            : isStale
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+              : "bg-green-500/15 text-green-700 dark:text-green-400",
         className
       )}
       title={title}
     >
-      {paused ? t("paused") : isStale ? t("stale") : t("inSync")}
+      {retrying ? t("retrying") : paused ? t("paused") : isStale ? t("stale") : t("inSync")}
     </span>
   );
 }

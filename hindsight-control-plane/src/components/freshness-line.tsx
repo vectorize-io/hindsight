@@ -48,6 +48,7 @@ export function FreshnessLine({
   lastRefreshedAt,
   lastMemorySeenAt,
   refreshFailedAt,
+  attempt,
   className,
 }: {
   isStale: boolean | null | undefined;
@@ -56,6 +57,8 @@ export function FreshnessLine({
   lastMemorySeenAt?: string | null;
   /** ISO time of the last failed refresh, or null when the last one succeeded. */
   refreshFailedAt?: string | null;
+  /** A refresh that is queued or running for this model, if any. */
+  attempt?: { nextAttemptAt: string | null } | null;
   className?: string;
 }) {
   const t = useTranslations("mentalModels");
@@ -73,11 +76,12 @@ export function FreshnessLine({
         isStale={isStale}
         trigger={trigger}
         refreshFailedAt={refreshFailedAt}
+        retrying={Boolean(attempt)}
         variant="inline"
       />
       {lastRefreshedAt && (
         <>
-          {(refreshFailedAt || (isStale !== null && isStale !== undefined)) && <Sep />}
+          {(refreshFailedAt || attempt || (isStale !== null && isStale !== undefined)) && <Sep />}
           <span title={formatAbsoluteDateTime(lastRefreshedAt)}>
             {t("freshnessRefreshed", { time: formatRelativeTime(lastRefreshedAt) })}
           </span>
@@ -93,7 +97,8 @@ export function FreshnessLine({
       )}
       <Sep />
       <span>
-        {t("freshnessNext")} <NextRefresh trigger={trigger} refreshFailedAt={refreshFailedAt} />
+        {t("freshnessNext")}{" "}
+        <NextRefresh trigger={trigger} refreshFailedAt={refreshFailedAt} attempt={attempt} />
       </span>
       {factTypes && (
         <>

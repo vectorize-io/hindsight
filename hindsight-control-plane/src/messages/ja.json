@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "最小更新間隔",
     "toastContentCleared": "メンタルモデルのコンテンツをクリアしました",
     "actionOpenDetail": "詳細を開く",
-    "nextRefreshPaused": "更新失敗により一時停止中"
+    "nextRefreshPaused": "更新失敗により一時停止中",
+    "nextRefreshRetrying": "再試行中、次は{time}",
+    "nextRefreshRunning": "更新中"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "スコープ内に新しい記憶があります（手動更新を実行してください）",
     "inSyncTitle": "最新の状態です（スコープ内に新しい記憶はありません）",
     "paused": "一時停止",
-    "pausedTitle": "前回の更新が失敗したため、このモデルは自動更新されません。更新すると再開します"
+    "pausedTitle": "前回の更新が失敗したため、このモデルは自動更新されません。更新すると再開します",
+    "retrying": "再試行中",
+    "retryingTitle": "前回の試行は失敗し、次の試行が待機中です。これも失敗した場合にのみ自動更新が停止します"
   }
 }

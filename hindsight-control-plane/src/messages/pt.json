@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "Intervalo mínimo de atualização",
     "toastContentCleared": "Conteúdo do modelo mental limpo",
     "actionOpenDetail": "Abrir",
-    "nextRefreshPaused": "em pausa após uma atualização falhada"
+    "nextRefreshPaused": "em pausa após uma atualização falhada",
+    "nextRefreshRetrying": "a repetir, próxima tentativa {time}",
+    "nextRefreshRunning": "a atualizar agora"
   },
   "cronPreview": {
     "invalid": "Expressão cron inválida",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "Novas memórias no escopo (atualize manualmente para sincronizar)",
     "inSyncTitle": "Não há novas memórias no escopo deste modelo",
     "paused": "Em pausa",
-    "pausedTitle": "A última atualização falhou, por isso este modelo já não se atualiza sozinho — atualize-o para retomar"
+    "pausedTitle": "A última atualização falhou, por isso este modelo já não se atualiza sozinho — atualize-o para retomar",
+    "retrying": "A repetir",
+    "retryingTitle": "A última tentativa falhou e há outra em fila — as atualizações automáticas só param se esta também falhar"
   }
 }

@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "最小刷新间隔",
     "toastContentCleared": "心智模型内容已清空",
     "actionOpenDetail": "查看详情",
-    "nextRefreshPaused": "刷新失败后已暂停"
+    "nextRefreshPaused": "刷新失败后已暂停",
+    "nextRefreshRetrying": "重试中，下次尝试{time}",
+    "nextRefreshRunning": "正在刷新"
   },
   "cronPreview": {
     "invalid": "无效的 cron 表达式",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "此模型作用域内有新记忆 — 请刷新以同步",
     "inSyncTitle": "此模型作用域内没有新记忆",
     "paused": "已暂停",
-    "pausedTitle": "上次刷新失败，该模型不再自动刷新——手动刷新可恢复"
+    "pausedTitle": "上次刷新失败，该模型不再自动刷新——手动刷新可恢复",
+    "retrying": "重试中",
+    "retryingTitle": "上次尝试失败，已排队下一次尝试——只有这次也失败才会停止自动刷新"
   }
 }

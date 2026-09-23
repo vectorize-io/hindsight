@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "Minimales Aktualisierungsintervall",
     "toastContentCleared": "Inhalt des mentalen Modells gelöscht",
     "actionOpenDetail": "Öffnen",
-    "nextRefreshPaused": "pausiert nach fehlgeschlagener Aktualisierung"
+    "nextRefreshPaused": "pausiert nach fehlgeschlagener Aktualisierung",
+    "nextRefreshRetrying": "Wiederholung, nächster Versuch {time}",
+    "nextRefreshRunning": "wird gerade aktualisiert"
   },
   "cronPreview": {
     "invalid": "Ungültiger Cron-Ausdruck",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "Neue Erinnerungen vorhanden (manuell aktualisieren zum Abgleichen)",
     "inSyncTitle": "Keine neuen Erinnerungen im Bereich dieses Modells vorhanden",
     "paused": "Pausiert",
-    "pausedTitle": "Die letzte Aktualisierung ist fehlgeschlagen, daher aktualisiert sich dieses Modell nicht mehr selbst – aktualisieren Sie es, um fortzufahren"
+    "pausedTitle": "Die letzte Aktualisierung ist fehlgeschlagen, daher aktualisiert sich dieses Modell nicht mehr selbst – aktualisieren Sie es, um fortzufahren",
+    "retrying": "Wiederholung",
+    "retryingTitle": "Der letzte Versuch ist fehlgeschlagen, ein weiterer steht an – automatische Aktualisierungen stoppen nur, wenn auch dieser fehlschlägt"
   }
 }

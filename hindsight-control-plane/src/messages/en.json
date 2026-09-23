@@ -1027,7 +1027,9 @@
     "triggerMinIntervalLabel": "Minimum refresh interval",
     "toastContentCleared": "Mental model content cleared",
     "actionOpenDetail": "Open",
-    "nextRefreshPaused": "paused after a failed refresh"
+    "nextRefreshPaused": "paused after a failed refresh",
+    "nextRefreshRetrying": "retrying, next attempt {time}",
+    "nextRefreshRunning": "refreshing now"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",
@@ -2120,6 +2122,8 @@
     "staleManualTitle": "New memories in this model's scope since it last read them — refresh it to catch up",
     "inSyncTitle": "No new memories in this model's scope since it last read them",
     "paused": "Paused",
-    "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume"
+    "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume",
+    "retrying": "Retrying",
+    "retryingTitle": "The last attempt failed and another is queued — automatic refreshes stop only if this one fails too"
   }
 }

@@ -735,6 +735,8 @@ export class ControlPlaneClient {
         items_count: number;
         document_id: string | null;
         filename?: string | null;
+        /** The model a refresh operation belongs to; null on every other type. */
+        mental_model_id?: string | null;
         created_at: string;
         updated_at?: string | null;
         status: string;

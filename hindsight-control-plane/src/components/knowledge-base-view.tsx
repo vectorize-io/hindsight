@@ -52,6 +52,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
 import { StalenessBadge } from "./staleness-badge";
+import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attempts";
 import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { KnowledgeSearchDialog } from "./knowledge-search-dialog";
@@ -67,6 +68,9 @@ const ROOT_ID = "";
 // How often the tree view silently re-polls so page stats (last refresh / sync
 // status) stay live while pages refresh in the background.
 const AUTO_REFRESH_MS = 12000;
+
+/** Shared empty map, so a TreeRow without in-flight data does not remount on every render. */
+const EMPTY_ATTEMPTS: Map<string, RefreshAttempt> = new Map();
 
 function flatten(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNode[] {
   for (const n of nodes) {
@@ -260,6 +264,10 @@ export function KnowledgeBaseView() {
 
   // Read from the same tree node, for the same reason: a page whose refresh keeps
   // failing stops rebuilding itself, and the header must not keep promising it will.
+  // Same read the mental-model list does: a page whose refresh is still being
+  // retried is not paused yet, so the tree must not say it is (#4532).
+  const refreshAttempts = useRefreshAttempts(currentBank, AUTO_REFRESH_MS);
+
   const selectedRefreshFailedAt = useMemo(
     () =>
       selected
@@ -560,6 +568,7 @@ export function KnowledgeBaseView() {
                   onOpenPage={openPage}
                   onAddChild={openCreate}
                   onDelete={setDeleteTarget}
+                  refreshAttempts={refreshAttempts}
                   t={t}
                 />
                 {roots.length === 0 && (
@@ -660,6 +669,7 @@ export function KnowledgeBaseView() {
                   trigger={selectedTrigger}
                   lastRefreshedAt={selected.timestamp}
                   refreshFailedAt={selectedRefreshFailedAt}
+                  attempt={selectedMmId ? refreshAttempts.get(selectedMmId) : undefined}
                 />
               ) : (
                 <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
@@ -892,6 +902,7 @@ export function TreeRow({
   onOpenPage,
   onAddChild,
   onDelete,
+  refreshAttempts = EMPTY_ATTEMPTS,
   t,
 }: {
   node: KnowledgeNode;
@@ -904,6 +915,9 @@ export function TreeRow({
   onOpenPage: (id: string) => void;
   onAddChild?: (kind: "folder" | "page", parentId: string) => void;
   onDelete?: (node: KnowledgeNode) => void;
+  /** In-flight refreshes by mental-model id, so a page being retried is not called paused.
+   *  Optional: a read-only tree (the home view) shows the tree without polling for them. */
+  refreshAttempts?: Map<string, RefreshAttempt>;
   t: ReturnType<typeof useTranslations>;
 }) {
   const isFolder = node.kind === "folder";
@@ -961,6 +975,9 @@ export function TreeRow({
                 isStale={node.is_stale}
                 trigger={node.trigger}
                 refreshFailedAt={node.last_refresh_failed_at}
+                retrying={Boolean(
+                  node.mental_model_id && refreshAttempts.has(node.mental_model_id)
+                )}
                 variant="dot"
               />
             )}
@@ -1043,6 +1060,7 @@ export function TreeRow({
               onOpenPage={onOpenPage}
               onAddChild={onAddChild}
               onDelete={onDelete}
+              refreshAttempts={refreshAttempts}
               t={t}
             />
           ))}
