@@ -5954,7 +5954,7 @@ components:
           type: array
         consolidation_strategies:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/ConsolidationStrategySpec'
           nullable: true
           type: array
         reflect_source_facts_max_tokens:
@@ -6515,6 +6515,34 @@ components:
       required:
       - operation_id
       title: ConsolidationResponse
+    ConsolidationScopePattern:
+      description: |-
+        One rule of a consolidation strategy: tags, and how they must match.
+
+        ``tags`` may be empty — that is a rule still being filled in, which the editor
+        saves as typed and consolidation ignores. The type pins the *shape*, not
+        completeness: a string where the tag list belongs is rejected at the door
+        instead of being stored and silently ignored for the life of the bank.
+
+        Unknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`
+        on the write path rather than by ``extra="forbid"`` here: that would put
+        ``additionalProperties: false`` in the schema, which openapi-generator cannot
+        process ("Codegen Property not yet supported in getPydanticType").
+      example:
+        tags_match: tags_match
+        tags:
+        - tags
+        - tags
+      properties:
+        tags:
+          description: "fnmatch tag patterns, e.g. company:*"
+          items:
+            type: string
+          type: array
+        tags_match:
+          nullable: true
+          type: string
+      title: ConsolidationScopePattern
     ConsolidationStrategiesPreview:
       description: Which existing observation scopes each consolidation strategy would
         apply to.
@@ -6625,14 +6653,38 @@ components:
         scopes.
       example:
         strategies:
-        - key: ""
-        - key: ""
-        sample_limit: 4
+        - observations_mission: observations_mission
+          scopes:
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          max_observations_per_scope: 0
+          consolidation_source_facts_max_tokens: 6
+          consolidation_source_facts_max_tokens_per_observation: 1
+        - observations_mission: observations_mission
+          scopes:
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          max_observations_per_scope: 0
+          consolidation_source_facts_max_tokens: 6
+          consolidation_source_facts_max_tokens_per_observation: 1
+        sample_limit: 29
       properties:
         strategies:
           description: Draft consolidation_strategies value
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/ConsolidationStrategySpec'
           type: array
         sample_limit:
           default: 5
@@ -6644,6 +6696,45 @@ components:
       required:
       - strategies
       title: ConsolidationStrategiesPreviewRequest
+    ConsolidationStrategySpec:
+      description: |-
+        One `consolidation_strategies` entry: the rules it claims scopes with, and
+        the observation settings those scopes use. Every setting is optional; unset
+        ones come from the bank-wide values.
+      example:
+        observations_mission: observations_mission
+        scopes:
+        - tags_match: tags_match
+          tags:
+          - tags
+          - tags
+        - tags_match: tags_match
+          tags:
+          - tags
+          - tags
+        max_observations_per_scope: 0
+        consolidation_source_facts_max_tokens: 6
+        consolidation_source_facts_max_tokens_per_observation: 1
+      properties:
+        scopes:
+          description: "Alternatives: the strategy claims a scope when any rule matches\
+            \ it"
+          items:
+            $ref: '#/components/schemas/ConsolidationScopePattern'
+          type: array
+        observations_mission:
+          nullable: true
+          type: string
+        max_observations_per_scope:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens_per_observation:
+          nullable: true
+          type: integer
+      title: ConsolidationStrategySpec
     CreateBankRequest:
       description: Request model for creating/updating a bank.
       example:

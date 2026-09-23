@@ -53,8 +53,10 @@ hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
 hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
+hindsight_client_api/models/consolidation_scope_pattern.py
 hindsight_client_api/models/consolidation_strategies_preview.py
 hindsight_client_api/models/consolidation_strategies_preview_request.py
+hindsight_client_api/models/consolidation_strategy_spec.py
 hindsight_client_api/models/content.py
 hindsight_client_api/models/content_any_of_inner.py
 hindsight_client_api/models/create_bank_request.py

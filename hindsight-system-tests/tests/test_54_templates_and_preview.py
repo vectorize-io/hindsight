@@ -205,3 +205,59 @@ async def test_a_custom_instruction_is_ignored_outside_custom_mode(client, llm, 
     preview = await client.banks.preview_prompt(bank_id, {"operation": "retain"})
     rendered = "\n".join(block.text or "" for message in preview.messages for block in message.blocks)
     assert CUSTOM_INSTRUCTION not in rendered
+
+
+def _without_nulls(value):
+    """Drop nulls at every level — the template manifest keeps one for each unset
+    optional field, including inside a strategy's rules."""
+    if isinstance(value, dict):
+        return {k: _without_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_without_nulls(v) for v in value]
+    return value
+
+
+STRATEGIES = [
+    {
+        "scopes": [{"tags": ["company:*"], "tags_match": "exact"}, {"tags": ["team:*"]}],
+        "observations_mission": "Record only generalized trends.",
+        "max_observations_per_scope": 20,
+    }
+]
+
+
+async def test_a_template_carries_consolidation_strategies(client, configured_bank, fresh_bank):
+    """Per-scope consolidation settings are part of "how is this bank set up", so
+    they must survive the round trip. A template that dropped them would produce a
+    bank that looks configured and consolidates every scope the same way — the
+    quiet kind of wrong this suite exists to catch.
+
+    Asserted on the imported bank's own config, not on the manifest, because that
+    is what consolidation reads.
+    """
+    await client.banks.update_bank_config(configured_bank, {"updates": {"consolidation_strategies": STRATEGIES}})
+
+    template = await _templates(client).export_bank_template(configured_bank)
+    await _templates(client).import_bank_template(fresh_bank, template)
+
+    stored = (await client.banks.get_bank_config(fresh_bank)).config["consolidation_strategies"]
+    # Unset optional settings come back as explicit nulls (this manifest keeps
+    # nulls); what matters is that nothing was dropped or reshaped.
+    assert _without_nulls(stored) == STRATEGIES
+
+
+async def test_a_misspelled_strategy_is_refused_instead_of_stored(client, configured_bank):
+    """`consolidation_strategies` is a free-form list in the config store, so a
+    typo used to be accepted and then ignored for the life of the bank: the
+    strategy simply never applied, with nothing to show why."""
+    from hindsight_client_api.exceptions import BadRequestException
+
+    with pytest.raises(BadRequestException) as caught:
+        await client.banks.update_bank_config(
+            configured_bank,
+            {"updates": {"consolidation_strategies": [{"scope": [{"tags": ["company:*"]}]}]}},
+        )
+
+    assert "scope" in str(caught.value)
+    config = (await client.banks.get_bank_config(configured_bank)).config
+    assert config.get("consolidation_strategies") is None

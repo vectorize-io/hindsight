@@ -635,11 +635,9 @@ export type BankTemplateConfig = {
   /**
    * Consolidation Strategies
    *
-   * Per-scope consolidation settings: [{"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only generalized trends.", "max_observations_per_scope": 20}]. Each strategy lists the scopes it claims — a scope is a list of fnmatch tag-globs, and a consolidation pass is claimed when any of the strategy's patterns matches its tags. Each pattern is {"tags": [...], "tags_match": ...}; "tags_match" is "all" (default) — the scope has every tag in the pattern, other tags allowed — or "exact" — the scope has exactly the pattern's tags and no others. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset — and every scope no strategy claims — uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief.
+   * Per-scope consolidation settings: [{"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only generalized trends.", "max_observations_per_scope": 20}]. Each strategy lists the rules it claims scopes with — a rule's tags are fnmatch globs that must all be on the scope, and its "tags_match" decides whether the scope may carry others ("all", the default) or not ("exact"). The rules are alternatives: any one matching claims the scope. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset — and every scope no strategy claims — uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief.
    */
-  consolidation_strategies?: Array<{
-    [key: string]: unknown;
-  }> | null;
+  consolidation_strategies?: Array<ConsolidationStrategySpec> | null;
   /**
    * Reflect Source Facts Max Tokens
    *
@@ -1285,6 +1283,36 @@ export type ConsolidationResponse = {
 };
 
 /**
+ * ConsolidationScopePattern
+ *
+ * One rule of a consolidation strategy: tags, and how they must match.
+ *
+ * ``tags`` may be empty — that is a rule still being filled in, which the editor
+ * saves as typed and consolidation ignores. The type pins the *shape*, not
+ * completeness: a string where the tag list belongs is rejected at the door
+ * instead of being stored and silently ignored for the life of the bank.
+ *
+ * Unknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`
+ * on the write path rather than by ``extra="forbid"`` here: that would put
+ * ``additionalProperties: false`` in the schema, which openapi-generator cannot
+ * process ("Codegen Property not yet supported in getPydanticType").
+ */
+export type ConsolidationScopePattern = {
+  /**
+   * Tags
+   *
+   * fnmatch tag patterns, e.g. company:*
+   */
+  tags?: Array<string>;
+  /**
+   * Tags Match
+   *
+   * "all" (the default when omitted): the scope has every tag in the rule, other tags allowed. "exact": exactly these tags and no others.
+   */
+  tags_match?: string | null;
+};
+
+/**
  * ConsolidationStrategiesPreview
  *
  * Which existing observation scopes each consolidation strategy would apply to.
@@ -1320,15 +1348,45 @@ export type ConsolidationStrategiesPreviewRequest = {
    *
    * Draft consolidation_strategies value
    */
-  strategies: Array<{
-    [key: string]: unknown;
-  }>;
+  strategies: Array<ConsolidationStrategySpec>;
   /**
    * Sample Limit
    *
    * Example scopes returned per rule
    */
   sample_limit?: number;
+};
+
+/**
+ * ConsolidationStrategySpec
+ *
+ * One `consolidation_strategies` entry: the rules it claims scopes with, and
+ * the observation settings those scopes use. Every setting is optional; unset
+ * ones come from the bank-wide values.
+ */
+export type ConsolidationStrategySpec = {
+  /**
+   * Scopes
+   *
+   * Alternatives: the strategy claims a scope when any rule matches it
+   */
+  scopes?: Array<ConsolidationScopePattern>;
+  /**
+   * Observations Mission
+   */
+  observations_mission?: string | null;
+  /**
+   * Max Observations Per Scope
+   */
+  max_observations_per_scope?: number | null;
+  /**
+   * Consolidation Source Facts Max Tokens
+   */
+  consolidation_source_facts_max_tokens?: number | null;
+  /**
+   * Consolidation Source Facts Max Tokens Per Observation
+   */
+  consolidation_source_facts_max_tokens_per_observation?: number | null;
 };
 
 /**

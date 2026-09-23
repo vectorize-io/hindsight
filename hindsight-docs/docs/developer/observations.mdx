@@ -246,6 +246,8 @@ To see which strategy a scope uses, open the strategy in the control plane: each
 
 A strategy that sets nothing is ignored: it matches no scope and doesn't block later ones.
 
+A malformed strategy is rejected when you save it — an unknown key (`"scope"` for `"scopes"`), a tag list that is not a list of strings, an unknown `tags_match` — with a 400 naming the offending entry. An *incomplete* one is accepted, because the control plane saves strategies as you type them: a rule with no tags yet, or a strategy with no setting yet, is stored and simply ignored until you finish it. Strategies survive [bank template](/developer/api/memory-banks) export and import unchanged.
+
 Each scope is consolidated in its own LLM call, so one scope's mission never reaches another scope's call.
 
 Set `consolidation_strategies` in the control plane (bank **Configuration → Observations**), via the [bank config API](/developer/api/memory-banks#observations-configuration), or with the [`HINDSIGHT_API_CONSOLIDATION_STRATEGIES`](/developer/configuration#observations) environment variable. It replaces the older `observation_scope_limits`, which still works but is checked only after the strategies.

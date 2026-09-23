@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
+from hindsight_client_api.models.consolidation_strategy_spec import ConsolidationStrategySpec
 from hindsight_client_api.models.label_group_output import LabelGroupOutput
 from typing import Optional, Set
 from typing_extensions import Self
@@ -55,7 +56,7 @@ class BankTemplateConfig(BaseModel):
     consolidation_source_facts_max_tokens_per_observation: Optional[StrictInt] = None
     max_observations_per_scope: Optional[StrictInt] = None
     observation_scope_limits: Optional[List[Dict[str, Any]]] = None
-    consolidation_strategies: Optional[List[Dict[str, Any]]] = None
+    consolidation_strategies: Optional[List[ConsolidationStrategySpec]] = None
     reflect_source_facts_max_tokens: Optional[StrictInt] = None
     knowledge_page_default_trigger: Optional[Dict[str, Any]] = None
     reflect_default_options: Optional[Dict[str, Any]] = None
@@ -127,6 +128,13 @@ class BankTemplateConfig(BaseModel):
                 if _item_entity_labels:
                     _items.append(_item_entity_labels.to_dict())
             _dict['entity_labels'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in consolidation_strategies (list)
+        _items = []
+        if self.consolidation_strategies:
+            for _item_consolidation_strategies in self.consolidation_strategies:
+                if _item_consolidation_strategies:
+                    _items.append(_item_consolidation_strategies.to_dict())
+            _dict['consolidation_strategies'] = _items
         # set to None if reflect_mission (nullable) is None
         # and model_fields_set contains the field
         if self.reflect_mission is None and "reflect_mission" in self.model_fields_set:
@@ -421,7 +429,7 @@ class BankTemplateConfig(BaseModel):
             "consolidation_source_facts_max_tokens_per_observation": obj.get("consolidation_source_facts_max_tokens_per_observation"),
             "max_observations_per_scope": obj.get("max_observations_per_scope"),
             "observation_scope_limits": obj.get("observation_scope_limits"),
-            "consolidation_strategies": obj.get("consolidation_strategies"),
+            "consolidation_strategies": [ConsolidationStrategySpec.from_dict(_item) for _item in obj["consolidation_strategies"]] if obj.get("consolidation_strategies") is not None else None,
             "reflect_source_facts_max_tokens": obj.get("reflect_source_facts_max_tokens"),
             "knowledge_page_default_trigger": obj.get("knowledge_page_default_trigger"),
             "reflect_default_options": obj.get("reflect_default_options"),

@@ -22,7 +22,7 @@ var _ MappedNullable = &ConsolidationStrategiesPreviewRequest{}
 // ConsolidationStrategiesPreviewRequest A draft consolidation_strategies value to preview against existing scopes.
 type ConsolidationStrategiesPreviewRequest struct {
 	// Draft consolidation_strategies value
-	Strategies []map[string]interface{} `json:"strategies"`
+	Strategies []ConsolidationStrategySpec `json:"strategies"`
 	// Example scopes returned per rule
 	SampleLimit *int32 `json:"sample_limit,omitempty"`
 }
@@ -33,7 +33,7 @@ type _ConsolidationStrategiesPreviewRequest ConsolidationStrategiesPreviewReques
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewConsolidationStrategiesPreviewRequest(strategies []map[string]interface{}) *ConsolidationStrategiesPreviewRequest {
+func NewConsolidationStrategiesPreviewRequest(strategies []ConsolidationStrategySpec) *ConsolidationStrategiesPreviewRequest {
 	this := ConsolidationStrategiesPreviewRequest{}
 	this.Strategies = strategies
 	var sampleLimit int32 = 5
@@ -52,9 +52,9 @@ func NewConsolidationStrategiesPreviewRequestWithDefaults() *ConsolidationStrate
 }
 
 // GetStrategies returns the Strategies field value
-func (o *ConsolidationStrategiesPreviewRequest) GetStrategies() []map[string]interface{} {
+func (o *ConsolidationStrategiesPreviewRequest) GetStrategies() []ConsolidationStrategySpec {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []ConsolidationStrategySpec
 		return ret
 	}
 
@@ -63,7 +63,7 @@ func (o *ConsolidationStrategiesPreviewRequest) GetStrategies() []map[string]int
 
 // GetStrategiesOk returns a tuple with the Strategies field value
 // and a boolean to check if the value has been set.
-func (o *ConsolidationStrategiesPreviewRequest) GetStrategiesOk() ([]map[string]interface{}, bool) {
+func (o *ConsolidationStrategiesPreviewRequest) GetStrategiesOk() ([]ConsolidationStrategySpec, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -71,7 +71,7 @@ func (o *ConsolidationStrategiesPreviewRequest) GetStrategiesOk() ([]map[string]
 }
 
 // SetStrategies sets field value
-func (o *ConsolidationStrategiesPreviewRequest) SetStrategies(v []map[string]interface{}) {
+func (o *ConsolidationStrategiesPreviewRequest) SetStrategies(v []ConsolidationStrategySpec) {
 	o.Strategies = v
 }
 

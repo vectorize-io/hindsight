@@ -17,20 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from typing_extensions import Annotated
-from hindsight_client_api.models.consolidation_strategy_spec import ConsolidationStrategySpec
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ConsolidationStrategiesPreviewRequest(BaseModel):
+class ConsolidationScopePattern(BaseModel):
     """
-    A draft consolidation_strategies value to preview against existing scopes.
+    One rule of a consolidation strategy: tags, and how they must match.  ``tags`` may be empty — that is a rule still being filled in, which the editor saves as typed and consolidation ignores. The type pins the *shape*, not completeness: a string where the tag list belongs is rejected at the door instead of being stored and silently ignored for the life of the bank.  Unknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec` on the write path rather than by ``extra=\"forbid\"`` here: that would put ``additionalProperties: false`` in the schema, which openapi-generator cannot process (\"Codegen Property not yet supported in getPydanticType\").
     """ # noqa: E501
-    strategies: List[ConsolidationStrategySpec] = Field(description="Draft consolidation_strategies value")
-    sample_limit: Optional[Annotated[int, Field(le=50, strict=True, ge=0)]] = Field(default=5, description="Example scopes returned per rule")
-    __properties: ClassVar[List[str]] = ["strategies", "sample_limit"]
+    tags: Optional[List[StrictStr]] = Field(default=None, description="fnmatch tag patterns, e.g. company:*")
+    tags_match: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["tags", "tags_match"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -50,7 +48,7 @@ class ConsolidationStrategiesPreviewRequest(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ConsolidationStrategiesPreviewRequest from a JSON string"""
+        """Create an instance of ConsolidationScopePattern from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -71,18 +69,16 @@ class ConsolidationStrategiesPreviewRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in strategies (list)
-        _items = []
-        if self.strategies:
-            for _item_strategies in self.strategies:
-                if _item_strategies:
-                    _items.append(_item_strategies.to_dict())
-            _dict['strategies'] = _items
+        # set to None if tags_match (nullable) is None
+        # and model_fields_set contains the field
+        if self.tags_match is None and "tags_match" in self.model_fields_set:
+            _dict['tags_match'] = None
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ConsolidationStrategiesPreviewRequest from a dict"""
+        """Create an instance of ConsolidationScopePattern from a dict"""
         if obj is None:
             return None
 
@@ -90,8 +86,8 @@ class ConsolidationStrategiesPreviewRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "strategies": [ConsolidationStrategySpec.from_dict(_item) for _item in obj["strategies"]] if obj.get("strategies") is not None else None,
-            "sample_limit": obj.get("sample_limit") if obj.get("sample_limit") is not None else 5
+            "tags": obj.get("tags"),
+            "tags_match": obj.get("tags_match")
         })
         return _obj
 
