@@ -33,7 +33,7 @@ class KnowledgePageResponse(BaseModel):
     tags: Optional[List[StrictStr]] = None
     timestamp: Optional[StrictStr] = None
     body: Optional[StrictStr] = None
-    markdown: StrictStr = Field(description="The full markdown document: YAML frontmatter + markdown body.")
+    markdown: StrictStr = Field(description="The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document.")
     __properties: ClassVar[List[str]] = ["id", "name", "type", "description", "tags", "timestamp", "body", "markdown"]
 
     model_config = ConfigDict(

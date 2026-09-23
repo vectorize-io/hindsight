@@ -12289,12 +12289,12 @@
               }
             ],
             "title": "Body",
-            "description": "The page's synthesized markdown body."
+            "description": "The page's synthesized markdown body, exactly as stored. Empty until a refresh writes one \u2014 unlike `markdown`, which says so in words. Build a UI's own empty state off this field; read `markdown` to show the document itself."
           },
           "markdown": {
             "type": "string",
             "title": "Markdown",
-            "description": "The full markdown document: YAML frontmatter + markdown body."
+            "description": "The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document."
           }
         },
         "type": "object",

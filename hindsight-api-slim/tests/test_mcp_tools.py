@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
+from hindsight_api.api import page_markdown
 from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.mcp_tools import (
     KNOWLEDGE_ROOT_PARENT,
@@ -2139,6 +2140,21 @@ class TestKnowledgeBaseTools:
         assert result["tags"] == ["ops"]
         assert result["markdown"].startswith("---\n")
         assert "Run `make deploy`." in result["markdown"]
+
+    async def test_get_page_with_no_body_yet_says_so(self, mock_memory):
+        """The read surface has to pass notice_when_empty, not just support it.
+
+        The flag defaults to off, so dropping it at the call site returns a document
+        that is frontmatter and nothing else — which an agent reads as a page that
+        failed to render rather than one nobody has written, and answers by creating
+        a second page for the topic. Search already says it; reading must agree.
+        """
+        mock_memory.get_knowledge_page.return_value = dict(_KNOWLEDGE_PAGE, content="")
+        mcp = _make_mcp_server(mock_memory, {"get_knowledge_page"}, include_bank_id=True)
+
+        result = json.loads(await _tools(mcp)["get_knowledge_page"].fn(page_id="kp-1"))
+
+        assert page_markdown.EMPTY_PAGE_NOTICE in result["markdown"]
 
     async def test_get_page_not_found(self, mock_memory):
         mock_memory.get_knowledge_page.return_value = None

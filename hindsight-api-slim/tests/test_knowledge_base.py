@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 
 import hindsight_api.engine.memory_engine as memory_engine_module
+from hindsight_api.api import page_markdown
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import (
     MemoryEngine,
@@ -589,7 +590,7 @@ class TestSearch:
         results = await memory.search_knowledge_pages(bank_id, "refund window", request_context=request_context)
 
         hit = next(r for r in results if r["id"] == pending["id"])
-        assert hit["snippet"] == "No content yet."
+        assert hit["snippet"] == page_markdown.EMPTY_PAGE_NOTICE
 
         stored = await memory.get_mental_model(
             bank_id, pending["mental_model_id"], detail="full", request_context=request_context
@@ -818,6 +819,30 @@ class TestGetPage:
         assert page["body"].startswith("# Orders")
         assert page["markdown"].startswith("---\n")
         assert 'type: "runbook"' in page["markdown"]
+
+    async def test_a_page_with_no_body_yet_says_so_in_its_markdown(self, api_client, kb_bank, memory, request_context):
+        """``markdown`` carries the notice; ``body`` stays empty.
+
+        Two readers, two needs: an agent is handed the rendered document and must be
+        told the page is unwritten rather than shown bare frontmatter, while the
+        control plane branches on ``body`` to show its own localized empty state —
+        putting the notice there would replace that string with this one.
+        """
+        bank_id, _ = kb_bank
+        page = await memory.create_knowledge_page(
+            bank_id=bank_id,
+            name="Unwritten",
+            source_query="What is not written yet?",
+            content="",
+            request_context=request_context,
+        )
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page['id']}")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert page_markdown.EMPTY_PAGE_NOTICE in body["markdown"]
+        assert not (body["body"] or "").strip()
 
     async def test_missing_page_404(self, api_client, kb_bank):
         bank_id, ids = kb_bank

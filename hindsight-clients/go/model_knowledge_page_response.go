@@ -29,7 +29,7 @@ type KnowledgePageResponse struct {
 	Tags []string `json:"tags,omitempty"`
 	Timestamp NullableString `json:"timestamp,omitempty"`
 	Body NullableString `json:"body,omitempty"`
-	// The full markdown document: YAML frontmatter + markdown body.
+	// The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document.
 	Markdown string `json:"markdown"`
 }
 
