@@ -1065,7 +1065,10 @@ async def import_bank(
         #
         # A no-op when a size threshold is set: entitlement is by size then, and
         # the restored rows land through the normal import path, where the
-        # maintenance operation picks them up (#3485).
+        # maintenance operation picks them up (#3485). Also a no-op when a custom
+        # store owns this bank's memories — the restored facts go to the store, so
+        # there is nothing here to index (#4615). Both are decided inside
+        # create_bank_vector_indexes, so this call stays unconditional.
         internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
         if internal_id is not None:
             await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)

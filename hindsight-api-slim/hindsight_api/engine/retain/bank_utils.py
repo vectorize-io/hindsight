@@ -55,6 +55,35 @@ def _vector_index_clause() -> str | None:
     return index_using_clause(ext)
 
 
+def bank_indexes_are_store_owned(bank_id: str) -> bool:
+    """Whether ``bank_id``'s memories live outside SQL, so it can never have rows to index.
+
+    A store-owned bank writes no ``memory_units`` rows at all, so its three partial
+    indexes can only ever be empty — and an empty index is not free. Postgres plans
+    against every index on a relation, so 3 x banks empty indexes on the shared
+    ``memory_units`` tax every OTHER statement that so much as names the table: a
+    tenant with 27,315 store-owned banks carried 82,795 of them and paid ~975 ms of
+    planning for a query over zero rows (#4615). #4326 took the same decision for the
+    whole-table reconcile — dimension resize, global vector and text indexes — but it
+    does not reach the per-bank loops, which are built from the engine, not migrations.
+
+    Asked per bank, not per deployment: a router can keep some banks in SQL and some
+    in a store (:meth:`MemoriesExtension.store_owned_for`), and getting this backwards
+    is silent — an SQL-owned bank without its index still recalls, just without ANN.
+    A store that cannot answer is treated as SQL-backed, which is the safe direction:
+    the bank keeps the index it would have had before this existed. Logged rather than
+    swallowed, because that fallback re-arms #4615 — a router that throws goes back to
+    three empty indexes per bank, and at 27k banks nothing else would say so.
+    """
+    from ..memories import get_memories
+
+    try:
+        return get_memories().store_owned_for(bank_id)
+    except Exception as e:  # noqa: BLE001 — no store configured, or one that cannot answer, is SQL-backed
+        logger.debug("Store cannot say whether bank %s is store-owned (%s); treating it as SQL-backed", bank_id, e)
+        return False
+
+
 async def create_bank_vector_indexes(
     conn: "DatabaseConnection", bank_id: str, internal_id: str, *, ops: "DataAccessOps"
 ) -> None:
@@ -81,6 +110,10 @@ async def create_bank_vector_indexes(
     Oracle uses a single global vector index created during migrations, and does
     not support partial (WHERE-clause) vector indexes.
 
+    A bank whose memories a custom store owns is the third no-op, and the only one
+    decided per bank rather than per deployment: it has no memory_units rows to index
+    (see :func:`bank_indexes_are_store_owned`).
+
     bank_id is escaped for SQL literal safety (apostrophes doubled).
 
     ``ops`` is required rather than defaulting to None: it is only dereferenced
@@ -94,6 +127,17 @@ async def create_bank_vector_indexes(
     index_clause = _vector_index_clause()
     if index_clause is None:
         logger.debug("Skipping per-bank vector indexes for configured backend")
+        return
+
+    # A bank whose memories a custom store owns has no rows here and never will,
+    # so all three indexes would be empty — and empty is not free on a shared
+    # table (see bank_indexes_are_store_owned). Checked here rather than at each
+    # caller because import restores a bank around the fresh-INSERT gate and
+    # calls this directly (#2645), and that path must skip them too. Last of the
+    # three gates: it is the only one that reaches outside this process, so the
+    # two local ones answer first for a deployment where it cannot matter.
+    if bank_indexes_are_store_owned(bank_id):
+        logger.debug("Skipping per-bank vector indexes for store-owned bank %s", bank_id)
         return
 
     await ops.create_bank_vector_indexes(
