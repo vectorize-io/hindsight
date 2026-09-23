@@ -186,7 +186,14 @@ Available in `hybrid` and `tools` memory modes:
 
 ## Client Version
 
-Requires `hindsight-client >= 0.6.1`. The plugin auto-upgrades on session start if an older version is detected.
+Requires `hindsight-client >= 0.10.1` and, for `local_embedded`, `hindsight-embed >= 0.10.1`. The plugin
+auto-upgrades the client on session start if an older version is detected.
+
+The floor is 0.10.1 rather than the 0.6.1 this plugin needs at the API level because
+`hindsight-embed` 0.10.0 breaks `local_embedded` outright: its daemon probe cleared the calling
+thread's event loop, so the next client call failed with `Timeout context manager should be used
+inside a task`. If you installed between 2026-09-14 and 2026-09-21, run `hermes update` (or
+`hermes plugins update hindsight`) to move off it.
 
 ## Development
 
