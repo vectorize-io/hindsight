@@ -64,10 +64,11 @@ const NON_DESTRUCTIVE_WRITE_ANNOTATIONS: ToolSafetyAnnotations = {
  * anything, and silently absorbs the memory instead of crediting it.
  */
 const CREDIT_REMINDER =
-  "If anything below reaches your reply — quoted, paraphrased, or merely confirming what you were " +
-  'going to say — open that part with "> 🧠 **From Hindsight memory (<page>)** — <the specific ' +
-  'facts you drew on>". Rewriting a snippet in your own words does not make it yours. If none of ' +
-  "these bear on the turn, ignore them silently — an unhelpful search needs no mention.";
+  "Crediting is mandatory, not a judgement call: if anything these results contribute reaches your " +
+  "reply — quoted, paraphrased, or merely confirming what you were going to say — open that part " +
+  'with "> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
+  "snippet in your own words does not make it yours. If none of them bear on the turn, ignore them " +
+  "silently — an unhelpful search needs no mention.";
 
 /**
  * What the agent gets back from reading one page.
@@ -224,11 +225,10 @@ export function buildKnowledgeTools(
         "hybrid full-text + semantic search, server-side. Call this when the user's question may " +
         "be answered by the project's accumulated knowledge (architecture, conventions, decisions, " +
         "initiatives) rather than by reading code. Returns ranked pages with a relevance snippet; " +
-        "read a full page with hindsight_read_knowledge_page. Crediting is mandatory, not a " +
-        "judgement call: if anything these results contribute reaches your reply — quoted, " +
-        "paraphrased, or merely confirming what you were going to say — open that part with " +
-        '"> 🧠 **From Hindsight memory (<page name>)** — <the facts you drew on>". If they did not ' +
-        "bear on the turn, ignore them silently.",
+        // Same sentence the payload carries, from the same constant: two copies of a rule this
+        // fiddly drift apart, and the description is what a host shows when the tool is listed.
+        "read a full page with hindsight_read_knowledge_page. " +
+        CREDIT_REMINDER,
       inputSchema: { query: z.string().describe("what to look for") },
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
