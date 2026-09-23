@@ -16,13 +16,14 @@ Two problems this fixes, both measured rather than guessed:
    `reserve` must reject quantity 0, the catalog stays uncached on purpose. A
    turn that skips the search gets these wrong.
 
-**Why the placeholder pages are replaced rather than refreshed.** This describes a
-server that still created pages with a placeholder body; a current one creates them
-empty, which falls back to a full refresh instead of hitting the guard below. The
-replacement is kept because ``--api-url`` can point this harness at either.
-Refreshing a placeholder page fails on the server's own guard — ``delta operations did not reach the document,
-and the reflect candidate covers only memories newer than the last refresh, so
-writing it would drop the rest of the document`` — because the page was created
+**Why the placeholder pages are replaced rather than refreshed.** This describes
+a server that still created pages with a placeholder body; a current one creates
+them empty, which falls back to a full refresh instead of hitting the guard
+below. The replacement is kept because ``--api-url`` can point this harness at
+either. Refreshing a placeholder page fails on the server's own guard — ``delta
+operations did not reach the document, and the reflect candidate covers only
+memories newer than the last refresh, so writing it would drop the rest of the
+document`` — because the page was created
 with a watermark and a placeholder body, and every prefilled memory is newer
 than that. The guard is right in general and unhelpful here, where the document
 it is protecting is the placeholder. A page created *after* the documents are in

@@ -4750,10 +4750,13 @@ class MemoryEngine(MemoryEngineInterface):
         based_on = reflect_response.get("based_on") or {}
         outcome = RefreshMentalModelOutcomeMetadata(
             content_len=len(content),
-            # Whitespace-only is not synthesis. Reflect's own failure stubs are
-            # gone: a run with no answer now raises (#2959), so no refresh
-            # reaches here carrying one.
-            populated_content=bool(stripped),
+            # Whitespace-only is not synthesis, and neither is the legacy placeholder
+            # an upgraded bank may still be holding: a skipped refresh preserves that
+            # body, and a length check alone would report it as populated — which is
+            # what this field exists to tell apart. Reflect's own failure stubs are
+            # gone: a run with no answer now raises (#2959), so no refresh reaches
+            # here carrying one.
+            populated_content=bool(stripped) and stripped != _LEGACY_PENDING_PLACEHOLDER,
             based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
             delta_ops_applied=len(reflect_response.get("delta_operations_applied") or []),
             delta_ops_skipped=len(reflect_response.get("delta_operations_skipped") or []),
@@ -17258,8 +17261,8 @@ class MemoryEngine(MemoryEngineInterface):
         treating it as content would defeat the emptiness check for the case it was
         written for (#3875).
 
-        Which is why the legacy placeholder is excluded too, and not just the empty
-        body pages carry now. A bank upgraded from a version that wrote
+        Which is why the legacy placeholder is excluded too, not just the empty body
+        that pages carry now. A bank upgraded from a version that wrote
         ``Generating content...`` still holds those rows, and they are unrefreshed
         pages by any other measure — counting them because the column happens to be
         non-empty would re-open #3875 for exactly the banks the check protects.
