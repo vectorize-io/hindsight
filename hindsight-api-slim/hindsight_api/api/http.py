@@ -5525,10 +5525,12 @@ def _register_routes(app: FastAPI):
         # blocking file I/O) are synchronous, and serialization cost scales with metric cardinality
         # -- on a large registry it takes seconds. Awaiting it inline blocks the asyncio loop for
         # that whole duration, so /health, WebSocket handshakes, and every other request this worker
-        # is handling stall until the scrape completes. Offloading to a worker thread keeps the loop
-        # servicing requests no matter how big the registry grows; both render paths are thread-safe
-        # (generate_latest is designed to be scraped off-thread, and WorkerMetrics.render only reads
-        # a registry + per-worker snapshot files).
+        # is handling stall until the scrape completes. Offloading to a worker thread doesn't make
+        # the render free -- it is pure Python, so it holds the GIL and only yields every
+        # sys.getswitchinterval() -- but the loop is descheduled in 5ms slices instead of frozen for
+        # the whole render, which is the difference between degraded and dead. Both paths are safe
+        # to call off-thread (generate_latest is designed to be scraped off-thread, and
+        # WorkerMetrics.render only reads a registry + per-worker snapshot files).
         render = worker_metrics.render if worker_metrics is not None else generate_latest
         metrics_data = await asyncio.to_thread(render)
         return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
