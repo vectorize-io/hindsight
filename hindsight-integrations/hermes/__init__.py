@@ -621,6 +621,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Fact types to surface on recall — applies to both auto-recall and the hindsight_recall tool (comma-separated or list). Defaults to observation-only — observations are Hindsight's consolidated, deduplicated, evidence-grounded knowledge layer; raw world/experience facts are the supporting evidence observations already summarize. Set to e.g. 'observation,world,experience' to also include raw facts.",
                 "default": "observation",
             },
+            {
+                "key": "recall_tag_prefixes",
+                "description": "Tag prefixes whose value is shown before each recalled memory, e.g. 'conf:' renders '[confidential] <text>' (comma-separated or list; empty by default). Recall otherwise hands the model the memory text alone, so a tag the agent is meant to reason about — a confidentiality level, an audience, a source — never reaches it. Only the requested prefixes are surfaced: banks routinely carry bookkeeping tags that would spend the recall_max_tokens budget without telling the model anything.",
+                "default": "",
+            },
             {"key": "auto_recall", "description": "Automatically recall memories before each turn", "default": True},
             {
                 "key": "recall_sync",
@@ -1074,6 +1079,11 @@ class HindsightMemoryProvider(MemoryProvider):
             self._recall_types = [t.strip() for t in configured_types.split(",") if t.strip()]
         else:
             self._recall_types = list([] if configured_types is None else configured_types) or ["observation"]
+        # Comma-separated string accepted for parity with recall_tags/recall_types.
+        configured_prefixes = cfg.get("recall_tag_prefixes") or ""
+        if isinstance(configured_prefixes, str):
+            configured_prefixes = [x.strip() for x in configured_prefixes.split(",") if x.strip()]
+        self._recall_tag_prefixes = list(configured_prefixes)
         self._recall_prompt_preamble = cfg.get("recall_prompt_preamble", "")
         self._recall_indicator = bool(cfg.get("recall_indicator", True))
 
@@ -1165,6 +1175,27 @@ class HindsightMemoryProvider(MemoryProvider):
             logger.debug("Prefetch: skipped (%s)", why)
         return why is not None
 
+    def _tag_annotation(self, result) -> str:
+        """Prefix of the tag dimensions the operator asked to surface, or "".
+
+        Shared by both places a memory becomes context — the auto-recall block and
+        the hindsight_recall tool — so the two cannot drift apart.
+        """
+        if not self._recall_tag_prefixes:
+            return ""
+        tags = getattr(result, "tags", None) or []
+        groups = []
+        for prefix in self._recall_tag_prefixes:
+            # One bracket per prefix, so "/" always means several values of the SAME
+            # dimension — a consolidated observation spanning two confidentiality
+            # levels reads "[internal/confidential]", which is exactly the case the
+            # agent must notice. Merging distinct dimensions into one bracket would
+            # make that indistinguishable from an unrelated second tag.
+            values = [t[len(prefix) :] for t in tags if t.startswith(prefix)]
+            if values:
+                groups.append(f"[{'/'.join(values)}]")
+        return " ".join(groups) + " " if groups else ""
+
     def _recall(self, query: str) -> list:
         kwargs: dict = {
             "bank_id": self._bank_id,
@@ -1199,7 +1230,7 @@ class HindsightMemoryProvider(MemoryProvider):
             )
             results = self._recall(query)
             logger.debug("Recall: returned %d results", len(results))
-            return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
+            return "\n".join(f"- {self._tag_annotation(r)}{r.text}" for r in results if r.text), len(results)
         except Exception as e:
             logger.debug("Hindsight recall failed: %s", e, exc_info=True)
             return "", 0
@@ -1443,7 +1474,10 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Tool hindsight_recall: bank=%s, query_len=%d, budget=%s", self._bank_id, len(query), self._budget)
         results = self._recall(query)
         logger.debug("Tool hindsight_recall: %d results", len(results))
-        return "\n".join(f"{i}. {r.text}" for i, r in enumerate(results, 1)) or "No relevant memories found."
+        return (
+            "\n".join(f"{i}. {self._tag_annotation(r)}{r.text}" for i, r in enumerate(results, 1))
+            or "No relevant memories found."
+        )
 
     def _tool_reflect(self, args: dict) -> str:
         query = args["query"]

@@ -123,3 +123,23 @@ def test_register_exposes_the_provider_to_hermes():
     registered = []
     plugin.register(type("Ctx", (), {"register_memory_provider": lambda _self, p: registered.append(p)})())
     assert registered and registered[0].name == "hindsight"
+
+
+def test_recall_surfaces_only_the_configured_tag_prefixes(provider):
+    """A tag the agent must reason about has to reach it; the rest is budget."""
+    instance, _ = provider(
+        {"recall_tag_prefixes": "conf:"},
+        client=FakeClient(recall_texts=[("the Aircall deal", ["source:obsidian", "conf:confidential"])]),
+    )
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "aircall"}))
+
+    assert result["result"] == "1. [confidential] the Aircall deal"
+    instance.shutdown()
+
+
+def test_recall_without_configured_prefixes_is_unchanged(provider):
+    instance, _ = provider({}, client=FakeClient(recall_texts=[("the Aircall deal", ["conf:confidential"])]))
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "aircall"}))
+
+    assert result["result"] == "1. the Aircall deal"
+    instance.shutdown()
