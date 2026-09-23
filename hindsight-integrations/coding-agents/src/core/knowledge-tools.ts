@@ -67,7 +67,7 @@ const CREDIT_REMINDER =
   "If anything below reaches your reply — quoted, paraphrased, or merely confirming what you were " +
   'going to say — open that part with "> 🧠 **From Hindsight memory (<page>)** — <the specific ' +
   'facts you drew on>". Rewriting a snippet in your own words does not make it yours. If none of ' +
-  "these bear on the turn, say so in one line.";
+  "these bear on the turn, ignore them silently — an unhelpful search needs no mention.";
 
 /**
  * What the agent gets back from reading one page.
@@ -228,7 +228,7 @@ export function buildKnowledgeTools(
         "judgement call: if anything these results contribute reaches your reply — quoted, " +
         "paraphrased, or merely confirming what you were going to say — open that part with " +
         '"> 🧠 **From Hindsight memory (<page name>)** — <the facts you drew on>". If they did not ' +
-        "bear on the turn, say so in one line.",
+        "bear on the turn, ignore them silently.",
       inputSchema: { query: z.string().describe("what to look for") },
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
