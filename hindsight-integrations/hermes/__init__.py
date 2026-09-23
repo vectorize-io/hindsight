@@ -386,6 +386,12 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def __init__(self):
         self._config = self._api_key = self._client = None
+        # LEAF lock guarding _client construction/retirement: two threads racing
+        # a cold or just-nulled client would both build one, and the loser owns
+        # an aiohttp session nothing ever closes. Never held across
+        # _run_sync/operation(client) or while taking _prefetch_lock /
+        # _pending_retain_ops_lock.
+        self._client_lock = threading.Lock()
         self._api_url, self._llm_base_url, self._mode = _DEFAULT_API_URL, "", "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
@@ -735,11 +741,28 @@ class HindsightMemoryProvider(MemoryProvider):
         )
         return Hindsight(**kwargs)
 
-    def _get_client(self):
-        """Return the cached Hindsight client (created once, reused)."""
-        if self._client is None:
-            self._client = self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
-        return self._client
+    def _get_client(self, *, retire=None):
+        """Return the cached Hindsight client (created once, reused).
+
+        *retire* is the exact client instance the caller's failed operation ran
+        with — identity passed as an argument, never shared broken-client state a
+        concurrent retry could clobber. It is dropped and the client rebuilt
+        exactly once, under the lock; if a sibling already rebuilt after our
+        failure, that fresh client is returned as-is instead of being orphaned.
+        """
+        if retire is None and (client := self._client) is not None:
+            return client
+        with self._client_lock:
+            if retire is not None:
+                # Identity CAS: retire only the client the operation actually ran
+                # with. A sibling thread may have already replaced it — its fresh
+                # replacement must survive our retry.
+                if self._client is not None and self._client is not retire:
+                    return self._client
+                self._client = None
+            if self._client is None:
+                self._client = self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
+            return self._client
 
     def _run_sync(self, coro):
         """Schedule *coro* on the shared loop using the configured timeout."""
@@ -749,14 +772,17 @@ class HindsightMemoryProvider(MemoryProvider):
         """Run an async client operation; for local_embedded, a stale-daemon
         connection failure recreates the client and retries once."""
         try:
-            return self._run_sync(operation(self._get_client()))
+            client = self._get_client()
+            return self._run_sync(operation(client))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}".lower()
             if self._mode != "local_embedded" or not any(m in text for m in _RETRIABLE_CONNECTION_MARKERS):
                 raise
             logger.info("Hindsight embedded daemon appears unreachable; recreating client and retrying once: %s", exc)
-            self._client = None
-            self._client = client = self._get_client()
+            # Retire the exact client this operation ran with (identity as an
+            # argument); the loser of a concurrent retry is not closed inline
+            # (closing against a dead daemon can hang) — only shutdown() closes.
+            client = self._get_client(retire=client)
             return self._run_sync(operation(client))
 
     # -- retain writer thread + server-side visibility -------------------------
@@ -1564,20 +1590,20 @@ class HindsightMemoryProvider(MemoryProvider):
             self._document_id,
         )
 
-    def _close_client(self) -> None:
+    def _close_client_of(self, client) -> None:
         if self._mode != "local_embedded":
-            self._run_sync(self._client.aclose())
+            self._run_sync(client.aclose())
             return
         # HindsightEmbedded.close() closes its sync client from this thread ("attached
         # to a different loop" before aiohttp releases the session): aclose the inner
         # client on the shared loop first, then let the wrapper clean up bookkeeping.
-        inner_client = getattr(self._client, "_client", None)
+        inner_client = getattr(client, "_client", None)
         if inner_client is not None and hasattr(inner_client, "aclose"):
             _run_sync(inner_client.aclose())
             with contextlib.suppress(Exception):
-                self._client._client = None
+                client._client = None
         with contextlib.suppress(RuntimeError):
-            self._client.close()
+            client.close()
 
     def shutdown(self) -> None:
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
@@ -1594,10 +1620,14 @@ class HindsightMemoryProvider(MemoryProvider):
                     self._retain_queue.qsize(),
                 )
         self._join_prefetch(5.0)
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._close_client()
+        # Retire the client under the lock BEFORE closing it, so a concurrent
+        # _get_client() sees None and rebuilds instead of racing the close.
+        with self._client_lock:
+            client = self._client
             self._client = None
+        if client is not None:
+            with contextlib.suppress(Exception):
+                self._close_client_of(client)
         # The module-global loop is intentionally NOT stopped: it's shared by every
         # provider in the process (one per gateway chat session); stopping it would
         # strand siblings' aiohttp sessions ("Unclosed client session"). Daemon
