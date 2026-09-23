@@ -366,6 +366,7 @@ class HindsightEmbedded:
             embedded.mental_models.create(
                 bank_id="test",
                 name="User Preferences",
+                source_query="What are the user's preferences?",
                 content="User prefers dark mode"
             )
 

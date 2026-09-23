@@ -1509,6 +1509,7 @@ class Hindsight:
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
         id: str | None = None,
+        content: str | None = None,
     ):
         """
         Create a mental model (sync wrapper — prefer :meth:`acreate_mental_model` in async code).
@@ -1524,6 +1525,7 @@ class Hindsight:
                 max_tokens=max_tokens,
                 trigger=trigger,
                 id=id,
+                content=content,
             )
         )
 
@@ -1536,6 +1538,7 @@ class Hindsight:
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
         id: str | None = None,
+        content: str | None = None,
     ):
         """
         Create a mental model (async — preferred over :meth:`create_mental_model`).
@@ -1546,11 +1549,19 @@ class Hindsight:
             source_query: The query to run to generate content
             tags: Optional tags for filtering during retrieval
             max_tokens: Optional maximum tokens for the mental model content
-            trigger: Optional trigger settings (e.g., {"refresh_after_consolidation": True})
+            trigger: Optional trigger settings (e.g., {"refresh_after_consolidation": True, "mode": "delta"})
             id: Optional custom ID for the mental model (alphanumeric lowercase with hyphens)
+            content: Optional authored content to store directly. When provided, the model
+                is created with this content and no refresh runs at create time; the
+                response carries ``operation_id=None``. When omitted, content is generated
+                asynchronously from ``source_query``. Authored content is not permanent:
+                later refreshes still rewrite it according to ``trigger["mode"]`` — pass
+                ``trigger={"mode": "delta"}`` to keep this content as the baseline those
+                edits start from. Appended last so the existing positional parameters keep
+                their positions.
 
         Returns:
-            CreateMentalModelResponse with operation_id
+            CreateMentalModelResponse with operation_id (None when content was provided)
         """
         from hindsight_client_api.models import create_mental_model_request
 
@@ -1560,6 +1571,7 @@ class Hindsight:
             id=id,
             name=name,
             source_query=source_query,
+            content=content,
             tags=tags,
             max_tokens=max_tokens,
             trigger=trigger_obj,
@@ -1750,6 +1762,7 @@ class Hindsight:
         tags: list[str] | None = None,
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
+        content: str | None = None,
     ):
         """
         Update a mental model's metadata (sync wrapper — prefer :meth:`aupdate_mental_model` in async code).
@@ -1765,6 +1778,7 @@ class Hindsight:
                 tags=tags,
                 max_tokens=max_tokens,
                 trigger=trigger,
+                content=content,
             )
         )
 
@@ -1777,6 +1791,7 @@ class Hindsight:
         tags: list[str] | None = None,
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
+        content: str | None = None,
     ):
         """
         Update a mental model's metadata (async — preferred over :meth:`update_mental_model`).
@@ -1788,7 +1803,14 @@ class Hindsight:
             source_query: Optional new source query
             tags: Optional new tags
             max_tokens: Optional new max tokens
-            trigger: Optional trigger settings (e.g., {"refresh_after_consolidation": True})
+            trigger: Optional trigger settings (e.g., {"refresh_after_consolidation": True, "mode": "delta"})
+            content: Optional authored content that replaces the stored content directly,
+                without running reflect. It is not permanent: later refreshes still rewrite
+                it according to ``trigger["mode"]`` — pass ``trigger={"mode": "delta"}`` to
+                keep this content as the baseline those edits start from. Use
+                :meth:`aclear_mental_model` to empty content instead of passing an empty
+                string. Appended last so the existing positional parameters keep their
+                positions.
 
         Returns:
             MentalModelResponse
@@ -1800,6 +1822,7 @@ class Hindsight:
         request_obj = update_mental_model_request.UpdateMentalModelRequest(
             name=name,
             source_query=source_query,
+            content=content,
             tags=tags,
             max_tokens=max_tokens,
             trigger=trigger_obj,

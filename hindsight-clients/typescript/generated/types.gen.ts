@@ -1614,6 +1614,12 @@ export type CreateMentalModelRequest = {
    */
   source_query: string;
   /**
+   * Content
+   *
+   * Optional authored content to store directly. When provided, the mental model is created with this content and no refresh is scheduled at create time. When omitted, content is generated asynchronously from source_query via reflect. Later refreshes still rewrite the content according to trigger.mode; set trigger.mode='delta' to keep this content as the baseline those edits start from.
+   */
+  content?: string | null;
+  /**
    * Tags
    *
    * Tags for scoped visibility
@@ -1646,9 +1652,9 @@ export type CreateMentalModelResponse = {
   /**
    * Operation Id
    *
-   * Operation ID to track refresh progress
+   * Operation ID to track refresh progress when content is generated asynchronously. Null when content was provided directly and no refresh was scheduled.
    */
-  operation_id: string;
+  operation_id?: string | null;
 };
 
 /**
@@ -6583,6 +6589,12 @@ export type UpdateMentalModelRequest = {
    * New source query for the mental model
    */
   source_query?: string | null;
+  /**
+   * Content
+   *
+   * Optional authored content to store directly. When provided, replaces the current content without running reflect. Use the clear endpoint to empty content instead of passing an empty string.
+   */
+  content?: string | null;
   /**
    * Max Tokens
    *

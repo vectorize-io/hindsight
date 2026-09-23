@@ -26,6 +26,7 @@ type CreateMentalModelRequest struct {
 	Name string `json:"name"`
 	// The query to run to generate content
 	SourceQuery string `json:"source_query"`
+	Content NullableString `json:"content,omitempty"`
 	// Tags for scoped visibility
 	Tags []string `json:"tags,omitempty"`
 	// Maximum tokens for generated content
@@ -149,6 +150,48 @@ func (o *CreateMentalModelRequest) SetSourceQuery(v string) {
 	o.SourceQuery = v
 }
 
+// GetContent returns the Content field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *CreateMentalModelRequest) GetContent() string {
+	if o == nil || IsNil(o.Content.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Content.Get()
+}
+
+// GetContentOk returns a tuple with the Content field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *CreateMentalModelRequest) GetContentOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Content.Get(), o.Content.IsSet()
+}
+
+// HasContent returns a boolean if a field has been set.
+func (o *CreateMentalModelRequest) HasContent() bool {
+	if o != nil && o.Content.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetContent gets a reference to the given NullableString and assigns it to the Content field.
+func (o *CreateMentalModelRequest) SetContent(v string) {
+	o.Content.Set(&v)
+}
+// SetContentNil sets the value for Content to be an explicit nil
+func (o *CreateMentalModelRequest) SetContentNil() {
+	o.Content.Set(nil)
+}
+
+// UnsetContent ensures that no value is present for Content, not even an explicit nil
+func (o *CreateMentalModelRequest) UnsetContent() {
+	o.Content.Unset()
+}
+
 // GetTags returns the Tags field value if set, zero value otherwise.
 func (o *CreateMentalModelRequest) GetTags() []string {
 	if o == nil || IsNil(o.Tags) {
@@ -260,6 +303,9 @@ func (o CreateMentalModelRequest) ToMap() (map[string]interface{}, error) {
 	}
 	toSerialize["name"] = o.Name
 	toSerialize["source_query"] = o.SourceQuery
+	if o.Content.IsSet() {
+		toSerialize["content"] = o.Content.Get()
+	}
 	if !IsNil(o.Tags) {
 		toSerialize["tags"] = o.Tags
 	}

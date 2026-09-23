@@ -35,6 +35,26 @@ const result = await client.createMentalModel(
 console.log(`Operation ID: ${result.operation_id}`);
 // [/docs:create-mental-model]
 
+// [docs:create-mental-model-with-content]
+// Create a mental model from content you wrote, instead of generating one.
+// No reflect runs at create time, so there is no operation to poll —
+// operation_id is null and the content is readable immediately.
+const authored = await client.createMentalModel(
+    BANK_ID,
+    'Escalation Policy',
+    'What is our escalation policy?',
+    {
+        content: '## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n',
+        // delta keeps this document as the baseline later refreshes edit in
+        // place; the default mode "full" would regenerate it from the source
+        // query and discard what you wrote.
+        trigger: { mode: 'delta' },
+    },
+);
+
+console.log(`Authored model created: ${authored.mental_model_id} (operation_id: ${authored.operation_id})`);
+// [/docs:create-mental-model-with-content]
+
 // [docs:create-mental-model-with-id]
 // Create a mental model with a specific custom ID
 const resultWithId = await client.createMentalModel(
@@ -133,6 +153,14 @@ const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
 });
 
 console.log(`Updated name: ${updated.name}`);
+
+// Provide content to replace the stored document directly, without running
+// reflect. Later refreshes still rewrite it according to trigger.mode.
+const edited = await client.updateMentalModel(BANK_ID, mentalModelId, {
+    content: '## Communication\n\n- Async by default in Slack\n',
+});
+
+console.log(`Edited content: ${edited.content}`);
 // [/docs:update-mental-model]
 
 // [docs:get-mental-model-history]

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the createMentalModel wrapper's trigger mapping.
+ * Unit tests for the createMentalModel wrapper's option mapping.
  *
  * Unlike the other suites, these do NOT require a running server: the generated
  * sdk layer is mocked so we can assert the ergonomic camelCase options are
@@ -80,5 +80,23 @@ describe("createMentalModel trigger mapping", () => {
     await client.createMentalModel("bank", "Plain", "q");
 
     expect(lastBody().trigger).toBeUndefined();
+  });
+
+  test("threads authored content into the request body", async () => {
+    // The point of authored content is that the exact text travels; a wrapper that
+    // forgot the field would still create a model — just a generated one.
+    await client.createMentalModel("bank", "Deployment", "What are the conventions?", {
+      content: "## Conventions\n\n- Ship small\n",
+      trigger: { mode: "delta" },
+    });
+
+    expect(lastBody().content).toBe("## Conventions\n\n- Ship small\n");
+    expect(lastBody().trigger.mode).toBe("delta");
+  });
+
+  test("omitting content sends no content (the server generates it)", async () => {
+    await client.createMentalModel("bank", "Plain", "q");
+
+    expect(lastBody().content).toBeUndefined();
   });
 });

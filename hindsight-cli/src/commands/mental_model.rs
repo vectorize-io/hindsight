@@ -280,6 +280,7 @@ pub fn create(
     bank_id: &str,
     name: &str,
     source_query: &str,
+    content: Option<&str>,
     id: Option<&str>,
     tags: Vec<String>,
     max_tokens: i64,
@@ -317,6 +318,7 @@ pub fn create(
         id: id.map(|s| s.to_string()),
         name: name.to_string(),
         source_query: source_query.to_string(),
+        content: content.map(|s| s.to_string()),
         max_tokens,
         tags,
         trigger,
@@ -331,10 +333,16 @@ pub fn create(
     match response {
         Ok(result) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!(
-                    "Mental model created, operation_id: {}",
-                    result.operation_id
-                ));
+                // Authored content schedules no refresh, so the server reports no
+                // operation to track — say what happened instead of printing "none".
+                match &result.operation_id {
+                    Some(operation_id) => ui::print_success(&format!(
+                        "Mental model created, operation_id: {operation_id}"
+                    )),
+                    None => ui::print_success(
+                        "Mental model created with the supplied content (no refresh scheduled)",
+                    ),
+                }
             } else {
                 output::print_output(&result, output_format)?;
             }
@@ -352,6 +360,7 @@ pub fn update(
     mental_model_id: &str,
     name: Option<String>,
     source_query: Option<String>,
+    content: Option<String>,
     max_tokens: Option<i64>,
     tags: Option<Vec<String>>,
     trigger_update: &TriggerUpdate,
@@ -360,12 +369,13 @@ pub fn update(
 ) -> Result<()> {
     if name.is_none()
         && source_query.is_none()
+        && content.is_none()
         && max_tokens.is_none()
         && tags.is_none()
         && trigger_update.is_empty()
     {
         anyhow::bail!(
-            "At least one of --name, --source-query, --max-tokens, --tags, or a \
+            "At least one of --name, --source-query, --content, --max-tokens, --tags, or a \
              --trigger-* flag must be provided"
         );
     }
@@ -395,6 +405,7 @@ pub fn update(
     let request = types::UpdateMentalModelRequest {
         name,
         source_query,
+        content,
         max_tokens,
         tags,
         trigger,
@@ -960,6 +971,7 @@ mod tests {
         let request = types::UpdateMentalModelRequest {
             name: Some("renamed".to_string()),
             source_query: None,
+            content: None,
             max_tokens: None,
             tags: None,
             trigger: None,
@@ -967,5 +979,68 @@ mod tests {
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["name"], "renamed");
         assert!(value.get("trigger").is_none() || value["trigger"].is_null());
+    }
+
+    /// `--content` is the whole point of authoring: if the flag never reached the
+    /// body the CLI would still "succeed" and silently hand the server a model it
+    /// generates from the source query instead.
+    #[test]
+    fn create_request_serializes_authored_content() {
+        let request = types::CreateMentalModelRequest {
+            id: None,
+            name: "Policy".to_string(),
+            source_query: "What is the policy?".to_string(),
+            content: Some("# Policy\n\n- Ship small\n".to_string()),
+            max_tokens: 2048,
+            tags: Vec::new(),
+            trigger: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["content"], "# Policy\n\n- Ship small\n");
+        assert_eq!(value["source_query"], "What is the policy?");
+    }
+
+    /// Without the flag the key must stay out of the body, so the server stores a
+    /// placeholder and schedules the generating refresh as before.
+    #[test]
+    fn create_request_omits_content_when_not_authored() {
+        let request = types::CreateMentalModelRequest {
+            id: None,
+            name: "Policy".to_string(),
+            source_query: "What is the policy?".to_string(),
+            content: None,
+            max_tokens: 2048,
+            tags: Vec::new(),
+            trigger: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert!(value.get("content").is_none() || value["content"].is_null());
+    }
+
+    /// The update body must carry content under the same key, and still leave it
+    /// absent when only metadata changes.
+    #[test]
+    fn update_request_serializes_authored_content() {
+        let request = types::UpdateMentalModelRequest {
+            name: None,
+            source_query: None,
+            content: Some("# Policy\n".to_string()),
+            max_tokens: None,
+            tags: None,
+            trigger: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["content"], "# Policy\n");
+
+        let metadata_only = types::UpdateMentalModelRequest {
+            name: Some("renamed".to_string()),
+            source_query: None,
+            content: None,
+            max_tokens: None,
+            tags: None,
+            trigger: None,
+        };
+        let value = serde_json::to_value(&metadata_only).unwrap();
+        assert!(value.get("content").is_none() || value["content"].is_null());
     }
 }

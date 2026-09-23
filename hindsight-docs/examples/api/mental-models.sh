@@ -27,6 +27,21 @@ hindsight mental-model create "$BANK_ID" \
   "How does the team prefer to communicate?"
 # [/docs:create-mental-model]
 
+# [docs:create-mental-model-with-content]
+# Create a mental model from content you wrote, instead of generating one.
+# No reflect runs at create time, so there is no operation to poll.
+# --trigger-mode delta keeps this document as the baseline later refreshes
+# edit in place; the default "full" would regenerate it from the source query.
+hindsight mental-model create "$BANK_ID" \
+  "Escalation Policy" \
+  "What is our escalation policy?" \
+  --content "## Escalation policy
+
+- Page the on-call engineer for SEV-1
+- File a ticket for everything else" \
+  --trigger-mode delta
+# [/docs:create-mental-model-with-content]
+
 # [docs:create-mental-model-with-id]
 # Create a mental model with a specific custom ID
 hindsight mental-model create "$BANK_ID" \
@@ -89,6 +104,13 @@ if [ -n "$MENTAL_MODEL_ID" ]; then
   # Update a mental model's metadata
   hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
     --name "Updated Team Communication Preferences"
+
+  # Provide --content to replace the stored document directly, without running
+  # reflect. Later refreshes still rewrite it according to --trigger-mode.
+  hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+    --content "## Communication
+
+- Async by default in Slack"
   # [/docs:update-mental-model]
 
   # [docs:get-mental-model-history]

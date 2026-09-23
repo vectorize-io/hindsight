@@ -59,6 +59,27 @@ func main() {
 	fmt.Printf("Operation ID: %s\n", result.GetOperationId())
 	// [/docs:create-mental-model]
 
+	// [docs:create-mental-model-with-content]
+	// Create a mental model from content you wrote, instead of generating one.
+	// No reflect runs at create time, so there is no operation to poll.
+	// delta keeps this document as the baseline later refreshes edit in place;
+	// the default "full" mode would regenerate it from the source query.
+	authoredContent := "## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n"
+	deltaMode := "delta"
+	authored, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+		CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+			Name:        "Escalation Policy",
+			SourceQuery: "What is our escalation policy?",
+			Content:     *hindsight.NewNullableString(&authoredContent),
+			Trigger: &hindsight.MentalModelTriggerInput{
+				Mode: &deltaMode,
+			},
+		}).Execute()
+
+	// operation_id is empty when content was authored: nothing was scheduled.
+	fmt.Printf("Authored model created: %s (operation_id: %q)\n", authored.GetMentalModelId(), authored.GetOperationId())
+	// [/docs:create-mental-model-with-content]
+
 	// [docs:create-mental-model-with-id]
 	// Create a mental model with a specific custom ID
 	mmID := "communication-policy"
@@ -167,6 +188,16 @@ func main() {
 		}).Execute()
 
 	fmt.Printf("Updated name: %s\n", updated.GetName())
+
+	// Provide Content to replace the stored document directly, without running
+	// reflect. Later refreshes still rewrite it according to Trigger.Mode.
+	editedContent := "## Communication\n\n- Async by default in Slack\n"
+	edited, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+		UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+			Content: *hindsight.NewNullableString(&editedContent),
+		}).Execute()
+
+	fmt.Printf("Edited content: %s\n", edited.GetContent())
 	// [/docs:update-mental-model]
 
 	// [docs:get-mental-model-history]

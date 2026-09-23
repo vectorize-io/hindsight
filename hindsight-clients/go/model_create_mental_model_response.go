@@ -12,8 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"bytes"
-	"fmt"
 )
 
 // checks if the CreateMentalModelResponse type satisfies the MappedNullable interface at compile time
@@ -22,19 +20,15 @@ var _ MappedNullable = &CreateMentalModelResponse{}
 // CreateMentalModelResponse Response model for mental model creation.
 type CreateMentalModelResponse struct {
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
-	// Operation ID to track refresh progress
-	OperationId string `json:"operation_id"`
+	OperationId NullableString `json:"operation_id,omitempty"`
 }
-
-type _CreateMentalModelResponse CreateMentalModelResponse
 
 // NewCreateMentalModelResponse instantiates a new CreateMentalModelResponse object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewCreateMentalModelResponse(operationId string) *CreateMentalModelResponse {
+func NewCreateMentalModelResponse() *CreateMentalModelResponse {
 	this := CreateMentalModelResponse{}
-	this.OperationId = operationId
 	return &this
 }
 
@@ -88,28 +82,46 @@ func (o *CreateMentalModelResponse) UnsetMentalModelId() {
 	o.MentalModelId.Unset()
 }
 
-// GetOperationId returns the OperationId field value
+// GetOperationId returns the OperationId field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *CreateMentalModelResponse) GetOperationId() string {
-	if o == nil {
+	if o == nil || IsNil(o.OperationId.Get()) {
 		var ret string
 		return ret
 	}
-
-	return o.OperationId
+	return *o.OperationId.Get()
 }
 
-// GetOperationIdOk returns a tuple with the OperationId field value
+// GetOperationIdOk returns a tuple with the OperationId field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *CreateMentalModelResponse) GetOperationIdOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return &o.OperationId, true
+	return o.OperationId.Get(), o.OperationId.IsSet()
 }
 
-// SetOperationId sets field value
+// HasOperationId returns a boolean if a field has been set.
+func (o *CreateMentalModelResponse) HasOperationId() bool {
+	if o != nil && o.OperationId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationId gets a reference to the given NullableString and assigns it to the OperationId field.
 func (o *CreateMentalModelResponse) SetOperationId(v string) {
-	o.OperationId = v
+	o.OperationId.Set(&v)
+}
+// SetOperationIdNil sets the value for OperationId to be an explicit nil
+func (o *CreateMentalModelResponse) SetOperationIdNil() {
+	o.OperationId.Set(nil)
+}
+
+// UnsetOperationId ensures that no value is present for OperationId, not even an explicit nil
+func (o *CreateMentalModelResponse) UnsetOperationId() {
+	o.OperationId.Unset()
 }
 
 func (o CreateMentalModelResponse) MarshalJSON() ([]byte, error) {
@@ -125,45 +137,10 @@ func (o CreateMentalModelResponse) ToMap() (map[string]interface{}, error) {
 	if o.MentalModelId.IsSet() {
 		toSerialize["mental_model_id"] = o.MentalModelId.Get()
 	}
-	toSerialize["operation_id"] = o.OperationId
+	if o.OperationId.IsSet() {
+		toSerialize["operation_id"] = o.OperationId.Get()
+	}
 	return toSerialize, nil
-}
-
-func (o *CreateMentalModelResponse) UnmarshalJSON(data []byte) (err error) {
-	// This validates that all required properties are included in the JSON object
-	// by unmarshalling the object into a generic map with string keys and checking
-	// that every required field exists as a key in the generic map.
-	requiredProperties := []string{
-		"operation_id",
-	}
-
-	allProperties := make(map[string]interface{})
-
-	err = json.Unmarshal(data, &allProperties)
-
-	if err != nil {
-		return err;
-	}
-
-	for _, requiredProperty := range(requiredProperties) {
-		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf("no value given for required property %v", requiredProperty)
-		}
-	}
-
-	varCreateMentalModelResponse := _CreateMentalModelResponse{}
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&varCreateMentalModelResponse)
-
-	if err != nil {
-		return err
-	}
-
-	*o = CreateMentalModelResponse(varCreateMentalModelResponse)
-
-	return err
 }
 
 type NullableCreateMentalModelResponse struct {

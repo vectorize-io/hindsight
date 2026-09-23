@@ -105,16 +105,25 @@ class MentalModelsAPI:
         self,
         bank_id: str,
         name: str,
-        content: str,
+        source_query: str,
+        content: str | None = None,
         tags: list[str] | None = None,
+        trigger: dict[str, Any] | None = None,
     ) -> Any:
         """Create a new mental model.
         
         Args:
             bank_id: The ID of the bank to add the model to.
             name: Name for the mental model.
-            content: The content/instructions for the mental model.
+            source_query: The query run to generate content when it is not authored.
+            content: Optional authored content to store directly. When provided, no
+                refresh runs at create time and the response's ``operation_id`` is
+                None. Later refreshes still rewrite it according to
+                ``trigger["mode"]`` — pass ``{"mode": "delta"}`` to keep this
+                content as the baseline those edits start from.
             tags: Optional list of tags for categorization.
+            trigger: Optional trigger settings, e.g. ``{"mode": "delta"}`` or
+                ``{"refresh_after_consolidation": True}``.
             
         Returns:
             Creation response from the API.
@@ -122,8 +131,10 @@ class MentalModelsAPI:
         return self._client.create_mental_model(
             bank_id=bank_id,
             name=name,
+            source_query=source_query,
             content=content,
             tags=tags,
+            trigger=trigger,
         )
 
     def list(
@@ -177,8 +188,10 @@ class MentalModelsAPI:
         bank_id: str,
         mental_model_id: str,
         name: str | None = None,
+        source_query: str | None = None,
         content: str | None = None,
         tags: list[str] | None = None,
+        trigger: dict[str, Any] | None = None,
     ) -> Any:
         """Update a mental model.
         
@@ -186,8 +199,14 @@ class MentalModelsAPI:
             bank_id: The ID of the bank.
             mental_model_id: The ID of the mental model to update.
             name: Optional new name.
-            content: Optional new content.
+            source_query: Optional new source query.
+            content: Optional authored content that replaces the stored content
+                directly, without running reflect. Later refreshes still rewrite it
+                according to ``trigger["mode"]`` — pass ``{"mode": "delta"}`` to keep
+                this content as the baseline those edits start from.
             tags: Optional new tags list.
+            trigger: Optional trigger settings, e.g. ``{"mode": "delta"}`` or
+                ``{"refresh_after_consolidation": True}``.
             
         Returns:
             Update response from the API.
@@ -196,8 +215,10 @@ class MentalModelsAPI:
             bank_id=bank_id,
             mental_model_id=mental_model_id,
             name=name,
+            source_query=source_query,
             content=content,
             tags=tags,
+            trigger=trigger,
         )
 
     def delete(self, bank_id: str, mental_model_id: str) -> Any:

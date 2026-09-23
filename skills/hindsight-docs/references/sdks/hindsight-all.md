@@ -114,13 +114,15 @@ embedded.banks.create(bank_id="test", name="Test Bank", mission="Help users")
 embedded.banks.set_mission(bank_id="test", mission="Updated mission")
 embedded.banks.delete(bank_id="test")
 
-# Mental models
+# Mental models — source_query is required; content seeds the document directly
 embedded.mental_models.create(
     bank_id="test",
     name="User Preferences",
-    content="User prefers dark mode"
+    source_query="What are the user's UI preferences?",
+    content="User prefers dark mode",
+    trigger={"mode": "delta"},
 )
-models = embedded.mental_models.list(bank_id="test")
+models = embedded.mental_models.list(bank_id="test", detail="content")
 
 # Directives
 embedded.directives.create(
@@ -132,6 +134,34 @@ directives = embedded.directives.list(bank_id="test")
 
 # List memories
 memories = embedded.memories.list(bank_id="test", type="world", limit=50)
+```
+
+### Authored mental-model content
+
+`source_query` is required for every mental model — it is what a refresh regenerates from. Passing `content` on top of it stores the document you wrote instead of generating one: creation schedules no refresh and returns `operation_id=None`, so the text is readable immediately.
+
+Authored content is not permanent. Later refreshes still rewrite the document according to `trigger.mode`:
+
+- `full` (the default) regenerates it from `source_query` and discards what you wrote.
+- `delta` edits the stored document in place, keeping unchanged sections byte-for-byte — this is what you want when the authored text is the baseline, not a placeholder.
+
+```python
+# Authored content that later refreshes edit in place rather than replace
+model = embedded.mental_models.create(
+    bank_id="test",
+    name="Deployment conventions",
+    source_query="What are the team's deployment conventions?",
+    content="## Deployment conventions\n\n- Roll out behind a feature flag\n",
+    trigger={"mode": "delta"},
+)
+assert model.operation_id is None
+
+# Replace the document directly — no reflect call, no LLM tokens
+embedded.mental_models.update(
+    bank_id="test",
+    mental_model_id=model.mental_model_id,
+    content="## Deployment conventions\n\n- Roll out behind a feature flag\n- Escalate rollbacks to the incident channel\n",
+)
 ```
 
 API namespaces ensure the daemon is running before each call, so daemon crashes are handled gracefully:

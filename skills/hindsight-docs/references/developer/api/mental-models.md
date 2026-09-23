@@ -9,7 +9,7 @@ See [Mental Models](../mental-models) for the concepts behind this API.
 
 ## What Are Mental Models?
 
-Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
+Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result — or, if you already know what the model should say, you can supply the content yourself and skip reflect entirely. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
 **Figure: Mental Models (API).** An animated diagram on the docs site; its narration, step by step:
 
@@ -55,7 +55,7 @@ Mental models are checked first because they represent your explicitly curated k
 
 ## Create a Mental Model
 
-Creating a mental model runs a reflect operation in the background and saves the result:
+Creating a mental model runs a reflect operation in the background and saves the result. Pass `content` to store a document you wrote instead:
 
 ### Python
 
@@ -117,10 +117,102 @@ fmt.Printf("Operation ID: %s\n", result.GetOperationId())
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query to run to generate content |
+| `content` | string | No | Authored content stored directly instead of generated. See [Authored Content](#authored-content). |
 | `id` | string | No | Custom ID for the mental model (alphanumeric lowercase with hyphens). Auto-generated if omitted. |
 | `tags` | list | No | Tags that scope the model during reflect **and** filter source memories during refresh. Defaults to `all_strict` matching, so only memories carrying every listed tag are read. See [Tags and Visibility](#tags-and-visibility). |
 | `max_tokens` | int | No | Maximum tokens for the mental model content |
 | `trigger` | object | No | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
+
+### Authored Content
+
+Sometimes the document you want is not something reflect can generate — a hand-written policy, a curated answer, or a first draft you want delta refreshes to maintain. Supply it as `content` and Hindsight stores it verbatim:
+
+### Python
+
+```python
+# Create a mental model from content you wrote, instead of generating one.
+# No reflect runs at create time, so there is no operation to poll —
+# operation_id is None and the content is readable immediately.
+authored = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Escalation Policy",
+    source_query="What is our escalation policy?",
+    content="## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n",
+    # delta keeps this document as the baseline later refreshes edit in place;
+    # the default mode "full" would regenerate it from the source query and
+    # discard what you wrote.
+    trigger={"mode": "delta"}
+)
+
+print(f"Authored model created: {authored.mental_model_id} (operation_id: {authored.operation_id})")
+```
+
+### Node.js
+
+```javascript
+// Create a mental model from content you wrote, instead of generating one.
+// No reflect runs at create time, so there is no operation to poll —
+// operation_id is null and the content is readable immediately.
+const authored = await client.createMentalModel(
+    BANK_ID,
+    'Escalation Policy',
+    'What is our escalation policy?',
+    {
+        content: '## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n',
+        // delta keeps this document as the baseline later refreshes edit in
+        // place; the default mode "full" would regenerate it from the source
+        // query and discard what you wrote.
+        trigger: { mode: 'delta' },
+    },
+);
+
+console.log(`Authored model created: ${authored.mental_model_id} (operation_id: ${authored.operation_id})`);
+```
+
+### CLI
+
+```bash
+# Create a mental model from content you wrote, instead of generating one.
+# No reflect runs at create time, so there is no operation to poll.
+# --trigger-mode delta keeps this document as the baseline later refreshes
+# edit in place; the default "full" would regenerate it from the source query.
+hindsight mental-model create "$BANK_ID" \
+  "Escalation Policy" \
+  "What is our escalation policy?" \
+  --content "## Escalation policy
+
+- Page the on-call engineer for SEV-1
+- File a ticket for everything else" \
+  --trigger-mode delta
+```
+
+### Go
+
+```go
+// Create a mental model from content you wrote, instead of generating one.
+// No reflect runs at create time, so there is no operation to poll.
+// delta keeps this document as the baseline later refreshes edit in place;
+// the default "full" mode would regenerate it from the source query.
+authoredContent := "## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n"
+deltaMode := "delta"
+authored, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Escalation Policy",
+		SourceQuery: "What is our escalation policy?",
+		Content:     *hindsight.NewNullableString(&authoredContent),
+		Trigger: &hindsight.MentalModelTriggerInput{
+			Mode: &deltaMode,
+		},
+	}).Execute()
+
+// operation_id is empty when content was authored: nothing was scheduled.
+fmt.Printf("Authored model created: %s (operation_id: %q)\n", authored.GetMentalModelId(), authored.GetOperationId())
+```
+
+Two things to know:
+
+- **Nothing is scheduled.** Creating with `content` does not call reflect, so `operation_id` is `null` and the text is final when the request returns. It replaces the whole document — send all of it, and use [Update a Mental Model](#update-a-mental-model) or [Clear a Mental Model](#clear-a-mental-model) to change or blank an existing one.
+- **Authored content is initial content, not permanent content.** A later refresh still rewrites it according to `trigger.mode` (see [Refresh Mode](#refresh-mode)): `full` (the default) regenerates from `source_query` and discards what you wrote, while `delta` edits your text in place. Pass `trigger={"mode": "delta"}` to keep it as the baseline.
 
 ---
 
@@ -664,6 +756,10 @@ Refreshing is useful when:
 - Observations have been updated
 - You want to ensure the mental model reflects current knowledge
 
+A refresh always returns an `operation_id` to poll, even for a model created with authored
+`content` — a refresh is work you asked for. What it does to that content depends on
+`trigger.mode` (see [Refresh Mode](#refresh-mode)).
+
 **Refreshes coalesce.** A model has at most one refresh waiting at a time: if one is
 already queued and has not started yet, this call returns *that* operation instead of
 queueing an identical second one — the queued refresh reads the model as it stands when
@@ -919,7 +1015,7 @@ For long-lived delta-mode mental models, consider scheduling a periodic clear + 
 
 ## Update a Mental Model
 
-Update the mental model's name:
+Update the mental model's metadata — or replace its content directly:
 
 ### Python
 
@@ -933,6 +1029,16 @@ updated = client.update_mental_model(
 )
 
 print(f"Updated name: {updated.name}")
+
+# Provide content to replace the stored document directly, without running
+# reflect. Later refreshes still rewrite it according to trigger.mode.
+updated = client.update_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id,
+    content="## Communication\n\n- Async by default in Slack\n"
+)
+
+print(f"Edited content: {updated.content}")
 ```
 
 ### Node.js
@@ -945,14 +1051,29 @@ const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
 });
 
 console.log(`Updated name: ${updated.name}`);
+
+// Provide content to replace the stored document directly, without running
+// reflect. Later refreshes still rewrite it according to trigger.mode.
+const edited = await client.updateMentalModel(BANK_ID, mentalModelId, {
+    content: '## Communication\n\n- Async by default in Slack\n',
+});
+
+console.log(`Edited content: ${edited.content}`);
 ```
 
 ### CLI
 
 ```bash
-# Update a mental model's metadata
-hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
-  --name "Updated Team Communication Preferences"
+  # Update a mental model's metadata
+  hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+    --name "Updated Team Communication Preferences"
+
+  # Provide --content to replace the stored document directly, without running
+  # reflect. Later refreshes still rewrite it according to --trigger-mode.
+  hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+    --content "## Communication
+
+- Async by default in Slack"
 ```
 
 ### Go
@@ -970,7 +1091,22 @@ updated, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalM
 	}).Execute()
 
 fmt.Printf("Updated name: %s\n", updated.GetName())
+
+// Provide Content to replace the stored document directly, without running
+// reflect. Later refreshes still rewrite it according to Trigger.Mode.
+editedContent := "## Communication\n\n- Async by default in Slack\n"
+edited, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+	UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+		Content: *hindsight.NewNullableString(&editedContent),
+	}).Execute()
+
+fmt.Printf("Edited content: %s\n", edited.GetContent())
 ```
+
+`PATCH` is a patch, so only the fields you send change: omitting `content` leaves the
+stored document alone. Sending it replaces the whole document without running reflect, and
+— like content supplied at create time — the replacement is still rewritten by later
+refreshes according to `trigger.mode`.
 
 ---
 

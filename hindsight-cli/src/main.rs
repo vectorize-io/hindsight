@@ -1017,6 +1017,14 @@ enum MentalModelCommands {
         /// Source query to generate the mental model from
         source_query: String,
 
+        /// Authored content to store directly instead of generating it from the
+        /// source query. When given, no refresh is scheduled at create time and
+        /// the response carries no operation_id. Later refreshes still rewrite
+        /// the content according to --trigger-mode: pass "delta" to keep it as
+        /// the baseline those edits start from instead of replacing it.
+        #[arg(long)]
+        content: Option<String>,
+
         /// Optional custom ID for the mental model (alphanumeric lowercase with hyphens)
         #[arg(long)]
         id: Option<String>,
@@ -1061,6 +1069,13 @@ enum MentalModelCommands {
         /// New source query
         #[arg(long)]
         source_query: Option<String>,
+
+        /// Replace the stored content directly, without running reflect. Later
+        /// refreshes still rewrite it according to --trigger-mode: "full" (the
+        /// default) regenerates it from the source query, "delta" edits it in
+        /// place
+        #[arg(long)]
+        content: Option<String>,
 
         /// New maximum tokens for generated content
         #[arg(long)]
@@ -1864,6 +1879,7 @@ fn run() -> Result<()> {
                 bank_id,
                 name,
                 source_query,
+                content,
                 id,
                 tags,
                 max_tokens,
@@ -1875,6 +1891,7 @@ fn run() -> Result<()> {
                 &bank_id,
                 &name,
                 &source_query,
+                content.as_deref(),
                 id.as_deref(),
                 tags,
                 max_tokens,
@@ -1889,6 +1906,7 @@ fn run() -> Result<()> {
                 mental_model_id,
                 name,
                 source_query,
+                content,
                 max_tokens,
                 tags,
                 trigger_refresh_after_consolidation,
@@ -1904,6 +1922,7 @@ fn run() -> Result<()> {
                 &mental_model_id,
                 name,
                 source_query,
+                content,
                 max_tokens,
                 tags,
                 &commands::mental_model::TriggerUpdate {

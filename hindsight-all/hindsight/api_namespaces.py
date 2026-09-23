@@ -61,16 +61,27 @@ class MentalModelsAPI:
         self,
         bank_id: str,
         name: str,
-        content: str,
+        source_query: str,
+        content: str | None = None,
         tags: list[str] | None = None,
+        trigger: dict[str, Any] | None = None,
     ):
-        """Create a new mental model."""
+        """Create a new mental model.
+
+        ``source_query`` is required. Pass ``content`` to store authored content
+        directly — no refresh runs at create time and the response's
+        ``operation_id`` is None. Later refreshes still rewrite that content
+        according to ``trigger["mode"]``; pass ``{"mode": "delta"}`` to keep the
+        authored content as the baseline those edits start from.
+        """
         self._embedded._ensure_started()
         return self._embedded._client.create_mental_model(
             bank_id=bank_id,
             name=name,
+            source_query=source_query,
             content=content,
             tags=tags,
+            trigger=trigger,
         )
 
     def list(self, bank_id: str, tags: list[str] | None = None, detail: str | None = None):
@@ -97,17 +108,27 @@ class MentalModelsAPI:
         bank_id: str,
         mental_model_id: str,
         name: str | None = None,
+        source_query: str | None = None,
         content: str | None = None,
         tags: list[str] | None = None,
+        trigger: dict[str, Any] | None = None,
     ):
-        """Update a mental model."""
+        """Update a mental model.
+
+        Pass ``content`` to replace the stored content directly, without running
+        reflect. Later refreshes still rewrite it according to
+        ``trigger["mode"]``; pass ``{"mode": "delta"}`` to keep that content as
+        the baseline those edits start from.
+        """
         self._embedded._ensure_started()
         return self._embedded._client.update_mental_model(
             bank_id=bank_id,
             mental_model_id=mental_model_id,
             name=name,
+            source_query=source_query,
             content=content,
             tags=tags,
+            trigger=trigger,
         )
 
     def delete(self, bank_id: str, mental_model_id: str):

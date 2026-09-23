@@ -399,13 +399,12 @@ class TestMentalModelsAPI:
             json={
                 "name": "API Test Mental Model",
                 "source_query": "What is the API test about?",
-                "content": "This is an API test mental model",
                 "tags": ["api-test"],
             },
         )
         assert response.status_code == 200
         create_result = response.json()
-        assert "operation_id" in create_result
+        assert create_result.get("operation_id")
         operation_id = create_result["operation_id"]
 
         # Wait for the async operation to complete

@@ -42,6 +42,24 @@ result = client.create_mental_model(
 print(f"Operation ID: {result.operation_id}")
 # [/docs:create-mental-model]
 
+# [docs:create-mental-model-with-content]
+# Create a mental model from content you wrote, instead of generating one.
+# No reflect runs at create time, so there is no operation to poll —
+# operation_id is None and the content is readable immediately.
+authored = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Escalation Policy",
+    source_query="What is our escalation policy?",
+    content="## Escalation policy\n\n- Page the on-call engineer for SEV-1\n- File a ticket for everything else\n",
+    # delta keeps this document as the baseline later refreshes edit in place;
+    # the default mode "full" would regenerate it from the source query and
+    # discard what you wrote.
+    trigger={"mode": "delta"}
+)
+
+print(f"Authored model created: {authored.mental_model_id} (operation_id: {authored.operation_id})")
+# [/docs:create-mental-model-with-content]
+
 # [docs:create-mental-model-with-id]
 # Create a mental model with a specific custom ID
 result_with_id = client.create_mental_model(
@@ -153,6 +171,16 @@ if mental_model_id:
     )
 
     print(f"Updated name: {updated.name}")
+
+    # Provide content to replace the stored document directly, without running
+    # reflect. Later refreshes still rewrite it according to trigger.mode.
+    updated = client.update_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id,
+        content="## Communication\n\n- Async by default in Slack\n"
+    )
+
+    print(f"Edited content: {updated.content}")
     # [/docs:update-mental-model]
 
 

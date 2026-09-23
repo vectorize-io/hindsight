@@ -1719,8 +1719,12 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Create a mental model (async - content auto-generated in background)
-   * Returns operation_id to track progress
+   * Create a mental model.
+   *
+   * Without `content` the model is created with a placeholder and the content is
+   * generated in the background, so `operation_id` tracks that refresh. With
+   * `content` the authored document is stored directly and nothing is scheduled,
+   * so `operation_id` is null.
    */
   async createMentalModel(
     bankId: string,
@@ -1728,6 +1732,8 @@ export class ControlPlaneClient {
       id?: string;
       name: string;
       source_query: string;
+      /** Authored content stored directly instead of generated. */
+      content?: string;
       tags?: string[];
       max_tokens?: number;
       trigger?: {
@@ -1751,7 +1757,7 @@ export class ControlPlaneClient {
     }
   ) {
     return this.fetchApi<{
-      operation_id: string;
+      operation_id: string | null;
     }>(bankApi(bankId, "/mental-models"), {
       method: "POST",
       body: JSON.stringify(params),
@@ -1776,6 +1782,8 @@ export class ControlPlaneClient {
     params: {
       name?: string;
       source_query?: string;
+      /** Authored content that replaces the stored document directly. */
+      content?: string;
       max_tokens?: number;
       tags?: string[];
       trigger?: {

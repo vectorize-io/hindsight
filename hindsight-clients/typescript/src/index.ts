@@ -1227,7 +1227,14 @@ export class HindsightClient {
   // Mental Model methods
 
   /**
-   * Create a mental model (runs reflect in background).
+   * Create a mental model.
+   *
+   * Without `content` the model is created with a placeholder and reflect runs in
+   * the background to generate the real content (`operation_id` tracks it). With
+   * `content` the authored document is stored directly and nothing is scheduled
+   * (`operation_id` is null). Authored content is not permanent: later refreshes
+   * rewrite it according to `trigger.mode` — `full` (the default) regenerates from
+   * `source_query` and discards it, while `delta` edits it in place.
    */
   async createMentalModel(
     bankId: string,
@@ -1235,6 +1242,9 @@ export class HindsightClient {
     sourceQuery: string,
     options?: {
       id?: string;
+      /** Authored content stored directly. Pass `trigger: { mode: "delta" }` to keep
+       *  it as the baseline later refreshes edit instead of replace. */
+      content?: string;
       tags?: string[];
       maxTokens?: number;
       trigger?: MentalModelTriggerOptions;
@@ -1248,6 +1258,7 @@ export class HindsightClient {
         id: options?.id,
         name,
         source_query: sourceQuery,
+        content: options?.content,
         tags: options?.tags,
         max_tokens: options?.maxTokens,
         trigger: options?.trigger ? toTriggerBody(options.trigger) : undefined,
@@ -1374,6 +1385,11 @@ export class HindsightClient {
 
   /**
    * Update a mental model's metadata.
+   *
+   * `content` replaces the stored document directly, without running reflect, and
+   * is not permanent: later refreshes rewrite it according to `trigger.mode` —
+   * `full` (the default) regenerates from `source_query` and discards it, while
+   * `delta` edits it in place.
    */
   async updateMentalModel(
     bankId: string,
@@ -1381,6 +1397,10 @@ export class HindsightClient {
     options: {
       name?: string;
       sourceQuery?: string;
+      /** Authored content that replaces the stored document directly. Pass
+       *  `trigger: { mode: "delta" }` to keep it as the baseline later refreshes
+       *  edit instead of replace. */
+      content?: string;
       tags?: string[];
       maxTokens?: number;
       /** Refresh settings to change. Applied as a patch: the fields you send are updated
@@ -1395,6 +1415,7 @@ export class HindsightClient {
       body: {
         name: options.name,
         source_query: options.sourceQuery,
+        content: options.content,
         tags: options.tags,
         max_tokens: options.maxTokens,
         trigger: options.trigger ? toTriggerBody(options.trigger) : undefined,

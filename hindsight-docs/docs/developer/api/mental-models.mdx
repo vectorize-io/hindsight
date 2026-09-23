@@ -23,7 +23,7 @@ import refreshModes from '@vectorize-io/interfig/figures/refresh-modes';
 
 ## What Are Mental Models?
 
-Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
+Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result — or, if you already know what the model should say, you can supply the content yourself and skip reflect entirely. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
 <Flow {...mentalModelsApi.props} />
 
@@ -50,7 +50,7 @@ Mental models are checked first because they represent your explicitly curated k
 
 ## Create a Mental Model
 
-Creating a mental model runs a reflect operation in the background and saves the result:
+Creating a mental model runs a reflect operation in the background and saves the result. Pass `content` to store a document you wrote instead:
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -73,10 +73,35 @@ Creating a mental model runs a reflect operation in the background and saves the
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query to run to generate content |
+| `content` | string | No | Authored content stored directly instead of generated. See [Authored Content](#authored-content). |
 | `id` | string | No | Custom ID for the mental model (alphanumeric lowercase with hyphens). Auto-generated if omitted. |
 | `tags` | list | No | Tags that scope the model during reflect **and** filter source memories during refresh. Defaults to `all_strict` matching, so only memories carrying every listed tag are read. See [Tags and Visibility](#tags-and-visibility). |
 | `max_tokens` | int | No | Maximum tokens for the mental model content |
 | `trigger` | object | No | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
+
+### Authored Content
+
+Sometimes the document you want is not something reflect can generate — a hand-written policy, a curated answer, or a first draft you want delta refreshes to maintain. Supply it as `content` and Hindsight stores it verbatim:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="create-mental-model-with-content" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model-with-content" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model-with-content" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model-with-content" language="go" />
+</TabItem>
+</Tabs>
+
+Two things to know:
+
+- **Nothing is scheduled.** Creating with `content` does not call reflect, so `operation_id` is `null` and the text is final when the request returns. It replaces the whole document — send all of it, and use [Update a Mental Model](#update-a-mental-model) or [Clear a Mental Model](#clear-a-mental-model) to change or blank an existing one.
+- **Authored content is initial content, not permanent content.** A later refresh still rewrites it according to `trigger.mode` (see [Refresh Mode](#refresh-mode)): `full` (the default) regenerates from `source_query` and discards what you wrote, while `delta` edits your text in place. Pass `trigger={"mode": "delta"}` to keep it as the baseline.
 
 ---
 
@@ -414,6 +439,10 @@ Refreshing is useful when:
 - Observations have been updated
 - You want to ensure the mental model reflects current knowledge
 
+A refresh always returns an `operation_id` to poll, even for a model created with authored
+`content` — a refresh is work you asked for. What it does to that content depends on
+`trigger.mode` (see [Refresh Mode](#refresh-mode)).
+
 **Refreshes coalesce.** A model has at most one refresh waiting at a time: if one is
 already queued and has not started yet, this call returns *that* operation instead of
 queueing an identical second one — the queued refresh reads the model as it stands when
@@ -574,7 +603,7 @@ For long-lived delta-mode mental models, consider scheduling a periodic clear + 
 
 ## Update a Mental Model
 
-Update the mental model's name:
+Update the mental model's metadata — or replace its content directly:
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -590,6 +619,11 @@ Update the mental model's name:
 <CodeSnippet code={mentalModelsGo} section="update-mental-model" language="go" />
 </TabItem>
 </Tabs>
+
+`PATCH` is a patch, so only the fields you send change: omitting `content` leaves the
+stored document alone. Sending it replaces the whole document without running reflect, and
+— like content supplied at create time — the replacement is still rewritten by later
+refreshes according to `trigger.mode`.
 
 ---
 

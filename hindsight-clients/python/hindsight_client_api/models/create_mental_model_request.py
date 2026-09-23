@@ -31,10 +31,11 @@ class CreateMentalModelRequest(BaseModel):
     id: Optional[StrictStr] = None
     name: StrictStr = Field(description="Human-readable name for the mental model")
     source_query: StrictStr = Field(description="The query to run to generate content")
+    content: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = Field(default=None, description="Tags for scoped visibility")
     max_tokens: Optional[Annotated[int, Field(le=8192, strict=True, ge=256)]] = Field(default=2048, description="Maximum tokens for generated content")
     trigger: Optional[MentalModelTriggerInput] = Field(default=None, description="Trigger settings")
-    __properties: ClassVar[List[str]] = ["id", "name", "source_query", "tags", "max_tokens", "trigger"]
+    __properties: ClassVar[List[str]] = ["id", "name", "source_query", "content", "tags", "max_tokens", "trigger"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -83,6 +84,11 @@ class CreateMentalModelRequest(BaseModel):
         if self.id is None and "id" in self.model_fields_set:
             _dict['id'] = None
 
+        # set to None if content (nullable) is None
+        # and model_fields_set contains the field
+        if self.content is None and "content" in self.model_fields_set:
+            _dict['content'] = None
+
         return _dict
 
     @classmethod
@@ -98,6 +104,7 @@ class CreateMentalModelRequest(BaseModel):
             "id": obj.get("id"),
             "name": obj.get("name"),
             "source_query": obj.get("source_query"),
+            "content": obj.get("content"),
             "tags": obj.get("tags"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 2048,
             "trigger": MentalModelTriggerInput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None

@@ -30,10 +30,11 @@ class UpdateMentalModelRequest(BaseModel):
     """ # noqa: E501
     name: Optional[StrictStr] = None
     source_query: Optional[StrictStr] = None
+    content: Optional[StrictStr] = None
     max_tokens: Optional[Annotated[int, Field(le=8192, strict=True, ge=256)]] = None
     tags: Optional[List[StrictStr]] = None
     trigger: Optional[MentalModelTriggerInput] = None
-    __properties: ClassVar[List[str]] = ["name", "source_query", "max_tokens", "tags", "trigger"]
+    __properties: ClassVar[List[str]] = ["name", "source_query", "content", "max_tokens", "tags", "trigger"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -87,6 +88,11 @@ class UpdateMentalModelRequest(BaseModel):
         if self.source_query is None and "source_query" in self.model_fields_set:
             _dict['source_query'] = None
 
+        # set to None if content (nullable) is None
+        # and model_fields_set contains the field
+        if self.content is None and "content" in self.model_fields_set:
+            _dict['content'] = None
+
         # set to None if max_tokens (nullable) is None
         # and model_fields_set contains the field
         if self.max_tokens is None and "max_tokens" in self.model_fields_set:
@@ -116,6 +122,7 @@ class UpdateMentalModelRequest(BaseModel):
         _obj = cls.model_validate({
             "name": obj.get("name"),
             "source_query": obj.get("source_query"),
+            "content": obj.get("content"),
             "max_tokens": obj.get("max_tokens"),
             "tags": obj.get("tags"),
             "trigger": MentalModelTriggerInput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None

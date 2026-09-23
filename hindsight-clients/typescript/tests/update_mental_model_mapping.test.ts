@@ -1,5 +1,5 @@
 /**
- * Unit tests for the updateMentalModel wrapper's trigger mapping.
+ * Unit tests for the updateMentalModel wrapper's option mapping.
  *
  * The generated sdk layer is mocked, so no server is needed: these assert that
  * the camelCase options reach the snake_case body, and — the point of the
@@ -110,5 +110,22 @@ describe("updateMentalModel trigger mapping", () => {
     await client.updateMentalModel("bank", "mm-1", { name: "Renamed" });
 
     expect(lastBody().trigger).toBeUndefined();
+  });
+
+  test("threads authored content into the request body", async () => {
+    await client.updateMentalModel("bank", "mm-1", {
+      content: "## Conventions\n\n- Ship small\n",
+      trigger: { mode: "delta" },
+    });
+
+    expect(lastBody().content).toBe("## Conventions\n\n- Ship small\n");
+    expect(lastBody().trigger.mode).toBe("delta");
+  });
+
+  test("omitting content sends no content (the stored document survives)", async () => {
+    // A name-only update must not blank the document: absent means "leave it".
+    await client.updateMentalModel("bank", "mm-1", { name: "Renamed" });
+
+    expect(lastBody().content).toBeUndefined();
   });
 });
