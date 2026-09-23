@@ -6,16 +6,17 @@ so they are charged to every OTHER statement that names the shared table. A tena
 27,315 store-owned banks carried 82,795 such indexes and paid ~975 ms of planning for a
 query returning zero rows (#4615).
 
-Two halves, and only one of them is loud:
+There are **two** builders, and the bug is only fixed if both stop: bank creation
+(``create_bank_vector_indexes``) and the reconcile behind ``repair-bank`` /
+``vector_index_maintenance`` (``plan_bank_vector_indexes``). Once creation stops, a
+store-owned bank reads to the reconcile exactly like one whose CREATE INDEX lost a
+deadlock — all three missing — so a single ``repair-bank --all`` would put all 82,795
+back. That is the sibling this suite exists to keep honest.
 
-* creation must skip them — the fix;
-* an SQL-owned bank must still get all three — the half that fails SILENTLY if the
-  condition is inverted, because recall still answers, just without its ANN index.
-
-Creation only. Nothing here drops an index a bank already carries, and that is the
-point: shedding the 82,795 that already exist is an operator's decision, not something
-a deploy or a write does behind their back. This suite therefore also pins that the
-indexes an existing store-owned bank has are left exactly where they are.
+Creation only, in both directions: nothing here drops an index a bank already carries.
+Turning a memories extension on makes every existing bank store-owned at once, and
+shedding tens of thousands of indexes is an operator's decision with its own timing.
+So the suite also pins that a reconcile leaves an existing bank's indexes alone.
 
 Runs via: uv run pytest tests/test_hnsw_indexes_store_owned.py -v
 """
@@ -27,16 +28,12 @@ import pytest
 import hindsight_api.engine.memories as memories_mod
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
+from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.retain.bank_utils import _vector_index_clause
-from hindsight_api.engine.vector_index_health import reconcile_bank_vector_indexes
-from hindsight_api.models import RequestContext
+from hindsight_api.engine.transfer import export_bank
+from hindsight_api.engine.vector_index_health import plan_bank_vector_indexes, reconcile_bank_vector_indexes
 from tests.test_memories_extension import InMemoryMemories
-
-
-@pytest.fixture
-def request_ctx():
-    return RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
 
 
 @pytest.fixture(autouse=True)
@@ -54,13 +51,26 @@ def eager(monkeypatch):
         monkeypatch.setattr(module, "per_bank_indexes_are_eager", lambda: True)
 
 
+@pytest.fixture(autouse=True)
+def per_bank_backend():
+    """Skip the whole module on a backend that has no per-bank indexes to speak of.
+
+    Applied to every test, not just the ones asserting three indexes: on AlloyDB ScaNN
+    or Oracle the negative assertions (``== []``) hold no matter what the store guard
+    does, so they would report a pass for a guard they never exercised.
+    """
+    if _vector_index_clause() is None:
+        pytest.skip("configured vector backend does not use per-bank vector indexes")
+
+
 @pytest.fixture
 def store_owned(monkeypatch):
     """Route ``get_memories()`` to a store that owns its memory rows.
 
     Patched on the ``memories`` module rather than on each importer: every call site
-    under test reaches the accessor through it, and patching one importer by name would
-    leave the others on the real store and quietly pass.
+    under test reaches the accessor through a function-local import of it, so this
+    catches them all, and patching one importer by name would leave the others on the
+    real store and quietly pass.
     """
     store = InMemoryMemories()
     monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
@@ -83,95 +93,186 @@ async def _bank_indexes(pool, bank_id: str) -> list[str]:
     return [row["indexname"] for row in rows]
 
 
-@pytest.mark.asyncio
-async def test_store_owned_bank_gets_no_vector_indexes(memory, request_ctx, store_owned):
+async def test_store_owned_bank_gets_no_vector_indexes(memory, request_context, store_owned):
     """The fix. Three indexes on a table this bank will never write a row to."""
     bank_id = f"test_so_none_{uuid.uuid4().hex[:8]}"
     try:
-        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_ctx)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         indexes = await _bank_indexes(memory._pool, bank_id)
         assert indexes == [], f"a store-owned bank must get no per-bank vector indexes, got: {indexes}"
     finally:
-        await memory.delete_bank(bank_id, request_context=request_ctx)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
-@pytest.mark.asyncio
-async def test_a_sql_owned_bank_still_gets_all_three(memory, request_ctx):
+async def test_a_sql_owned_bank_still_gets_all_three(memory, request_context):
     """The silent half: inverting the condition strips ANN from every ordinary bank.
 
     Nothing fails when that happens — recall falls back to the exact ``(bank_id,
     fact_type)`` scan and returns the same rows, more slowly — so only an explicit
-    assertion catches it.
+    assertion catches it. Overlaps ``test_repair_bank_vector_indexes.py``'s
+    ``test_bank_creation_builds_all_three_indexes`` on purpose: it is the in-file
+    control that gives the store-owned assertion above its meaning.
     """
-    if _vector_index_clause() is None:
-        pytest.skip("configured vector backend does not use per-bank indexes")
-
     bank_id = f"test_so_sql_{uuid.uuid4().hex[:8]}"
     try:
-        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_ctx)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         assert len(await _bank_indexes(memory._pool, bank_id)) == 3
     finally:
-        await memory.delete_bank(bank_id, request_context=request_ctx)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
-@pytest.mark.asyncio
-async def test_indexes_an_existing_store_owned_bank_already_has_are_left_alone(memory, request_ctx, monkeypatch):
+async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request_context, monkeypatch):
+    """A router that raises must fall back to SQL-backed, not to a failed bank create.
+
+    ``store_owned_for`` is an extension's method, so it can raise. This runs inside the
+    bank-create transaction, so an exception escaping here fails an ordinary first
+    retain to a new bank with a 500 — and the safe direction is the pre-#4615 one:
+    build the indexes, because a bank that turns out to be SQL-owned without them
+    silently loses ANN, while three unused indexes on one bank cost almost nothing.
+    """
+
+    class _Unanswerable:
+        """The real store, except that the capability probe raises.
+
+        Delegates everything else rather than stubbing it: bank creation calls several
+        other store methods, and a fake thin enough to isolate the probe would fail on
+        those instead — testing the fake, not the fallback.
+        """
+
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def store_owned_for(self, bank_id: str) -> bool:
+            raise RuntimeError("router is unreachable")
+
+    real_store = memories_mod.get_memories()
+    bank_id = f"test_so_raises_{uuid.uuid4().hex[:8]}"
+    try:
+        # Scoped to bank creation only. The probe is consulted on other paths too —
+        # delete_bank among them — and leaving it raising would fail this test in its
+        # own teardown, on a call that is not what is under test.
+        with pytest.MonkeyPatch.context() as unanswerable:
+            unanswerable.setattr(memories_mod, "get_memories", lambda: _Unanswerable(real_store))
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        assert len(await _bank_indexes(memory._pool, bank_id)) == 3
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_repair_does_not_rebuild_what_creation_declined_to_build(memory, request_context, store_owned):
+    """The second builder, and the one that would silently undo the whole fix.
+
+    With creation guarded, a store-owned bank has no indexes — which is indistinguishable,
+    to the reconcile, from a bank whose CREATE INDEX lost a deadlock or that was restored
+    around the gate. At the default threshold entitlement does not consult row counts, so
+    without its own guard the eager branch puts all three fact types in ``to_build`` and
+    one ``repair-bank --all`` rebuilds every index #4615 is about: 82,795 on that tenant,
+    from a command that reads as a repair.
+
+    Asserted on the PLAN, not just on the catalog afterwards, so the test names the
+    decision rather than a side effect of it.
+    """
+    bank_id = f"test_so_norebuild_{uuid.uuid4().hex[:8]}"
+    index_clause = _vector_index_clause()
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        assert await _bank_indexes(memory._pool, bank_id) == [], "setup: creation should have built nothing"
+
+        async with memory._pool.acquire() as conn:
+            plan = await plan_bank_vector_indexes(conn, "public", bank_id)
+            assert plan.to_build == [], f"repair must not rebuild a store-owned bank's indexes, got {plan.to_build}"
+
+            result = await reconcile_bank_vector_indexes(conn, "public", bank_id, index_clause)
+
+        assert result.created == 0, f"reconcile built indexes for a store-owned bank: {result}"
+        assert await _bank_indexes(memory._pool, bank_id) == []
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_indexes_an_existing_store_owned_bank_already_has_are_left_alone(memory, request_context, monkeypatch):
     """Adopting a memories store must not silently drop what is already built.
 
     The bank is created SQL-owned so it really gets its three indexes, then the store
-    takes it over — which is what a deployment that adopts a memories store after the
-    fact looks like, and what flipping the extension on does to every existing bank at
-    once. Dropping tens of thousands of indexes is an operator's decision with its own
-    timing: this change only stops NEW ones being created, so the reconcile must leave
-    these exactly where they are.
+    takes it over — which is what flipping the extension on does to every existing bank
+    at once. Dropping tens of thousands of indexes is an operator's decision with its
+    own timing: this change only stops NEW ones being created, so the reconcile must
+    leave these exactly where they are.
 
-    Asserted through ``reconcile_bank_vector_indexes`` because that is the one path
-    that could take them away — the maintenance operation and ``repair-bank`` both end
-    up here, so a future entitlement rule that forgets store-owned banks fails here.
+    Asserted with a size threshold SET, deliberately, against the eager default the rest
+    of this file pins. Eager mode never populates ``to_drop`` for any bank, so asserting
+    it there is a tautology that would pass with the guard deleted. With a threshold the
+    drop is live: a store-owned bank holds zero rows, which is below any keep bound, so
+    the branch below would shed all three on the next write that queues a reconcile.
+    That is the configuration where "nothing is dropped" is a real promise.
+
+    The complement of the test above: that one pins ``to_build`` empty, this one pins
+    ``to_drop`` empty, and together they are what "an empty plan" has to mean.
     """
-    index_clause = _vector_index_clause()
-    if index_clause is None:
-        pytest.skip("configured vector backend does not use per-bank indexes")
+    for module in (vector_index_health, bank_utils, memory_engine_module):
+        monkeypatch.setattr(module, "per_bank_indexes_are_eager", lambda: False)
+    monkeypatch.setattr(vector_index_health, "per_bank_index_build_bound", lambda: 4)
+    monkeypatch.setattr(vector_index_health, "per_bank_index_keep_bound", lambda: 2)
 
+    index_clause = _vector_index_clause()
     bank_id = f"test_so_keep_{uuid.uuid4().hex[:8]}"
     try:
-        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_ctx)
+        # Built by hand: with the threshold on, creation no longer makes them, and this
+        # test is about a bank that already HAS them when the store takes over.
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        backend = await memory._get_backend()
+        async with memory._pool.acquire() as conn:
+            internal_id = str(await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id))
+            await backend.ops.create_bank_vector_indexes(
+                conn, "memory_units", bank_id, internal_id, index_clause, bank_utils._BANK_INDEX_FACT_TYPES
+            )
         before = await _bank_indexes(memory._pool, bank_id)
-        assert len(before) == 3, "setup: the bank needs indexes that could be dropped"
+        assert len(before) == 3, f"setup: the bank needs indexes that could be dropped, got {before}"
 
+        # Flipped only now, so the bank is built SQL-owned and adopted afterwards.
         monkeypatch.setattr(memories_mod, "get_memories", lambda: InMemoryMemories())
 
         async with memory._pool.acquire() as conn:
+            plan = await plan_bank_vector_indexes(conn, "public", bank_id)
+            assert plan.to_drop == [], f"a reconcile must not shed existing indexes, got {plan.to_drop}"
+
             result = await reconcile_bank_vector_indexes(conn, "public", bank_id, index_clause)
 
-        assert result.dropped == 0, f"a reconcile must not shed a store-owned bank's existing indexes, got {result}"
+        assert result.dropped == 0, f"a store-owned bank's existing indexes must survive a reconcile, got {result}"
         assert await _bank_indexes(memory._pool, bank_id) == before
     finally:
-        await memory.delete_bank(bank_id, request_context=request_ctx)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
-@pytest.mark.asyncio
-async def test_restoring_a_bank_into_a_store_owned_deployment_creates_no_indexes(memory, request_ctx, store_owned):
-    """The import seam, which does NOT go through the fresh-INSERT gate.
+async def test_importing_a_bank_into_a_store_owned_deployment_creates_no_indexes(memory, request_context, store_owned):
+    """The import seam, driven through the real ``import_bank_async``.
 
-    A restored ``banks`` row already exists by the time the bank is set up, so import
-    calls :func:`create_bank_vector_indexes` directly to give the bank the coverage the
-    gate would otherwise have skipped (#2645). That call reproduces here exactly as the
-    importer makes it — with the bank row already in place — because it is the one path
-    that would still have built three empty indexes per restored bank after the
-    creation-time guard was added.
+    Import restores the ``banks`` row directly, so the fresh-INSERT gate never fires and
+    it builds the indexes itself (#2645) — a second call site for the guard, and the one
+    a creation-only fix would miss. Exercised end to end rather than by hand-calling
+    ``create_bank_vector_indexes``, so it would also catch import bypassing that helper
+    or passing it the wrong bank id.
     """
     bank_id = f"test_so_import_{uuid.uuid4().hex[:8]}"
+    backend = await memory._get_backend()
     try:
-        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_ctx)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank_id)
 
-        backend = await memory._get_backend()
-        async with memory._pool.acquire() as conn:
-            internal_id = await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id)
-            await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=backend.ops)
+        # Deleted then restored into the same id, which is the shape that reaches the
+        # explicit build: the restored banks row exists before the bank is set up.
+        await memory.delete_bank(bank_id, request_context=request_context)
+        result = await memory.import_bank_async(archive, request_context)
+        assert result.bank_id == bank_id
 
-        assert await _bank_indexes(memory._pool, bank_id) == []
+        indexes = await _bank_indexes(memory._pool, bank_id)
+        assert indexes == [], f"import into a store-owned deployment must build no indexes, got: {indexes}"
     finally:
-        await memory.delete_bank(bank_id, request_context=request_ctx)
+        await memory.delete_bank(bank_id, request_context=request_context)

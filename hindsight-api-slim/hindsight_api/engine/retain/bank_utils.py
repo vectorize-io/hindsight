@@ -71,9 +71,10 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
     in a store (:meth:`MemoriesExtension.store_owned_for`), and getting this backwards
     is silent — an SQL-owned bank without its index still recalls, just without ANN.
     A store that cannot answer is treated as SQL-backed, which is the safe direction:
-    the bank keeps the index it would have had before this existed. Logged rather than
-    swallowed, because that fallback re-arms #4615 — a router that throws goes back to
-    three empty indexes per bank, and at 27k banks nothing else would say so.
+    the bank keeps the index it would have had before this existed. Logged at debug
+    (the level the equivalent fallback in ``MemoryEngine._db_semaphore_for`` uses, and
+    all a per-bank-create path can afford) so the reason is recoverable when someone
+    goes looking: a router that throws re-arms #4615 silently otherwise.
     """
     from ..memories import get_memories
 
@@ -371,9 +372,10 @@ async def create_bank_if_missing(pool, bank_id: str) -> bool:
     """
 
     # Retried as a whole transaction. With the size threshold off (the default)
-    # a fresh bank builds its per-(bank, fact_type) partial vector indexes with a
-    # plain CREATE INDEX — it must, since this runs inside the bank-create tx and
-    # CONCURRENTLY cannot — and that CREATE takes a ShareLock on the shared
+    # a fresh SQL-owned bank builds its per-(bank, fact_type) partial vector
+    # indexes with a plain CREATE INDEX — it must, since this runs inside the
+    # bank-create tx and CONCURRENTLY cannot — and that CREATE takes a ShareLock
+    # on the shared
     # memory_units table, which can deadlock with concurrent writers. Even with
     # no DDL to issue, the lazy create can lose a deadlock (40P01 / ORA-00060) to
     # a concurrent writer touching the same bank row. The body is idempotent

@@ -6,6 +6,12 @@ partial indexes are built in the bank-create transaction and dropped when the
 bank is deleted — the behaviour that predates the threshold, and still the right
 one for a deployment whose bank count is not the problem.
 
+One bank is outside all of it at every threshold: one whose memories a custom
+store owns has no ``memory_units`` rows, so it is owed no index here and
+:func:`plan_bank_vector_indexes` returns it an empty plan (#4615). Empty in both
+directions — this module will not build such a bank an index, and will not take
+away one it already has.
+
 A deployment holding thousands of banks sets a positive threshold, because these
 indexes live on the shared ``memory_units`` table: PostgreSQL locks and plans
 against every index on a relation, and opens every one for each DML statement, so
@@ -43,7 +49,7 @@ from .._vector_index import (
     per_bank_indexes_are_eager,
 )
 from .db_utils import retry_with_backoff
-from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
+from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, bank_indexes_are_store_owned
 
 logger = logging.getLogger(__name__)
 
@@ -238,12 +244,18 @@ async def plan_bank_vector_indexes(
     without counting.
 
     With the threshold off, entitlement does not depend on rows at all: every
-    partition is owed an index from the moment the bank exists, so this reports
-    whatever bank creation did not manage to leave healthy and never drops
-    anything. The write path does not reach here in that mode (it short-circuits
-    before querying), but ``repair-bank`` does, and it is the path that repairs a
-    bank whose creation lost its DDL to a deadlock, or that was restored around
-    it.
+    partition of a SQL-owned bank is owed an index from the moment the bank
+    exists, so this reports whatever bank creation did not manage to leave
+    healthy and never drops anything. The write path does not reach here in that
+    mode (it short-circuits before querying), but ``repair-bank`` does, and it is
+    the path that repairs a bank whose creation lost its DDL to a deadlock, or
+    that was restored around it.
+
+    A store-owned bank is excluded from that entitlement, and the check comes
+    before both branches because it does not depend on the threshold. Its plan is
+    empty either way: bank creation no longer builds it anything (#4615), so
+    without this it would read here exactly like a bank whose DDL was lost, and
+    one ``repair-bank --all`` would rebuild every index the fix stopped creating.
 
     A bank whose row is gone yields an empty plan: its indexes are dropped by
     ``delete_bank`` while the internal_id they are named after is still known,
@@ -261,6 +273,24 @@ async def plan_bank_vector_indexes(
 
     names = {ft: _bank_index_name(ft, str(internal_id)) for ft in _BANK_INDEX_FACT_TYPES}
     health = await _index_health(conn, schema, list(names.values()), bank_id)
+
+    # A bank whose memories a custom store owns gets an EMPTY plan: nothing built,
+    # and — just as deliberately — nothing dropped.
+    #
+    # Nothing built, because otherwise this is the second builder and it undoes the
+    # first one's guard. Bank creation stopped making these (#4615), so every such
+    # bank now reads to the branch below exactly like one whose CREATE INDEX lost a
+    # deadlock: all three missing, and at the default threshold entitlement does not
+    # consult rows. `repair-bank --all` on the tenant from that issue would have
+    # rebuilt all 82,795 empty indexes in one command that reads as a repair.
+    #
+    # Nothing dropped, because turning a memories extension on makes every existing
+    # bank store-owned at once, and shedding tens of thousands of indexes is an
+    # operator's decision with its own timing — not something a deploy, a write, or
+    # a repair does on their behalf. Whatever such a bank already carries stays.
+    if bank_indexes_are_store_owned(bank_id):
+        plan.already_present += sum(1 for name in names.values() if health.get(name) is True)
+        return plan
 
     if per_bank_indexes_are_eager():
         for fact_type, index_name in names.items():
