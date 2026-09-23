@@ -1502,6 +1502,29 @@ class TestListReportsTheContentItDelivers:
         assert any(m["id"] == pending["id"] for m in page.items), "the pending model should still be listed"
         assert pending["id"] not in validator.model_reads
 
+    async def test_a_legacy_placeholder_is_not_reported_either(self, memory, kb_bank, request_context, monkeypatch):
+        """This path prices what it reports, so a body nobody wrote must not be billed.
+
+        An upgraded bank still holds pages carrying "Generating content..." from
+        before pages were created empty. They are unwritten by every other measure,
+        and metering them charges for content that was never synthesized.
+        """
+        bank_id, _ = kb_bank
+        legacy = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Legacy Pending",
+            source_query="Not answered yet.",
+            content="Generating content...",
+            request_context=request_context,
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert any(m["id"] == legacy["id"] for m in page.items), "the page is still listed"
+        assert legacy["id"] not in validator.model_reads
+
 
 class TestExportReportsOnceNotPerPage:
     """An export is a single named operation, not N model reads.

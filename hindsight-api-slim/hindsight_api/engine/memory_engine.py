@@ -183,7 +183,10 @@ def _knowledge_snippet(content: str | None) -> str:
 
 
 #: What a page's body was set to at creation before pages were created empty. Only
-#: ever read, never written — see the baseline check in _execute_mental_model_refresh.
+#: ever read, never written: an upgraded bank still holds rows carrying it, and every
+#: check that asks "has this page been written yet?" has to treat it as unwritten —
+#: the delta baseline, the sibling readability query, the refresh outcome's
+#: populated_content, and read metering.
 _LEGACY_PENDING_PLACEHOLDER = "Generating content..."
 
 # ``mental_model_history`` holds two kinds of row in one JSONB blob: the version
@@ -14711,13 +14714,16 @@ class MemoryEngine(MemoryEngineInterface):
 
         Items carrying no content are skipped: nothing was delivered, so there
         is nothing to report. That covers a model that has never been refreshed,
-        one still generating its first content, and every detail level that
-        drops the column — so "report what was delivered" is read off the items
-        themselves rather than inferred from the caller's ``detail`` argument.
+        one an upgraded bank still holds the legacy placeholder for, and every
+        detail level that drops the column — so "report what was delivered" is
+        read off the items themselves rather than inferred from the caller's
+        ``detail`` argument. The placeholder is skipped here and not only in the
+        monitoring fields because this path prices what it reports: metering a
+        body nobody wrote would bill for it.
         """
         for item in items:
             content = item.get("content")
-            if not content or not content.strip():
+            if not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER):
                 continue
             await self._record_mental_model_read(bank_id, str(item["id"]), content, request_context=request_context)
 
