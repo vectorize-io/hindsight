@@ -1,9 +1,13 @@
 ---
 sidebar_position: 1
 slug: /
+hide_table_of_contents: true
 ---
 
 import {ClientsGrid} from '@site/src/components/SupportedGrids';
+import {Flow} from '@vectorize-io/interfig';
+import whatHindsightDoes from '@vectorize-io/interfig/figures/what-hindsight-does';
+import tempr from '@vectorize-io/interfig/figures/tempr';
 
 # Overview
 
@@ -22,33 +26,7 @@ Hindsight solves these problems with a memory system designed specifically for A
 
 ## What Hindsight Does
 
-```mermaid
-graph LR
-    subgraph app["<b>Your Application</b>"]
-        Agent[AI Agent]
-    end
-
-    subgraph hindsight["<b>Hindsight</b>"]
-        API[API Server]
-
-        subgraph bank["<b>Memory Bank</b>"]
-            direction TB
-            MentalModels[Mental Models]
-            Observations[Observations]
-            MemEnt[Memories & Entities]
-            Chunks[Chunks]
-            Documents[Documents]
-
-            MentalModels --> Observations --> MemEnt --> Chunks --> Documents
-        end
-    end
-
-    Agent -->|retain| API
-    Agent -->|recall| API
-    Agent -->|reflect| API
-
-    API --> bank
-```
+<Flow {...whatHindsightDoes.props} />
 
 **Your AI agent** stores information via `retain()`, searches with `recall()`, and reasons with `reflect()` — all interactions with its dedicated **memory bank**
 
@@ -71,21 +49,7 @@ During reflect, the agent checks sources in priority order: **Mental Models → 
 
 Four search strategies run in parallel:
 
-```mermaid
-graph LR
-    Q[Query] --> S[Semantic]
-    Q --> K[Keyword]
-    Q --> G[Graph]
-    Q --> T[Temporal]
-
-    S --> RRF[RRF Fusion]
-    K --> RRF
-    G --> RRF
-    T --> RRF
-
-    RRF --> CE[Cross-Encoder]
-    CE --> R[Results]
-```
+<Flow {...tempr.props} />
 
 | Strategy | Best for |
 |----------|----------|

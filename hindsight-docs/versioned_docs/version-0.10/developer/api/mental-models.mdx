@@ -17,20 +17,15 @@ import mentalModelsPy from '!!raw-loader!@site/examples/api/mental-models.py';
 import mentalModelsMjs from '!!raw-loader!@site/examples/api/mental-models.mjs';
 import mentalModelsSh from '!!raw-loader!@site/examples/api/mental-models.sh';
 import mentalModelsGo from '!!raw-loader!@site/examples/api/mental-models.go';
+import {Flow} from '@vectorize-io/interfig';
+import mentalModelsApi from '@vectorize-io/interfig/figures/mental-models-api';
+import refreshModes from '@vectorize-io/interfig/figures/refresh-modes';
 
 ## What Are Mental Models?
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+<Flow {...mentalModelsApi.props} />
 
 ### Why Use Mental Models?
 
@@ -231,6 +226,8 @@ Two strategies are available for how a refresh produces the new content:
 - **`full`** *(default)* — every refresh regenerates the entire content from scratch. Simple and predictable: the LLM synthesises a fresh document from the retrieved memories. Best when the document is short, when you want every refresh to potentially restructure the output, or when you're not yet sure what the final shape should be.
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
+
+<Flow {...refreshModes.props} />
 
 #### How delta mode works
 

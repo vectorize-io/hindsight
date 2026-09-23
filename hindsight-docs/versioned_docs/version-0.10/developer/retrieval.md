@@ -2,25 +2,14 @@
 sidebar_position: 3
 ---
 
+import {Flow} from '@vectorize-io/interfig';
+import tempr from '@vectorize-io/interfig/figures/tempr';
+
 # Recall: How Hindsight Retrieves Memories
 
 When you call `recall()`, Hindsight uses multiple search strategies in parallel to find the most relevant memories, regardless of how you phrase your query.
 
-```mermaid
-graph LR
-    Q[Query] --> S[Semantic]
-    Q --> K[Keyword]
-    Q --> G[Graph]
-    Q --> T[Temporal]
-
-    S --> RRF[RRF Fusion]
-    K --> RRF
-    G --> RRF
-    T --> RRF
-
-    RRF --> CE[Cross-Encoder]
-    CE --> R[Results]
-```
+<Flow {...tempr.props} />
 
 ---
 

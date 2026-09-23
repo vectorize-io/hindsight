@@ -4,6 +4,8 @@ sidebar_position: 5
 
 import CodeSnippet from '@site/src/components/CodeSnippet';
 import multilingualPy from '!!raw-loader!@site/examples/api/multilingual.py';
+import {Flow} from '@vectorize-io/interfig';
+import multilingualFigure from '@vectorize-io/interfig/figures/multilingual';
 
 # Multilingual Support
 
@@ -11,13 +13,7 @@ Hindsight automatically detects the language of your input and responds in the s
 
 ## How It Works
 
-```mermaid
-graph LR
-    A[Chinese Input] --> B[Language Detection]
-    B --> C[Extract Facts in Chinese]
-    C --> D[Chinese Entities]
-    D --> E[Chinese Response]
-```
+<Flow {...multilingualFigure.props} />
 
 When you retain content or reflect on a query, Hindsight:
 

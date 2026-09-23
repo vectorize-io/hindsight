@@ -2,19 +2,16 @@
 sidebar_position: 2
 ---
 
+import {Flow} from '@vectorize-io/interfig';
+import retainFigure from '@vectorize-io/interfig/figures/retain';
+
 # Retain: How Hindsight Stores Memories
 
 When you call `retain()`, Hindsight transforms conversations and documents into structured, searchable memories that preserve meaning and context.
 
 ## What Retain Does
 
-```mermaid
-graph LR
-    A[Your Content] --> B[Extract Facts]
-    B --> C[Identify Entities]
-    C --> D[Build Connections]
-    D --> E[Memory Bank]
-```
+<Flow {...retainFigure.props} />
 
 ---
 

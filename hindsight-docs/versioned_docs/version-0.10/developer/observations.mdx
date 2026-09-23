@@ -6,20 +6,14 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 import recallPy from '!!raw-loader!@site/examples/api/recall.py';
 import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
 import observationsPy from '!!raw-loader!@site/examples/api/observations.py';
+import {Flow} from '@vectorize-io/interfig';
+import observationsFigure from '@vectorize-io/interfig/figures/observations';
 
 # Observations: Knowledge Consolidation
 
 After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
-```mermaid
-graph LR
-    A[New Facts] --> B[Consolidation Engine]
-    B --> C{Existing Observation?}
-    C -->|Yes| D[Refine Observation]
-    C -->|No| E[Create Observation]
-    D --> F[Observations]
-    E --> F
-```
+<Flow {...observationsFigure.props} />
 
 ---
 
