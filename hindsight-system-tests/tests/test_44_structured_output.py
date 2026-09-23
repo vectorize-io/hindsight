@@ -37,6 +37,10 @@ async def bank_with_facts(client, llm, bank_id, settled) -> str:
         extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
     )
     llm.on_step("consolidate").returns(consolidation())
+    # Reflect closes by asking for the answer through `done` in the conversation it
+    # searched in (the turn that offers only that tool); the standalone synthesis
+    # prompt is the fallback when a provider will not make the call.
+    llm.on_step("reflect", tool="done").returns_tool_call("done", answer=ANSWER)
     llm.on_step("reflect").calls_the_offered_tool(query="Alice")
     llm.on_step("reflect_answer").returns_text(ANSWER)
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
