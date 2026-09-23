@@ -761,7 +761,9 @@ class HindsightMemoryProvider(MemoryProvider):
                     return self._client
                 self._client = None
             if self._client is None:
-                self._client = self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
+                self._client = (
+                    self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
+                )
             return self._client
 
     def _run_sync(self, coro):
