@@ -128,6 +128,9 @@ async def test_a_page_with_nothing_to_say_yet_is_empty_rather_than_a_placeholder
 
     read = await client.knowledge_base.get_knowledge_page(bank_id, created.page_id)
     assert not (read.body or "").strip(), f"page body should be empty, got {read.body!r}"
+    # The rendered document says what the empty body cannot. Frontmatter and nothing
+    # else reads as a page that failed to render rather than one nobody has written.
+    assert "No content yet." in read.markdown
 
     # Still a search hit, and it says why it is bare. Hiding an empty page would be
     # worse than showing one: an agent that cannot find the page concludes the topic
