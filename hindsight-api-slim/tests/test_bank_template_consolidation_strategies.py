@@ -171,3 +171,18 @@ def test_unknown_fields_are_still_ignored_by_the_template_model():
     settings); those are filtered, not treated as invalid."""
     assert _bank_template_config_from_overrides({"llm_api_key": "secret"}) is None
     assert set(BankTemplateConfig.model_fields) >= {"consolidation_strategies"}
+
+
+@pytest.mark.asyncio
+async def test_importing_a_template_with_a_malformed_strategy_is_refused(api_client, bank):
+    """The typed template model is the other door into the config. A manifest
+    carrying a broken strategy must be refused rather than written, or import
+    would be a way around the validation the config endpoint applies."""
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank}/import",
+        json={"version": "1", "bank": {"consolidation_strategies": [{"scopes": "company:*"}]}},
+    )
+
+    assert resp.status_code in (400, 422), resp.text
+    config = await api_client.get(f"/v1/default/banks/{bank}/config")
+    assert "consolidation_strategies" not in config.json()["overrides"]
