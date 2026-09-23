@@ -39,6 +39,23 @@ Figures wider than their container shrink to fit (down to half size, then scroll
 
 The docs site sets the `--fig-*` colors for its light and dark themes in `hindsight-docs/src/css/custom.css` (search for `interfig`).
 
+## Clips for social
+
+`npm run export` records every figure, one clip per step, into `~/Downloads/interfig-clips` (outside the repo —
+they are throwaway social assets; `--out <dir>` picks another folder) as `<figure>-<step>.mp4` — H.264, sized to the figure, the step label and narration kept, the buttons hidden.
+
+```bash
+npm run export                                  # everything
+npm run export -- what-hindsight-does tempr     # only these figures
+npm run export -- --2x                          # play at 2x: half as long, same frames
+npm run export -- --dark --gif                  # dark theme, and GIFs beside the MP4s
+```
+
+MP4 is the one to post: same quality at a fraction of a GIF's size (a 23s clip is ~2.7 MB against ~12 MB).
+Use `--gif` where a file has to autoplay inline, like a README.
+
+Needs `npx playwright install chromium` once, and `ffmpeg` on PATH.
+
 ## Gallery
 
 `npm run dev` opens the gallery. Every file in `figures/` is one figure: add a file and it shows up.
