@@ -49,8 +49,14 @@ const playStep = (page, step, fast) =>
       window.startExport(i);
       if (fast) {
         // A clip hides the controls, so press the 2x button through the DOM instead of clicking it.
-        await new Promise((r) => requestAnimationFrame(r));
-        document.querySelector('button[title="Playback speed"]').click();
+        // It only exists once the figure has rendered, and the press has to land: check it took.
+        for (let tries = 0; tries < 50; tries++) {
+          const button = document.querySelector('button[title="Playback speed"]');
+          if (button?.innerText.startsWith('2')) break;
+          button?.click();
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        if (!document.querySelector('button[title="Playback speed"]')?.innerText.startsWith('2')) throw new Error('2x never took');
       }
       const width = () => {
         const bar = document.querySelector('[role=tab][aria-selected=true] div');
@@ -94,21 +100,47 @@ try {
     for (const [i, label] of steps.entries()) {
       const name = `${figure}-${slug(label)}`;
       const context = await browser.newContext({ viewport: box, recordVideo: { dir: RAW, size: box } });
+      const startedAt = Date.now(); // recording starts with the context; the page is blank until playStep
       const page = await context.newPage();
       await page.goto(url);
+      const blankLead = (Date.now() - startedAt) / 1000;
       await playStep(page, i, flags.has('--2x'));
       const video = page.video();
       await context.close(); // the video file is only complete once the context is gone
       const webm = await video.path();
 
       const mp4 = join(OUT, `${name}.mp4`);
-      await run('ffmpeg', ['-y', '-i', webm, '-an', '-c:v', 'libx264', '-crf', '20', '-preset', 'slow', '-pix_fmt', 'yuv420p', mp4]);
+      // -ss drops the blank frames before the step started, so the poster frame shows the figure.
+      // +faststart moves the index to the front: without it a browser downloads the whole file
+      // before it can show anything, which is what GitHub's player looked like it was doing.
+      await run('ffmpeg', [
+        // prettier-ignore
+        '-y',
+        '-ss',
+        String(blankLead),
+        '-i',
+        webm,
+        '-an',
+        '-c:v',
+        'libx264',
+        '-crf',
+        '20',
+        '-preset',
+        'slow',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        mp4,
+      ]);
       if (flags.has('--gif')) {
         const palette = join(RAW, `${name}.png`);
         const filters = 'fps=15,scale=900:-2:flags=lanczos';
-        await run('ffmpeg', ['-y', '-i', webm, '-vf', `${filters},palettegen=stats_mode=diff`, palette]);
+        await run('ffmpeg', ['-y', '-ss', String(blankLead), '-i', webm, '-vf', `${filters},palettegen=stats_mode=diff`, palette]);
         await run('ffmpeg', [
           '-y',
+          '-ss',
+          String(blankLead),
           '-i',
           webm,
           '-i',
