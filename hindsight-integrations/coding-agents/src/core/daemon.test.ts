@@ -1,9 +1,21 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { daemonEnv, detectLlm, ensureDaemon, startDaemonDetached } from "./daemon";
+
+// A daemon-mode ensure has to clear `preflightDaemon`, which shells out to `uvx` and probes the
+// PATH for an LLM. Neither is guaranteed on a test runner, so stub the subprocess layer; every
+// other use of it in daemon.ts sits behind an explicitly injected spawn.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, execFileSync: vi.fn(() => "") };
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("connection modes", () => {
   it("daemon mode derives the URL from apiPort, ignoring apiUrl", () => {
@@ -102,6 +114,75 @@ describe("ensureDaemon", () => {
   it("resolves without reporting usability", async () => {
     const cfg = resolveConfig({ apiUrl: "https://cloud.example" });
     expect(await ensureDaemon(cfg, "claude-code", {})).toBeUndefined();
+  });
+
+  /**
+   * The persistent-plugin hosts (dsh, opencode) fire several ensure points in the same tick: a
+   * SessionStart per session plus a Stop per finished turn. All of them see the same dead port, so
+   * without a shared guard each spawns its own starter, and the starters that lose the profile's
+   * file lock sit there for the full 300 s budget before failing (#1155, #3100). Collapsing the
+   * burst onto one spawn is the whole point of the guard.
+   */
+  it("collapses a concurrent burst onto a single start", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("ECONNREFUSED")))
+    );
+    const child = { on: vi.fn(), unref: vi.fn() };
+    const spawnFn = vi.fn(() => child);
+    const cfg = resolveConfig({ serverMode: "daemon" });
+
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        ensureDaemon(cfg, "dsh", {
+          waitMs: 0,
+          spawnFn: spawnFn as unknown as typeof import("node:child_process").spawn,
+        })
+      )
+    );
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+  });
+
+  // The guard must not outlive its attempt: a later turn that still finds the port dead has to
+  // start a fresh one rather than inheriting a spent attempt that already gave up.
+  it("starts again once the previous attempt has settled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("ECONNREFUSED")))
+    );
+    const child = { on: vi.fn(), unref: vi.fn() };
+    const spawnFn = vi.fn(() => child);
+    const cfg = resolveConfig({ serverMode: "daemon" });
+    const spawn = spawnFn as unknown as typeof import("node:child_process").spawn;
+
+    await ensureDaemon(cfg, "dsh", { waitMs: 0, spawnFn: spawn });
+    await ensureDaemon(cfg, "dsh", { waitMs: 0, spawnFn: spawn });
+
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+  });
+
+  // Joining must not cost a caller patience. The shared attempt belongs to the leader, so a
+  // follower whose own budget is larger would otherwise return the instant that leader gave up —
+  // and spend the rest of its turn making memory calls against a daemon still coming up.
+  it("spends what is left of its own budget after joining", async () => {
+    const probe = vi.fn(() => Promise.reject(new Error("ECONNREFUSED")));
+    vi.stubGlobal("fetch", probe);
+    const child = { on: vi.fn(), unref: vi.fn() };
+    const spawnFn = vi.fn(() => child);
+    const cfg = resolveConfig({ serverMode: "daemon" });
+    const spawn = spawnFn as unknown as typeof import("node:child_process").spawn;
+
+    // The first call takes the guard with a zero budget and settles at once; the second has 100 ms
+    // to spend and must go on polling after that first attempt is gone.
+    await Promise.all([
+      ensureDaemon(cfg, "dsh", { waitMs: 0, spawnFn: spawn }),
+      ensureDaemon(cfg, "dsh", { waitMs: 100, spawnFn: spawn }),
+    ]);
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    // One probe each up front, plus the follower's own poll — the shorter-lived leader has none.
+    expect(probe.mock.calls.length).toBeGreaterThan(2);
   });
 });
 
