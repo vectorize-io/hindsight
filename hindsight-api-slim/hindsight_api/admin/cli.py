@@ -683,26 +683,37 @@ async def _resolve_schemas(base_schema: str | None) -> list[str]:
     return list(dict.fromkeys(schemas))
 
 
-def _reraise_if_connection_is_gone(exc: BaseException) -> None:
-    """Re-raise when the sweep's shared connection is dead rather than skipping on.
+def _connection_is_gone(exc: BaseException) -> bool:
+    """Whether ``exc`` means the sweep's shared connection is dead, not that one schema is.
 
     ``_run_repair_bank`` holds ONE autocommit connection for every schema, so a
     connection-class failure is not a property of the schema it happened on — every
-    remaining schema will fail the same way. Skipping per schema would then print the
-    same error once per tenant and bury the single root cause in 200 lines.
+    remaining schema will fail the same way. Carrying on would print the same error
+    once per tenant and bury the single root cause in 200 lines.
+
+    The caller STOPS the sweep on a true here; it does not re-raise. Raising would
+    leave ``repair_bank``'s ``asyncio.run`` with no handler, so a connection lost on
+    schema 13 of 40 would discard twelve schemas of completed work and every report
+    with it — including the failed-index names, which appear nowhere else. Stopping
+    keeps the summary, the failure list and the exit code, which is the whole reason
+    the reporting was split up in the first place.
     """
-    if isinstance(exc, asyncpg.PostgresConnectionError | asyncpg.InterfaceError):
-        raise exc
+    return isinstance(exc, asyncpg.PostgresConnectionError | asyncpg.InterfaceError)
 
 
 @dataclass
 class RepairSweep:
     """What one ``repair-bank`` run did, and which schemas it could not do at all.
 
-    A dataclass rather than a second return value: a schema skipped whole (its store
-    unreachable, say) contributes no BankIndexResult, so the bank list alone cannot
-    distinguish "nothing needed doing" from "never looked", and the command must exit
-    non-zero for the second.
+    A dataclass rather than a second return value: a skipped schema contributes no
+    BankIndexResult, so the bank list alone cannot distinguish "nothing needed doing"
+    from "never looked at", and the command must exit non-zero for the second.
+
+    ``skipped_schemas`` means exactly that — not reconciled, re-run once the cause is
+    cleared. A schema whose banks WERE repaired never appears here, even if the orphan
+    sweep after them failed; that is reported on its own line and left out, because
+    telling an operator to re-run a sweep that already did its work is how a report
+    stops being believed.
     """
 
     banks: list[BankIndexResult]
@@ -751,30 +762,43 @@ async def _run_repair_bank(
                     for bid in bank_ids
                 ]
             except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
-                _reraise_if_connection_is_gone(exc)
                 typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
                 skipped_schemas.append(target_schema)
+                if _connection_is_gone(exc):
+                    # Every remaining schema would fail the same way on the same dead
+                    # connection. Mark them unlooked-at and stop, so the caller still
+                    # reports what the sweep DID manage before the connection went.
+                    remaining = schemas[schemas.index(target_schema) + 1 :]
+                    if remaining:
+                        typer.echo(
+                            f"  stopping: the shared connection is gone, so "
+                            f"{len(remaining)} further schema(s) were not attempted.",
+                            err=True,
+                        )
+                    skipped_schemas.extend(remaining)
+                    break
                 continue
-            # Banked before the orphan sweep, not after it. Those reconciles already
-            # happened — CREATE INDEX CONCURRENTLY is not rolled back by a later
-            # failure — so folding them into the same guard would report "skipped"
-            # and "0 created" for a schema that just built 300 indexes. A skipped
-            # schema has to mean what RepairSweep says it means: never looked at.
+            # Banked before the orphan sweep: those reconciles already happened, and
+            # CREATE INDEX CONCURRENTLY is not rolled back by a later failure.
             results.extend(schema_results)
+            # Only in --all mode: an index whose bank row is gone is unreachable
+            # from every bank-scoped path, so this is the one place that can collect
+            # it. Normally finds nothing — delete_bank drops a bank's indexes while it
+            # still knows their names — but a deployment that hit the #3485 wall could
+            # not run delete_bank at all.
+            #
+            # Best-effort, and deliberately NOT a "skipped schema": the banks here were
+            # reconciled, and reporting the schema as skipped would tell the operator
+            # to re-run a sweep that already did its work. Per-index drop failures are
+            # handled inside drop_orphaned_bank_indexes; this catches only the catalog
+            # read behind it.
+            orphans: list[str] = []
             try:
-                # Only in --all mode: an index whose bank row is gone is unreachable
-                # from every bank-scoped path, so this is the one place that can
-                # collect it. Normally finds nothing — delete_bank drops a bank's
-                # indexes while it still knows their names — but a deployment that
-                # hit the #3485 wall could not run delete_bank at all.
                 orphans = [] if bank_id else await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
-            except Exception as exc:  # noqa: BLE001 — the banks were repaired; say what failed
-                _reraise_if_connection_is_gone(exc)
+            except Exception as exc:  # noqa: BLE001 — the banks were repaired; orphan collection is a nicety
                 typer.echo(
                     f"  schema '{target_schema}': banks repaired, but orphan collection failed ({exc})", err=True
                 )
-                skipped_schemas.append(target_schema)
-                orphans = []
             if orphans:
                 typer.echo(
                     f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
@@ -902,9 +926,8 @@ def repair_bank(
         failed_names = [name for r in results for name in r.failed_indexes]
         typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
     if sweep.skipped_schemas:
-        # A skipped schema was never looked at (or only half looked at), so a run that
-        # reported only successes would read as converged while whole tenants still
-        # carry whatever they carried.
+        # A skipped schema was never reconciled, so a run that reported only successes
+        # would read as converged while whole tenants still carry whatever they carried.
         typer.echo(
             f"Skipped {len(sweep.skipped_schemas)} schema(s): "
             f"{', '.join(sweep.skipped_schemas)}. Re-run once the cause is cleared.",

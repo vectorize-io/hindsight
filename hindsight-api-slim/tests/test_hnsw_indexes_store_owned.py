@@ -413,3 +413,65 @@ async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_clas
         assert "router is unreachable" in result.output, result.output
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch):
+    """Failed index names and skipped schemas are independent; neither may hide the other.
+
+    The bug this pins: the skipped-schemas branch used to ``raise Exit(1)`` before the
+    failed-index branch, so a run with both printed the failure COUNT but never the
+    NAMES — and those names appear nowhere else in the output.
+
+    Driven off a canned RepairSweep rather than a real sweep, because producing both
+    conditions at once against a live database means engineering a failed CONCURRENTLY
+    build, which is slow and flaky. What is under test is the reporting block.
+    """
+    from typer.testing import CliRunner
+
+    from hindsight_api.admin.cli import RepairSweep
+    from hindsight_api.engine.vector_index_health import BankIndexResult
+
+    canned = RepairSweep(
+        banks=[BankIndexResult(bank_id="b1", failed=1, failed_indexes=["public.idx_mu_emb_worl_dead"])],
+        skipped_schemas=["t_unreachable"],
+    )
+
+    async def _fake_sweep(*args, **kwargs):
+        return canned
+
+    monkeypatch.setattr(cli, "_run_repair_bank", _fake_sweep)
+    monkeypatch.setattr(cli, "_vector_index_clause", lambda: "USING hnsw (embedding vector_cosine_ops)")
+
+    result = CliRunner().invoke(cli.app, ["repair-bank", "--all"])
+
+    assert result.exit_code == 1, result.output
+    assert "idx_mu_emb_worl_dead" in result.output, f"failed index names were swallowed:\n{result.output}"
+    assert "t_unreachable" in result.output, f"skipped schema was not reported:\n{result.output}"
+
+
+async def test_rename_refuses_when_the_store_cannot_say_who_owns_the_bank(memory, request_context, pg0_db_url):
+    """rename-bank must refuse, not traceback, when the probe raises.
+
+    ``rename-bank`` already refuses a store-owned bank outright. The precondition
+    probe that decides that can now raise, and it runs BEFORE anything is changed —
+    so the honest answer is a refusal saying nothing was touched, not a stack trace
+    that leaves the operator unsure whether the rename half-happened.
+    """
+    bank_id = f"test_so_rename_{uuid.uuid4().hex[:8]}"
+    real_store = memories_mod.get_memories()
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        memories_mod.set_memories(_Unanswerable(real_store))
+        try:
+            with pytest.raises(cli.RenameBankError, match="cannot tell whether"):
+                await cli._run_rename_bank(pg0_db_url, _TEST_SCHEMA, bank_id, f"{bank_id}_new", dry_run=False)
+        finally:
+            memories_mod.set_memories(real_store)
+
+        # Refused before anything moved: the bank is still under its original id.
+        async with memory._pool.acquire() as conn:
+            assert await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", bank_id) == 1
+            assert await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", f"{bank_id}_new") is None
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

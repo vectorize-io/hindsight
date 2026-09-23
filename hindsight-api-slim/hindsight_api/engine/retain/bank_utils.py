@@ -139,19 +139,11 @@ async def create_bank_vector_indexes(
         logger.debug("Skipping per-bank vector indexes for configured backend")
         return
 
-    # A bank whose memories a custom store owns has no rows here and never will,
-    # so all three indexes would be empty — and empty is not free on a shared
-    # table (see bank_indexes_are_store_owned). Checked here rather than at each
-    # caller because import restores a bank around the fresh-INSERT gate and
-    # calls this directly (#2645), and that path must skip them too. Last of the
-    # three gates: it is the only one that reaches outside this process, so the
-    # two local ones answer first for a deployment where it cannot matter.
-    #
-    # A store that cannot answer is treated as SQL-backed. That is the safe
-    # direction HERE and only here: this runs inside the bank-create transaction,
-    # so an escaping exception fails an ordinary first retain, and the cost of
-    # guessing wrong is three unused indexes on one bank. The reconcile makes the
-    # opposite choice — see the docstring above.
+    # Checked in the callee rather than at each caller because import restores a bank
+    # around the fresh-INSERT gate and calls this directly (#2645). Last of the three
+    # gates: the only one that reaches outside this process, so the two local ones
+    # answer first. Catching is the safe direction HERE and only here — see
+    # bank_indexes_are_store_owned for why the reconcile chooses the opposite.
     try:
         store_owned = bank_indexes_are_store_owned(bank_id)
     except Exception as e:  # noqa: BLE001 — a store that cannot answer must not fail bank creation

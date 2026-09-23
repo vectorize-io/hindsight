@@ -109,6 +109,15 @@ Those indexes are empty, and Postgres plans against every index on a relation, s
 a deployment with many store-owned banks they are charged to every other query that
 touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are ready.
 
+**Exit code.** `0` when every schema was reconciled. `1` when an index failed to build
+(the names are printed, and a re-run retries them), or when a schema could not be
+reconciled at all — for example because the memories store could not say which banks
+it owns. A skipped schema is named in the output and was left exactly as it was; the
+command does not guess, because guessing would rebuild the very indexes described
+above. Both are reported before the command exits, so one never hides the other. If
+the database connection itself is lost mid-sweep, the run stops there rather than
+repeating the same error for every remaining schema, and still reports what it did.
+
 **Examples:**
 
 ```bash

@@ -256,9 +256,12 @@ async def plan_bank_vector_indexes(
 
     A store-owned bank is excluded from that entitlement, and the check comes
     before both branches because it does not depend on the threshold. Its plan is
-    empty either way: bank creation no longer builds it anything (#4615), so
-    without this it would read here exactly like a bank whose DDL was lost, and
-    one ``repair-bank --all`` would rebuild every index the fix stopped creating.
+    empty in BOTH directions. Nothing built: creation no longer builds it anything
+    (#4615), so without this it would read here exactly like a bank whose DDL was
+    lost, and one ``repair-bank --all`` would rebuild every index the fix stopped
+    creating. Nothing dropped: adopting a memories store makes every existing bank
+    store-owned at once, and shedding tens of thousands of indexes stays an
+    operator's decision with its own timing.
 
     A bank whose row is gone yields an empty plan: its indexes are dropped by
     ``delete_bank`` while the internal_id they are named after is still known,
@@ -266,40 +269,11 @@ async def plan_bank_vector_indexes(
     """
     plan = BankIndexPlan(bank_id=bank_id)
 
-    # A bank whose memories a custom store owns gets an EMPTY plan: nothing built,
-    # and — just as deliberately — nothing dropped.
-    #
-    # Nothing built, because otherwise this is the second builder and it undoes the
-    # first one's guard. Bank creation stopped making these (#4615), so every such
-    # bank now reads to the branches below exactly like one whose CREATE INDEX lost
-    # a deadlock: all three missing, and with the threshold off entitlement does not
-    # consult rows. `repair-bank --all` on the tenant from that issue would have
-    # rebuilt all 82,795 empty indexes in one command that reads as a repair.
-    #
-    # Nothing dropped, because turning a memories extension on makes every existing
-    # bank store-owned at once, and shedding tens of thousands of indexes is an
-    # operator's decision with its own timing — not something a deploy, a write, or
-    # a repair does on their behalf. Whatever such a bank already carries stays.
-    #
-    # First, before either round trip below: with a threshold set this runs on every
-    # write to the bank (the submit-time pre-check), and neither the bank lookup nor
-    # the catalog read can change the answer. Both were paid here at first, only to
-    # fill `already_present` for repair-bank's output — a counter, against two
-    # queries per retain forever. `pg_indexes` is where an operator reads what a
-    # store-owned bank still carries; see the admin-CLI docs.
-    #
-    # Deliberately NOT wrapped: a store that cannot answer must not be guessed at here.
-    # Guessing "SQL-backed" would have a transient router blip partway through
-    # `repair-bank --all` rebuild all three indexes for every bank it failed on. Letting
-    # it raise makes the write path log and do nothing, and the sweep report that schema
-    # skipped and exit non-zero. bank_indexes_are_store_owned's docstring has the full
-    # asymmetry, and admin/cli.py::_run_repair_bank is where the per-schema guard lives.
-    #
-    # `bank_id` alone, with no schema: that is the store interface's shape, and inside
-    # the API the schema is implied by the request context. `repair-bank --all` is the
-    # first caller to ask one process about many schemas, so a deployment where the same
-    # bank id exists in two tenant schemas with different backends would get one answer
-    # for both. No such router exists today; worth knowing before one does.
+    # Empty plan for a store-owned bank — see this function's docstring for both
+    # halves. First, before either round trip: with a threshold set this runs on every
+    # write, and neither the bank lookup nor the catalog read can change the answer.
+    # Not wrapped, deliberately: bank_indexes_are_store_owned raises rather than guess,
+    # and its docstring says why the two callers need opposite fallbacks.
     if bank_indexes_are_store_owned(bank_id):
         return plan
 
