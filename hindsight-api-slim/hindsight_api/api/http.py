@@ -3534,7 +3534,7 @@ class KnowledgePageSearchResult(BaseModel):
     snippet: str = Field(
         description=(
             "The page's opening text. A page whose body is still empty says so in words — "
-            "'_No content yet._' — rather than coming back blank, so a caller can tell an "
+            "'No content yet.' — rather than coming back blank, so a caller can tell an "
             "unwritten page from a page whose snippet simply did not render. The marker is "
             "produced on the way out; the stored body stays empty and out of the search index."
         )

@@ -3270,11 +3270,17 @@ class TestRefreshSkipsEmptyScope:
         """The reported shape: a page created with its bank, before anything is retained."""
         bank_id = f"test-mm-empty-full-{uuid.uuid4().hex[:8]}"
         await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        # Seeded with real content, not the empty body a fresh page carries: the
+        # assertion below is about PRESERVING what the document already said, and an
+        # empty body would pass it whether the skip preserved the content or wiped
+        # it. The bank still has nothing to reflect over — the sibling check excludes
+        # the model being refreshed — so the skip under test is unchanged.
+        existing = "# Coding Style\n\nTabs, and no clever one-liners."
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content="",
+            content=existing,
             request_context=request_context,
         )
         calls = self._stub_reflect(memory)
@@ -3290,7 +3296,7 @@ class TestRefreshSkipsEmptyScope:
             "slots it needs to ingest anything (#3875)"
         )
         assert refreshed is not None
-        assert refreshed["content"].strip() == "", (
+        assert refreshed["content"].strip() == existing, (
             "the document must be preserved, not overwritten from an empty synthesis"
         )
         reflect_response = refreshed["reflect_response"]

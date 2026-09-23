@@ -12353,7 +12353,7 @@
           "snippet": {
             "type": "string",
             "title": "Snippet",
-            "description": "The page's opening text. A page whose body is still empty says so in words \u2014 '_No content yet._' \u2014 rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index."
+            "description": "The page's opening text. A page whose body is still empty says so in words \u2014 'No content yet.' \u2014 rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index."
           },
           "score": {
             "type": "number",

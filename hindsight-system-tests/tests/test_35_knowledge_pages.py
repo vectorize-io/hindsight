@@ -131,6 +131,14 @@ async def test_a_page_with_nothing_to_say_yet_is_empty_rather_than_a_placeholder
     read = await client.knowledge_base.get_knowledge_page(bank_id, created.page_id)
     assert not (read.body or "").strip(), f"page body should be empty, got {read.body!r}"
 
+    # Still a search hit, and it says why it is bare. Hiding an empty page would be
+    # worse than showing one: an agent that cannot find the page concludes the topic
+    # is uncovered and creates a second page for it. The marker is built when the row
+    # is read, so the stored body above stays empty and the index never carries it.
+    found = await client.knowledge_base.search_knowledge_base(bank_id, q=PAGE_NAME)
+    hit = next(result for result in found.results if result.id == created.page_id)
+    assert hit.snippet == "No content yet."
+
 
 async def test_a_bank_default_trigger_shapes_new_pages(client, llm, bank_id, settled):
     """``knowledge_page_default_trigger`` is merged over the built-in page default.

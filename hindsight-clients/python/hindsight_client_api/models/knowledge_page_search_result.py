@@ -29,7 +29,7 @@ class KnowledgePageSearchResult(BaseModel):
     id: StrictStr
     name: StrictStr
     mental_model_id: Optional[StrictStr] = None
-    snippet: StrictStr = Field(description="The page's opening text. A page whose body is still empty says so in words — '_No content yet._' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.")
+    snippet: StrictStr = Field(description="The page's opening text. A page whose body is still empty says so in words — 'No content yet.' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.")
     score: Union[StrictFloat, StrictInt] = Field(description="Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.")
     updated_at: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["id", "name", "mental_model_id", "snippet", "score", "updated_at"]

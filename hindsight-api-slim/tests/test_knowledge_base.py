@@ -589,7 +589,7 @@ class TestSearch:
         results = await memory.search_knowledge_pages(bank_id, "refund window", request_context=request_context)
 
         hit = next(r for r in results if r["id"] == pending["id"])
-        assert hit["snippet"] == "_No content yet._"
+        assert hit["snippet"] == "No content yet."
 
         stored = await memory.get_mental_model(
             bank_id, pending["mental_model_id"], detail="full", request_context=request_context

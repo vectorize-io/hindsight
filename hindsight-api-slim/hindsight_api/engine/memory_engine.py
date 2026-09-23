@@ -171,8 +171,13 @@ def _knowledge_snippet(content: str | None) -> str:
     refreshed is indistinguishable here from one that refreshed and found nothing to
     say. Promising content that may never come is worse than describing the state
     that is actually observable.
+
+    Plain words, no markdown emphasis: a snippet is rendered as text, not parsed —
+    the control plane prints it into a span — so underscores would reach the reader
+    as underscores. This is the same sentence the page detail shows for an empty
+    body, so one page reads the same wherever it is seen.
     """
-    return (content or "").strip() or "_No content yet._"
+    return (content or "").strip() or "No content yet."
 
 
 #: What a page's body was set to at creation before pages were created empty. Only
