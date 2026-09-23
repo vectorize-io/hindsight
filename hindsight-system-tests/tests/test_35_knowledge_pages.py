@@ -113,9 +113,7 @@ async def test_deleting_a_page_leaves_the_facts_alone(client, bank_id, bank_with
     assert [m.text for m in memories.items] == ["Alice moved to Berlin | Involving: Alice"]
 
 
-async def test_a_page_with_nothing_to_say_yet_is_empty_rather_than_a_placeholder(
-    client, llm, bank_id, settled
-):
+async def test_a_page_with_nothing_to_say_yet_is_empty_rather_than_a_placeholder(client, bank_id, settled):
     """A page created in a bank with nothing to synthesize from carries an empty
     body, not a sentence describing its own state.
 

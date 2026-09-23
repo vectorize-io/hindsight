@@ -1460,7 +1460,7 @@ class TestListReportsTheContentItDelivers:
         assert validator.model_reads == []
 
     async def test_a_model_still_generating_is_not_reported(self, memory, kb_bank, request_context, monkeypatch):
-        # The placeholder is not synthesized knowledge; nothing was delivered.
+        # An unwritten page is not synthesized knowledge; nothing was delivered.
         bank_id, ids = kb_bank
         pending = await memory.create_mental_model(
             bank_id=bank_id,

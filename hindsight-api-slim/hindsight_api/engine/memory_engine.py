@@ -172,12 +172,14 @@ def _knowledge_snippet(content: str | None) -> str:
     say. Promising content that may never come is worse than describing the state
     that is actually observable.
 
-    Plain words, no markdown emphasis: a snippet is rendered as text, not parsed —
-    the control plane prints it into a span — so underscores would reach the reader
-    as underscores. This is the same sentence the page detail shows for an empty
-    body, so one page reads the same wherever it is seen.
+    The wording itself lives with the other read-time page rendering, so searching for
+    a page and reading it tell the reader the same thing in the same words.
     """
-    return (content or "").strip() or "No content yet."
+    # Imported here rather than at module scope: ``hindsight_api.api`` pulls in
+    # MemoryEngine, so a top-level import of anything under it would close a cycle.
+    from ..api.page_markdown import EMPTY_PAGE_NOTICE
+
+    return (content or "").strip() or EMPTY_PAGE_NOTICE
 
 
 #: What a page's body was set to at creation before pages were created empty. Only

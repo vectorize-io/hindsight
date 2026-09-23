@@ -2479,7 +2479,7 @@ async def _do_get_knowledge_page(
         "description": node.get("source_query"),
         "tags": page.display_tags,
         "timestamp": node.get("last_refreshed_at") or node.get("created_at"),
-        "markdown": page_markdown.render_document(node),
+        "markdown": page_markdown.render_document(node, notice_when_empty=True),
     }
 
 

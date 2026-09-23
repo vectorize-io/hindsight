@@ -3600,7 +3600,7 @@ def _knowledge_page_response(node: dict[str, Any]) -> KnowledgePageResponse:
         tags=page.display_tags,
         timestamp=node.get("last_refreshed_at") or node.get("created_at"),
         body=node.get("content"),
-        markdown=page_markdown.render_document(node),
+        markdown=page_markdown.render_document(node, notice_when_empty=True),
     )
 
 
