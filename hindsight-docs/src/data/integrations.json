@@ -591,6 +591,16 @@
       "icon": "/img/icons/gemini.svg"
     },
     {
+      "id": "meta-muse",
+      "name": "Meta Muse",
+      "description": "Bring the memory from your other AI tools into Meta Muse. Muse signs in to Hindsight with OAuth, keeps its own memory bank, and reads the banks your other agents write to \u2014 recall, retain and reflect over MCP.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/meta-muse",
+      "icon": "/img/icons/mcp.png"
+    },
+    {
       "id": "outsystems",
       "name": "OutSystems",
       "description": "Add Hindsight memory banks to OutSystems applications or agents.",
