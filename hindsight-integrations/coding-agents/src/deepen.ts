@@ -17,10 +17,10 @@
  *   5. drain this run's extractions, then create the knowledge pages if the bank has none —
  *      pages-last makes `syncStatus().synced` a real completion marker
  *
- * A per-bank lock file makes concurrent session starts a no-op (stale locks expire).
+ * A heartbeat-backed per-bank lease makes concurrent session starts a no-op and lets a new run
+ * recover quickly after a holder dies.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bankProjectName, deriveBankIdOrSkip } from "./core/bank";
@@ -37,9 +37,9 @@ import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
 import { buildRetainStamp } from "./core/retain-stamp";
 import { describeError, log as plog, setLogLevel } from "./core/log";
+import { acquireDeepenLease } from "./core/deepen-lease";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
-const LOCK_STALE_MS = 30 * 60 * 1000;
 
 function arg(name: string, def?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -92,43 +92,22 @@ const log = (m: string) => {
   plog.info("deepen", m);
 };
 
-// ── per-bank lock: concurrent session starts must not double-ingest ─────────────
-// Scratch, not state: the lock only guards against concurrent double-ingest cost. In the OS
+// ── per-bank lease: concurrent session starts must not double-ingest ────────────
+// Scratch, not state: the lease only guards against concurrent double-ingest cost. In the OS
 // temp dir so ~/.hindsight holds ONLY the config file (a reboot clearing it is harmless).
 const LOCK_DIR = join(tmpdir(), "hindsight-coding-agent");
-const LOCK = join(LOCK_DIR, `deepen-${encodeURIComponent(FINAL_BANK ?? "")}.lock`);
-
-function acquireLock(): boolean {
-  try {
-    const held = JSON.parse(readFileSync(LOCK, "utf8")) as { pid?: number; ts?: number };
-    if (held.ts && Date.now() - held.ts < LOCK_STALE_MS) {
-      // TTL alone is not enough: a killed run would block its bank for LOCK_STALE_MS. The lock
-      // already records the holder's pid — if that process is gone, the lock is stale NOW.
-      let holderAlive = false;
-      if (held.pid) {
-        try {
-          process.kill(held.pid, 0);
-          holderAlive = true;
-        } catch {
-          /* ESRCH: holder is dead — treat as stale */
-        }
-      }
-      if (holderAlive) return false; // live run in progress
-    }
-  } catch {
-    /* no/invalid lock — free */
-  }
-  try {
-    mkdirSync(LOCK_DIR, { recursive: true });
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-    return true;
-  } catch {
-    return false;
-  }
-}
+const LOCK_KEY = encodeURIComponent(FINAL_BANK ?? "");
 
 async function main() {
-  if (!acquireLock()) {
+  const lease = acquireDeepenLease(LOCK_DIR, LOCK_KEY, {
+    onLost: () => {
+      // A machine can sleep past the stale window. If a successor reclaimed the lease while this
+      // process was suspended, stop this generation instead of resuming duplicate ingestion.
+      log(`deepen: lock for ${FINAL_BANK} was reclaimed — stopping the old run`);
+      process.exit(0);
+    },
+  });
+  if (!lease) {
     log(`deepen: another run holds the lock for ${FINAL_BANK} — nothing to do`);
     return;
   }
@@ -325,11 +304,7 @@ async function main() {
       `\n✅ deepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${failures ? ` (${failures} items failed to enqueue)` : ""}.`
     );
   } finally {
-    try {
-      unlinkSync(LOCK);
-    } catch {
-      /* best-effort */
-    }
+    lease.release();
   }
 }
 
@@ -339,10 +314,5 @@ main().catch((e) => {
     error: describeError(e),
   });
   console.error("deepen failed:", (e as Error).message || e);
-  try {
-    unlinkSync(LOCK);
-  } catch {
-    /* best-effort */
-  }
   process.exit(1);
 });

@@ -8,6 +8,7 @@ import {
   heartbeatLease,
   LEASE_STALE_MS,
   releaseLease,
+  startLeaseHeartbeat,
   superviseSurvey,
   type SurveyLease,
 } from "./survey-lease";
@@ -35,6 +36,11 @@ describe("acquireLease", () => {
     expect(acquireLease(root, "other")).toBeDefined();
     expect(readdirSync(root).sort()).toEqual(["survey-k.lock", "survey-other.lock"]);
     expect(readdirSync(first!.directory)).toEqual([first!.owner]);
+  });
+
+  it("scopes the lock name for another single-flight job", () => {
+    const lease = acquireLease(root, "bank", LEASE_STALE_MS, "deepen");
+    expect(lease!.directory).toBe(join(root, "deepen-bank.lock"));
   });
 
   it("is free again once released", () => {
@@ -105,6 +111,45 @@ describe("releaseLease / heartbeatLease", () => {
     age(lease, LEASE_STALE_MS + 5_000);
     expect(heartbeatLease(lease)).toBe(true);
     expect(acquireLease(root, "k")).toBeUndefined();
+  });
+});
+
+describe("startLeaseHeartbeat", () => {
+  it("keeps a live holder exclusive beyond the stale interval", () => {
+    vi.useFakeTimers();
+    const staleMs = 1_000;
+    const lease = acquireLease(root, "deepen", staleMs)!;
+    const stop = startLeaseHeartbeat(lease, { heartbeatMs: 100 });
+
+    vi.advanceTimersByTime(staleMs * 4);
+
+    expect(acquireLease(root, "deepen", staleMs)).toBeUndefined();
+    stop();
+  });
+
+  it("admits exactly one successor after the heartbeat stops", () => {
+    const staleMs = 1_000;
+    const lease = acquireLease(root, "deepen", staleMs)!;
+    const stop = startLeaseHeartbeat(lease, { heartbeatMs: 100 });
+    stop();
+    age(lease, staleMs + 1);
+    const successors = Array.from({ length: 8 }, () => acquireLease(root, "deepen", staleMs));
+
+    expect(successors.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("cannot let an old generation remove its successor", () => {
+    const staleMs = 1_000;
+    const old = acquireLease(root, "deepen", staleMs)!;
+    const stop = startLeaseHeartbeat(old, { heartbeatMs: 100 });
+    stop();
+    age(old, staleMs + 1);
+    const successor = acquireLease(root, "deepen", staleMs)!;
+
+    releaseLease(old);
+
+    expect(readdirSync(successor.directory)).toEqual([successor.owner]);
+    expect(heartbeatLease(successor)).toBe(true);
   });
 });
 
