@@ -152,12 +152,26 @@ def _authorize_nested_operations() -> "Iterator[None]":
         _nested_operation_authorized.reset(token)
 
 
+#: What a page's body was set to at creation before pages were created empty. Only
+#: ever read, never written: an upgraded bank still holds rows carrying it, and every
+#: check that asks "has this page been written yet?" has to treat it as unwritten —
+#: the delta baseline, the sibling readability query, the refresh outcome's
+#: populated_content, and read metering.
+_LEGACY_PENDING_PLACEHOLDER = "Generating content..."
+
+
 def _is_unwritten_body(content: str | None) -> bool:
     """Has nothing been written into this page's body yet?
 
     Empty is the state a page is created in; the legacy placeholder is the state
     an upgraded bank's pages were created in before that. Both mean the same
     thing to every caller that has to decide whether a page carries anything.
+
+    Whitespace counts as unwritten, which the emptiness checks this replaced did
+    not all do consistently — a body of spaces was skipped by some and priced at
+    zero by others. Only an explicit ``update_mental_model(content="   ")`` can
+    produce one: a refresh that synthesizes nothing but whitespace is rejected
+    before it is stored.
     """
     return not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER)
 
@@ -191,13 +205,6 @@ def _knowledge_snippet(content: str | None) -> str:
 
     return (content or "").strip() or EMPTY_PAGE_NOTICE
 
-
-#: What a page's body was set to at creation before pages were created empty. Only
-#: ever read, never written: an upgraded bank still holds rows carrying it, and every
-#: check that asks "has this page been written yet?" has to treat it as unwritten —
-#: the delta baseline, the sibling readability query, the refresh outcome's
-#: populated_content, and read metering.
-_LEGACY_PENDING_PLACEHOLDER = "Generating content..."
 
 # ``mental_model_history`` holds two kinds of row in one JSONB blob: the version
 # snapshots a successful refresh writes, and the failure records a refused one
