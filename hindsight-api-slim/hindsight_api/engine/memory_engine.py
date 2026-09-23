@@ -152,6 +152,16 @@ def _authorize_nested_operations() -> "Iterator[None]":
         _nested_operation_authorized.reset(token)
 
 
+def _is_unwritten_body(content: str | None) -> bool:
+    """Has nothing been written into this page's body yet?
+
+    Empty is the state a page is created in; the legacy placeholder is the state
+    an upgraded bank's pages were created in before that. Both mean the same
+    thing to every caller that has to decide whether a page carries anything.
+    """
+    return not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER)
+
+
 def _knowledge_snippet(content: str | None) -> str:
     """The snippet a search result shows, including when the page has no body.
 
@@ -14717,13 +14727,13 @@ class MemoryEngine(MemoryEngineInterface):
         one an upgraded bank still holds the legacy placeholder for, and every
         detail level that drops the column — so "report what was delivered" is
         read off the items themselves rather than inferred from the caller's
-        ``detail`` argument — the skip itself lives in ``_record_mental_model_read``,
-        which every read route shares.
+        ``detail`` argument.
         """
         for item in items:
-            await self._record_mental_model_read(
-                bank_id, str(item["id"]), item.get("content"), request_context=request_context
-            )
+            content = item.get("content")
+            if _is_unwritten_body(content):
+                continue
+            await self._record_mental_model_read(bank_id, str(item["id"]), content, request_context=request_context)
 
     async def _record_mental_model_read(
         self,
@@ -14738,18 +14748,18 @@ class MemoryEngine(MemoryEngineInterface):
         Best-effort by design: the caller already has the content, so a failure
         here must not turn a served read into an error.
 
-        A page with nothing under it is not a read: nothing was delivered, so
-        there is nothing to price. That covers a page that has never refreshed,
-        one an upgraded bank still holds the legacy placeholder for, and every
-        detail level that drops the column. The check lives here rather than in
-        each caller because all three — the list, the mental-model get and the
-        knowledge-page get — route through this function, and pricing the same
-        page differently depending on how it was fetched is exactly what the
-        list path's docstring promises never happens.
+        An unwritten body prices at zero rather than by its length. That is the
+        legacy placeholder an upgraded bank still holds: nobody wrote it, so
+        billing for it would charge for text the deployment never asked for. It
+        is sized here, where every read route converges, so the same page costs
+        the same whether it arrived through a get or a list.
+
+        Zero tokens, not a skipped hook. A gated read that reports no completion
+        is the shape this hook exists to prevent — a deployment could authorize a
+        read it then never records — so the pairing holds even when the answer is
+        "nothing was delivered".
         """
         if not self._operation_validator:
-            return
-        if not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER):
             return
         from hindsight_api.extensions.operation_validator import MentalModelGetResult
 
@@ -14759,7 +14769,7 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id=bank_id,
                     mental_model_id=mental_model_id,
                     request_context=request_context,
-                    output_tokens=len(content) // 4 if content else 0,
+                    output_tokens=0 if _is_unwritten_body(content) else len(content or "") // 4,
                     success=True,
                 )
             )

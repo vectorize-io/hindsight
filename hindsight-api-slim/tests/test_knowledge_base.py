@@ -1589,6 +1589,35 @@ class TestPageReadIsAModelRead:
         assert validator.model_get_tokens[0] == len(body.get("body") or "") // 4
         assert validator.model_get_tokens[0] > 0
 
+    async def test_reading_an_unwritten_page_still_reports_completion_at_zero(
+        self, api_client, kb_bank, memory, request_context, monkeypatch
+    ):
+        """Zero tokens, not a missing hook — for an empty body and for the legacy one.
+
+        A gated read that reports no completion is the shape the post-hook exists to
+        prevent: the deployment authorized a read it then has no record of. So an
+        unwritten page still reports, it just reports nothing delivered — whether its
+        body is the empty string pages are created with now, or the placeholder an
+        upgraded bank's pages were created with before.
+        """
+        bank_id, _ = kb_bank
+        for name, content in (("Unwritten", ""), ("Legacy Unwritten", "Generating content...")):
+            page = await memory.create_knowledge_page(
+                bank_id=bank_id,
+                name=name,
+                source_query=f"what is {name}?",
+                content=content,
+                request_context=request_context,
+            )
+            validator = _kb_validator()
+            monkeypatch.setattr(memory, "_operation_validator", validator)
+
+            resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page['id']}")
+
+            assert resp.status_code == 200, resp.text
+            assert validator.model_gets, f"{name}: the read was gated"
+            assert validator.model_get_tokens == [0], f"{name}: gated but not reported"
+
     async def test_a_refused_model_get_returns_no_page_content(self, api_client, kb_bank, memory, monkeypatch):
         # The gate has to run before the body is handed back, or it is
         # decoration: the caller would get the content and the refusal.
