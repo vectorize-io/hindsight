@@ -8,6 +8,15 @@
 [![Version](https://img.shields.io/pypi/v/hindsight-api?logo=python&logoColor=white&label=version&color=blue)](https://pypi.org/project/hindsight-api/)
 [![PyPI Downloads](https://img.shields.io/pypi/dm/hindsight-client?logo=pypi&logoColor=white&label=PyPI&color=blue)](https://pypi.org/project/hindsight-client/)
 [![NPM Downloads](https://img.shields.io/npm/dm/%40vectorize-io%2Fhindsight-client?logo=npm&logoColor=white&label=NPM&color=blue)](https://www.npmjs.com/package/@vectorize-io/hindsight-client)
+
+
+reflect: https://github.com/user-attachments/assets/cd094bd0-e58f-4372-8397-1230a42637d4
+
+recall: https://github.com/user-attachments/assets/32539405-f522-428f-b62b-99cd34a565d6
+
+retain: https://github.com/user-attachments/assets/46300014-5fa8-458e-b5b5-34f7d2eac072
+
+
 [![Slack Community](https://img.shields.io/badge/Slack-Join%20Community-4A154B?logo=slack)](https://vectorize.io/slack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 <br/>
