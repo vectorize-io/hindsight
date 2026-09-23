@@ -399,9 +399,9 @@ async def create_bank_if_missing(pool, bank_id: str) -> bool:
     # indexes with a plain CREATE INDEX — it must, since this runs inside the
     # bank-create tx and CONCURRENTLY cannot — and that CREATE takes a ShareLock
     # on the shared memory_units table, which can deadlock with concurrent
-    # writers. Even with
-    # no DDL to issue, the lazy create can lose a deadlock (40P01 / ORA-00060) to
-    # a concurrent writer touching the same bank row. The body is idempotent
+    # writers. Even with no DDL to issue, the lazy create can lose a deadlock
+    # (40P01 / ORA-00060) to a concurrent writer touching the same bank row.
+    # The body is idempotent
     # (INSERT ... ON CONFLICT DO NOTHING + CREATE INDEX IF NOT EXISTS), so
     # retrying the whole tx stays correct and cheap.
     async def _create() -> bool:

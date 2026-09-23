@@ -425,10 +425,7 @@ def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch, pg0_db_
     """
     from typer.testing import CliRunner
 
-    from hindsight_api.admin.cli import RepairSweep
-    from hindsight_api.engine.vector_index_health import BankIndexResult
-
-    canned = RepairSweep(
+    canned = cli.RepairSweep(
         banks=[BankIndexResult(bank_id="b1", failed=1, failed_indexes=["public.idx_mu_emb_worl_dead"])],
         skipped_schemas=["t_unreachable"],
     )

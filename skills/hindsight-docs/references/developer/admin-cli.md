@@ -121,8 +121,8 @@ owns. The command does not guess there, because guessing would rebuild the very
 indexes described above.
 
 A schema is named as skipped whether it failed before its first bank or partway
-through, so it may already have had some banks reconciled; the per-schema line says
-how far it got, and those builds are not undone. Both the failed-index names and the
+through, so it may already have had some banks reconciled; when it got that far the
+per-schema line says how many, and those builds are not undone. Both the failed-index names and the
 skipped schemas are reported before the command exits, so one never hides the other.
 If the database connection itself is lost mid-sweep, the run stops there rather than
 repeating the same error for every remaining schema, and still reports what it did.
