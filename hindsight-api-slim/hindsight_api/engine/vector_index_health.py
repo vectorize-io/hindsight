@@ -291,8 +291,9 @@ async def plan_bank_vector_indexes(
     # Deliberately NOT wrapped: a store that cannot answer must not be guessed at here.
     # Guessing "SQL-backed" would have a transient router blip partway through
     # `repair-bank --all` rebuild all three indexes for every bank it failed on. Letting
-    # it raise makes the write path log and do nothing, and the sweep report the schema
-    # as failed. bank_indexes_are_store_owned's docstring has the full asymmetry.
+    # it raise makes the write path log and do nothing, and the sweep report that schema
+    # skipped and exit non-zero. bank_indexes_are_store_owned's docstring has the full
+    # asymmetry, and admin/cli.py::_run_repair_bank is where the per-schema guard lives.
     #
     # `bank_id` alone, with no schema: that is the store interface's shape, and inside
     # the API the schema is implied by the request context. `repair-bank --all` is the

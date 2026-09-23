@@ -84,7 +84,8 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
       rebuild all three indexes for each — re-arming #4615 at full scale, from a
       command that then exits 0 and reads as a successful repair. Propagating instead
       makes the write path log a warning and do nothing, and makes ``repair-bank``
-      report the schema as failed.
+      report that schema skipped and exit non-zero — loud, and scoped to the schema,
+      rather than quietly rebuilding.
     """
     from ..memories import get_memories
 

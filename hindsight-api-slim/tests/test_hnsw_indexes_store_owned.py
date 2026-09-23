@@ -26,6 +26,7 @@ import uuid
 import pytest
 
 import hindsight_api.engine.memories as memories_mod
+from hindsight_api.admin.cli import _run_repair_bank
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
 from hindsight_api.engine.db_utils import acquire_with_retry
@@ -319,9 +320,9 @@ async def test_repair_refuses_to_guess_when_the_store_cannot_answer(memory, requ
     tenant from #4615 — and the command would still exit 0, reading as a successful
     repair. The only trace would be a log line, and the admin CLI logs at INFO.
 
-    So planning must RAISE rather than return a plan. That is what makes the sweep
-    report the schema as failed and the write path log and do nothing, instead of
-    quietly undoing the fix.
+    So planning must RAISE rather than return a plan. The sweep then reports that
+    schema skipped and exits non-zero, and the write path logs and does nothing —
+    instead of quietly undoing the fix.
     """
     bank_id = f"test_so_blip_{uuid.uuid4().hex[:8]}"
     real_store = memories_mod.get_memories()
@@ -337,6 +338,40 @@ async def test_repair_refuses_to_guess_when_the_store_cannot_answer(memory, requ
             memories_mod.set_memories(real_store)
 
         # And nothing was built on the way out.
+        assert len(await _bank_indexes(memory._pool, bank_id)) == 3
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_the_sweep_skips_a_schema_it_cannot_classify_instead_of_dying(memory, request_context, pg0_db_url):
+    """The other half of the contract above, at the command level.
+
+    Planning raises so the sweep cannot silently rebuild — but the raise must be
+    caught per SCHEMA, not escape the whole command. It used to: the guard in
+    ``_run_repair_bank`` wrapped only ``list_bank_ids``, so one unclassifiable bank
+    took down the entire run from inside a list comprehension. A deployment whose
+    admin process cannot reach the memories store then repaired NOTHING — including
+    the ordinary SQL-owned banks the operator ran the command for — and got a bare
+    traceback naming neither the bank nor the schema.
+
+    So: the schema is reported skipped, and `repair-bank` exits non-zero on it.
+    """
+    bank_id = f"test_so_sweep_{uuid.uuid4().hex[:8]}"
+    real_store = memories_mod.get_memories()
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        memories_mod.set_memories(_Unanswerable(real_store))
+        try:
+            sweep = await _run_repair_bank(
+                pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=bank_id, dry_run=False
+            )
+        finally:
+            memories_mod.set_memories(real_store)
+
+        assert sweep.skipped_schemas == [_TEST_SCHEMA], f"the schema should be reported skipped, got {sweep}"
+        assert sweep.banks == [], "a schema that could not be classified must contribute no results"
+        # And the bank kept exactly what it had — nothing rebuilt, nothing dropped.
         assert len(await _bank_indexes(memory._pool, bank_id)) == 3
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
