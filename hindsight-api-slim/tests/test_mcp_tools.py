@@ -789,7 +789,10 @@ class TestCreateMentalModel:
         call_kwargs = mock_memory.create_mental_model.call_args.kwargs
         assert call_kwargs["name"] == "Test Model"
         assert call_kwargs["source_query"] == "What are the user's preferences?"
-        assert call_kwargs["content"] == "Generating content..."
+        assert call_kwargs["content"] == "", (
+            "a page is created with an empty body — a placeholder string would be embedded "
+            "and BM25-indexed, making a brand-new page searchable as its own placeholder"
+        )
         # Verify async refresh was scheduled
         mock_memory.submit_async_refresh_mental_model.assert_called_once()
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["mental_model_id"] == "mm-new"

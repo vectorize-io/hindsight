@@ -44,6 +44,9 @@ from hindsight_client import Hindsight
 
 from hindsight_system_evals.coding_agents.scenario import SettleFn
 
+#: A never-refreshed page carries an empty body, and the emptiness checks below
+#: catch that on their own. This string is what older servers wrote instead, kept
+#: because ``--api-url`` can point this harness at any deployment.
 PLACEHOLDER = "Generating content..."
 
 #: How long to wait for the prefill's own background work. Shorter than the

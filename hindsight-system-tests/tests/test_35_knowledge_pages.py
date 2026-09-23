@@ -113,6 +113,25 @@ async def test_deleting_a_page_leaves_the_facts_alone(client, bank_id, bank_with
     assert [m.text for m in memories.items] == ["Alice moved to Berlin | Involving: Alice"]
 
 
+async def test_a_page_with_nothing_to_say_yet_is_empty_rather_than_a_placeholder(
+    client, llm, bank_id, settled
+):
+    """A page created in a bank with nothing to synthesize from carries an empty
+    body, not a sentence describing its own state.
+
+    The body is embedded and BM25-indexed, so a placeholder sentence is not an
+    inert label — it is indexed text, and a bank whose pages are all waiting on
+    their first refresh would carry a copy of it per page.
+    """
+    created = await client.knowledge_base.create_knowledge_page(
+        bank_id, {"name": PAGE_NAME, "source_query": SOURCE_QUERY}
+    )
+    await settled(bank_id)
+
+    read = await client.knowledge_base.get_knowledge_page(bank_id, created.page_id)
+    assert not (read.body or "").strip(), f"page body should be empty, got {read.body!r}"
+
+
 async def test_a_bank_default_trigger_shapes_new_pages(client, llm, bank_id, settled):
     """``knowledge_page_default_trigger`` is merged over the built-in page default.
 

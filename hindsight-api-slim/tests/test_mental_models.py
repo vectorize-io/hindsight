@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import pytest
 
 from hindsight_api.engine.memory_engine import (
-    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
@@ -3275,7 +3274,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         calls = self._stub_reflect(memory)
@@ -3291,7 +3290,7 @@ class TestRefreshSkipsEmptyScope:
             "slots it needs to ingest anything (#3875)"
         )
         assert refreshed is not None
-        assert refreshed["content"].strip() == MENTAL_MODEL_PENDING_CONTENT, (
+        assert refreshed["content"].strip() == "", (
             "the document must be preserved, not overwritten from an empty synthesis"
         )
         reflect_response = refreshed["reflect_response"]
@@ -3311,7 +3310,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         await memory.retain_batch_async(
@@ -3470,7 +3469,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": False},
             request_context=request_context,
         )
@@ -3478,7 +3477,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding (isolated)",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": True},
             request_context=request_context,
         )
@@ -3511,7 +3510,7 @@ class TestRefreshSkipsEmptyScope:
                 bank_id=bank_id,
                 name=f"Page {i}",
                 source_query=f"topic {i}",
-                content=MENTAL_MODEL_PENDING_CONTENT,
+                content="",
                 trigger={"exclude_mental_models": False},
                 request_context=request_context,
             )

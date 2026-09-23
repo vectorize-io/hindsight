@@ -467,7 +467,7 @@ class BenchmarkRunner:
                 bank_id=bank_id,
                 name=mm.name,
                 source_query=mm.source_query,
-                content="Generating content...",
+                content="",
                 mental_model_id=mm.id,
                 tags=mm.tags if mm.tags else None,
                 max_tokens=mm.max_tokens,

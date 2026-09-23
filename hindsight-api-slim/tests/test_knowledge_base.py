@@ -19,7 +19,6 @@ import pytest_asyncio
 import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import (
-    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _may_need_refresh,
     fq_table,
@@ -560,6 +559,44 @@ class TestSearch:
 
         assert results, "the BM25 arm must still generate candidates for a question"
         assert results[0]["id"] == ids.billing
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_a_page_with_no_body_says_so_in_its_snippet(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """An empty body must reach a searcher as words, not as a blank snippet.
+
+        A titled hit with nothing under it reads as "matched, snippet came back
+        empty" — which is how an agent decides the topic is uncovered and creates a
+        second page for one that already exists. The marker is built on the way out,
+        so the stored body stays empty and the search index never carries it.
+        """
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        bank_id, _ = kb_bank
+        pending = await memory.create_knowledge_page(
+            bank_id=bank_id,
+            name="Refund window",
+            source_query="How long is the refund window?",
+            content="",
+            request_context=request_context,
+        )
+
+        results = await memory.search_knowledge_pages(bank_id, "refund window", request_context=request_context)
+
+        hit = next(r for r in results if r["id"] == pending["id"])
+        assert hit["snippet"] == "_No content yet._"
+
+        stored = await memory.get_mental_model(
+            bank_id, pending["mental_model_id"], detail="full", request_context=request_context
+        )
+        assert not (stored["content"] or "").strip(), (
+            "the marker is a read-time label; storing it would put it back in the index"
+        )
 
     @pytest.mark.memory_backend_incompatible
     async def test_query_without_word_characters_returns_nothing(
@@ -1429,7 +1466,7 @@ class TestListReportsTheContentItDelivers:
             bank_id=bank_id,
             name="Pending",
             source_query="Not answered yet.",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         validator = _kb_validator()

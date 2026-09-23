@@ -108,7 +108,7 @@ This is the right pick for long-lived "playbook"-style models — documents you 
 
 The `refresh_mental_model` decision logic:
 
-1. Parse `trigger.mode`. If `delta`, check whether the existing `content` is non-empty and not the placeholder `"Generating content..."`.
+1. Parse `trigger.mode`. If `delta`, check whether the existing `content` is non-empty (a page that has never refreshed carries an empty body).
 2. Check whether `source_query` has changed since `last_refreshed_source_query`.
 3. If both checks pass, run the delta path. Otherwise, fall back to full synthesis.
 

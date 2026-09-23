@@ -543,7 +543,7 @@ class TestDeltaRefreshPlumbing:
             bank_id=bank_id,
             name="Backend Overview",
             source_query="What is the backend architecture?",
-            content="Generating content...",
+            content="",
             trigger={"mode": "delta"},
             request_context=request_context,
         )
