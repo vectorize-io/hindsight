@@ -22,7 +22,7 @@ from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_e
 from ..db_url import is_oracle_url
 from ..engine.memories import get_memories
 from ..engine.memory_engine import _current_schema
-from ..engine.retain.bank_utils import _vector_index_clause
+from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.storage import bank_storage_prefix, create_file_storage
 from ..engine.transfer import TransferScope, export_bank
@@ -687,9 +687,9 @@ async def _resolve_schemas(base_schema: str | None) -> list[str]:
 class RepairSweep:
     """What one ``repair-bank`` run did, and which schemas it could not do at all.
 
-    A dataclass rather than a second return value: a skipped schema contributes no
-    BankIndexResult, so the bank list alone cannot distinguish "nothing needed doing"
-    from "never looked at", and the command must exit non-zero for the second.
+    A dataclass rather than a second return value: the bank list alone cannot
+    distinguish "nothing needed doing" from "never got there", and the command must
+    exit non-zero for the second.
 
     ``skipped_schemas`` means "not fully reconciled — re-run once the cause is
     cleared". A schema that failed partway appears in BOTH lists: the banks it did
@@ -741,10 +741,9 @@ async def _run_repair_bank(
             # admin process cannot reach the store repaired nothing at all, including
             # the ordinary SQL-owned banks the operator ran this for.
             # Appended as they complete, not built as a comprehension: a comprehension
-            # binds nothing until it finishes, so a blip on bank 250 of 300 discarded
-            # 249 reconciles that had already run — and with them their failed-index
-            # names, which appear nowhere else. CREATE INDEX CONCURRENTLY is not rolled
-            # back by a later failure, so whatever happened is reported either way.
+            # binds nothing until it finishes, so a blip partway through discarded every
+            # reconcile that had already run. See RepairSweep for what that means for
+            # the two lists.
             bank_ids: list[str] = []
             schema_results: list[BankIndexResult] = []
             try:
@@ -788,13 +787,13 @@ async def _run_repair_bank(
             # handled inside drop_orphaned_bank_indexes; this catches only the catalog
             # read behind it.
             orphans: list[str] = []
-            try:
-                if not bank_id:
+            if not bank_id:
+                try:
                     orphans = await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
-            except Exception as exc:  # noqa: BLE001 — the banks were repaired; orphan collection is a nicety
-                typer.echo(
-                    f"  schema '{target_schema}': banks repaired, but orphan collection failed ({exc})", err=True
-                )
+                except Exception as exc:  # noqa: BLE001 — the banks were repaired; orphan collection is a nicety
+                    typer.echo(
+                        f"  schema '{target_schema}': banks repaired, but orphan collection failed ({exc})", err=True
+                    )
             if orphans:
                 typer.echo(
                     f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
@@ -922,8 +921,9 @@ def repair_bank(
         failed_names = [name for r in results for name in r.failed_indexes]
         typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
     if sweep.skipped_schemas:
-        # A skipped schema was never reconciled, so a run that reported only successes
-        # would read as converged while whole tenants still carry whatever they carried.
+        # Some or all of a skipped schema's banks were not reconciled, so a run that
+        # reported only successes would read as converged while whole tenants — or the
+        # tail of one — still carry whatever they carried.
         typer.echo(
             f"Skipped {len(sweep.skipped_schemas)} schema(s): "
             f"{', '.join(sweep.skipped_schemas)}. Re-run once the cause is cleared.",
@@ -1167,7 +1167,7 @@ async def _run_rename_bank(
     # way: this runs before anything is changed, so refusing is free and a traceback
     # would just look like a crash.
     try:
-        old_is_store_owned = get_memories().store_owned_for(old_bank_id)
+        old_is_store_owned = bank_indexes_are_store_owned(old_bank_id)
     except Exception as exc:  # noqa: BLE001 — cannot verify the precondition, so do not proceed
         raise RenameBankError(
             f"cannot tell whether bank '{old_bank_id}' keeps its memories outside SQL ({exc}); "

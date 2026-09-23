@@ -97,13 +97,18 @@ is owed no per-bank index and nothing is built for it. Nothing is dropped either
 bank that carries indexes from before it moved to the store keeps them, because
 shedding them is an operator decision with its own timing, not something a repair
 does on your behalf. A store-owned bank therefore reports `0 present, 0 created`
-whether or not it still carries indexes; to see what one actually has, query the
-catalog:
+whether or not it still carries indexes; to see what one actually carries, query
+the catalog for that bank's own partial indexes:
 
 ```sql
-SELECT COUNT(*) FROM pg_indexes
-WHERE schemaname = '<tenant schema>' AND tablename = 'memory_units';
+SELECT indexname FROM pg_indexes
+WHERE schemaname = '<tenant schema>'
+  AND tablename = 'memory_units'
+  AND indexname LIKE 'idx_mu_emb_%'
+  AND strpos(indexdef, $$bank_id = '<bank id>'$$) > 0;
 ```
+
+Drop the `strpos` line to list every per-bank index in the schema instead.
 
 Those indexes are empty, and Postgres plans against every index on a relation, so on
 a deployment with many store-owned banks they are charged to every other query that
@@ -114,7 +119,11 @@ touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are re
 reconciled at all — for example because the memories store could not say which banks
 it owns. A skipped schema is named in the output and was left exactly as it was; the
 command does not guess, because guessing would rebuild the very indexes described
-above. Both are reported before the command exits, so one never hides the other. If
+above. A schema is named as skipped whether it failed before its first bank or
+partway through, so it may already have had some banks reconciled — the per-schema
+line says how far it got, and those builds are not undone. Both the failed-index
+names and the skipped schemas are reported before the command exits, so one never
+hides the other. If
 the database connection itself is lost mid-sweep, the run stops there rather than
 repeating the same error for every remaining schema, and still reports what it did.
 

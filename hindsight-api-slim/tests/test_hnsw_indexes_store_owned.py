@@ -18,6 +18,13 @@ Turning a memories extension on makes every existing bank store-owned at once, a
 shedding tens of thousands of indexes is an operator's decision with its own timing.
 So the suite also pins that a reconcile leaves an existing bank's indexes alone.
 
+The second half of the file is about what `repair-bank` REPORTS once the probe can
+raise: that a schema which fails partway still reports the banks it did repair, that
+a dead connection stops the sweep instead of repeating itself once per tenant, that
+the failed-index names and the skipped schemas never hide each other, and that
+`rename-bank` refuses rather than tracebacks. Those live here because they exist only
+because of the store-owned guard above.
+
 Runs via: uv run pytest tests/test_hnsw_indexes_store_owned.py -v
 """
 
@@ -28,19 +35,21 @@ import pytest
 
 import hindsight_api.engine.memories as memories_mod
 from hindsight_api.admin import cli
-from hindsight_api.admin.cli import _run_repair_bank
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.retain.bank_utils import _vector_index_clause
 from hindsight_api.engine.transfer import export_bank
-from hindsight_api.engine.vector_index_health import plan_bank_vector_indexes, reconcile_bank_vector_indexes
-from hindsight_api.engine.vector_index_health import BankIndexResult
+from hindsight_api.engine.vector_index_health import (
+    BankIndexResult,
+    plan_bank_vector_indexes,
+    reconcile_bank_vector_indexes,
+)
 from tests.test_memories_extension import InMemoryMemories
 
 
-async def _ids(value):
+async def _returns(value):
     """Await-able stand-in, so a monkeypatched coroutine can be written as a lambda."""
     return value
 
@@ -352,40 +361,6 @@ async def test_repair_refuses_to_guess_when_the_store_cannot_answer(memory, requ
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-async def test_the_sweep_skips_a_schema_it_cannot_classify_instead_of_dying(memory, request_context, pg0_db_url):
-    """The other half of the contract above, at the command level.
-
-    Planning raises so the sweep cannot silently rebuild — but the raise must be
-    caught per SCHEMA, not escape the whole command. It used to: the guard in
-    ``_run_repair_bank`` wrapped only ``list_bank_ids``, so one unclassifiable bank
-    took down the entire run from inside a list comprehension. A deployment whose
-    admin process cannot reach the memories store then repaired NOTHING — including
-    the ordinary SQL-owned banks the operator ran the command for — and got a bare
-    traceback naming neither the bank nor the schema.
-
-    So: the schema is reported skipped, and `repair-bank` exits non-zero on it.
-    """
-    bank_id = f"test_so_sweep_{uuid.uuid4().hex[:8]}"
-    real_store = memories_mod.get_memories()
-    try:
-        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
-
-        memories_mod.set_memories(_Unanswerable(real_store))
-        try:
-            sweep = await _run_repair_bank(
-                pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=bank_id, dry_run=False
-            )
-        finally:
-            memories_mod.set_memories(real_store)
-
-        assert sweep.skipped_schemas == [_TEST_SCHEMA], f"the schema should be reported skipped, got {sweep}"
-        assert sweep.banks == [], "a schema that could not be classified must contribute no results"
-        # And the bank kept exactly what it had — nothing rebuilt, nothing dropped.
-        assert len(await _bank_indexes(memory._pool, bank_id)) == 3
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
 async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_classify(
     memory, request_context, monkeypatch, pg0_db_url
 ):
@@ -495,7 +470,7 @@ async def test_rename_refuses_when_the_store_cannot_say_who_owns_the_bank(memory
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-async def test_a_schema_that_fails_partway_still_reports_the_banks_it_did_repair(monkeypatch, pg0_db_url):
+async def test_a_schema_that_fails_partway_still_reports_the_banks_it_did_repair(monkeypatch, pg0_db_url, capsys):
     """Work that already happened must survive the failure that stopped the rest.
 
     ``CREATE INDEX CONCURRENTLY`` is not rolled back by a later exception, so banks
@@ -512,7 +487,7 @@ async def test_a_schema_that_fails_partway_still_reports_the_banks_it_did_repair
             raise RuntimeError("router blipped on the third bank")
         return BankIndexResult(bank_id=bid, created=1, failed=1, failed_indexes=[f"idx_dead_{bid}"])
 
-    monkeypatch.setattr(cli, "list_bank_ids", lambda conn, schema: _ids(["b1", "b2", "b3", "b4"]))
+    monkeypatch.setattr(cli, "list_bank_ids", lambda conn, schema: _returns(["b1", "b2", "b3", "b4"]))
     monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _flaky_reconcile)
 
     sweep = await cli._run_repair_bank(
@@ -523,9 +498,11 @@ async def test_a_schema_that_fails_partway_still_reports_the_banks_it_did_repair
     assert sweep.skipped_schemas == [_TEST_SCHEMA], "the schema still needs a re-run for b3/b4"
     # The names are the point: nothing else in the output carries them.
     assert [n for r in sweep.banks for n in r.failed_indexes] == ["idx_dead_b1", "idx_dead_b2"]
+    # And the operator is told how far it got, not just that it stopped.
+    assert "2 of 4 bank(s) done" in capsys.readouterr().err
 
 
-async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(monkeypatch, pg0_db_url):
+async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(monkeypatch, pg0_db_url, capsys):
     """One dead connection is not N schema failures, and must not look like them.
 
     The sweep holds a single connection for every schema. Reporting per schema would
@@ -545,13 +522,16 @@ async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(mon
     async def _ok_reconcile(conn, schema, bid, index_clause, dry_run=False):
         return BankIndexResult(bank_id=f"{schema}:{bid}", created=1)
 
-    monkeypatch.setattr(cli, "_resolve_schemas", lambda base: _ids(["s1", "s2", "s3", "s4"]))
+    monkeypatch.setattr(cli, "_resolve_schemas", lambda base: _returns(["s1", "s2", "s3", "s4"]))
     monkeypatch.setattr(cli, "list_bank_ids", _dies_on_the_second_schema)
     monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _ok_reconcile)
-    monkeypatch.setattr(cli, "drop_orphaned_bank_indexes", lambda conn, schema, dry_run=False: _ids([]))
+    monkeypatch.setattr(cli, "drop_orphaned_bank_indexes", lambda conn, schema, dry_run=False: _returns([]))
 
     sweep = await cli._run_repair_bank(pg0_db_url, base_schema=_TEST_SCHEMA, schema=None, bank_id=None, dry_run=False)
 
     assert seen == ["s1", "s2"], f"the sweep kept going on a dead connection: tried {seen}"
     assert sweep.skipped_schemas == ["s2", "s3", "s4"], sweep.skipped_schemas
     assert [r.bank_id for r in sweep.banks] == ["s1:b1"], "s1's work was thrown away"
+    # Said once, with the count — not one line per remaining tenant.
+    err = capsys.readouterr().err
+    assert "2 further schema(s) were not attempted" in err, err
