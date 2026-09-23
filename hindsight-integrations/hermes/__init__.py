@@ -49,9 +49,11 @@ from .settings import (
     _DEFAULT_API_URL,
     _DEFAULT_IDLE_TIMEOUT,
     _DEFAULT_LOCAL_URL,
+    _DEFAULT_PREFETCH_JOIN_TIMEOUT,
     _DEFAULT_RETAIN_SOURCE,
     _DEFAULT_TIMEOUT,
     _HINDSIGHT_GLYPH,
+    _MAX_PREFETCH_JOIN_TIMEOUT,
     _MIN_CLIENT_VERSION,
     _MIN_VERSION_FOR_UPDATE_MODE_APPEND,
     _PROVIDER_DEFAULT_MODELS,
@@ -59,6 +61,7 @@ from .settings import (
     _daemon_llm_provider,
     _normalize_observation_scopes,
     _normalize_retain_tags,
+    _parse_float_setting,
     _parse_int_setting,
     _resolve_bank_id_template,
 )
@@ -427,6 +430,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # Recall: pending prefetch block + count, and the indicator state (recall_status()).
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
+        # Bumped by on_session_switch() so an in-flight background prefetch
+        # from the old session discards its result instead of writing it
+        # into the new session's cache (see queue_prefetch's generation check).
+        self._prefetch_generation = 0
         self._prefetch_thread = None
         self._last_recall_returned, self._last_recall_count = False, 0
         self._apply_recall_settings({})
@@ -668,6 +675,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "key": "recall_max_input_chars",
                 "description": "Maximum input query length for auto-recall",
                 "default": 800,
+            },
+            {
+                "key": "prefetch_join_timeout",
+                "description": "Seconds to wait for the background prefetch recall thread before using its result (0 = non-blocking, prefetch still runs)",
+                "default": _DEFAULT_PREFETCH_JOIN_TIMEOUT,
             },
             {"key": "recall_prompt_preamble", "description": "Custom preamble for recalled memories in context"},
             {"key": "timeout", "description": "API request timeout in seconds", "default": _DEFAULT_TIMEOUT},
@@ -1083,6 +1095,14 @@ class HindsightMemoryProvider(MemoryProvider):
             self._recall_types = list([] if configured_types is None else configured_types) or ["observation"]
         self._recall_prompt_preamble = cfg.get("recall_prompt_preamble", "")
         self._recall_indicator = bool(cfg.get("recall_indicator", True))
+        # Prefetch join timeout (seconds). How long prefetch()/on_session_switch()
+        # wait for the background recall thread before using the cached result.
+        # 0 = non-blocking (the prefetch still runs in the background).
+        self._prefetch_join_timeout = _parse_float_setting(
+            cfg.get("prefetch_join_timeout"),
+            _DEFAULT_PREFETCH_JOIN_TIMEOUT,
+            _MAX_PREFETCH_JOIN_TIMEOUT,
+        )
 
     def _start_embedded_daemon(self) -> None:
         """Start the embedded daemon on a background thread (Rich output -> log file)."""
@@ -1247,8 +1267,9 @@ class HindsightMemoryProvider(MemoryProvider):
         # See NousResearch/hermes-agent#5820.
         if self._recall_sync:
             return self._finish_prefetch(*(("", 0) if self._recall_disabled() else self._do_recall(query)))
-        # Default: the background worker's result for the previous turn (capped join).
-        self._join_prefetch(3.0, log=True)
+        # Default: the background worker's result for the previous turn
+        # (capped join, configurable via prefetch_join_timeout).
+        self._join_prefetch(self._prefetch_join_timeout, log=True)
         with self._prefetch_lock:
             result, count = self._prefetch_result, self._prefetch_count
             self._prefetch_result, self._prefetch_count = "", 0
@@ -1265,6 +1286,9 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._recall_sync or self._recall_disabled():
             return
 
+        with self._prefetch_lock:
+            prefetch_generation = self._prefetch_generation
+
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
             # retain to be recall-visible so the warmed context includes it.
@@ -1273,7 +1297,16 @@ class HindsightMemoryProvider(MemoryProvider):
             text, count = self._do_recall(query)
             if text:
                 with self._prefetch_lock:
-                    self._prefetch_result, self._prefetch_count = text, count
+                    # Discard the result if the session switched while this
+                    # worker was in flight: writing old-session recall into
+                    # the new session's cache would leak across sessions.
+                    if prefetch_generation == self._prefetch_generation:
+                        self._prefetch_result, self._prefetch_count = text, count
+                    else:
+                        logger.debug(
+                            "Prefetch: discarding result (generation %d != current %d)",
+                            prefetch_generation, self._prefetch_generation,
+                        )
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
         self._prefetch_thread.start()
@@ -1545,8 +1578,12 @@ class HindsightMemoryProvider(MemoryProvider):
             if not self._shutting_down.is_set():
                 self._enqueue_retain(_flush)
 
-        # 2. Drain the old session's in-flight prefetch and drop its result.
-        self._join_prefetch(3.0)
+        # 2. Invalidate in-flight prefetch before waiting so a timed-out old
+        # worker cannot write stale recall into the new session's cache,
+        # then drain it (configurable via prefetch_join_timeout).
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+        self._join_prefetch(self._prefetch_join_timeout)
         with self._prefetch_lock:
             self._prefetch_result = ""
 

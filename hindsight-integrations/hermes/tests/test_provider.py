@@ -2,6 +2,9 @@
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
+import threading
+import time
+from types import SimpleNamespace
 
 import hindsight_hermes as plugin
 from conftest import FakeClient
@@ -194,3 +197,121 @@ def test_warning_sink_defaults_exist_without_initialize():
     bare = plugin.HindsightMemoryProvider()
     assert bare._warning_callback is None
     assert bare._platform == "cli"
+
+
+# ---------------------------------------------------------------------------
+# prefetch join timeout + stale-prefetch generation guard
+# (ported from NousResearch/hermes-agent#42232)
+# ---------------------------------------------------------------------------
+
+
+def test_prefetch_join_timeout_defaults_and_overrides(provider):
+    instance, _ = provider({})
+    assert instance._prefetch_join_timeout == 5.0
+    instance, _ = provider({"prefetch_join_timeout": 10.0})
+    assert instance._prefetch_join_timeout == 10.0
+    instance, _ = provider({"prefetch_join_timeout": 0})
+    assert instance._prefetch_join_timeout == 0.0  # non-blocking is a valid timeout
+    instance.shutdown()
+
+
+def test_prefetch_join_timeout_garbage_falls_back(provider):
+    instance, _ = provider({"prefetch_join_timeout": "garbage"})
+    assert instance._prefetch_join_timeout == 5.0
+    instance, _ = provider({"prefetch_join_timeout": -5})
+    assert instance._prefetch_join_timeout == 5.0
+    instance.shutdown()
+
+
+def _stuck_prefetch_thread():
+    """A thread that blocks until released -- lets a test observe the join."""
+    gate = threading.Event()
+
+    def _slow():
+        gate.wait(timeout=5.0)
+
+    thread = threading.Thread(target=_slow, daemon=True)
+    return thread, gate
+
+
+def test_prefetch_join_uses_the_configured_timeout(provider):
+    """The join must use the configured 0.1s, not the 5.0s default: under the
+    default this call blocks ~5s, so the bound fails fast and loudly."""
+    instance, _ = provider({"prefetch_join_timeout": 0.1})
+    thread, gate = _stuck_prefetch_thread()
+    instance._prefetch_thread = thread
+    thread.start()
+
+    started = time.monotonic()
+    result = instance.prefetch("test")
+    elapsed = time.monotonic() - started
+    gate.set()
+    assert result == ""
+    assert elapsed < 1.0
+    instance.shutdown()
+
+
+def test_session_switch_join_uses_the_configured_timeout(provider):
+    """Same discrimination for on_session_switch's join."""
+    instance, _ = provider({"prefetch_join_timeout": 0.1})
+    thread, gate = _stuck_prefetch_thread()
+    instance._prefetch_thread = thread
+    thread.start()
+
+    started = time.monotonic()
+    instance.on_session_switch("session-2")
+    elapsed = time.monotonic() - started
+    gate.set()
+    assert instance._prefetch_result == ""
+    assert elapsed < 1.0
+    instance.shutdown()
+
+
+def test_prefetch_result_cleared_on_switch(provider):
+    """Stale recall text from the old session must not leak into the next
+    session's first prefetch read."""
+    instance, _ = provider({})
+    instance._prefetch_result = "old-session recall: User likes Rust"
+    instance.on_session_switch("session-2")
+    assert instance._prefetch_result == ""
+    assert instance.prefetch("anything") == ""
+    instance.shutdown()
+
+
+def test_late_old_session_prefetch_cannot_write_after_switch(provider, monkeypatch):
+    """A zero-wait session switch must discard a late result from the old
+    session's still-running prefetch worker (the generation check).
+
+    Regression guard for the race the generation counter fixes: with only a
+    join timeout, a wedged old-session worker completes AFTER the switch
+    cleared _prefetch_result and re-populates it, so the new session's first
+    prefetch() serves the old session's memories. Deleting the generation
+    check in queue_prefetch's worker reintroduces that leak -- this test must
+    fail if that happens.
+    """
+    instance, _ = provider({"prefetch_join_timeout": 0})
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocked_recall(_operation):
+        started.set()
+        release.wait(timeout=5.0)
+        return SimpleNamespace(results=[SimpleNamespace(text="old-session memory")])
+
+    monkeypatch.setattr(instance, "_run_hindsight_operation", _blocked_recall)
+    instance.queue_prefetch("old-session query")
+    assert started.wait(timeout=1.0), "prefetch worker never reached the recall"
+
+    # Zero-wait switch: the join times out immediately while the worker is
+    # still blocked mid-recall. The switch must invalidate its future write.
+    instance.on_session_switch("session-2")
+
+    # The worker completes AFTER the switch -- its result must be discarded
+    # by the generation check, not written into the new session's cache.
+    release.set()
+    assert instance._prefetch_thread is not None
+    instance._prefetch_thread.join(timeout=5.0)
+
+    assert instance._prefetch_result == ""
+    assert instance.prefetch("session-2 query") == ""
+    instance.shutdown()
