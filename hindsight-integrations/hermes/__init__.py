@@ -1305,7 +1305,8 @@ class HindsightMemoryProvider(MemoryProvider):
                     else:
                         logger.debug(
                             "Prefetch: discarding result (generation %d != current %d)",
-                            prefetch_generation, self._prefetch_generation,
+                            prefetch_generation,
+                            self._prefetch_generation,
                         )
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
