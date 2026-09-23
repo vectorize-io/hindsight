@@ -909,6 +909,34 @@ async def _run_reflect_agent_inner(
         )
         return next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
 
+    async def _finish(iterations_completed: int) -> ReflectAgentResult:
+        """Produce the answer for a loop that has stopped retrieving.
+
+        Through ``done`` when the model will make the call (structured, and on a
+        prefix the provider already holds), otherwise through the standalone
+        synthesis prompt.
+        """
+        closing = await _ask_for_done()
+        if closing is None:
+            return await _forced_final_synthesis(iterations_completed)
+        return await _process_done_tool(
+            closing.model_copy(update={"arguments": presenter.resolve(closing.arguments)}),
+            available_memory_ids,
+            available_mental_model_ids,
+            available_observation_ids,
+            iterations_completed,
+            total_tools_called,
+            tool_trace,
+            _get_llm_trace(),
+            _get_usage(),
+            _log_completion,
+            reflect_id,
+            directives_applied=directives_applied,
+            llm_config=llm_config,
+            response_schema=response_schema,
+            max_tokens=max_tokens,
+        )
+
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
         """Answer without tools from the accumulated tool results.
 
@@ -1046,29 +1074,8 @@ async def _run_reflect_agent_inner(
         is_last = iteration == max_iterations - 1
 
         if is_last:
-            # Out of iterations. Same as the stop-with-prose case below: ask for the
-            # answer through ``done`` in this conversation before falling back to
-            # the standalone synthesis prompt, which re-sends all the evidence.
-            closing = await _ask_for_done()
-            if closing is not None:
-                return await _process_done_tool(
-                    closing.model_copy(update={"arguments": presenter.resolve(closing.arguments)}),
-                    available_memory_ids,
-                    available_mental_model_ids,
-                    available_observation_ids,
-                    iteration + 1,
-                    total_tools_called,
-                    tool_trace,
-                    _get_llm_trace(),
-                    _get_usage(),
-                    _log_completion,
-                    reflect_id,
-                    directives_applied=directives_applied,
-                    llm_config=llm_config,
-                    response_schema=response_schema,
-                    max_tokens=max_tokens,
-                )
-            return await _forced_final_synthesis(iteration + 1)
+            # Out of iterations: no more retrieval, just the answer.
+            return await _finish(iteration + 1)
 
         # Proactive context-window guard: if accumulated messages would exceed the
         # configured token budget, bail out early and synthesize from what we have.
@@ -1080,6 +1087,8 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
+            # Not ``_finish``: asking for ``done`` appends to a conversation that is
+            # already over the budget. The standalone prompt splits the evidence.
             return await _forced_final_synthesis(iteration + 1)
 
         # Call LLM with tools
@@ -1225,30 +1234,8 @@ async def _run_reflect_agent_inner(
                     f"Reflect requires a tool-calling model, but {llm_config.provider}/{llm_config.model} "
                     f"produced no usable tool call (the transport may not support function calling)." + detail
                 )
-            # Model tool-called earlier and is now stopping. Ask it to say the same
-            # thing through ``done`` first — same conversation, so the evidence is
-            # not re-sent, and the answer arrives structured. Falls back to the
-            # standalone synthesis prompt when the provider will not produce it.
-            closing = await _ask_for_done()
-            if closing is not None:
-                return await _process_done_tool(
-                    closing.model_copy(update={"arguments": presenter.resolve(closing.arguments)}),
-                    available_memory_ids,
-                    available_mental_model_ids,
-                    available_observation_ids,
-                    iteration + 1,
-                    total_tools_called,
-                    tool_trace,
-                    _get_llm_trace(),
-                    _get_usage(),
-                    _log_completion,
-                    reflect_id,
-                    directives_applied=directives_applied,
-                    llm_config=llm_config,
-                    response_schema=response_schema,
-                    max_tokens=max_tokens,
-                )
-            return await _forced_final_synthesis(iteration + 1)
+            # Model tool-called earlier and is now stopping with prose.
+            return await _finish(iteration + 1)
 
         # The model produced at least one tool call reflect could parse: it can
         # drive the loop, so a later text-only turn is a legitimate stop, not a

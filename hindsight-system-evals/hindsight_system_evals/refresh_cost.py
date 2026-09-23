@@ -418,6 +418,9 @@ async def llm_calls(client: Hindsight, bank_id: str, since: str, until: str) -> 
     refresh on their own, so the only thing calling the model is the refresh the
     eval started.
     """
+    # Still the published client, one layer down: the convenience wrapper has no
+    # method for the trace endpoint, so the generated API class is driven with the
+    # wrapper's own configured transport rather than a second HTTP client.
     api = LLMTracesApi(client._api_client)
     calls: list[LLMCall] = []
     offset = 0
