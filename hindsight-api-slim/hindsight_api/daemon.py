@@ -83,8 +83,19 @@ def _redirect_stdio_to_log() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
 
-    with open(os.devnull, "r") as devnull:
-        os.dup2(devnull.fileno(), sys.stdin.fileno())
+    # Detached launchers can leave fd 0 closed and Python's stdin unset.
+    # If open() reuses fd 0, keep it open: closing it would let the log file
+    # take that descriptor and turn stdin into a write-only log handle.
+    stdin_fd = os.open(os.devnull, os.O_RDONLY)
+    if stdin_fd != 0:
+        try:
+            os.dup2(stdin_fd, 0)
+        finally:
+            os.close(stdin_fd)
+    else:
+        os.set_inheritable(0, True)
+    if sys.stdin is None or sys.stdin.closed:
+        sys.stdin = open(0, "r", closefd=False)
 
     log_fd = open(daemon_log_path(), "a")
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
