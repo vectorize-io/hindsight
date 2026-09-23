@@ -57,6 +57,13 @@ async def _returns(value):
 # The suite runs against the base schema, as test_repair_bank_vector_indexes.py does.
 # Named rather than repeated so the reconcile calls and the hand-built index below
 # cannot drift apart into asserting about two different schemas.
+# Onto the same single worker as test_repair_bank_vector_indexes.py, for the reason
+# that file documents: these tests do CREATE INDEX / DROP INDEX CONCURRENTLY against
+# the one shared public.memory_units, and eight workers doing that to one table
+# outlast any retry budget. Advisory locks are banned, so the isolation comes from
+# the scheduler.
+pytestmark = pytest.mark.xdist_group("vector_index_reconcile")
+
 _TEST_SCHEMA = "public"
 
 
@@ -136,8 +143,9 @@ async def _bank_indexes(pool, bank_id: str) -> list[str]:
               AND tablename = 'memory_units'
               AND indexname LIKE 'idx_mu_emb_%'
               -- strpos, not LIKE: every bank id here contains underscores, which LIKE
-              -- reads as single-char wildcards. This is the same exact-match shape
-              -- _index_health uses in production.
+              -- reads as single-char wildcards. Production (_index_health) matches the
+              -- fuller `(bank_id = 'x'::text)` rendering; this needle is the part of it
+              -- that identifies the bank, which is all this helper needs.
               AND strpos(indexdef, $2) > 0
             ORDER BY indexname
             """,

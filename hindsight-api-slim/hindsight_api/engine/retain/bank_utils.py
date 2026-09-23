@@ -89,8 +89,12 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
       not catch it, so it would fail the operation into worker retry; the submit gate
       is what keeps the job from being queued in that state at all.)
     """
-    # Local import: hindsight_api.engine.memories imports from this package at module
-    # scope, so a top-level import here closes the cycle.
+    # Local import, like the other five get_memories call sites in this module. At
+    # module scope it closes a cycle: engine.memories -> memories.base ->
+    # hindsight_api.extensions -> extensions.mcp -> `from hindsight_api import
+    # MemoryEngine`, which is still partially initialised, so importing
+    # hindsight_api.admin.cli dies on ImportError. (An earlier version of this comment
+    # blamed engine.memories importing from engine.retain — it does not.)
     from ..memories import get_memories
 
     return get_memories().store_owned_for(bank_id)
