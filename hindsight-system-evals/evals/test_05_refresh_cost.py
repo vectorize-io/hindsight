@@ -107,8 +107,8 @@ async def _measure(client: Hindsight, bank: str, settled: SettleFn, pages: tuple
 def _report(request: pytest.FixtureRequest, results: list[RefreshCost]) -> None:
     model = provider_environment()["HINDSIGHT_API_LLM_MODEL"] if not request.config.getoption("--api-url") else "remote"
     price = PRICES.get(model)
-    # The server's own default unless this run overrode it (off since the refresh-cost baseline).
-    explicit = os.getenv("HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED", "false").lower() == "true"
+    # The server's own default unless this run overrode it.
+    explicit = os.getenv("HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED", "true").lower() != "false"
     table = summary_table(results, price, explicit)
     log.info("refresh cost baseline:\n%s", table)
     out = request.config.getoption("--cost-output")

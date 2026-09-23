@@ -2054,20 +2054,7 @@ class TestReflectIncrementalCache:
     turn's full input, and every per-reflect cache is deleted at the end."""
 
     @pytest.mark.asyncio
-    async def test_each_auto_turn_reuses_previous_step_cache_and_cleans_up(self, monkeypatch):
-        # Off by default (every rolling cache is read once, so on Gemini its create +
-        # storage cost more than they save); this covers the path when it is enabled.
-        from hindsight_api.config import get_config
-
-        real = get_config()
-
-        class _CacheEnabled:
-            reflect_prompt_cache_enabled = True
-
-            def __getattr__(self, name):
-                return getattr(real, name)
-
-        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", _CacheEnabled)
+    async def test_each_auto_turn_reuses_previous_step_cache_and_cleans_up(self):
         functions = {
             "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "x"}]}),

@@ -686,8 +686,9 @@ async def _run_reflect_agent_inner(
     # reuses the entire prior conversation at the cached rate and sends only its
     # own new tool results as the delta. Note what this costs on Gemini: a cache
     # CREATE is billed at the full input rate plus storage, and each rolling cache is
-    # read once, so the whole prior conversation is paid in full at every step anyway.
-    # That is why HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED defaults to off.
+    # read once, so the whole prior conversation is paid in full at every step anyway
+    # — measured at ~4.6% more than running uncached. See the note on
+    # DEFAULT_REFLECT_PROMPT_CACHE_ENABLED in config.py.
     #
     # The cache create for turn N+1 covers turn N's input, which is fully known the
     # moment turn N's LLM call returns — so we kick it off as a background task that
