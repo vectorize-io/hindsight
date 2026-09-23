@@ -10223,6 +10223,39 @@
         "title": "ConsolidationStrategySpec",
         "description": "One `consolidation_strategies` entry: the rules it claims scopes with, and\nthe observation settings those scopes use. Every setting is optional; unset\nones come from the bank-wide values."
       },
+      "Content": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/FileContentBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "file": "#/components/schemas/FileContentBlock",
+                  "image": "#/components/schemas/ImageContentBlock",
+                  "text": "#/components/schemas/TextContentBlock"
+                }
+              }
+            },
+            "type": "array"
+          }
+        ],
+        "title": "Content",
+        "description": "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
+      },
       "CreateBankAliasRequest": {
         "properties": {
           "alias": {
@@ -11380,9 +11413,8 @@
       "DryRunExtractRequest": {
         "properties": {
           "content": {
-            "type": "string",
-            "title": "Content",
-            "description": "Text to extract facts from (e.g. a document or a single chunk)."
+            "$ref": "#/components/schemas/Content",
+            "description": "The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear."
           },
           "context": {
             "type": "string",
@@ -12109,6 +12141,14 @@
             ],
             "title": "Chunk Index",
             "description": "Index into `chunks` of the chunk this fact came from; null if it could not be attributed."
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFactAttachment"
+            },
+            "type": "array",
+            "title": "Attachments",
+            "description": "Attachments from user input that this fact is attributed to / associated with."
           }
         },
         "type": "object",
@@ -12118,6 +12158,37 @@
         ],
         "title": "ExtractedFact",
         "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape \u2014 only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, \u2026)\nare omitted because nothing is stored. Entities are raw, unresolved names."
+      },
+      "ExtractedFactAttachment": {
+        "properties": {
+          "block_index": {
+            "type": "integer",
+            "title": "Block Index",
+            "description": "Index of the content block in user's input (0-based)"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "file"
+            ],
+            "title": "AttachmentType",
+            "description": "Content block type ('image' or 'file')"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME media type of the attachment, e.g. 'image/png'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_index",
+          "type",
+          "media_type"
+        ],
+        "title": "ExtractedFactAttachment",
+        "description": "An attachment from multimodal input associated with an extracted fact."
       },
       "ExtractionChunk": {
         "properties": {
@@ -12250,7 +12321,7 @@
           "source"
         ],
         "title": "FileContentBlock",
-        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in the position it was written.\n\nSplit from ``image`` rather than folded into one type because the providers\nsplit it: Anthropic has distinct image and document blocks, OpenAI has\nimage_url and file parts. Carrying the caller's own distinction through means\nthe per-provider conversion never has to guess from the media type alone."
+        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in its input position.\n\nThis stays distinct from ``image`` because providers use different request\nparts for images and documents; retaining the caller's kind avoids guessing."
       },
       "FileRetainResponse": {
         "properties": {
@@ -14021,36 +14092,7 @@
       "MemoryItem": {
         "properties": {
           "content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "items": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/TextContentBlock"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ImageContentBlock"
-                    },
-                    {
-                      "$ref": "#/components/schemas/FileContentBlock"
-                    }
-                  ],
-                  "discriminator": {
-                    "propertyName": "type",
-                    "mapping": {
-                      "file": "#/components/schemas/FileContentBlock",
-                      "image": "#/components/schemas/ImageContentBlock",
-                      "text": "#/components/schemas/TextContentBlock"
-                    }
-                  }
-                },
-                "type": "array"
-              }
-            ],
-            "title": "Content",
+            "$ref": "#/components/schemas/Content",
             "description": "The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:\n\n  [{\"type\": \"text\", \"text\": \"click the button shown:\"},\n   {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},\n   {\"type\": \"text\", \"text\": \"...then reconnect.\"}]\n\nThe block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form."
           },
           "timestamp": {

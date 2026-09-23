@@ -54,9 +54,26 @@ class ContentAnyOfInner(BaseModel):
                 raise ValueError("If a position argument is used, only 1 is allowed to set `actual_instance`")
             if kwargs:
                 raise ValueError("If a position argument is used, keyword arguments cannot be used.")
-            super().__init__(actual_instance=args[0])
-        else:
+            value = args[0]
+        elif "actual_instance" in kwargs:
             super().__init__(**kwargs)
+            return
+        elif kwargs:
+            value = kwargs
+        else:
+            super().__init__()
+            return
+
+        if isinstance(value, dict):
+            block_class = {
+                "text": TextContentBlock,
+                "image": ImageContentBlock,
+                "file": FileContentBlock,
+            }.get(value.get("type"))
+            if block_class is None:
+                raise ValueError(f"Unknown content block type: {value.get('type')!r}")
+            value = block_class.from_dict(value)
+        super().__init__(actual_instance=value)
 
     @field_validator('actual_instance')
     def actual_instance_must_validate_oneof(cls, v):

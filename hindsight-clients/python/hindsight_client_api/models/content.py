@@ -28,7 +28,7 @@ CONTENT_ANY_OF_SCHEMAS = ["List[ContentAnyOfInner]", "str"]
 
 class Content(BaseModel):
     """
-    The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:    [{\"type\": \"text\", \"text\": \"click the button shown:\"},    {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},    {\"type\": \"text\", \"text\": \"...then reconnect.\"}]  The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
+    The raw content to retain or extract from. Either a plain string or an ordered list of content blocks.
     """
 
     # data type: str
@@ -129,6 +129,11 @@ class Content(BaseModel):
 
         if hasattr(self.actual_instance, "to_dict") and callable(self.actual_instance.to_dict):
             return self.actual_instance.to_dict()
+        elif isinstance(self.actual_instance, list):
+            return [
+                item.to_dict() if hasattr(item, "to_dict") and callable(item.to_dict) else item
+                for item in self.actual_instance
+            ]
         else:
             return self.actual_instance
 

@@ -22,8 +22,8 @@ var _ MappedNullable = &DryRunExtractRequest{}
 
 // DryRunExtractRequest Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).  Every field below the content/context/date is a prompt-affecting override applied just for this call — used to preview what a candidate retain mission (or any extraction setting) would extract, without changing the bank. Unset (null) fields fall back to the bank's resolved config.
 type DryRunExtractRequest struct {
-	// Text to extract facts from (e.g. a document or a single chunk).
-	Content string `json:"content"`
+	// The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear.
+	Content Content `json:"content"`
 	// Optional context about the content.
 	Context *string `json:"context,omitempty"`
 	Timestamp NullableTime `json:"timestamp,omitempty"`
@@ -45,7 +45,7 @@ type _DryRunExtractRequest DryRunExtractRequest
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewDryRunExtractRequest(content string) *DryRunExtractRequest {
+func NewDryRunExtractRequest(content Content) *DryRunExtractRequest {
 	this := DryRunExtractRequest{}
 	this.Content = content
 	var context string = ""
@@ -64,9 +64,9 @@ func NewDryRunExtractRequestWithDefaults() *DryRunExtractRequest {
 }
 
 // GetContent returns the Content field value
-func (o *DryRunExtractRequest) GetContent() string {
+func (o *DryRunExtractRequest) GetContent() Content {
 	if o == nil {
-		var ret string
+		var ret Content
 		return ret
 	}
 
@@ -75,7 +75,7 @@ func (o *DryRunExtractRequest) GetContent() string {
 
 // GetContentOk returns a tuple with the Content field value
 // and a boolean to check if the value has been set.
-func (o *DryRunExtractRequest) GetContentOk() (*string, bool) {
+func (o *DryRunExtractRequest) GetContentOk() (*Content, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -83,7 +83,7 @@ func (o *DryRunExtractRequest) GetContentOk() (*string, bool) {
 }
 
 // SetContent sets field value
-func (o *DryRunExtractRequest) SetContent(v string) {
+func (o *DryRunExtractRequest) SetContent(v Content) {
 	o.Content = v
 }
 

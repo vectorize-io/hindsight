@@ -6971,6 +6971,16 @@ components:
           nullable: true
           type: integer
       title: ConsolidationStrategySpec
+    Content:
+      anyOf:
+      - nullable: true
+        type: string
+      - items:
+          $ref: '#/components/schemas/Content_anyOf_inner'
+        type: array
+      description: The raw content to retain or extract from. Either a plain string
+        or an ordered list of content blocks.
+      title: Content
     CreateBankAliasRequest:
       description: Request model for adding an alias to a bank.
       example:
@@ -7768,7 +7778,7 @@ components:
               fields:
                 key: null
           key: key
-        content: content
+        content: Content
         entities_allow_free_form: true
         context: ""
         llm_output_language: llm_output_language
@@ -7777,9 +7787,7 @@ components:
         timestamp: 2000-01-23T04:56:07.000+00:00
       properties:
         content:
-          description: Text to extract facts from (e.g. a document or a single chunk).
-          title: Content
-          type: string
+          $ref: '#/components/schemas/Content'
         context:
           default: ""
           description: Optional context about the content.
@@ -7830,9 +7838,9 @@ components:
         and aggregated LLM token usage.
       example:
         chunks:
-        - fact_count: 6
+        - fact_count: 1
           text: text
-        - fact_count: 6
+        - fact_count: 1
           text: text
         usage:
           input_tokens: 1500
@@ -7841,6 +7849,13 @@ components:
         facts:
         - occurred_start: occurred_start
           chunk_index: 0
+          attachments:
+          - media_type: media_type
+            block_index: 6
+            type: image
+          - media_type: media_type
+            block_index: 6
+            type: image
           entities:
           - entities
           - entities
@@ -7849,6 +7864,13 @@ components:
           fact_type: fact_type
         - occurred_start: occurred_start
           chunk_index: 0
+          attachments:
+          - media_type: media_type
+            block_index: 6
+            type: image
+          - media_type: media_type
+            block_index: 6
+            type: image
           entities:
           - entities
           - entities
@@ -8173,6 +8195,13 @@ components:
       example:
         occurred_start: occurred_start
         chunk_index: 0
+        attachments:
+        - media_type: media_type
+          block_index: 6
+          type: image
+        - media_type: media_type
+          block_index: 6
+          type: image
         entities:
         - entities
         - entities
@@ -8202,14 +8231,48 @@ components:
         chunk_index:
           nullable: true
           type: integer
+        attachments:
+          description: Attachments from user input that this fact is attributed to
+            / associated with.
+          items:
+            $ref: '#/components/schemas/ExtractedFactAttachment'
+          type: array
       required:
       - fact_type
       - text
       title: ExtractedFact
+    ExtractedFactAttachment:
+      description: An attachment from multimodal input associated with an extracted
+        fact.
+      example:
+        media_type: media_type
+        block_index: 6
+        type: image
+      properties:
+        block_index:
+          description: Index of the content block in user's input (0-based)
+          title: Block Index
+          type: integer
+        type:
+          description: Content block type ('image' or 'file')
+          enum:
+          - image
+          - file
+          title: AttachmentType
+          type: string
+        media_type:
+          description: "MIME media type of the attachment, e.g. 'image/png'"
+          title: Media Type
+          type: string
+      required:
+      - block_index
+      - media_type
+      - type
+      title: ExtractedFactAttachment
     ExtractionChunk:
       description: "One chunk the extractor was handed, and how much it yielded."
       example:
-        fact_count: 6
+        fact_count: 1
         text: text
       properties:
         text:
@@ -8293,12 +8356,10 @@ components:
       title: FeaturesInfo
     FileContentBlock:
       description: |-
-        A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+        A non-image attachment — a PDF, a spreadsheet — in its input position.
 
-        Split from ``image`` rather than folded into one type because the providers
-        split it: Anthropic has distinct image and document blocks, OpenAI has
-        image_url and file parts. Carrying the caller's own distinction through means
-        the per-provider conversion never has to guess from the media type alone.
+        This stays distinct from ``image`` because providers use different request
+        parts for images and documents; retaining the caller's kind avoids guessing.
       properties:
         type:
           enum:
@@ -13117,6 +13178,17 @@ components:
       - id
       - url
       title: WebhookResponse
+    Content_anyOf_inner:
+      discriminator:
+        mapping:
+          file: '#/components/schemas/FileContentBlock'
+          image: '#/components/schemas/ImageContentBlock'
+          text: '#/components/schemas/TextContentBlock'
+        propertyName: type
+      oneOf:
+      - $ref: '#/components/schemas/TextContentBlock'
+      - $ref: '#/components/schemas/ImageContentBlock'
+      - $ref: '#/components/schemas/FileContentBlock'
     Observation_Scopes:
       anyOf:
       - type: string
@@ -13131,32 +13203,6 @@ components:
         \ before this was captured."
       nullable: true
       title: Observation Scopes
-    Content_anyOf_inner:
-      discriminator:
-        mapping:
-          file: '#/components/schemas/FileContentBlock'
-          image: '#/components/schemas/ImageContentBlock'
-          text: '#/components/schemas/TextContentBlock'
-        propertyName: type
-      oneOf:
-      - $ref: '#/components/schemas/TextContentBlock'
-      - $ref: '#/components/schemas/ImageContentBlock'
-      - $ref: '#/components/schemas/FileContentBlock'
-    Content:
-      anyOf:
-      - type: string
-      - items:
-          $ref: '#/components/schemas/Content_anyOf_inner'
-        type: array
-      description: |-
-        The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
-
-          [{"type": "text", "text": "click the button shown:"},
-           {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
-           {"type": "text", "text": "...then reconnect."}]
-
-        The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
-      title: Content
     Timestamp:
       anyOf:
       - format: date-time

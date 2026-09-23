@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.extracted_fact_attachment import ExtractedFactAttachment
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -32,7 +33,8 @@ class ExtractedFact(BaseModel):
     occurred_end: Optional[StrictStr] = None
     entities: Optional[List[StrictStr]] = Field(default=None, description="Raw (unresolved) entity names mentioned in the fact.")
     chunk_index: Optional[StrictInt] = None
-    __properties: ClassVar[List[str]] = ["text", "fact_type", "occurred_start", "occurred_end", "entities", "chunk_index"]
+    attachments: Optional[List[ExtractedFactAttachment]] = Field(default=None, description="Attachments from user input that this fact is attributed to / associated with.")
+    __properties: ClassVar[List[str]] = ["text", "fact_type", "occurred_start", "occurred_end", "entities", "chunk_index", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,6 +75,13 @@ class ExtractedFact(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
+        _items = []
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
         # set to None if occurred_start (nullable) is None
         # and model_fields_set contains the field
         if self.occurred_start is None and "occurred_start" in self.model_fields_set:
@@ -105,7 +114,8 @@ class ExtractedFact(BaseModel):
             "occurred_start": obj.get("occurred_start"),
             "occurred_end": obj.get("occurred_end"),
             "entities": obj.get("entities"),
-            "chunk_index": obj.get("chunk_index")
+            "chunk_index": obj.get("chunk_index"),
+            "attachments": [ExtractedFactAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

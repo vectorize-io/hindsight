@@ -341,6 +341,100 @@ else:
 PATCH_SCRIPT
 fi
 
+# Patch content models in Python SDK to support deserializing and serializing block dicts
+echo "Patching content models in Python client..."
+python3 << PATCH_CONTENT_SCRIPT
+import os
+
+inner_file = "$PYTHON_CLIENT_DIR/hindsight_client_api/models/content_any_of_inner.py"
+if os.path.exists(inner_file):
+    with open(inner_file, 'r') as f:
+        content = f.read()
+
+    old_init = '''    def __init__(self, *args, **kwargs) -> None:
+        if args:
+            if len(args) > 1:
+                raise ValueError("If a position argument is used, only 1 is allowed to set \`actual_instance\`")
+            if kwargs:
+                raise ValueError("If a position argument is used, keyword arguments cannot be used.")
+            super().__init__(actual_instance=args[0])
+        else:
+            super().__init__(**kwargs)'''
+
+    new_init = '''    def __init__(self, *args, **kwargs) -> None:
+        if args:
+            if len(args) > 1:
+                raise ValueError("If a position argument is used, only 1 is allowed to set \`actual_instance\`")
+            if kwargs:
+                raise ValueError("If a position argument is used, keyword arguments cannot be used.")
+            value = args[0]
+        elif "actual_instance" in kwargs:
+            super().__init__(**kwargs)
+            return
+        elif kwargs:
+            value = kwargs
+        else:
+            super().__init__()
+            return
+
+        if isinstance(value, dict):
+            block_class = {
+                "text": TextContentBlock,
+                "image": ImageContentBlock,
+                "file": FileContentBlock,
+            }.get(value.get("type"))
+            if block_class is None:
+                raise ValueError(f"Unknown content block type: {value.get('type')!r}")
+            value = block_class.from_dict(value)
+        super().__init__(actual_instance=value)'''
+
+    if old_init in content:
+        content = content.replace(old_init, new_init)
+        with open(inner_file, 'w') as f:
+            f.write(content)
+        print("  ✓ content_any_of_inner.py patched successfully")
+    else:
+        raise SystemExit("Could not find expected __init__ in content_any_of_inner.py")
+
+content_file = "$PYTHON_CLIENT_DIR/hindsight_client_api/models/content.py"
+if os.path.exists(content_file):
+    with open(content_file, 'r') as f:
+        c_content = f.read()
+
+    old_to_dict = '''    def to_dict(self) -> Optional[Union[Dict[str, Any], List[ContentAnyOfInner], str]]:
+        """Returns the dict representation of the actual instance"""
+        if self.actual_instance is None:
+            return None
+
+        if hasattr(self.actual_instance, "to_dict") and callable(self.actual_instance.to_dict):
+            return self.actual_instance.to_dict()
+        else:
+            return self.actual_instance'''
+
+    new_to_dict = '''    def to_dict(self) -> Optional[Union[Dict[str, Any], List[ContentAnyOfInner], str]]:
+        """Returns the dict representation of the actual instance"""
+        if self.actual_instance is None:
+            return None
+
+        if hasattr(self.actual_instance, "to_dict") and callable(self.actual_instance.to_dict):
+            return self.actual_instance.to_dict()
+        elif isinstance(self.actual_instance, list):
+            return [
+                item.to_dict() if hasattr(item, "to_dict") and callable(item.to_dict) else item
+                for item in self.actual_instance
+            ]
+        else:
+            return self.actual_instance'''
+
+    if old_to_dict in c_content:
+        c_content = c_content.replace(old_to_dict, new_to_dict)
+        with open(content_file, 'w') as f:
+            f.write(c_content)
+        print("  ✓ content.py patched successfully")
+    else:
+        raise SystemExit("Could not find expected to_dict in content.py")
+PATCH_CONTENT_SCRIPT
+
 echo "✓ Python client generated at $PYTHON_CLIENT_DIR"
 echo ""
 

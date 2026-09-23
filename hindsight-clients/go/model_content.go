@@ -16,7 +16,7 @@ import (
 )
 
 
-// Content The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:    [{\"type\": \"text\", \"text\": \"click the button shown:\"},    {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},    {\"type\": \"text\", \"text\": \"...then reconnect.\"}]  The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
+// Content The raw content to retain or extract from. Either a plain string or an ordered list of content blocks.
 type Content struct {
 	ArrayOfContentAnyOfInner *[]ContentAnyOfInner
 	String *string

@@ -17,26 +17,25 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.base64_attachment_source import Base64AttachmentSource
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class FileContentBlock(BaseModel):
+class ExtractedFactAttachment(BaseModel):
     """
-    A non-image attachment — a PDF, a spreadsheet — in its input position.  This stays distinct from ``image`` because providers use different request parts for images and documents; retaining the caller's kind avoids guessing.
+    An attachment from multimodal input associated with an extracted fact.
     """ # noqa: E501
-    type: StrictStr
-    source: Base64AttachmentSource
-    filename: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["type", "source", "filename"]
+    block_index: StrictInt = Field(description="Index of the content block in user's input (0-based)")
+    type: StrictStr = Field(description="Content block type ('image' or 'file')")
+    media_type: StrictStr = Field(description="MIME media type of the attachment, e.g. 'image/png'")
+    __properties: ClassVar[List[str]] = ["block_index", "type", "media_type"]
 
     @field_validator('type')
     def type_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['file']):
-            raise ValueError("must be one of enum values ('file')")
+        if value not in set(['image', 'file']):
+            raise ValueError("must be one of enum values ('image', 'file')")
         return value
 
     model_config = ConfigDict(
@@ -57,7 +56,7 @@ class FileContentBlock(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of FileContentBlock from a JSON string"""
+        """Create an instance of ExtractedFactAttachment from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -78,19 +77,11 @@ class FileContentBlock(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of source
-        if self.source:
-            _dict['source'] = self.source.to_dict()
-        # set to None if filename (nullable) is None
-        # and model_fields_set contains the field
-        if self.filename is None and "filename" in self.model_fields_set:
-            _dict['filename'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of FileContentBlock from a dict"""
+        """Create an instance of ExtractedFactAttachment from a dict"""
         if obj is None:
             return None
 
@@ -98,9 +89,9 @@ class FileContentBlock(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "block_index": obj.get("block_index"),
             "type": obj.get("type"),
-            "source": Base64AttachmentSource.from_dict(obj["source"]) if obj.get("source") is not None else None,
-            "filename": obj.get("filename")
+            "media_type": obj.get("media_type")
         })
         return _obj
 

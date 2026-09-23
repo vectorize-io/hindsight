@@ -20,6 +20,7 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.content import Content
 from hindsight_client_api.models.label_group_input import LabelGroupInput
 from typing import Optional, Set
 from typing_extensions import Self
@@ -28,7 +29,7 @@ class DryRunExtractRequest(BaseModel):
     """
     Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).  Every field below the content/context/date is a prompt-affecting override applied just for this call — used to preview what a candidate retain mission (or any extraction setting) would extract, without changing the bank. Unset (null) fields fall back to the bank's resolved config.
     """ # noqa: E501
-    content: StrictStr = Field(description="Text to extract facts from (e.g. a document or a single chunk).")
+    content: Content = Field(description="The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear.")
     context: Optional[StrictStr] = Field(default='', description="Optional context about the content.")
     timestamp: Optional[datetime] = None
     agent_name: Optional[StrictStr] = None
@@ -82,6 +83,9 @@ class DryRunExtractRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of content
+        if self.content:
+            _dict['content'] = self.content.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each item in entity_labels (list)
         _items = []
         if self.entity_labels:
@@ -156,7 +160,7 @@ class DryRunExtractRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "content": obj.get("content"),
+            "content": Content.from_dict(obj["content"]) if obj.get("content") is not None else None,
             "context": obj.get("context") if obj.get("context") is not None else '',
             "timestamp": obj.get("timestamp"),
             "agent_name": obj.get("agent_name"),

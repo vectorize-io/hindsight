@@ -15,11 +15,6 @@ and deterministic and is asserted directly, while whether the model attributes
 *correctly* is a question about the model and goes to the judge.
 """
 
-import base64
-import uuid
-
-import pytest
-
 from hindsight_api.engine.retain.attachment_content import (
     attachment_placeholder,
     compute_attachment_hash,

@@ -21,6 +21,7 @@ var _ MappedNullable = &MemoryItem{}
 
 // MemoryItem Single memory item for retain.
 type MemoryItem struct {
+	// The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:    [{\"type\": \"text\", \"text\": \"click the button shown:\"},    {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},    {\"type\": \"text\", \"text\": \"...then reconnect.\"}]  The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
 	Content Content `json:"content"`
 	Timestamp NullableTimestamp `json:"timestamp,omitempty"`
 	Context NullableString `json:"context,omitempty"`

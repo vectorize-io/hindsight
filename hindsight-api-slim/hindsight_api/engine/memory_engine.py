@@ -667,6 +667,15 @@ from .response_models import (
 )
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
+from .retain.attachment_content import (
+    Content,
+    LoadedAttachment,
+    occurrences_by_chunk,
+    render_chunk_placeholders,
+    select_occurrences,
+    short_attachment_id,
+    validate_and_canonicalize_content,
+)
 from .retain.fact_storage import _normalize_scopes
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
@@ -13078,7 +13087,7 @@ class MemoryEngine(MemoryEngineInterface):
     async def extract_dry_run(
         self,
         bank_id: str,
-        content: str,
+        content: Content | str,
         *,
         context: str = "",
         event_date: "datetime | None" = None,
@@ -13096,7 +13105,7 @@ class MemoryEngine(MemoryEngineInterface):
         in ``context`` instead) but still overrides the narrator when supplied, for backwards compatibility.
         Side-effect-free and idempotent.
         """
-        from .response_models import ExtractedFact, ExtractionChunk
+        from .response_models import ExtractedFact, ExtractedFactAttachment, ExtractionChunk
         from .retain import fact_extraction
 
         # Resolve the tenant schema before touching any bank-scoped data (config).
@@ -13116,6 +13125,29 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             setattr(resolved_config, key, value)
 
+        canonical = validate_and_canonicalize_content(
+            content,
+            max_attachment_count=resolved_config.retain_attachment_max_count,
+            max_attachment_size_bytes=resolved_config.retain_attachment_max_size_bytes,
+            max_attachment_size_mb=resolved_config.retain_attachment_max_size_mb,
+        )
+
+        attachment_loader = None
+        if canonical.has_attachments:
+            self._require_vision_capable_retain_llm()
+            from .retain.attachment_store import InMemoryAttachmentLoader
+
+            loaded_map: dict[str, LoadedAttachment] = {}
+            for att in canonical.attachments:
+                sid = short_attachment_id(att.attachment_hash)
+                loaded_map[sid] = LoadedAttachment(
+                    media_type=att.media_type,
+                    data=att.data,
+                    kind=att.kind,
+                    filename=att.filename,
+                )
+            attachment_loader = InMemoryAttachmentLoader(loaded_map)
+
         # chunks mode never reaches an LLM in a real retain — each chunk is stored as
         # its own memory verbatim — and the branch that does that lives in
         # `extract_facts_from_contents`, which this path does not go through. Without
@@ -13125,9 +13157,13 @@ class MemoryEngine(MemoryEngineInterface):
             from .retain.types import RetainContent
 
             chunked = fact_extraction._extract_facts_chunks(
-                [RetainContent(content=content, context=context, event_date=event_date)],
+                [RetainContent(content=canonical.text, context=context, event_date=event_date)],
                 resolved_config,
             )
+            chunk_occurrences = occurrences_by_chunk(
+                [chunk.chunk_text for chunk in chunked.chunks], canonical.occurrences
+            )
+
             chunk_of = self._chunk_index_per_fact([c.fact_count for c in chunked.chunks], len(chunked.facts))
             return DryRunExtractionResult(
                 facts=[
@@ -13141,10 +13177,24 @@ class MemoryEngine(MemoryEngineInterface):
                         occurred_end=fact.occurred_end,
                         entities=list(fact.entities or []),
                         chunk_index=chunk_of[i],
+                        attachments=[
+                            ExtractedFactAttachment(
+                                block_index=att.block_index,
+                                type=att.kind,
+                                media_type=att.media_type,
+                            )
+                            for att in (chunk_occurrences[chunk_of[i]] if chunk_of[i] is not None else [])
+                        ],
                     )
                     for i, fact in enumerate(chunked.facts)
                 ],
-                chunks=[ExtractionChunk(text=c.chunk_text, fact_count=c.fact_count) for c in chunked.chunks],
+                chunks=[
+                    ExtractionChunk(
+                        text=render_chunk_placeholders(c.chunk_text, chunk_occurrences[idx]),
+                        fact_count=c.fact_count,
+                    )
+                    for idx, c in enumerate(chunked.chunks)
+                ],
                 usage=chunked.usage,
             )
 
@@ -13153,32 +13203,55 @@ class MemoryEngine(MemoryEngineInterface):
         # derives a narrator from it either, so a dry run must mirror what retain would do.
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
         facts, chunks, usage = await fact_extraction.extract_facts_from_text(
-            text=content,
+            text=canonical.text,
             event_date=event_date,
             llm_config=retain_llm,
             vlm_config=self._vlm_config,
             config=resolved_config,
             context=context,
             agent_name=agent_name,
+            attachment_loader=attachment_loader,
         )
 
+        chunk_occurrences = occurrences_by_chunk([text for text, _ in chunks], canonical.occurrences)
+
         chunk_of = self._chunk_index_per_fact([count for _, count in chunks], len(facts))
-        extracted = [
-            ExtractedFact(
-                text=fact.fact,
-                fact_type=fact.fact_type,
-                occurred_start=fact.occurred_start,
-                occurred_end=fact.occurred_end,
-                entities=list(fact.entities or []),
-                chunk_index=chunk_of[i],
+        extracted = []
+        for i, fact in enumerate(facts):
+            chunk_idx = chunk_of[i]
+            cur_occs = chunk_occurrences[chunk_idx] if chunk_idx is not None else []
+            fact_attachments = [
+                ExtractedFactAttachment(
+                    block_index=occ.block_index,
+                    type=occ.kind,
+                    media_type=occ.media_type,
+                )
+                for occ in select_occurrences(fact.from_attachments or [], cur_occs)
+            ]
+
+            extracted.append(
+                ExtractedFact(
+                    text=fact.fact,
+                    fact_type=fact.fact_type,
+                    occurred_start=fact.occurred_start,
+                    occurred_end=fact.occurred_end,
+                    entities=list(fact.entities or []),
+                    chunk_index=chunk_idx,
+                    attachments=fact_attachments,
+                )
             )
-            for i, fact in enumerate(facts)
-        ]
+
         return DryRunExtractionResult(
             facts=extracted,
             # The LLM path returns (text, fact_count) pairs; the chunks path returns
             # ChunkMetadata objects. Same information, two shapes.
-            chunks=[ExtractionChunk(text=text, fact_count=count) for text, count in chunks],
+            chunks=[
+                ExtractionChunk(
+                    text=render_chunk_placeholders(text, chunk_occurrences[idx]),
+                    fact_count=count,
+                )
+                for idx, (text, count) in enumerate(chunks)
+            ],
             usage=usage,
         )
 

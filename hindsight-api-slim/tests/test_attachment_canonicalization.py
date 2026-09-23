@@ -7,15 +7,19 @@ body, or retain's ``content_hash`` gate would re-extract an unchanged document.
 
 from hindsight_api.engine.llm_wrapper import sanitize_text
 from hindsight_api.engine.retain.attachment_content import (
+    AttachmentOccurrence,
     CanonicalContent,
     RetainAttachment,
     RetainText,
+    attachment_placeholder,
     canonicalize,
     compute_attachment_hash,
     contains_attachment,
-    attachment_placeholder,
     iter_placeholder_ids,
     neutralize_placeholders,
+    occurrences_by_chunk,
+    render_chunk_placeholders,
+    select_occurrences,
     short_attachment_id,
 )
 
@@ -148,3 +152,30 @@ def test_placeholder_holds_no_chunk_separator_characters() -> None:
 
 def test_empty_block_list_yields_empty_content() -> None:
     assert canonicalize([]) == CanonicalContent(text="", attachments=())
+
+
+def test_occurrences_are_partitioned_across_chunks() -> None:
+    first = AttachmentOccurrence(block_index=1, kind="image", media_type="image/png")
+    second = AttachmentOccurrence(block_index=3, kind="file", media_type="application/pdf")
+    chunks = [
+        f"first {attachment_placeholder('a' * 64)}",
+        f"second {attachment_placeholder('b' * 64)}",
+    ]
+
+    assert occurrences_by_chunk(chunks, [first, second]) == [[first], [second]]
+
+
+def test_rendering_leaves_an_unmatched_placeholder_intact() -> None:
+    first = AttachmentOccurrence(block_index=1, kind="image", media_type="image/png")
+    text = f"{attachment_placeholder('a' * 64)} {attachment_placeholder('b' * 64)}"
+
+    assert render_chunk_placeholders(text, [first]) == (
+        f"[Block #1: image (image/png)] {attachment_placeholder('b' * 64)}"
+    )
+
+
+def test_select_occurrences_drops_invalid_numbers_and_preserves_duplicate_blocks() -> None:
+    first = AttachmentOccurrence(block_index=1, kind="image", media_type="image/png")
+    repeated_bytes = AttachmentOccurrence(block_index=3, kind="image", media_type="image/png")
+
+    assert select_occurrences([0, 1, 1, 2, 9], [first, repeated_bytes]) == [first, repeated_bytes]

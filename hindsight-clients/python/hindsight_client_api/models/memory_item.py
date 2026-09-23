@@ -30,7 +30,7 @@ class MemoryItem(BaseModel):
     """
     Single memory item for retain.
     """ # noqa: E501
-    content: Content
+    content: Content = Field(description="The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:    [{\"type\": \"text\", \"text\": \"click the button shown:\"},    {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},    {\"type\": \"text\", \"text\": \"...then reconnect.\"}]  The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.")
     timestamp: Optional[Timestamp] = None
     context: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None

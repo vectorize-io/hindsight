@@ -30,6 +30,8 @@ type ExtractedFact struct {
 	// Raw (unresolved) entity names mentioned in the fact.
 	Entities []string `json:"entities,omitempty"`
 	ChunkIndex NullableInt32 `json:"chunk_index,omitempty"`
+	// Attachments from user input that this fact is attributed to / associated with.
+	Attachments []ExtractedFactAttachment `json:"attachments,omitempty"`
 }
 
 type _ExtractedFact ExtractedFact
@@ -259,6 +261,38 @@ func (o *ExtractedFact) UnsetChunkIndex() {
 	o.ChunkIndex.Unset()
 }
 
+// GetAttachments returns the Attachments field value if set, zero value otherwise.
+func (o *ExtractedFact) GetAttachments() []ExtractedFactAttachment {
+	if o == nil || IsNil(o.Attachments) {
+		var ret []ExtractedFactAttachment
+		return ret
+	}
+	return o.Attachments
+}
+
+// GetAttachmentsOk returns a tuple with the Attachments field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ExtractedFact) GetAttachmentsOk() ([]ExtractedFactAttachment, bool) {
+	if o == nil || IsNil(o.Attachments) {
+		return nil, false
+	}
+	return o.Attachments, true
+}
+
+// HasAttachments returns a boolean if a field has been set.
+func (o *ExtractedFact) HasAttachments() bool {
+	if o != nil && !IsNil(o.Attachments) {
+		return true
+	}
+
+	return false
+}
+
+// SetAttachments gets a reference to the given []ExtractedFactAttachment and assigns it to the Attachments field.
+func (o *ExtractedFact) SetAttachments(v []ExtractedFactAttachment) {
+	o.Attachments = v
+}
+
 func (o ExtractedFact) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -282,6 +316,9 @@ func (o ExtractedFact) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ChunkIndex.IsSet() {
 		toSerialize["chunk_index"] = o.ChunkIndex.Get()
+	}
+	if !IsNil(o.Attachments) {
+		toSerialize["attachments"] = o.Attachments
 	}
 	return toSerialize, nil
 }

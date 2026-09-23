@@ -96,6 +96,7 @@ hindsight_client_api/models/entity_list_response.py
 hindsight_client_api/models/entity_observation_response.py
 hindsight_client_api/models/entity_state_response.py
 hindsight_client_api/models/extracted_fact.py
+hindsight_client_api/models/extracted_fact_attachment.py
 hindsight_client_api/models/extraction_chunk.py
 hindsight_client_api/models/features_info.py
 hindsight_client_api/models/file_content_block.py

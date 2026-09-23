@@ -19,7 +19,7 @@ import (
 // checks if the FileContentBlock type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &FileContentBlock{}
 
-// FileContentBlock A non-image attachment — a PDF, a spreadsheet — in the position it was written.  Split from ``image`` rather than folded into one type because the providers split it: Anthropic has distinct image and document blocks, OpenAI has image_url and file parts. Carrying the caller's own distinction through means the per-provider conversion never has to guess from the media type alone.
+// FileContentBlock A non-image attachment — a PDF, a spreadsheet — in its input position.  This stays distinct from ``image`` because providers use different request parts for images and documents; retaining the caller's kind avoids guessing.
 type FileContentBlock struct {
 	Type string `json:"type"`
 	Source Base64AttachmentSource `json:"source"`

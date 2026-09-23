@@ -1440,6 +1440,25 @@ export type ConsolidationStrategySpec = {
 };
 
 /**
+ * Content
+ *
+ * The raw content to retain or extract from. Either a plain string or an ordered list of content blocks.
+ */
+export type Content =
+  | string
+  | Array<
+      | ({
+          type: "text";
+        } & TextContentBlock)
+      | ({
+          type: "image";
+        } & ImageContentBlock)
+      | ({
+          type: "file";
+        } & FileContentBlock)
+    >;
+
+/**
  * CreateBankAliasRequest
  *
  * Request model for adding an alias to a bank.
@@ -2177,11 +2196,9 @@ export type DocumentResponse = {
  */
 export type DryRunExtractRequest = {
   /**
-   * Content
-   *
-   * Text to extract facts from (e.g. a document or a single chunk).
+   * The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear.
    */
-  content: string;
+  content: Content;
   /**
    * Context
    *
@@ -2618,6 +2635,38 @@ export type ExtractedFact = {
    * Index into `chunks` of the chunk this fact came from; null if it could not be attributed.
    */
   chunk_index?: number | null;
+  /**
+   * Attachments
+   *
+   * Attachments from user input that this fact is attributed to / associated with.
+   */
+  attachments?: Array<ExtractedFactAttachment>;
+};
+
+/**
+ * ExtractedFactAttachment
+ *
+ * An attachment from multimodal input associated with an extracted fact.
+ */
+export type ExtractedFactAttachment = {
+  /**
+   * Block Index
+   *
+   * Index of the content block in user's input (0-based)
+   */
+  block_index: number;
+  /**
+   * AttachmentType
+   *
+   * Content block type ('image' or 'file')
+   */
+  type: "image" | "file";
+  /**
+   * Media Type
+   *
+   * MIME media type of the attachment, e.g. 'image/png'
+   */
+  media_type: string;
 };
 
 /**
@@ -2726,12 +2775,10 @@ export type FeaturesInfo = {
 /**
  * FileContentBlock
  *
- * A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+ * A non-image attachment — a PDF, a spreadsheet — in its input position.
  *
- * Split from ``image`` rather than folded into one type because the providers
- * split it: Anthropic has distinct image and document blocks, OpenAI has
- * image_url and file parts. Carrying the caller's own distinction through means
- * the per-provider conversion never has to guess from the media type alone.
+ * This stays distinct from ``image`` because providers use different request
+ * parts for images and documents; retaining the caller's kind avoids guessing.
  */
 export type FileContentBlock = {
   /**
@@ -3848,8 +3895,6 @@ export type MemoryGraphTableRow = {
  */
 export type MemoryItem = {
   /**
-   * Content
-   *
    * The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
    *
    * [{"type": "text", "text": "click the button shown:"},
@@ -3858,19 +3903,7 @@ export type MemoryItem = {
    *
    * The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
    */
-  content:
-    | string
-    | Array<
-        | ({
-            type: "text";
-          } & TextContentBlock)
-        | ({
-            type: "image";
-          } & ImageContentBlock)
-        | ({
-            type: "file";
-          } & FileContentBlock)
-      >;
+  content: Content;
   /**
    * Timestamp
    *

@@ -316,3 +316,13 @@ async def _record_attachments(conn, bank_id: str, document_id: str, attachments:
             for attachment in attachments
         ],
     )
+
+
+class InMemoryAttachmentLoader:
+    """In-memory attachment loader for preview/dry-run extraction without persistence."""
+
+    def __init__(self, attachments: dict[str, LoadedAttachment]) -> None:
+        self._attachments = attachments
+
+    async def load(self, attachment_ids: Sequence[str]) -> dict[str, LoadedAttachment]:
+        return {att_id: self._attachments[att_id] for att_id in attachment_ids if att_id in self._attachments}

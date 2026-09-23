@@ -6,8 +6,6 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
-import base64
-import binascii
 import json
 import logging
 import os
@@ -18,7 +16,7 @@ import uuid
 from collections.abc import Awaitable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
@@ -240,16 +238,14 @@ from hindsight_api.engine.response_models import (
 )
 from hindsight_api.engine.retain.attachment_content import (
     CanonicalContent,
-    RetainAttachment,
-    RetainText,
-    canonicalize,
-    compute_attachment_hash,
+    Content,
+    ContentValidationError,
+    TextContentBlock,
     contains_placeholder_like,
     iter_placeholder_ids,
-    neutralize_placeholders,
     short_attachment_id,
+    validate_and_canonicalize_content,
 )
-from hindsight_api.engine.retain.attachment_content import ContentBlock as CanonicalBlock
 from hindsight_api.engine.retain.attachment_store import StoredAttachment
 from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
@@ -838,92 +834,9 @@ class EntityInput(BaseModel):
     type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
 
 
-#: A syntactically well-formed MIME type. Deliberately the ONLY constraint on what
-#: may be attached: vision models keep gaining formats (PDF, audio, video), and an
-#: allowlist here would refuse content the provider would happily have read. An
-#: unsupported type is rejected by the provider, and that rejection fails the
-#: retain with the provider's own message — see `_require_vision_capable_retain_llm`.
-_MEDIA_TYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
-
 #: Image types the recall/UI path renders inline. Everything else is still stored
 #: and still sent to the model; this only decides what a browser is asked to draw.
 RENDERABLE_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
-
-
-class Base64AttachmentSource(BaseModel):
-    """Inline attachment bytes, base64-encoded.
-
-    The only source type in this version. ``url`` (server-side fetch) and
-    ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
-    is modelled as a discriminated union on ``type`` rather than as bare fields.
-    """
-
-    type: Literal["base64"] = "base64"
-    media_type: str = Field(
-        description=(
-            "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed "
-            "type is accepted; whether the model can read it is the model's answer to give, and a "
-            "provider that rejects it fails the retain with its own error."
-        )
-    )
-    data: str = Field(description="Base64-encoded bytes (no data: URI prefix).")
-
-    @field_validator("media_type")
-    @classmethod
-    def validate_media_type(cls, v: str) -> str:
-        if not _MEDIA_TYPE_RE.match(v):
-            raise ValueError(f"media_type must look like 'type/subtype', got {v!r}")
-        return v
-
-    def decode(self) -> bytes:
-        """Decode the payload, raising ``ValueError`` on malformed base64.
-
-        Not a validator: decoding a large attachment is expensive enough that it
-        should happen once, at the point the bytes are actually needed, rather
-        than on every model construction. The retain handler calls this inside its
-        request-validation block so a bad payload is still a 400, not a 500.
-        """
-        try:
-            return base64.b64decode(self.data, validate=True)
-        except (binascii.Error, ValueError) as e:
-            raise ValueError(f"attachment source data is not valid base64: {e}") from e
-
-
-class TextContentBlock(BaseModel):
-    """A run of text within a multimodal item, in the position the caller wrote it."""
-
-    type: Literal["text"]
-    text: str
-
-
-class ImageContentBlock(BaseModel):
-    """An image within a multimodal item, in the position the caller wrote it."""
-
-    type: Literal["image"]
-    source: Base64AttachmentSource
-
-
-class FileContentBlock(BaseModel):
-    """A non-image attachment — a PDF, a spreadsheet — in the position it was written.
-
-    Split from ``image`` rather than folded into one type because the providers
-    split it: Anthropic has distinct image and document blocks, OpenAI has
-    image_url and file parts. Carrying the caller's own distinction through means
-    the per-provider conversion never has to guess from the media type alone.
-    """
-
-    type: Literal["file"]
-    source: Base64AttachmentSource
-    filename: str | None = Field(
-        default=None,
-        description="Original filename, passed to providers that show one to the model (e.g. OpenAI).",
-    )
-
-
-#: One element of a multimodal ``content`` array. Discriminated on ``type`` so a
-#: malformed block reports which variant it failed against instead of dumping
-#: every variant's errors.
-ContentBlock = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock, Field(discriminator="type")]
 
 
 def bank_attachment_url(bank_id: str, attachment_id: str) -> str:
@@ -1079,7 +992,7 @@ async def _attach_to_recall_results(
 
 
 def canonicalize_item_content(
-    content: str | list[ContentBlock],
+    content: Content,
     *,
     item_index: int,
     config: HindsightConfig,
@@ -1098,59 +1011,18 @@ def canonicalize_item_content(
     here — any well-formed media type is accepted and the provider's rejection is
     what fails the retain.
     """
-    if isinstance(content, str):
-        # Scrubbed exactly like a text block. Only the canonicalizer may mint a
-        # placeholder: without this, a caller could hand-write the token in plain
-        # string content and have extraction resolve it to an attachment the
-        # document never carried — anything already retained in the same bank.
-        return CanonicalContent(text=neutralize_placeholders(content, allowed_attachment_ids), attachments=())
-
-    blocks: list[CanonicalBlock] = []
-    attachment_count = 0
-    for block_index, block in enumerate(content):
-        if isinstance(block, TextContentBlock):
-            blocks.append(RetainText(block.text))
-            continue
-
-        attachment_count += 1
-        if attachment_count > config.retain_attachment_max_count:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"items[{item_index}] carries more than {config.retain_attachment_max_count} attachments. "
-                    f"Split the content across several items."
-                ),
-            )
-        try:
-            data = block.source.decode()
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"items[{item_index}].content[{block_index}]: {e}") from e
-        if not data:
-            raise HTTPException(
-                status_code=400,
-                detail=f"items[{item_index}].content[{block_index}]: attachment source data is empty",
-            )
-        if len(data) > config.retain_attachment_max_size_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"items[{item_index}].content[{block_index}]: attachment is "
-                    f"{len(data) / (1024 * 1024):.1f}MB, exceeding the "
-                    f"{config.retain_attachment_max_size_mb}MB limit for a single attachment."
-                ),
-            )
-        blocks.append(
-            RetainAttachment(
-                attachment_hash=compute_attachment_hash(data),
-                media_type=block.source.media_type,
-                data=data,
-                block_index=block_index,
-                kind=block.type,
-                filename=getattr(block, "filename", None),
-            )
+    try:
+        return validate_and_canonicalize_content(
+            content,
+            max_attachment_count=config.retain_attachment_max_count,
+            max_attachment_size_bytes=config.retain_attachment_max_size_bytes,
+            max_attachment_size_mb=config.retain_attachment_max_size_mb,
+            allowed_attachment_ids=allowed_attachment_ids,
+            path_prefix=f"items[{item_index}].content",
+            attachment_limit_path=f"items[{item_index}]",
         )
-
-    return canonicalize(blocks, allowed_attachment_ids)
+    except ContentValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 class MemoryItem(BaseModel):
@@ -1170,7 +1042,7 @@ class MemoryItem(BaseModel):
         },
     )
 
-    content: str | list[ContentBlock] = Field(
+    content: Content = Field(
         description=(
             "The raw content to retain. Either a plain string, or an ordered list of "
             "content blocks so images sit inline where they actually appear:\n\n"
@@ -1217,24 +1089,6 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
-
-    @field_validator("content")
-    @classmethod
-    def validate_content(cls, v: str | list[ContentBlock]) -> str | list[ContentBlock]:
-        if isinstance(v, str):
-            if not v.strip():
-                raise ValueError("content cannot be empty")
-            return v
-
-        if not v:
-            raise ValueError("content cannot be empty")
-        # An all-text block list must clear the same bar as the string form. A list
-        # carrying an attachment is never empty, whatever its text blocks say.
-        if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
-            block.text.strip() for block in v if isinstance(block, TextContentBlock)
-        ):
-            raise ValueError("content cannot be empty")
-        return v
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -2608,7 +2462,12 @@ class DryRunExtractRequest(BaseModel):
     without changing the bank. Unset (null) fields fall back to the bank's resolved config.
     """
 
-    content: str = Field(description="Text to extract facts from (e.g. a document or a single chunk).")
+    content: Content = Field(
+        description=(
+            "The raw content to extract facts from. Either a plain string, or an ordered list of "
+            "content blocks (text, image, file) so images/attachments sit inline where they actually appear."
+        )
+    )
     context: str = Field(default="", description="Optional context about the content.")
     # Named `timestamp` to match the retain item payload (retain maps timestamp -> event_date internally).
     timestamp: datetime | None = Field(
@@ -2643,13 +2502,6 @@ class DryRunExtractRequest(BaseModel):
     llm_output_language: str | None = None
 
     _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
-
-    @field_validator("content")
-    @classmethod
-    def validate_content(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("content cannot be empty")
-        return v
 
 
 class DocumentListItem(OpenRowModel):
@@ -5873,6 +5725,7 @@ def _register_routes(app: FastAPI):
             # downstream sees the same shape it gets from the bank's stored config.
             if "entity_labels" in overrides:
                 overrides["entity_labels"] = [lg.model_dump() for lg in overrides["entity_labels"]]
+
             return await app.state.memory.extract_dry_run(
                 bank_id,
                 body.content,
@@ -5887,6 +5740,8 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=400, detail=str(e))
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except VisionNotSupportedError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -9966,7 +9821,7 @@ def _register_routes(app: FastAPI):
             revisited = {
                 item.document_id
                 for item in request.items
-                if item.document_id and isinstance(item.content, str) and contains_placeholder_like(item.content)
+                if item.document_id and isinstance(raw_c := item.content.root, str) and contains_placeholder_like(raw_c)
             }
             if revisited:
                 existing = await app.state.memory.attachments_for_documents(bank_id, sorted(revisited), request_context)
@@ -10179,12 +10034,13 @@ def _register_routes(app: FastAPI):
                 # Summarize the block form structurally: the raw content may be a
                 # list whose image blocks hold megabytes of base64, and this string
                 # goes into a log line and an error body.
-                if isinstance(item.content, str):
-                    raw_preview = item.content
+                raw_c = item.content.root
+                if isinstance(raw_c, str):
+                    raw_preview = raw_c
                 else:
                     raw_preview = " ".join(
                         block.text if isinstance(block, TextContentBlock) else f"<{block.source.media_type}>"
-                        for block in item.content
+                        for block in raw_c
                     )
                 content_preview = raw_preview[:100] + "..." if len(raw_preview) > 100 else raw_preview
                 input_summary.append(
