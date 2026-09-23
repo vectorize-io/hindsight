@@ -23,10 +23,13 @@ While Hermes still bundles `plugins/memory/hindsight/`, **the bundled copy wins*
 is bundled → `~/.hermes/plugins/` → project → entry point, first hit wins, so installing this plugin
 alongside the bundled one is inert. When Hermes drops the bundled copy, `hermes update` migrates
 existing users automatically via `hermes_cli/memory_provider_migration.py`, which resolves the
-provider name against the Hermes plugin catalog. Submitting that entry is **our** job per the
-handoff notes, which makes `plugin-catalog-entry.yaml` (to be PR'd into `NousResearch/hermes-agent`
-as `plugin-catalog/hindsight.yaml`) a hard prerequisite of their removal — see the comments in that
-file.
+provider name against the Hermes plugin catalog.
+
+The catalog entry lives in their repo at
+[`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml)
+and pins this directory at a specific commit. **Changes here do not reach users until that pin
+moves**, so anything shipped from this tree needs a follow-up PR to hermes-agent bumping `sha` and
+`version` together.
 
 `local_embedded` mode needs `hindsight-all`, which `pyproject.toml` deliberately does not declare
 (it would push the local-ML stack onto cloud-mode users). The setup wizard installs it, and
