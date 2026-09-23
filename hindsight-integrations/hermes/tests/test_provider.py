@@ -186,3 +186,11 @@ def test_root_warning_goes_through_the_hosts_warning_callback(provider, monkeypa
     assert len(seen) == 1 and "cannot run as root" in seen[0]
     assert instance._mode == "disabled"
     instance.shutdown()
+
+
+def test_warning_sink_defaults_exist_without_initialize():
+    """_start_embedded_daemon reads these directly, and availability probes construct a
+    provider without ever calling initialize() — so __init__ must supply both."""
+    bare = plugin.HindsightMemoryProvider()
+    assert bare._warning_callback is None
+    assert bare._platform == "cli"

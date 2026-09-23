@@ -1102,15 +1102,14 @@ class HindsightMemoryProvider(MemoryProvider):
             # startup diagnostic: it goes through the agent's gated warning sink when wired,
             # otherwise through the shared render boundary; the log line above never does.
             with contextlib.suppress(Exception):
-                cb = getattr(self, "_warning_callback", None)
-                if cb is not None:
-                    cb(msg)
+                if self._warning_callback is not None:
+                    self._warning_callback(msg)
                 else:
                     from gateway.warning_notifications import render_notification
 
                     render_notification(
                         lambda: print(f"  ⚠ {msg}", file=sys.stderr, flush=True),
-                        platform=getattr(self, "_platform", "cli"),
+                        platform=self._platform,
                     )
             self._mode = "disabled"
             return
