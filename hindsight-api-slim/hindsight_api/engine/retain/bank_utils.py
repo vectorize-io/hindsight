@@ -89,6 +89,8 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
       not catch it, so it would fail the operation into worker retry; the submit gate
       is what keeps the job from being queued in that state at all.)
     """
+    # Local import: hindsight_api.engine.memories imports from this package at module
+    # scope, so a top-level import here closes the cycle.
     from ..memories import get_memories
 
     return get_memories().store_owned_for(bank_id)

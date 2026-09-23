@@ -274,6 +274,9 @@ async def plan_bank_vector_indexes(
     # write, and neither the bank lookup nor the catalog read can change the answer.
     # Not wrapped, deliberately: bank_indexes_are_store_owned raises rather than guess,
     # and its docstring says why the two callers need opposite fallbacks.
+    # ponytail: the probe takes bank_id with no schema, so a router with per-schema
+    # backends would get one answer for the same id in two tenant schemas. Pass the
+    # schema through MemoriesExtension.store_owned_for if such a router appears.
     if bank_indexes_are_store_owned(bank_id):
         return plan
 

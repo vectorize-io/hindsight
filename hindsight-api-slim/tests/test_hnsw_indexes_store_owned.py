@@ -36,7 +36,14 @@ from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.retain.bank_utils import _vector_index_clause
 from hindsight_api.engine.transfer import export_bank
 from hindsight_api.engine.vector_index_health import plan_bank_vector_indexes, reconcile_bank_vector_indexes
+from hindsight_api.engine.vector_index_health import BankIndexResult
 from tests.test_memories_extension import InMemoryMemories
+
+
+async def _ids(value):
+    """Await-able stand-in, so a monkeypatched coroutine can be written as a lambda."""
+    return value
+
 
 # The suite runs against the base schema, as test_repair_bank_vector_indexes.py does.
 # Named rather than repeated so the reconcile calls and the hand-built index below
@@ -447,7 +454,6 @@ def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch, pg0_db_
         return canned
 
     monkeypatch.setattr(cli, "_run_repair_bank", _fake_sweep)
-    monkeypatch.setattr(cli, "_vector_index_clause", lambda: "USING hnsw (embedding vector_cosine_ops)")
     # Pinned even though the sweep is faked: repair_bank still refuses on an empty
     # database_url before it gets that far, and that refusal also exits 1 — which
     # would satisfy this test's exit-code assertion without running the block it is
@@ -487,3 +493,65 @@ async def test_rename_refuses_when_the_store_cannot_say_who_owns_the_bank(memory
             assert await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", f"{bank_id}_new") is None
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_a_schema_that_fails_partway_still_reports_the_banks_it_did_repair(monkeypatch, pg0_db_url):
+    """Work that already happened must survive the failure that stopped the rest.
+
+    ``CREATE INDEX CONCURRENTLY`` is not rolled back by a later exception, so banks
+    reconciled before the blip are real. Building them as a list comprehension threw
+    all of them away — the comprehension binds nothing until it finishes — taking the
+    failed-index names with them. Three commits of this PR have fixed a version of
+    that bug at a different scope; this is the one that pins it.
+    """
+    calls: list[str] = []
+
+    async def _flaky_reconcile(conn, schema, bid, index_clause, dry_run=False):
+        calls.append(bid)
+        if len(calls) == 3:
+            raise RuntimeError("router blipped on the third bank")
+        return BankIndexResult(bank_id=bid, created=1, failed=1, failed_indexes=[f"idx_dead_{bid}"])
+
+    monkeypatch.setattr(cli, "list_bank_ids", lambda conn, schema: _ids(["b1", "b2", "b3", "b4"]))
+    monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _flaky_reconcile)
+
+    sweep = await cli._run_repair_bank(
+        pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=None, dry_run=False
+    )
+
+    assert [r.bank_id for r in sweep.banks] == ["b1", "b2"], f"completed reconciles were discarded: {sweep.banks}"
+    assert sweep.skipped_schemas == [_TEST_SCHEMA], "the schema still needs a re-run for b3/b4"
+    # The names are the point: nothing else in the output carries them.
+    assert [n for r in sweep.banks for n in r.failed_indexes] == ["idx_dead_b1", "idx_dead_b2"]
+
+
+async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(monkeypatch, pg0_db_url):
+    """One dead connection is not N schema failures, and must not look like them.
+
+    The sweep holds a single connection for every schema. Reporting per schema would
+    print the same error once per tenant and bury the cause; re-raising would discard
+    every report. So: mark this schema and all the ones after it, say so once, stop.
+    """
+    import asyncpg
+
+    seen: list[str] = []
+
+    async def _dies_on_the_second_schema(conn, schema):
+        seen.append(schema)
+        if len(seen) == 2:
+            raise asyncpg.InterfaceError("connection was closed")
+        return ["b1"]
+
+    async def _ok_reconcile(conn, schema, bid, index_clause, dry_run=False):
+        return BankIndexResult(bank_id=f"{schema}:{bid}", created=1)
+
+    monkeypatch.setattr(cli, "_resolve_schemas", lambda base: _ids(["s1", "s2", "s3", "s4"]))
+    monkeypatch.setattr(cli, "list_bank_ids", _dies_on_the_second_schema)
+    monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _ok_reconcile)
+    monkeypatch.setattr(cli, "drop_orphaned_bank_indexes", lambda conn, schema, dry_run=False: _ids([]))
+
+    sweep = await cli._run_repair_bank(pg0_db_url, base_schema=_TEST_SCHEMA, schema=None, bank_id=None, dry_run=False)
+
+    assert seen == ["s1", "s2"], f"the sweep kept going on a dead connection: tried {seen}"
+    assert sweep.skipped_schemas == ["s2", "s3", "s4"], sweep.skipped_schemas
+    assert [r.bank_id for r in sweep.banks] == ["s1:b1"], "s1's work was thrown away"
