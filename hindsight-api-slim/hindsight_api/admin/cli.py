@@ -683,6 +683,18 @@ async def _resolve_schemas(base_schema: str | None) -> list[str]:
     return list(dict.fromkeys(schemas))
 
 
+def _reraise_if_connection_is_gone(exc: BaseException) -> None:
+    """Re-raise when the sweep's shared connection is dead rather than skipping on.
+
+    ``_run_repair_bank`` holds ONE autocommit connection for every schema, so a
+    connection-class failure is not a property of the schema it happened on — every
+    remaining schema will fail the same way. Skipping per schema would then print the
+    same error once per tenant and bury the single root cause in 200 lines.
+    """
+    if isinstance(exc, asyncpg.PostgresConnectionError | asyncpg.InterfaceError):
+        raise exc
+
+
 @dataclass
 class RepairSweep:
     """What one ``repair-bank`` run did, and which schemas it could not do at all.
@@ -738,17 +750,31 @@ async def _run_repair_bank(
                     await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
                     for bid in bank_ids
                 ]
+            except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
+                _reraise_if_connection_is_gone(exc)
+                typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
+                skipped_schemas.append(target_schema)
+                continue
+            # Banked before the orphan sweep, not after it. Those reconciles already
+            # happened — CREATE INDEX CONCURRENTLY is not rolled back by a later
+            # failure — so folding them into the same guard would report "skipped"
+            # and "0 created" for a schema that just built 300 indexes. A skipped
+            # schema has to mean what RepairSweep says it means: never looked at.
+            results.extend(schema_results)
+            try:
                 # Only in --all mode: an index whose bank row is gone is unreachable
                 # from every bank-scoped path, so this is the one place that can
                 # collect it. Normally finds nothing — delete_bank drops a bank's
                 # indexes while it still knows their names — but a deployment that
                 # hit the #3485 wall could not run delete_bank at all.
                 orphans = [] if bank_id else await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
-            except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
-                typer.echo(f"  schema '{target_schema}': skipped ({exc})", err=True)
+            except Exception as exc:  # noqa: BLE001 — the banks were repaired; say what failed
+                _reraise_if_connection_is_gone(exc)
+                typer.echo(
+                    f"  schema '{target_schema}': banks repaired, but orphan collection failed ({exc})", err=True
+                )
                 skipped_schemas.append(target_schema)
-                continue
-            results.extend(schema_results)
+                orphans = []
             if orphans:
                 typer.echo(
                     f"  schema '{target_schema}': {len(orphans)} orphaned index(es) "
@@ -800,6 +826,13 @@ def repair_bank(
     is missing or invalid — a bank whose creation lost its DDL to a deadlock, one
     restored around it, or one whose access method drifted after a backend
     switch. Nothing is dropped in that mode.
+
+    A bank whose memories a custom store owns is outside all of this, decided per
+    bank rather than per deployment: it has no rows in memory_units, so nothing is
+    built for it and nothing it already carries is taken away (#4615). Such a bank
+    reports 0 present, 0 created either way; query pg_indexes to see what one still
+    holds. If the store cannot say who owns a bank, that schema is reported skipped
+    and this exits non-zero rather than guessing and rebuilding.
 
     With a threshold set, a (bank, fact_type) earns its index once it holds that
     many rows; below it the planner answers the same query exactly, and faster,
@@ -861,19 +894,23 @@ def repair_bank(
         f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
         f"{total_failed} failed"
     )
-    if sweep.skipped_schemas:
-        # Non-zero, and said plainly: a skipped schema was never looked at, so a run
-        # that reports only successes would read as converged while whole tenants
-        # still carry whatever they carried.
-        typer.echo(
-            f"Skipped {len(sweep.skipped_schemas)} schema(s) entirely: "
-            f"{', '.join(sweep.skipped_schemas)}. Re-run once the cause is cleared.",
-            err=True,
-        )
-        raise typer.Exit(1)
+    # Both are reported before either exits. They are independent — a sweep can have
+    # failed builds in one schema and be unable to look at another — and raising on
+    # the first swallowed the index names, which appear nowhere else and are the whole
+    # point of the failed line.
     if total_failed:
         failed_names = [name for r in results for name in r.failed_indexes]
         typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
+    if sweep.skipped_schemas:
+        # A skipped schema was never looked at (or only half looked at), so a run that
+        # reported only successes would read as converged while whole tenants still
+        # carry whatever they carried.
+        typer.echo(
+            f"Skipped {len(sweep.skipped_schemas)} schema(s): "
+            f"{', '.join(sweep.skipped_schemas)}. Re-run once the cause is cleared.",
+            err=True,
+        )
+    if total_failed or sweep.skipped_schemas:
         raise typer.Exit(1)
 
 
@@ -1107,7 +1144,17 @@ async def _run_rename_bank(
     CONCURRENTLY, which is why it runs after the commit, outside the transaction.
     Until it finishes, recall on the bank runs without its index.
     """
-    if get_memories().store_owned_for(old_bank_id):
+    # Same unreachable-store case the reconcile below now handles, reported the same
+    # way: this runs before anything is changed, so refusing is free and a traceback
+    # would just look like a crash.
+    try:
+        old_is_store_owned = get_memories().store_owned_for(old_bank_id)
+    except Exception as exc:  # noqa: BLE001 — cannot verify the precondition, so do not proceed
+        raise RenameBankError(
+            f"cannot tell whether bank '{old_bank_id}' keeps its memories outside SQL ({exc}); "
+            f"nothing was changed. Re-run once the memories store is reachable."
+        ) from exc
+    if old_is_store_owned:
         raise RenameBankError(f"bank '{old_bank_id}' keeps its memories outside SQL; rename is not supported for it")
     conn = await _admin_connect(db_url)
     try:

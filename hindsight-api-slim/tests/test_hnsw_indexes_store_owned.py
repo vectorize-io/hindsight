@@ -21,11 +21,13 @@ So the suite also pins that a reconcile leaves an existing bank's indexes alone.
 Runs via: uv run pytest tests/test_hnsw_indexes_store_owned.py -v
 """
 
+import asyncio
 import uuid
 
 import pytest
 
 import hindsight_api.engine.memories as memories_mod
+from hindsight_api.admin import cli
 from hindsight_api.admin.cli import _run_repair_bank
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
@@ -373,5 +375,41 @@ async def test_the_sweep_skips_a_schema_it_cannot_classify_instead_of_dying(memo
         assert sweep.banks == [], "a schema that could not be classified must contribute no results"
         # And the bank kept exactly what it had — nothing rebuilt, nothing dropped.
         assert len(await _bank_indexes(memory._pool, bank_id)) == 3
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_the_command_exits_non_zero_and_names_the_schema_it_could_not_classify(
+    memory, request_context, monkeypatch
+):
+    """The operator-facing half: exit code and message, not just the return value.
+
+    A sweep that could not look at a schema must not exit 0 — a zero would read as
+    "converged" while whole tenants still carry whatever they carried. And the
+    skipped-schema report must not displace the failed-index report: the two are
+    independent, the index names appear nowhere else, and raising on the first
+    swallowed them.
+    """
+    from typer.testing import CliRunner
+
+    bank_id = f"test_so_exit_{uuid.uuid4().hex[:8]}"
+    real_store = memories_mod.get_memories()
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        memories_mod.set_memories(_Unanswerable(real_store))
+        try:
+            # In a thread: the command calls asyncio.run, which cannot nest inside this
+            # test's running loop. set_memories is process-global, so the thread sees
+            # the unanswerable store.
+            result = await asyncio.to_thread(CliRunner().invoke, cli.app, ["repair-bank", "--bank", bank_id])
+        finally:
+            memories_mod.set_memories(real_store)
+
+        assert result.exit_code == 1, f"an unclassifiable schema must exit non-zero:\n{result.output}"
+        assert "Skipped" in result.output, result.output
+        assert _TEST_SCHEMA in result.output, result.output
+        # The cause, not just the fact — so the operator knows what to clear.
+        assert "router is unreachable" in result.output, result.output
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

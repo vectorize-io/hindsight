@@ -83,9 +83,11 @@ def bank_indexes_are_store_owned(bank_id: str) -> bool:
       ``repair-bank --all`` would classify every bank it failed on as SQL-backed and
       rebuild all three indexes for each — re-arming #4615 at full scale, from a
       command that then exits 0 and reads as a successful repair. Propagating instead
-      makes the write path log a warning and do nothing, and makes ``repair-bank``
-      report that schema skipped and exit non-zero — loud, and scoped to the schema,
-      rather than quietly rebuilding.
+      makes the submit-time pre-check log a warning and queue nothing, and makes
+      ``repair-bank`` report that schema skipped and exit non-zero — loud, and scoped
+      to the schema, rather than quietly rebuilding. (The maintenance job itself does
+      not catch it, so it would fail the operation into worker retry; the submit gate
+      is what keeps the job from being queued in that state at all.)
     """
     from ..memories import get_memories
 
