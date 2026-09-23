@@ -1026,7 +1026,8 @@
     "triggerSeconds": "秒",
     "triggerMinIntervalLabel": "最小重新整理間隔",
     "toastContentCleared": "心智模型內容已清空",
-    "actionOpenDetail": "查看詳細"
+    "actionOpenDetail": "查看詳細",
+    "nextRefreshPaused": "重新整理失敗後暫停"
   },
   "cronPreview": {
     "invalid": "無效的 cron 運算式",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} 次嘗試",
     "tabErrors": "錯誤",
     "noErrors": "沒有失敗的重新整理。",
-    "errorsIntro": "拒絕寫入的重新整理，依時間由新到舊排列。它們都沒有更動已儲存的內容。失敗的重新整理會自動重試幾次；之後模型會保留最後一個有效版本，直到再次被觸發。",
+    "errorsIntro": "拒絕寫入的重新整理，由新到舊排列。它們都沒有更動已儲存的內容。重新整理失敗後會自動重試幾次；之後模型會保留上一個正常版本。",
     "errorsPresent": "此心智模型有失敗的重新整理",
-    "failureReasonUnexpected": "非預期錯誤"
+    "failureReasonUnexpected": "非預期錯誤",
+    "refreshPaused": "重新整理已暫停",
+    "errorsPausedNotice": "此模型不再自動更新：這些失敗之後，自動重新整理已暫停。手動重新整理可再試一次，成功後便會恢復。",
+    "noHistoryOnlyFailures": "尚無版本——到目前為止每次重新整理都失敗。請查看「錯誤」分頁。"
   },
   "constellation": {
     "instructions": "滾動縮放 · 拖曳平移 · 懸停探索 · 按一下選取",
@@ -2114,6 +2118,8 @@
     "inSync": "已同步",
     "staleAutoTitle": "此模型作用域內有新記憶 — 它會自動重新整理",
     "staleManualTitle": "此模型作用域內有新記憶 — 請重新整理以同步",
-    "inSyncTitle": "此模型作用域內沒有新記憶"
+    "inSyncTitle": "此模型作用域內沒有新記憶",
+    "paused": "已暫停",
+    "pausedTitle": "上次重新整理失敗，此模型不再自動更新——手動重新整理即可恢復"
   }
 }

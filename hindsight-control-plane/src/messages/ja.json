@@ -1026,7 +1026,8 @@
     "triggerSeconds": "秒",
     "triggerMinIntervalLabel": "最小更新間隔",
     "toastContentCleared": "メンタルモデルのコンテンツをクリアしました",
-    "actionOpenDetail": "詳細を開く"
+    "actionOpenDetail": "詳細を開く",
+    "nextRefreshPaused": "更新失敗により一時停止中"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} 回試行",
     "tabErrors": "エラー",
     "noErrors": "失敗した更新はありません。",
-    "errorsIntro": "書き込みを拒否した更新を新しい順に表示します。いずれも保存済みコンテンツには手を加えていません。失敗した更新は数回自動で再試行され、その後は次のトリガーまで最後に成功したバージョンが保持されます。",
+    "errorsIntro": "書き込みを拒否した更新を新しい順に表示します。いずれも保存済みコンテンツには手を加えていません。失敗した更新は数回自動で再試行され、その後は最後に成功したバージョンが保持されます。",
     "errorsPresent": "このメンタルモデルには失敗した更新があります",
-    "failureReasonUnexpected": "予期しないエラー"
+    "failureReasonUnexpected": "予期しないエラー",
+    "refreshPaused": "更新を一時停止",
+    "errorsPausedNotice": "このモデルは自動更新されなくなりました。これらの失敗のあと、自動更新は一時停止しています。更新すると再試行され、成功すれば自動更新が再開します。",
+    "noHistoryOnlyFailures": "まだバージョンがありません。これまでの更新はすべて失敗しています。「エラー」タブをご覧ください。"
   },
   "constellation": {
     "instructions": "スクロールでズーム · ドラッグで移動 · ホバーで探索 · クリックで選択",
@@ -2114,6 +2118,8 @@
     "inSync": "最新",
     "staleAutoTitle": "スコープ内に新しい記憶があります（自動更新されるため、自動的に解消されます）",
     "staleManualTitle": "スコープ内に新しい記憶があります（手動更新を実行してください）",
-    "inSyncTitle": "最新の状態です（スコープ内に新しい記憶はありません）"
+    "inSyncTitle": "最新の状態です（スコープ内に新しい記憶はありません）",
+    "paused": "一時停止",
+    "pausedTitle": "前回の更新が失敗したため、このモデルは自動更新されません。更新すると再開します"
   }
 }

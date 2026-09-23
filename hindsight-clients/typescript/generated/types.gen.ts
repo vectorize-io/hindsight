@@ -2690,6 +2690,12 @@ export type KnowledgeNode = {
    */
   is_stale?: boolean | null;
   /**
+   * Last Refresh Failed At
+   *
+   * Pages only: when this page's most recent refresh failed, in ISO format, or null when the last one succeeded. While it is set the page does not rebuild itself on its trigger — see the same field on the mental model. An explicit refresh still runs.
+   */
+  last_refresh_failed_at?: string | null;
+  /**
    * Pages only: the page's refresh settings — when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. This is the EFFECTIVE policy: a setting the page never stored is reported at its default, so compare the fields you care about rather than the whole object against a patch you sent. Absent on folders, which have no backing mental model, and on a page with no trigger stored.
    */
   trigger?: MentalModelTriggerOutput | null;
@@ -4322,6 +4328,12 @@ export type MentalModelResponse = {
    * How far through the bank's memories this model is written — the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet.
    */
   last_memory_seen_at?: string | null;
+  /**
+   * Last Refresh Failed At
+   *
+   * When this model's most recent refresh failed, in ISO format, or null when the last one succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, `refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every tick. An explicit refresh still runs, and a successful one clears this. The failure itself, with its reason, is in the model's history.
+   */
+  last_refresh_failed_at?: string | null;
   /**
    * Created At
    */

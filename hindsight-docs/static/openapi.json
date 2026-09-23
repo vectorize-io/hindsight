@@ -11896,6 +11896,18 @@
             "title": "Is Stale",
             "description": "Pages only, populated by the tree endpoint. True when a memory in *this page's* scope \u2014 its tags and fact types \u2014 has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           },
+          "last_refresh_failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refresh Failed At",
+            "description": "Pages only: when this page's most recent refresh failed, in ISO format, or null when the last one succeeded. While it is set the page does not rebuild itself on its trigger \u2014 see the same field on the mental model. An explicit refresh still runs."
+          },
           "trigger": {
             "anyOf": [
               {
@@ -14431,6 +14443,18 @@
             ],
             "title": "Last Memory Seen At",
             "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet."
+          },
+          "last_refresh_failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refresh Failed At",
+            "description": "When this model's most recent refresh failed, in ISO format, or null when the last one succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, `refresh_cron`) skip the model \u2014 a refresh that cannot succeed is not retried on every tick. An explicit refresh still runs, and a successful one clears this. The failure itself, with its reason, is in the model's history."
           },
           "created_at": {
             "anyOf": [

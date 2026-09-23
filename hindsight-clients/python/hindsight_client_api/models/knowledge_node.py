@@ -37,9 +37,10 @@ class KnowledgeNode(BaseModel):
     tags: Optional[List[StrictStr]] = None
     timestamp: Optional[StrictStr] = None
     is_stale: Optional[StrictBool] = None
+    last_refresh_failed_at: Optional[StrictStr] = None
     trigger: Optional[MentalModelTriggerOutput] = None
     children: Optional[List[KnowledgeNode]] = None
-    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "is_stale", "trigger", "children"]
+    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "is_stale", "last_refresh_failed_at", "trigger", "children"]
 
     @field_validator('kind')
     def kind_validate_enum(cls, value):
@@ -122,6 +123,11 @@ class KnowledgeNode(BaseModel):
         if self.is_stale is None and "is_stale" in self.model_fields_set:
             _dict['is_stale'] = None
 
+        # set to None if last_refresh_failed_at (nullable) is None
+        # and model_fields_set contains the field
+        if self.last_refresh_failed_at is None and "last_refresh_failed_at" in self.model_fields_set:
+            _dict['last_refresh_failed_at'] = None
+
         # set to None if trigger (nullable) is None
         # and model_fields_set contains the field
         if self.trigger is None and "trigger" in self.model_fields_set:
@@ -149,6 +155,7 @@ class KnowledgeNode(BaseModel):
             "tags": obj.get("tags"),
             "timestamp": obj.get("timestamp"),
             "is_stale": obj.get("is_stale"),
+            "last_refresh_failed_at": obj.get("last_refresh_failed_at"),
             "trigger": MentalModelTriggerOutput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None,
             "children": [KnowledgeNode.from_dict(_item) for _item in obj["children"]] if obj.get("children") is not None else None
         })

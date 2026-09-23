@@ -32,6 +32,7 @@ type KnowledgeNode struct {
 	Tags []string `json:"tags,omitempty"`
 	Timestamp NullableString `json:"timestamp,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
+	LastRefreshFailedAt NullableString `json:"last_refresh_failed_at,omitempty"`
 	Trigger NullableMentalModelTriggerOutput `json:"trigger,omitempty"`
 	Children []KnowledgeNode `json:"children,omitempty"`
 }
@@ -408,6 +409,48 @@ func (o *KnowledgeNode) UnsetIsStale() {
 	o.IsStale.Unset()
 }
 
+// GetLastRefreshFailedAt returns the LastRefreshFailedAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *KnowledgeNode) GetLastRefreshFailedAt() string {
+	if o == nil || IsNil(o.LastRefreshFailedAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.LastRefreshFailedAt.Get()
+}
+
+// GetLastRefreshFailedAtOk returns a tuple with the LastRefreshFailedAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *KnowledgeNode) GetLastRefreshFailedAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.LastRefreshFailedAt.Get(), o.LastRefreshFailedAt.IsSet()
+}
+
+// HasLastRefreshFailedAt returns a boolean if a field has been set.
+func (o *KnowledgeNode) HasLastRefreshFailedAt() bool {
+	if o != nil && o.LastRefreshFailedAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetLastRefreshFailedAt gets a reference to the given NullableString and assigns it to the LastRefreshFailedAt field.
+func (o *KnowledgeNode) SetLastRefreshFailedAt(v string) {
+	o.LastRefreshFailedAt.Set(&v)
+}
+// SetLastRefreshFailedAtNil sets the value for LastRefreshFailedAt to be an explicit nil
+func (o *KnowledgeNode) SetLastRefreshFailedAtNil() {
+	o.LastRefreshFailedAt.Set(nil)
+}
+
+// UnsetLastRefreshFailedAt ensures that no value is present for LastRefreshFailedAt, not even an explicit nil
+func (o *KnowledgeNode) UnsetLastRefreshFailedAt() {
+	o.LastRefreshFailedAt.Unset()
+}
+
 // GetTrigger returns the Trigger field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *KnowledgeNode) GetTrigger() MentalModelTriggerOutput {
 	if o == nil || IsNil(o.Trigger.Get()) {
@@ -515,6 +558,9 @@ func (o KnowledgeNode) ToMap() (map[string]interface{}, error) {
 	}
 	if o.IsStale.IsSet() {
 		toSerialize["is_stale"] = o.IsStale.Get()
+	}
+	if o.LastRefreshFailedAt.IsSet() {
+		toSerialize["last_refresh_failed_at"] = o.LastRefreshFailedAt.Get()
 	}
 	if o.Trigger.IsSet() {
 		toSerialize["trigger"] = o.Trigger.Get()

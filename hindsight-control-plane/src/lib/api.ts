@@ -70,6 +70,8 @@ export interface KnowledgeNode {
   tags: string[];
   timestamp: string | null;
   is_stale: boolean | null;
+  /** Pages only: when the last refresh failed. Set = the page no longer rebuilds itself. */
+  last_refresh_failed_at?: string | null;
   /** Pages only: when the page rebuilds itself and over which facts. Null on folders. */
   trigger: MentalModel["trigger"] | null;
   children: KnowledgeNode[];
@@ -258,6 +260,8 @@ export interface MentalModel {
   created_at: string;
   reflect_response?: any;
   is_stale?: boolean | null;
+  /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
+  last_refresh_failed_at?: string | null;
 }
 
 /** How a refresh resolved full-vs-delta, and why it did not stay in delta. */
@@ -1662,6 +1666,8 @@ export class ControlPlaneClient {
         last_memory_seen_at: string | null;
         /** Whether a memory in this model's own scope has been written since it last read them. */
         is_stale: boolean | null;
+        /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
+        last_refresh_failed_at?: string | null;
         created_at: string;
         reflect_response?: {
           text: string;

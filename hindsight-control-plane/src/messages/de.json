@@ -1026,7 +1026,8 @@
     "triggerSeconds": "Sekunden",
     "triggerMinIntervalLabel": "Minimales Aktualisierungsintervall",
     "toastContentCleared": "Inhalt des mentalen Modells gelöscht",
-    "actionOpenDetail": "Öffnen"
+    "actionOpenDetail": "Öffnen",
+    "nextRefreshPaused": "pausiert nach fehlgeschlagener Aktualisierung"
   },
   "cronPreview": {
     "invalid": "Ungültiger Cron-Ausdruck",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} Versuche",
     "tabErrors": "Fehler",
     "noErrors": "Keine fehlgeschlagenen Aktualisierungen.",
-    "errorsIntro": "Aktualisierungen, die nicht geschrieben haben – neueste zuerst. Der gespeicherte Inhalt blieb dabei jeweils unberührt. Eine fehlgeschlagene Aktualisierung wird einige Male automatisch wiederholt; danach behält das Modell seine letzte gültige Version, bis es erneut ausgelöst wird.",
+    "errorsIntro": "Aktualisierungen, die nicht geschrieben haben – neueste zuerst. Der gespeicherte Inhalt blieb dabei jeweils unangetastet. Eine fehlgeschlagene Aktualisierung wird einige Male automatisch wiederholt; danach behält das Modell seine letzte gute Version.",
     "errorsPresent": "Dieses Mental Model hat fehlgeschlagene Aktualisierungen",
-    "failureReasonUnexpected": "Unerwarteter Fehler"
+    "failureReasonUnexpected": "Unerwarteter Fehler",
+    "refreshPaused": "Aktualisierung pausiert",
+    "errorsPausedNotice": "Dieses Modell aktualisiert sich nicht mehr selbst: Nach diesen Fehlschlägen sind seine automatischen Aktualisierungen pausiert. Aktualisieren Sie es, um es erneut zu versuchen – eine erfolgreiche Aktualisierung setzt sie fort.",
+    "noHistoryOnlyFailures": "Noch keine Versionen – bisher ist jede Aktualisierung fehlgeschlagen. Siehe Tab „Fehler“."
   },
   "constellation": {
     "instructions": "Scrollen zum Zoomen · Ziehen zum Verschieben · Hover zum Erkunden · Klicken zum Auswählen",
@@ -2114,6 +2118,8 @@
     "inSync": "Aktuell",
     "staleAutoTitle": "Neue Erinnerungen im Bereich dieses Modells (wird automatisch aktualisiert)",
     "staleManualTitle": "Neue Erinnerungen vorhanden (manuell aktualisieren zum Abgleichen)",
-    "inSyncTitle": "Keine neuen Erinnerungen im Bereich dieses Modells vorhanden"
+    "inSyncTitle": "Keine neuen Erinnerungen im Bereich dieses Modells vorhanden",
+    "paused": "Pausiert",
+    "pausedTitle": "Die letzte Aktualisierung ist fehlgeschlagen, daher aktualisiert sich dieses Modell nicht mehr selbst – aktualisieren Sie es, um fortzufahren"
   }
 }

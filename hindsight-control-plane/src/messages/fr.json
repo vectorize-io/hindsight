@@ -1026,7 +1026,8 @@
     "triggerSeconds": "secondes",
     "triggerMinIntervalLabel": "Intervalle minimal d'actualisation",
     "toastContentCleared": "Contenu du modèle mental effacé",
-    "actionOpenDetail": "Ouvrir"
+    "actionOpenDetail": "Ouvrir",
+    "nextRefreshPaused": "en pause après un échec"
   },
   "cronPreview": {
     "invalid": "Expression cron non valide",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} tentatives",
     "tabErrors": "Erreurs",
     "noErrors": "Aucune actualisation échouée.",
-    "errorsIntro": "Actualisations qui ont refusé d'écrire, les plus récentes d'abord. Aucune n'a modifié le contenu stocké. Une actualisation échouée est réessayée automatiquement quelques fois ; ensuite le modèle conserve sa dernière version valide jusqu'au prochain déclenchement.",
+    "errorsIntro": "Actualisations qui ont refusé d'écrire, de la plus récente à la plus ancienne. Le contenu enregistré est resté intact à chaque fois. Une actualisation échouée est réessayée automatiquement quelques fois ; ensuite, le modèle conserve sa dernière bonne version.",
     "errorsPresent": "Ce modèle mental a des actualisations échouées",
-    "failureReasonUnexpected": "Erreur inattendue"
+    "failureReasonUnexpected": "Erreur inattendue",
+    "refreshPaused": "Actualisation en pause",
+    "errorsPausedNotice": "Ce modèle ne s'actualise plus tout seul : après ces échecs, ses actualisations automatiques sont en pause. Actualisez-le pour réessayer — une actualisation réussie les relance.",
+    "noHistoryOnlyFailures": "Aucune version pour l'instant : toutes les actualisations ont échoué. Voir l'onglet Erreurs."
   },
   "constellation": {
     "instructions": "Défiler pour zoomer · Glisser pour déplacer · Survoler pour explorer · Cliquer pour sélectionner",
@@ -2114,6 +2118,8 @@
     "inSync": "À jour",
     "staleAutoTitle": "Nouvelles mémoires dans le périmètre du modèle (s'actualisera automatiquement)",
     "staleManualTitle": "Nouvelles mémoires dans le périmètre (actualisez manuellement pour synchroniser)",
-    "inSyncTitle": "Aucune nouvelle mémoire dans le périmètre de ce modèle"
+    "inSyncTitle": "Aucune nouvelle mémoire dans le périmètre de ce modèle",
+    "paused": "En pause",
+    "pausedTitle": "La dernière actualisation a échoué : ce modèle ne s'actualise plus tout seul — actualisez-le pour reprendre"
   }
 }

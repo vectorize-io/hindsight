@@ -243,6 +243,7 @@ export function KnowledgeBaseView() {
       tags: [],
       timestamp: null,
       is_stale: null,
+      last_refresh_failed_at: null,
       trigger: null,
       children: roots,
     }),
@@ -254,6 +255,16 @@ export function KnowledgeBaseView() {
   // doesn't carry it); updates as the auto-refresh poll refreshes the tree.
   const selectedStale = useMemo(
     () => (selected ? (allNodes.find((n) => n.id === selected.id)?.is_stale ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // Read from the same tree node, for the same reason: a page whose refresh keeps
+  // failing stops rebuilding itself, and the header must not keep promising it will.
+  const selectedRefreshFailedAt = useMemo(
+    () =>
+      selected
+        ? (allNodes.find((n) => n.id === selected.id)?.last_refresh_failed_at ?? null)
+        : null,
     [selected, allNodes]
   );
 
@@ -648,6 +659,7 @@ export function KnowledgeBaseView() {
                   isStale={selectedStale}
                   trigger={selectedTrigger}
                   lastRefreshedAt={selected.timestamp}
+                  refreshFailedAt={selectedRefreshFailedAt}
                 />
               ) : (
                 <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
@@ -945,7 +957,12 @@ export function TreeRow({
                 needs the width, but the meaning, colours and tooltips are the same
                 ones the page header and the mental-model list show. */}
             {!isFolder && (
-              <StalenessBadge isStale={node.is_stale} trigger={node.trigger} variant="dot" />
+              <StalenessBadge
+                isStale={node.is_stale}
+                trigger={node.trigger}
+                refreshFailedAt={node.last_refresh_failed_at}
+                variant="dot"
+              />
             )}
           </div>
           {!isFolder && (

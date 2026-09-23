@@ -1026,7 +1026,8 @@
     "triggerSeconds": "秒",
     "triggerMinIntervalLabel": "最小刷新间隔",
     "toastContentCleared": "心智模型内容已清空",
-    "actionOpenDetail": "查看详情"
+    "actionOpenDetail": "查看详情",
+    "nextRefreshPaused": "刷新失败后已暂停"
   },
   "cronPreview": {
     "invalid": "无效的 cron 表达式",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} 次尝试",
     "tabErrors": "错误",
     "noErrors": "没有失败的刷新。",
-    "errorsIntro": "拒绝写入的刷新，按时间倒序排列。它们都没有改动已存储的内容。失败的刷新会自动重试几次；之后模型将保留最后一个有效版本，直到再次被触发。",
+    "errorsIntro": "拒绝写入的刷新，按时间从新到旧排列。它们都没有改动已保存的内容。刷新失败后会自动重试几次；之后模型会保留上一个正常版本。",
     "errorsPresent": "此心智模型有失败的刷新",
-    "failureReasonUnexpected": "意外错误"
+    "failureReasonUnexpected": "意外错误",
+    "refreshPaused": "刷新已暂停",
+    "errorsPausedNotice": "该模型不再自动刷新：这些失败之后，自动刷新已暂停。手动刷新可重试，成功后会恢复自动刷新。",
+    "noHistoryOnlyFailures": "尚无版本——迄今每次刷新都失败了。请查看“错误”标签页。"
   },
   "constellation": {
     "instructions": "滚动缩放 · 拖拽平移 · 悬停探索 · 点击选择",
@@ -2114,6 +2118,8 @@
     "inSync": "已同步",
     "staleAutoTitle": "此模型作用域内有新记忆 — 它会自动刷新",
     "staleManualTitle": "此模型作用域内有新记忆 — 请刷新以同步",
-    "inSyncTitle": "此模型作用域内没有新记忆"
+    "inSyncTitle": "此模型作用域内没有新记忆",
+    "paused": "已暂停",
+    "pausedTitle": "上次刷新失败，该模型不再自动刷新——手动刷新可恢复"
   }
 }

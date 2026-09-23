@@ -1026,7 +1026,8 @@
     "triggerSeconds": "seconds",
     "triggerMinIntervalLabel": "Minimum refresh interval",
     "toastContentCleared": "Mental model content cleared",
-    "actionOpenDetail": "Open"
+    "actionOpenDetail": "Open",
+    "nextRefreshPaused": "paused after a failed refresh"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} attempts",
     "tabErrors": "Errors",
     "noErrors": "No failed refreshes.",
-    "errorsIntro": "Refreshes that refused to write, newest first. The stored content was left untouched by each of these. A failed refresh is retried a few times automatically; after that the model keeps its last good version until something triggers it again.",
+    "errorsIntro": "Refreshes that refused to write, newest first. The stored content was left untouched by each of these. A failed refresh is retried a few times automatically; after that the model keeps its last good version.",
     "errorsPresent": "This mental model has failed refreshes",
-    "failureReasonUnexpected": "Unexpected error"
+    "failureReasonUnexpected": "Unexpected error",
+    "refreshPaused": "Refresh paused",
+    "errorsPausedNotice": "This model is not refreshing itself any more: after these failures its automatic refreshes are paused. Refresh it to try again — a refresh that succeeds resumes them.",
+    "noHistoryOnlyFailures": "No versions yet — every refresh so far failed. See the Errors tab."
   },
   "constellation": {
     "instructions": "Scroll to zoom · Drag to pan · Hover to explore · Click to select",
@@ -2114,6 +2118,8 @@
     "inSync": "In sync",
     "staleAutoTitle": "New memories in this model's scope since it last read them — it refreshes itself, so this clears on its own",
     "staleManualTitle": "New memories in this model's scope since it last read them — refresh it to catch up",
-    "inSyncTitle": "No new memories in this model's scope since it last read them"
+    "inSyncTitle": "No new memories in this model's scope since it last read them",
+    "paused": "Paused",
+    "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume"
   }
 }

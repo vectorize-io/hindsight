@@ -37,10 +37,11 @@ class MentalModelResponse(BaseModel):
     trigger: Optional[MentalModelTriggerOutput] = None
     last_refreshed_at: Optional[StrictStr] = None
     last_memory_seen_at: Optional[StrictStr] = None
+    last_refresh_failed_at: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
     reflect_response: Optional[Dict[str, Any]] = None
     is_stale: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "name", "source_query", "content", "tags", "max_tokens", "trigger", "last_refreshed_at", "last_memory_seen_at", "created_at", "reflect_response", "is_stale"]
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "name", "source_query", "content", "tags", "max_tokens", "trigger", "last_refreshed_at", "last_memory_seen_at", "last_refresh_failed_at", "created_at", "reflect_response", "is_stale"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -114,6 +115,11 @@ class MentalModelResponse(BaseModel):
         if self.last_memory_seen_at is None and "last_memory_seen_at" in self.model_fields_set:
             _dict['last_memory_seen_at'] = None
 
+        # set to None if last_refresh_failed_at (nullable) is None
+        # and model_fields_set contains the field
+        if self.last_refresh_failed_at is None and "last_refresh_failed_at" in self.model_fields_set:
+            _dict['last_refresh_failed_at'] = None
+
         # set to None if created_at (nullable) is None
         # and model_fields_set contains the field
         if self.created_at is None and "created_at" in self.model_fields_set:
@@ -151,6 +157,7 @@ class MentalModelResponse(BaseModel):
             "trigger": MentalModelTriggerOutput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None,
             "last_refreshed_at": obj.get("last_refreshed_at"),
             "last_memory_seen_at": obj.get("last_memory_seen_at"),
+            "last_refresh_failed_at": obj.get("last_refresh_failed_at"),
             "created_at": obj.get("created_at"),
             "reflect_response": obj.get("reflect_response"),
             "is_stale": obj.get("is_stale")

@@ -1026,7 +1026,8 @@
     "triggerSeconds": "segundos",
     "triggerMinIntervalLabel": "Intervalo mínimo de actualización",
     "toastContentCleared": "Contenido del modelo mental borrado",
-    "actionOpenDetail": "Abrir"
+    "actionOpenDetail": "Abrir",
+    "nextRefreshPaused": "en pausa tras una actualización fallida"
   },
   "cronPreview": {
     "invalid": "Expresión cron no válida",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} intentos",
     "tabErrors": "Errores",
     "noErrors": "No hay actualizaciones fallidas.",
-    "errorsIntro": "Actualizaciones que se negaron a escribir, de la más reciente a la más antigua. Ninguna modificó el contenido almacenado. Una actualización fallida se reintenta automáticamente unas cuantas veces; después el modelo conserva su última versión válida hasta que algo vuelva a activarlo.",
+    "errorsIntro": "Actualizaciones que se negaron a escribir, de más reciente a más antigua. El contenido guardado quedó intacto en todas ellas. Una actualización fallida se reintenta automáticamente unas cuantas veces; después, el modelo conserva su última versión correcta.",
     "errorsPresent": "Este modelo mental tiene actualizaciones fallidas",
-    "failureReasonUnexpected": "Error inesperado"
+    "failureReasonUnexpected": "Error inesperado",
+    "refreshPaused": "Actualización en pausa",
+    "errorsPausedNotice": "Este modelo ya no se actualiza solo: tras estos fallos, sus actualizaciones automáticas están en pausa. Actualízalo para volver a intentarlo; una actualización correcta las reanuda.",
+    "noHistoryOnlyFailures": "Aún no hay versiones: todas las actualizaciones han fallado. Consulta la pestaña Errores."
   },
   "constellation": {
     "instructions": "Desplaza para hacer zoom · Arrastra para mover · Pasa el cursor para explorar · Haz clic para seleccionar",
@@ -2114,6 +2118,8 @@
     "inSync": "Al día",
     "staleAutoTitle": "Nuevos recuerdos en el ámbito de este modelo (se actualizará automáticamente)",
     "staleManualTitle": "Nuevos recuerdos en el ámbito de este modelo (actualice manualmente para sincronizar)",
-    "inSyncTitle": "No hay nuevos recuerdos en el ámbito de este modelo"
+    "inSyncTitle": "No hay nuevos recuerdos en el ámbito de este modelo",
+    "paused": "En pausa",
+    "pausedTitle": "La última actualización falló, así que este modelo ya no se actualiza solo: actualízalo para reanudarlo"
   }
 }

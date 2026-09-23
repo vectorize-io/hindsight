@@ -31,6 +31,7 @@ type MentalModelResponse struct {
 	Trigger NullableMentalModelTriggerOutput `json:"trigger,omitempty"`
 	LastRefreshedAt NullableString `json:"last_refreshed_at,omitempty"`
 	LastMemorySeenAt NullableString `json:"last_memory_seen_at,omitempty"`
+	LastRefreshFailedAt NullableString `json:"last_refresh_failed_at,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
 	ReflectResponse map[string]interface{} `json:"reflect_response,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
@@ -414,6 +415,48 @@ func (o *MentalModelResponse) UnsetLastMemorySeenAt() {
 	o.LastMemorySeenAt.Unset()
 }
 
+// GetLastRefreshFailedAt returns the LastRefreshFailedAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelResponse) GetLastRefreshFailedAt() string {
+	if o == nil || IsNil(o.LastRefreshFailedAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.LastRefreshFailedAt.Get()
+}
+
+// GetLastRefreshFailedAtOk returns a tuple with the LastRefreshFailedAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelResponse) GetLastRefreshFailedAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.LastRefreshFailedAt.Get(), o.LastRefreshFailedAt.IsSet()
+}
+
+// HasLastRefreshFailedAt returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasLastRefreshFailedAt() bool {
+	if o != nil && o.LastRefreshFailedAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetLastRefreshFailedAt gets a reference to the given NullableString and assigns it to the LastRefreshFailedAt field.
+func (o *MentalModelResponse) SetLastRefreshFailedAt(v string) {
+	o.LastRefreshFailedAt.Set(&v)
+}
+// SetLastRefreshFailedAtNil sets the value for LastRefreshFailedAt to be an explicit nil
+func (o *MentalModelResponse) SetLastRefreshFailedAtNil() {
+	o.LastRefreshFailedAt.Set(nil)
+}
+
+// UnsetLastRefreshFailedAt ensures that no value is present for LastRefreshFailedAt, not even an explicit nil
+func (o *MentalModelResponse) UnsetLastRefreshFailedAt() {
+	o.LastRefreshFailedAt.Unset()
+}
+
 // GetCreatedAt returns the CreatedAt field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetCreatedAt() string {
 	if o == nil || IsNil(o.CreatedAt.Get()) {
@@ -564,6 +607,9 @@ func (o MentalModelResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.LastMemorySeenAt.IsSet() {
 		toSerialize["last_memory_seen_at"] = o.LastMemorySeenAt.Get()
+	}
+	if o.LastRefreshFailedAt.IsSet() {
+		toSerialize["last_refresh_failed_at"] = o.LastRefreshFailedAt.Get()
 	}
 	if o.CreatedAt.IsSet() {
 		toSerialize["created_at"] = o.CreatedAt.Get()

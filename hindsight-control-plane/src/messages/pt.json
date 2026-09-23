@@ -1026,7 +1026,8 @@
     "triggerSeconds": "segundos",
     "triggerMinIntervalLabel": "Intervalo mínimo de atualização",
     "toastContentCleared": "Conteúdo do modelo mental limpo",
-    "actionOpenDetail": "Abrir"
+    "actionOpenDetail": "Abrir",
+    "nextRefreshPaused": "em pausa após uma atualização falhada"
   },
   "cronPreview": {
     "invalid": "Expressão cron inválida",
@@ -1688,9 +1689,12 @@
     "failureAttempts": "· {count} tentativas",
     "tabErrors": "Erros",
     "noErrors": "Nenhuma atualização com falha.",
-    "errorsIntro": "Atualizações que se recusaram a escrever, da mais recente para a mais antiga. Nenhuma alterou o conteúdo armazenado. Uma atualização com falha é repetida automaticamente algumas vezes; depois disso o modelo mantém a última versão válida até ser acionado novamente.",
+    "errorsIntro": "Atualizações que se recusaram a escrever, das mais recentes para as mais antigas. O conteúdo guardado ficou intacto em todas elas. Uma atualização falhada é repetida automaticamente algumas vezes; depois, o modelo mantém a última versão boa.",
     "errorsPresent": "Este modelo mental tem atualizações com falha",
-    "failureReasonUnexpected": "Erro inesperado"
+    "failureReasonUnexpected": "Erro inesperado",
+    "refreshPaused": "Atualização em pausa",
+    "errorsPausedNotice": "Este modelo já não se atualiza sozinho: após estas falhas, as atualizações automáticas estão em pausa. Atualize-o para tentar de novo — uma atualização bem-sucedida retoma-as.",
+    "noHistoryOnlyFailures": "Ainda sem versões — todas as atualizações falharam. Veja o separador Erros."
   },
   "constellation": {
     "instructions": "Scroll para zoom · Arraste para mover · Passe o mouse para explorar · Clique para selecionar",
@@ -2114,6 +2118,8 @@
     "inSync": "Em dia",
     "staleAutoTitle": "Novas memórias no escopo deste modelo (será atualizado automaticamente)",
     "staleManualTitle": "Novas memórias no escopo (atualize manualmente para sincronizar)",
-    "inSyncTitle": "Não há novas memórias no escopo deste modelo"
+    "inSyncTitle": "Não há novas memórias no escopo deste modelo",
+    "paused": "Em pausa",
+    "pausedTitle": "A última atualização falhou, por isso este modelo já não se atualiza sozinho — atualize-o para retomar"
   }
 }

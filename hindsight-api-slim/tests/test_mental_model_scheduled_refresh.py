@@ -371,3 +371,25 @@ async def test_refresh_cut_off_by_the_wall_timeout_counts_as_failed(memory: Memo
     )
 
     assert await memory._automatic_refresh_paused(bank, mm_id) is True
+
+
+@pytest.mark.asyncio
+async def test_the_failure_is_visible_on_the_model_and_cleared_by_a_success(memory: MemoryEngine, request_context):
+    """`last_refresh_failed_at` is what the UI reads to say a model has stopped
+    refreshing itself, so it has to be on the read and gone again after a success."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron=None, last_refreshed_offset="1 day")
+
+    await memory._record_mental_model_refresh_failure(
+        bank, mm_id, outcome="refresh_failed_error", failure_reason="unexpected_error", error_message="boom"
+    )
+    failed = await memory.get_mental_model(bank, mm_id, request_context=request_context)
+    assert failed["last_refresh_failed_at"] is not None
+    listed = await memory.list_mental_models(bank, request_context=request_context)
+    assert listed.items[0]["last_refresh_failed_at"] == failed["last_refresh_failed_at"]
+
+    await memory.update_mental_model(bank, mm_id, content="a fresh answer", request_context=request_context)
+    refreshed = await memory.get_mental_model(bank, mm_id, request_context=request_context)
+    assert refreshed["last_refresh_failed_at"] is None
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False

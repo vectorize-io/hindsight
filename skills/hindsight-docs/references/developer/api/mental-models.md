@@ -204,6 +204,8 @@ When `refresh_after_consolidation` is enabled, the mental model will be re-gener
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
 
+`last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
+
 **A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. Neither `refresh_after_consolidation` nor `refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
 
 ### Rate-limiting automatic refreshes

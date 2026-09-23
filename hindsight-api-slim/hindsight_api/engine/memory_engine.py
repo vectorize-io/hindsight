@@ -16541,7 +16541,7 @@ class MemoryEngine(MemoryEngineInterface):
             rows = await conn.fetch(
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
-                       last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
+                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 {tag_filter}
@@ -16614,7 +16614,7 @@ class MemoryEngine(MemoryEngineInterface):
             row = await conn.fetchrow(
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
-                       last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
+                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 AND id = $2
@@ -16946,7 +16946,7 @@ class MemoryEngine(MemoryEngineInterface):
             VALUES ($1, $2, 'pinned', $3::text, ' ', $4, $5, $6, $7, COALESCE($8, 2048),
                     COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb), $10{sv_val})
             RETURNING id, bank_id, name, source_query, content, tags,
-                      last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
+                      last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
                       max_tokens, trigger, structured_content
             """,
             mental_model_id,
@@ -18542,6 +18542,10 @@ class MemoryEngine(MemoryEngineInterface):
             # direct content edit. A *failed* refresh passes neither, so it stays put.
             if content is not None or refresh_completed:
                 updates.append("last_refreshed_at = NOW()")
+                # This refresh worked (or the content was edited by hand), so the model is
+                # no longer the one that keeps failing: let the automatic triggers have it
+                # back rather than making the next reader wonder why it never refreshes.
+                updates.append("last_refresh_failed_at = NULL")
             # last_memory_seen_at — data watermark, "how far through the bank's memories
             # this document is written". Staleness keys off it. A row that commits after
             # the refresh snapshot stays newer than the watermark and is caught next
@@ -18605,7 +18609,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SET {", ".join(updates)}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
-                          last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
+                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
                           max_tokens, trigger, structured_content
             """
 
@@ -18838,10 +18842,11 @@ class MemoryEngine(MemoryEngineInterface):
                 SET content = '',
                     structured_content = NULL,
                     last_refreshed_source_query = NULL,
+                    last_refresh_failed_at = NULL,
                     embedding = $3{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
-                          last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
+                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
                           max_tokens, trigger, structured_content
                 """,
                 bank_id,
@@ -19045,6 +19050,10 @@ class MemoryEngine(MemoryEngineInterface):
             node["tags"] = list(row["mm_tags"] or [])
             node["source_query"] = row["mm_source_query"]
             node["last_refreshed_at"] = row["mm_last_refreshed_at"].isoformat() if row["mm_last_refreshed_at"] else None
+            # A page whose backing model keeps failing is not refreshing itself any more;
+            # the tree is where a reader notices that (#4532).
+            failed_at = row["mm_last_refresh_failed_at"] if "mm_last_refresh_failed_at" in row else None
+            node["last_refresh_failed_at"] = failed_at.isoformat() if failed_at else None
             # Carried on the read so a client can see WHEN a page refreshes and how much that
             # costs, and can tell whether its own settings still apply, without walking to the
             # mental-models API for every page (the knowledge base is the only surface some
@@ -19061,6 +19070,7 @@ class MemoryEngine(MemoryEngineInterface):
         "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
         "mm.trigger AS mm_trigger, "
         "mm.last_refreshed_at AS mm_last_refreshed_at, "
+        "mm.last_refresh_failed_at AS mm_last_refresh_failed_at, "
         "mm.last_memory_seen_at AS mm_last_memory_seen_at"
     )
 
@@ -20188,6 +20198,11 @@ class MemoryEngine(MemoryEngineInterface):
             "tags": row["tags"] or [],
             "last_refreshed_at": row["last_refreshed_at"].isoformat() if row["last_refreshed_at"] else None,
             "last_memory_seen_at": (row["last_memory_seen_at"].isoformat() if row["last_memory_seen_at"] else None),
+            # Carried at every detail level, including the list's: it is what tells a
+            # reader the model is not refreshing itself any more (#4532).
+            "last_refresh_failed_at": (
+                row["last_refresh_failed_at"].isoformat() if row.get("last_refresh_failed_at") else None
+            ),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
         if detail == "metadata":

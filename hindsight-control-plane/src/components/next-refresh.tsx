@@ -19,13 +19,20 @@ type TriggerLike = {
  */
 export function NextRefresh({
   trigger,
+  refreshFailedAt,
   className,
 }: {
   trigger?: TriggerLike | null;
+  /** ISO time of the last failed refresh, or null when the last one succeeded. */
+  refreshFailedAt?: string | null;
   className?: string;
 }) {
   const t = useTranslations("mentalModels");
   const cron = trigger?.refresh_cron?.trim();
+
+  // A failed refresh pauses the automatic triggers until one succeeds (#4532), so
+  // naming the next scheduled run here would promise something nothing will do.
+  if (refreshFailedAt) return <span className={className}>{t("nextRefreshPaused")}</span>;
 
   if (cron) {
     const next = nextCronRun(cron);

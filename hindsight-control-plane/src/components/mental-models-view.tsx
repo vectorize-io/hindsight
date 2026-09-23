@@ -109,6 +109,8 @@ interface MentalModel {
   last_memory_seen_at: string | null;
   /** Whether a memory in this model's own scope has been written since it last read them. */
   is_stale?: boolean | null;
+  /** When the last refresh failed, or null when it succeeded. Set = automatic refreshes paused. */
+  last_refresh_failed_at?: string | null;
   created_at: string;
   reflect_response?: ReflectResponse;
 }
@@ -438,6 +440,7 @@ export function MentalModelsView() {
                               trigger={m.trigger}
                               lastRefreshedAt={m.last_refreshed_at}
                               lastMemorySeenAt={m.last_memory_seen_at}
+                              refreshFailedAt={m.last_refresh_failed_at}
                             />
                           </div>
                         </CardContent>
@@ -1071,6 +1074,7 @@ function FilesView({
                       <StalenessBadge
                         isStale={m.is_stale}
                         trigger={m.trigger}
+                        refreshFailedAt={m.last_refresh_failed_at}
                         variant="dot"
                         className="ml-auto"
                       />
@@ -1087,7 +1091,8 @@ function FilesView({
                       </div>
                     )}
                     <div className="text-[10px] text-muted-foreground/70 truncate mt-0.5">
-                      {t("nextRefreshLabel")}: <NextRefresh trigger={m.trigger} />
+                      {t("nextRefreshLabel")}:{" "}
+                      <NextRefresh trigger={m.trigger} refreshFailedAt={m.last_refresh_failed_at} />
                     </div>
                   </div>
                 </button>
@@ -1115,6 +1120,7 @@ function FilesView({
                     trigger={selected.trigger}
                     lastRefreshedAt={selected.last_refreshed_at}
                     lastMemorySeenAt={selected.last_memory_seen_at}
+                    refreshFailedAt={selected.last_refresh_failed_at}
                   />
                   {selected.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">

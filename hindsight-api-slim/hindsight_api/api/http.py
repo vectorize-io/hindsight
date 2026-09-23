@@ -3301,6 +3301,16 @@ class MentalModelResponse(BaseModel):
             "against the model's own scope. Null for a model no refresh has stamped yet."
         ),
     )
+    last_refresh_failed_at: str | None = Field(
+        default=None,
+        description=(
+            "When this model's most recent refresh failed, in ISO format, or null when the last one "
+            "succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, "
+            "`refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every "
+            "tick. An explicit refresh still runs, and a successful one clears this. The failure "
+            "itself, with its reason, is in the model's history."
+        ),
+    )
     created_at: str | None = None
     reflect_response: dict | None = Field(
         default=None,
@@ -3356,6 +3366,12 @@ class KnowledgeNode(BaseModel):
         "That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page "
         "is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory "
         "leaves no write behind, so it does not raise this flag.",
+    )
+    last_refresh_failed_at: str | None = Field(
+        default=None,
+        description="Pages only: when this page's most recent refresh failed, in ISO format, or null "
+        "when the last one succeeded. While it is set the page does not rebuild itself on its "
+        "trigger — see the same field on the mental model. An explicit refresh still runs.",
     )
     trigger: MentalModelTrigger | None = Field(
         default=None,
@@ -3508,6 +3524,7 @@ def _knowledge_node_model(node: dict[str, Any]) -> KnowledgeNode:
         tags=list(node.get("tags") or []) if is_page else [],
         timestamp=(node.get("last_refreshed_at") if is_page else node.get("updated_at")),
         is_stale=node.get("is_stale") if is_page else None,
+        last_refresh_failed_at=node.get("last_refresh_failed_at") if is_page else None,
         trigger=node.get("trigger") if is_page else None,
     )
 
