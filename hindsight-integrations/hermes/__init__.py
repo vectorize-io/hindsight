@@ -1125,7 +1125,12 @@ class HindsightMemoryProvider(MemoryProvider):
             # stop: restarting the daemon now would boot it keyless, which is the
             # exact outage this guards against. _get_client() above already passed
             # whatever key WAS available into the in-process client kwargs.
-            if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
+            profile_env = _load_simple_env(_embedded_profile_env_path(self._config))
+            # hindsight-embed persists its resolved listener port in the profile.
+            # This runtime metadata is not configuration drift: comparing it with
+            # our generated settings restarts a healthy daemon every session.
+            profile_env.pop("HINDSIGHT_API_PORT", None)
+            if profile_env != _build_embedded_profile_env(self._config):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)
                     if client._manager.is_running(profile):
