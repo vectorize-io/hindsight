@@ -156,3 +156,70 @@ def test_same_session_boundary_still_publishes(provider):
     assert "Memory 1" in result
     assert "Memory 2" in result
     instance.shutdown()
+
+
+def test_late_prefetch_for_superseded_session_is_dropped(provider):
+    """Compression switches sessions inline, bypassing the manager's serialized
+    boundary task, so a prefetch queued at the previous turn can drain after the
+    rotation. Its recall belongs to a session that no longer owns the slot."""
+    instance, fake = provider({}, client=FakeClient(recall_texts=["Memory 1", "Memory 2"]))
+    # The previous turn's prefetch, still queued on the memory worker.
+    instance.queue_prefetch("old session query", session_id="parent-sid")
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+
+    # The inline switch (compression) rotates the slot's owner.
+    instance.on_session_switch("child-sid", parent_session_id="parent-sid")
+
+    # The queued task now drains: same query, superseded session.
+    instance.queue_prefetch("old session query", session_id="parent-sid")
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+
+    assert instance._prefetch_result == ""
+    assert instance.prefetch("child query") == ""
+    # And the recall was never spent on a session nobody will read.
+    assert fake.recalls == []
+    instance.shutdown()
+
+
+def test_post_switch_prefetch_for_current_session_still_publishes(provider):
+    """The session gate must not degenerate into 'drop everything': the new
+    session's own prefetch still warms the slot, and callers without a
+    session id stay unconstrained."""
+    instance, _ = provider({}, client=FakeClient(recall_texts=["Memory 1", "Memory 2"]))
+    instance.on_session_switch("child-sid", parent_session_id="parent-sid")
+
+    instance.queue_prefetch("child query", session_id="child-sid")
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+    assert "Memory 1" in instance.prefetch("child query")
+
+    instance.queue_prefetch("child query")  # empty session_id = unconstrained
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+    assert "Memory 1" in instance.prefetch("child query")
+    instance.shutdown()
+
+
+def test_sync_turn_revert_cannot_blind_the_session_gate(provider):
+    """sync_turn re-stamps _session_id from its kwarg; a queued sync for the
+    previous session lands after an inline switch and un-rotates it. The gate
+    must key off a boundary-owned id, not _session_id."""
+    instance, _ = provider({}, client=FakeClient(recall_texts=["Memory 1", "Memory 2"]))
+    instance.queue_prefetch("old session query", session_id="parent-sid")
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+
+    instance.on_session_switch("child-sid", parent_session_id="parent-sid")
+    # Queued sync_all(parent) drains late and reverts _session_id.
+    instance.sync_turn("x", "y", session_id="parent-sid")
+    assert instance._session_id == "parent-sid"  # the un-rotation is real
+
+    instance.queue_prefetch("old session query", session_id="parent-sid")
+    if instance._prefetch_thread:
+        instance._prefetch_thread.join(timeout=5.0)
+
+    assert instance._prefetch_result == ""
+    assert instance.prefetch("child query") == ""
+    instance.shutdown()
