@@ -14717,15 +14717,13 @@ class MemoryEngine(MemoryEngineInterface):
         one an upgraded bank still holds the legacy placeholder for, and every
         detail level that drops the column — so "report what was delivered" is
         read off the items themselves rather than inferred from the caller's
-        ``detail`` argument. The placeholder is skipped here and not only in the
-        monitoring fields because this path prices what it reports: metering a
-        body nobody wrote would bill for it.
+        ``detail`` argument — the skip itself lives in ``_record_mental_model_read``,
+        which every read route shares.
         """
         for item in items:
-            content = item.get("content")
-            if not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER):
-                continue
-            await self._record_mental_model_read(bank_id, str(item["id"]), content, request_context=request_context)
+            await self._record_mental_model_read(
+                bank_id, str(item["id"]), item.get("content"), request_context=request_context
+            )
 
     async def _record_mental_model_read(
         self,
@@ -14739,8 +14737,19 @@ class MemoryEngine(MemoryEngineInterface):
 
         Best-effort by design: the caller already has the content, so a failure
         here must not turn a served read into an error.
+
+        A page with nothing under it is not a read: nothing was delivered, so
+        there is nothing to price. That covers a page that has never refreshed,
+        one an upgraded bank still holds the legacy placeholder for, and every
+        detail level that drops the column. The check lives here rather than in
+        each caller because all three — the list, the mental-model get and the
+        knowledge-page get — route through this function, and pricing the same
+        page differently depending on how it was fetched is exactly what the
+        list path's docstring promises never happens.
         """
         if not self._operation_validator:
+            return
+        if not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER):
             return
         from hindsight_api.extensions.operation_validator import MentalModelGetResult
 
