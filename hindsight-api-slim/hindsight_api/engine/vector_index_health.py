@@ -264,6 +264,30 @@ async def plan_bank_vector_indexes(
     plan = BankIndexPlan(bank_id=bank_id)
     qschema = _quote_identifier(schema)
 
+    # A bank whose memories a custom store owns gets an EMPTY plan: nothing built,
+    # and — just as deliberately — nothing dropped.
+    #
+    # Nothing built, because otherwise this is the second builder and it undoes the
+    # first one's guard. Bank creation stopped making these (#4615), so every such
+    # bank now reads to the branches below exactly like one whose CREATE INDEX lost
+    # a deadlock: all three missing, and with the threshold off entitlement does not
+    # consult rows. `repair-bank --all` on the tenant from that issue would have
+    # rebuilt all 82,795 empty indexes in one command that reads as a repair.
+    #
+    # Nothing dropped, because turning a memories extension on makes every existing
+    # bank store-owned at once, and shedding tens of thousands of indexes is an
+    # operator's decision with its own timing — not something a deploy, a write, or
+    # a repair does on their behalf. Whatever such a bank already carries stays.
+    #
+    # First, before either round trip below: with a threshold set this runs on every
+    # write to the bank (the submit-time pre-check), and neither the bank lookup nor
+    # the catalog read can change the answer. Both were paid here at first, only to
+    # fill `already_present` for repair-bank's output — a counter, against two
+    # queries per retain forever. `pg_indexes` is where an operator reads what a
+    # store-owned bank still carries; see the admin-CLI docs.
+    if bank_indexes_are_store_owned(bank_id):
+        return plan
+
     internal_id = await conn.fetchval(
         f"SELECT internal_id FROM {qschema}.banks WHERE bank_id = $1",  # noqa: S608 — schema is a quoted identifier
         bank_id,
@@ -273,24 +297,6 @@ async def plan_bank_vector_indexes(
 
     names = {ft: _bank_index_name(ft, str(internal_id)) for ft in _BANK_INDEX_FACT_TYPES}
     health = await _index_health(conn, schema, list(names.values()), bank_id)
-
-    # A bank whose memories a custom store owns gets an EMPTY plan: nothing built,
-    # and — just as deliberately — nothing dropped.
-    #
-    # Nothing built, because otherwise this is the second builder and it undoes the
-    # first one's guard. Bank creation stopped making these (#4615), so every such
-    # bank now reads to the branch below exactly like one whose CREATE INDEX lost a
-    # deadlock: all three missing, and at the default threshold entitlement does not
-    # consult rows. `repair-bank --all` on the tenant from that issue would have
-    # rebuilt all 82,795 empty indexes in one command that reads as a repair.
-    #
-    # Nothing dropped, because turning a memories extension on makes every existing
-    # bank store-owned at once, and shedding tens of thousands of indexes is an
-    # operator's decision with its own timing — not something a deploy, a write, or
-    # a repair does on their behalf. Whatever such a bank already carries stays.
-    if bank_indexes_are_store_owned(bank_id):
-        plan.already_present += sum(1 for name in names.values() if health.get(name) is True)
-        return plan
 
     if per_bank_indexes_are_eager():
         for fact_type, index_name in names.items():

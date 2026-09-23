@@ -35,6 +35,11 @@ from hindsight_api.engine.transfer import export_bank
 from hindsight_api.engine.vector_index_health import plan_bank_vector_indexes, reconcile_bank_vector_indexes
 from tests.test_memories_extension import InMemoryMemories
 
+# The suite runs against the base schema, as test_repair_bank_vector_indexes.py does.
+# Named rather than repeated so the reconcile calls and the hand-built index below
+# cannot drift apart into asserting about two different schemas.
+_TEST_SCHEMA = "public"
+
 
 @pytest.fixture(autouse=True)
 def eager(monkeypatch):
@@ -64,17 +69,24 @@ def per_bank_backend():
 
 
 @pytest.fixture
-def store_owned(monkeypatch):
-    """Route ``get_memories()`` to a store that owns its memory rows.
+def store_owned():
+    """Route the store to one that owns its memory rows.
 
-    Patched on the ``memories`` module rather than on each importer: every call site
-    under test reaches the accessor through a function-local import of it, so this
-    catches them all, and patching one importer by name would leave the others on the
-    real store and quietly pass.
+    Through ``set_memories`` rather than by patching ``get_memories``: that is the
+    repo's own override hook, it also resets the cached graph retriever (chosen from
+    the store), and it reaches ``admin/cli.py`` — the one module that binds
+    ``get_memories`` at import time, so a monkeypatch of the accessor would leave a
+    CLI-driven test silently on the real Postgres store.
     """
+    previous = memories_mod.get_memories()
     store = InMemoryMemories()
-    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
-    return store
+    memories_mod.set_memories(store)
+    try:
+        yield store
+    finally:
+        # Back to whatever the suite resolved, not to None: set_memories also clears
+        # the cached graph retriever, which is chosen from the store.
+        memories_mod.set_memories(previous)
 
 
 async def _bank_indexes(pool, bank_id: str) -> list[str]:
@@ -123,7 +135,7 @@ async def test_a_sql_owned_bank_still_gets_all_three(memory, request_context):
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request_context, monkeypatch):
+async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request_context):
     """A router that raises must fall back to SQL-backed, not to a failed bank create.
 
     ``store_owned_for`` is an extension's method, so it can raise. This runs inside the
@@ -156,9 +168,11 @@ async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request
         # Scoped to bank creation only. The probe is consulted on other paths too —
         # delete_bank among them — and leaving it raising would fail this test in its
         # own teardown, on a call that is not what is under test.
-        with pytest.MonkeyPatch.context() as unanswerable:
-            unanswerable.setattr(memories_mod, "get_memories", lambda: _Unanswerable(real_store))
+        memories_mod.set_memories(_Unanswerable(real_store))
+        try:
             await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        finally:
+            memories_mod.set_memories(real_store)
 
         assert len(await _bank_indexes(memory._pool, bank_id)) == 3
     finally:
@@ -185,10 +199,10 @@ async def test_repair_does_not_rebuild_what_creation_declined_to_build(memory, r
         assert await _bank_indexes(memory._pool, bank_id) == [], "setup: creation should have built nothing"
 
         async with memory._pool.acquire() as conn:
-            plan = await plan_bank_vector_indexes(conn, "public", bank_id)
+            plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id)
             assert plan.to_build == [], f"repair must not rebuild a store-owned bank's indexes, got {plan.to_build}"
 
-            result = await reconcile_bank_vector_indexes(conn, "public", bank_id, index_clause)
+            result = await reconcile_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id, index_clause)
 
         assert result.created == 0, f"reconcile built indexes for a store-owned bank: {result}"
         assert await _bank_indexes(memory._pool, bank_id) == []
@@ -222,6 +236,7 @@ async def test_indexes_an_existing_store_owned_bank_already_has_are_left_alone(m
 
     index_clause = _vector_index_clause()
     bank_id = f"test_so_keep_{uuid.uuid4().hex[:8]}"
+    previous_store = memories_mod.get_memories()
     try:
         # Built by hand: with the threshold on, creation no longer makes them, and this
         # test is about a bank that already HAS them when the store takes over.
@@ -230,23 +245,33 @@ async def test_indexes_an_existing_store_owned_bank_already_has_are_left_alone(m
         async with memory._pool.acquire() as conn:
             internal_id = str(await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id))
             await backend.ops.create_bank_vector_indexes(
-                conn, "memory_units", bank_id, internal_id, index_clause, bank_utils._BANK_INDEX_FACT_TYPES
+                conn,
+                f"{_TEST_SCHEMA}.memory_units",
+                bank_id,
+                internal_id,
+                index_clause,
+                bank_utils._BANK_INDEX_FACT_TYPES,
             )
         before = await _bank_indexes(memory._pool, bank_id)
         assert len(before) == 3, f"setup: the bank needs indexes that could be dropped, got {before}"
 
         # Flipped only now, so the bank is built SQL-owned and adopted afterwards.
-        monkeypatch.setattr(memories_mod, "get_memories", lambda: InMemoryMemories())
+        # One instance, held: a fresh store per call happens to work while only the
+        # stateless capability probe is read, and turns any later store write in this
+        # test into a mystery product bug.
+        adopted = InMemoryMemories()
+        memories_mod.set_memories(adopted)
 
         async with memory._pool.acquire() as conn:
-            plan = await plan_bank_vector_indexes(conn, "public", bank_id)
+            plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id)
             assert plan.to_drop == [], f"a reconcile must not shed existing indexes, got {plan.to_drop}"
 
-            result = await reconcile_bank_vector_indexes(conn, "public", bank_id, index_clause)
+            result = await reconcile_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id, index_clause)
 
         assert result.dropped == 0, f"a store-owned bank's existing indexes must survive a reconcile, got {result}"
         assert await _bank_indexes(memory._pool, bank_id) == before
     finally:
+        memories_mod.set_memories(previous_store)
         await memory.delete_bank(bank_id, request_context=request_context)
 
 

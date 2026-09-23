@@ -91,6 +91,24 @@ hindsight-admin repair-bank (--bank BANK_ID | --all) [OPTIONS]
 
 Exactly one of `--bank` or `--all` is required. No-op for backends that use a single global vector index (AlloyDB ScaNN, Oracle). It is idempotent — safe to re-run and safe to run while the API is serving traffic.
 
+It is also a no-op for a bank whose memories a custom store owns, this time decided
+per bank rather than per deployment: such a bank has no rows in `memory_units`, so it
+is owed no per-bank index and nothing is built for it. Nothing is dropped either — a
+bank that carries indexes from before it moved to the store keeps them, because
+shedding them is an operator decision with its own timing, not something a repair
+does on your behalf. A store-owned bank therefore reports `0 present, 0 created`
+whether or not it still carries indexes; to see what one actually has, query the
+catalog:
+
+```sql
+SELECT COUNT(*) FROM pg_indexes
+WHERE schemaname = '<tenant schema>' AND tablename = 'memory_units';
+```
+
+Those indexes are empty, and Postgres plans against every index on a relation, so on
+a deployment with many store-owned banks they are charged to every other query that
+touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are ready.
+
 **Examples:**
 
 ```bash

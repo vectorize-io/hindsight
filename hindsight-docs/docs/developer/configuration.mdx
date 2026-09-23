@@ -202,7 +202,7 @@ limit.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) turns the threshold **off**: every bank is indexed from the moment it is created. `10000` is a good starting point for deployments with thousands of banks. | `0` |
+| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) turns the threshold **off**: every bank is indexed from the moment it is created. `10000` is a good starting point for deployments with thousands of banks. A bank whose memories a custom store owns is outside this at any value — it has no rows here, so it is never given a per-bank index, and never has an existing one taken away (see `repair-bank` in the [admin CLI](./admin-cli.md)). | `0` |
 | `HINDSIGHT_API_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS` | Shortest gap between two index-maintenance runs for one bank. Stops a bank whose size hovers at the threshold from building and dropping the same index repeatedly. Unused while the threshold is off. | `900` |
 
 **With the threshold off (the default),** indexes are created inside the
