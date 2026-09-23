@@ -1466,8 +1466,22 @@ class HindsightMemoryProvider(MemoryProvider):
         item = self._build_retain_kwargs(
             content, context=context, tags=args.get("tags"), occurred_at=args.get("occurred_at")
         )
-        logger.debug("Tool hindsight_retain: bank=%s, content_len=%d, context=%s", self._bank_id, len(content), context)
-        self._retain_batch(item, bank_id=self._bank_id)
+        # The writer may run after a session switch; capture the destination and policy now.
+        bank_id, retain_async = self._bank_id, self._retain_async
+        logger.debug("Tool hindsight_retain: bank=%s, content_len=%d, context=%s", bank_id, len(content), context)
+
+        def _retain() -> None:
+            resp = self._retain_batch(item, bank_id=bank_id, retain_async=retain_async)
+            if retain_async:
+                # Prefetch must wait for server-side completion, not just queue acceptance.
+                self._track_retain_ops(resp, bank_id)
+
+        if retain_async:
+            self._enqueue_retain(_retain)
+            logger.debug("Tool hindsight_retain: queued async retain")
+            return "Memory queued for storage."
+
+        _retain()
         logger.debug("Tool hindsight_retain: success")
         return "Memory stored successfully."
 
