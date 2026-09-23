@@ -162,7 +162,7 @@ describe("ingestChats", () => {
     ]);
 
     const [content] = retain.mock.calls[0];
-    const turns = content.split("\n").map((line) => JSON.parse(line) as TransportTurn);
+    const turns = content.split("\n").map((line: string) => JSON.parse(line) as TransportTurn);
     // The dated turn keeps its source value verbatim…
     expect(turns[1].timestamp).toBe("2026-01-05T09:00:00Z");
     // …and the undated one sits on the SESSION's timeline, not the import's. Index 0 is the REF-ID
