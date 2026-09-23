@@ -24,6 +24,7 @@ type KnowledgePageSearchResult struct {
 	Id string `json:"id"`
 	Name string `json:"name"`
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
+	// The page's opening text. A page whose body is still empty says so in words — '_No content yet._' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.
 	Snippet string `json:"snippet"`
 	// Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.
 	Score float32 `json:"score"`
