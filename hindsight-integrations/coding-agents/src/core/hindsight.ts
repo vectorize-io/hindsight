@@ -775,6 +775,11 @@ export class HindsightClient {
       [],
       opts.timeoutMs
     );
+    // Routed through the same check as every other page endpoint. Without it a server with no
+    // knowledge-base API parsed its own 404 body into zero hits and reported "nothing matched"
+    // forever, which reads as an empty bank rather than a missing feature.
+    if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
+    if (r.status === 404) return []; // bank not created yet — no pages to match
     const j = (await r.json()) as {
       results?: { id: string; name: string; snippet?: string; score?: number }[];
     };
@@ -931,7 +936,10 @@ export class HindsightClient {
         this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
         { trigger: pageTriggerPatch(desired) }
       );
-      if ([404, 405, 501].includes(r.status)) break;
+      // 404 only: `req` throws on every other non-ok status it was not told to tolerate, so the
+      // 405/501 this used to test for never arrive (see `pagesUnsupported`). No latch here — a
+      // bank or node that has gone missing is not a verdict on the server's capabilities.
+      if (r.status === 404) break;
       updated++;
     }
     return updated;

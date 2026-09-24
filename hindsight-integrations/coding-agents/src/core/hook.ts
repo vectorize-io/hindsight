@@ -90,11 +90,28 @@ interface HookClient {
  *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
 const HOOK_FALLBACK_BUDGET_MS = 7_000;
 
-/** How many turns auto-reflect may fail on before a session gives up on synthesis. */
+/** How many turns auto-inject may FAIL on before a session gives up on memory. The budget is
+ *  turns, not time: each retry costs another full attempt (up to `reflectTimeoutMs` on the
+ *  reflect path), so a dead server spends this many turns before every later turn is free. */
 const HOOK_REFLECT_ATTEMPTS = 2;
 
-/** Knowledge-page search for the prompt, formatted for injection; undefined when nothing matched
- *  or the search failed (recorded as `event` / `${event}_failed`). Never throws. */
+/**
+ * What to cache for a once-per-session auto-injection, given what the source returned.
+ *
+ * `null` (ran, nothing to say) resolves the session — `""` is cached and no later turn retries.
+ * `undefined` (failed) stays unresolved so a later turn can try again, until the attempt budget
+ * is spent. Caching a failure as an answer is what made one first-prompt timeout cost a whole
+ * session's memory (#4607); applied to all three sources, not just reflect.
+ */
+function resolveInjection(got: string | null | undefined, attempts: number): string | undefined {
+  if (got != null) return got;
+  return got === null || attempts >= HOOK_REFLECT_ATTEMPTS ? "" : undefined;
+}
+
+/** Knowledge-page search for the prompt, formatted for injection. `null` = it ran and nothing
+ *  matched (an answer); `undefined` = it FAILED (recorded as `${event}_failed`) and is worth
+ *  retrying. The two used to be one value, which cached a transient failure as "this session has
+ *  no memory" for every remaining turn (#4607). Never throws. */
 async function injectPages(
   harness: string,
   prompt: string,
@@ -102,18 +119,18 @@ async function injectPages(
   timeoutMs: number,
   event: string,
   lead?: string
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
   const t0 = Date.now();
   try {
     // The search query rides in a GET query string; the goal's opening carries its keywords.
     // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
     const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: hits.length });
-    if (hits.length) return formatPageFallback(hits, lead);
+    return hits.length ? formatPageFallback(hits, lead) : null;
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+    return undefined;
   }
-  return undefined;
 }
 
 /** Raw recall over the bank (what it asks for is the client's `recallOptions`), formatted for
@@ -125,17 +142,17 @@ async function injectRecall(
   timeoutMs: number,
   event: string,
   lead?: string
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
   const t0 = Date.now();
   try {
     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
     const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
-    if (observations.length) return formatRecallFallback(observations, lead);
+    return observations.length ? formatRecallFallback(observations, lead) : null;
   } catch (e) {
     diag(harness, `${event}_failed`, { ms: Date.now() - t0, error: describeError(e) });
+    return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -155,7 +172,8 @@ async function reflectFallback(
     (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
     // Event name predates the `injectRecall` rename and is kept: it is a logged contract that
     // other tools read, so renaming it would silently break them.
-    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations"))
+    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations")) ??
+    undefined
   );
 }
 
@@ -208,26 +226,32 @@ export async function buildHookOutput(args: {
     diag(harness, "reflect_deferred_new_bank", { query: prompt.slice(0, 80) });
   } else if (cfg.autoInject === "pages" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
-    reflectAnswer =
-      (await injectPages(
+    reflectAttempts++;
+    reflectAnswer = resolveInjection(
+      await injectPages(
         harness,
         prompt,
         client,
         HOOK_FALLBACK_BUDGET_MS,
         "inject_pages",
         PAGE_INJECT_LEAD
-      )) ?? "";
+      ),
+      reflectAttempts
+    );
   } else if (cfg.autoInject === "recall" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
-    reflectAnswer =
-      (await injectRecall(
+    reflectAttempts++;
+    reflectAnswer = resolveInjection(
+      await injectRecall(
         harness,
         prompt,
         client,
         HOOK_FALLBACK_BUDGET_MS,
         "inject_recall",
         RECALL_INJECT_LEAD
-      )) ?? "";
+      ),
+      reflectAttempts
+    );
   } else if (cfg.autoInject === "reflect" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAttempts++;
@@ -253,12 +277,11 @@ export async function buildHookOutput(args: {
         answer: reflectAnswer.slice(0, 8000),
       });
     } catch (e) {
-      // A failure is RETRYABLE, not an answer. Caching "" here meant one timeout on the session's
-      // first prompt disabled synthesis for the ENTIRE session, with no second chance — and against
-      // a real server a reflect near the timeout is a coin flip, not an edge case (#4607). Leaving
-      // it undefined lets a later turn try again; the attempt counter bounds that, so a server
-      // that is simply down costs HOOK_REFLECT_ATTEMPTS turns and then stops.
-      reflectAnswer = reflectAttempts >= HOOK_REFLECT_ATTEMPTS ? "" : undefined;
+      // A failure is RETRYABLE, not an answer — `resolveInjection` leaves it unresolved until the
+      // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
+      // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
+      // coin flip, not an edge case (#4607).
+      reflectAnswer = resolveInjection(undefined, reflectAttempts);
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
         error: describeError(e),

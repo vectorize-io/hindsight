@@ -1,5 +1,6 @@
 /**
- * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, Kilo, Cline). It delegates SessionStart and
+ * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, opencode2, Kilo, Cline, dsh, pi,
+ * Prime Agent — every host that loads us once and keeps us). It delegates SessionStart and
  * prompt behavior to the same core lifecycle as fresh-process hook harnesses; this class keeps only
  * the host-specific injection, toast, and incremental-transcript responsibilities.
  *
@@ -103,9 +104,10 @@ export class RuntimeCore {
 
   /**
    * Plugin load (SessionStart-equivalent): on a cold repo, deterministically start the background
-   * git-log seed + codebase survey, and compute the knowledge-page preamble (tool guide + roster)
-   * that onPrompt injects on the session's first turn. Reuses the exact hook-harness logic
-   * (`buildSessionStartContext`) so opencode seeds identically. Never throws.
+   * git-log seed + codebase survey, and compute a knowledge-page preamble (tool guide + roster).
+   * That preamble is only onPrompt's FALLBACK — each session rebuilds it from its own roster, since
+   * this runs once per process and these hosts outlive every session (#4607). Reuses the exact
+   * hook-harness logic (`buildSessionStartContext`) so opencode seeds identically. Never throws.
    */
   async seedIfCold(repoPath: string | undefined): Promise<void> {
     // Anti-recursion: a headless survey session runs the agent (which loads this plugin) with

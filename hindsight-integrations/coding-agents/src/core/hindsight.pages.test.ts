@@ -82,6 +82,11 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(await c.listPages()).toEqual({ items: [] });
     expect(c.knowledgePagesSupported).toBeUndefined();
 
+    // Search goes through the same check, so it too reports "no pages yet" without latching.
+    detail = "Bank 'repo-a' not found";
+    expect(await c.searchKnowledgePages("architecture")).toEqual([]);
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
     // Once the bank exists, the very same client sees its pages — no restart needed.
     status = 200;
     expect(await c.listPages()).toEqual({ items: [{ id: "kp-1", name: "Core concepts" }] });

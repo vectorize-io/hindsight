@@ -453,6 +453,35 @@ describe("buildHookOutput", () => {
     expect(next.context ?? "").not.toContain("<hindsight_memory>");
   });
 
+  it("autoInject pages: a FAILED search is retried, an empty one is not", async () => {
+    // The retryability fix is not reflect-only. A page search that threw used to cache "" just
+    // like a search that matched nothing, so a transient blip cost the whole session (#4607).
+    const cfg = resolveConfig({ autoInject: "pages" });
+    const client = makeClient({
+      searchKnowledgePages: vi.fn(async () => {
+        throw new Error("search boom");
+      }),
+    });
+    const args = { harness: "claude-code", prompt: MATCHING_PROMPT, cfg, client, cacheFile };
+    await buildHookOutput(args);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
+    await buildHookOutput(args);
+    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+    // Budget spent — now it is cached, so a broken search costs 2 turns and then stops.
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(args);
+    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+
+    // A search that RAN and matched nothing is an answer, not a failure: cached on the first turn.
+    rmSync(cacheFile, { force: true });
+    const empty = makeClient({ searchKnowledgePages: vi.fn(async () => []) });
+    const emptyArgs = { ...args, client: empty };
+    await buildHookOutput(emptyArgs);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(emptyArgs);
+    expect(empty.searchKnowledgePages).toHaveBeenCalledTimes(1);
+  });
+
   it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {
     const client = makeClient({
       recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
