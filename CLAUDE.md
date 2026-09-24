@@ -377,6 +377,24 @@ the agent-only half (tools, crediting, corrections) lives in `skill-src/preamble
 `./scripts/hooks/lint.sh` BEFORE regenerating — prettier re-pads the README's tables, and a
 generated file built from unformatted source fails the byte comparison in CI.
 
+### Hermes docs are generated from one README
+
+Same arrangement, one generator: `hindsight-integrations/hermes/README.md` is the single source for
+the Hermes integration page. **Never edit `hindsight-docs/docs-integrations/hermes.md` by hand** —
+it is generated:
+
+```bash
+node hindsight-docs/scripts/sync-hermes-doc.mjs                  # README -> docs page
+```
+
+The docs build runs the same script with `--check`, so a stale page fails the build. Sections listed
+in the script's `DROP_SECTIONS` (currently `Development`) stay repo-only, which is where
+maintainer-facing notes belong — anything else in the README ships to the public page.
+
+Shipping a change to that directory reaches no user until the Hermes plugin catalog pin moves: open
+a follow-up PR against `NousResearch/hermes-agent` bumping `sha` and `version` together in
+`plugin-catalog/hindsight.yaml`.
+
 ### Adding New Integrations
 
 Every new integration in `hindsight-integrations/` must satisfy all of the following before it can be merged:

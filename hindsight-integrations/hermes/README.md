@@ -2,13 +2,19 @@
 
 Long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval. Supports cloud, local embedded, and local external modes.
 
-A [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory-provider plugin. It used to ship inside Hermes as `plugins/memory/hindsight/`; Nous Research moved every memory provider out of the core tree and handed this one over, so it now lives here and is maintained by the Hindsight team. This directory is the live source, and the Hermes catalog entry points here.
+A [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory-provider plugin, installed from
+the Hermes plugin catalog. It used to ship inside Hermes as `plugins/memory/hindsight/`; Nous Research
+moved every memory provider out of the core tree, so it is now maintained by the Hindsight team in
+[vectorize-io/hindsight](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/hermes)
+and the catalog pins it from there.
 
 ## Install
 
+Hindsight is in the Hermes plugin catalog, so the name is all you need:
+
 ```bash
-hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
-hermes memory setup    # select "hindsight"
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ```
 
 Dependencies in `pyproject.toml` are installed into the Hermes venv automatically and survive `hermes update`.
@@ -19,23 +25,56 @@ Dependencies in `pyproject.toml` are installed into the Hermes venv automaticall
 the mode-dependent extras (`local_embedded` needs `hindsight-all`, not just the client), so
 `plugins install` on its own leaves the provider reporting "not available" in embedded mode.
 
-While Hermes still bundles `plugins/memory/hindsight/`, **the bundled copy wins** — provider lookup
-is bundled → `~/.hermes/plugins/` → project → entry point, first hit wins, so installing this plugin
-alongside the bundled one is inert. When Hermes drops the bundled copy, `hermes update` migrates
-existing users automatically via `hermes_cli/memory_provider_migration.py`, which resolves the
-provider name against the Hermes plugin catalog.
-
-The catalog entry lives in their repo at
-[`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml)
-and pins this directory at a specific commit. **Changes here do not reach users until that pin
-moves**, so anything shipped from this tree needs a follow-up PR to hermes-agent bumping `sha` and
-`version` together.
-
 `local_embedded` mode needs `hindsight-all`, which `pyproject.toml` deliberately does not declare
 (it would push the local-ML stack onto cloud-mode users). The setup wizard installs it, and
-`embedded.py::_ensure_local_runtime` self-installs it on the availability check as a backstop, so
-embedded mode no longer depends on the `if provider_name == "hindsight"` special case in Hermes
-core's `memory_setup.py` — which leaves the tree when the bundled provider does.
+`embedded.py::_ensure_local_runtime` self-installs it on the availability check as a backstop.
+
+## Coming from the built-in provider
+
+Hindsight used to ship inside Hermes as `plugins/memory/hindsight/`. Nous Research removed that copy
+on 2026-09-23 and the provider now installs from the catalog instead. **You do not need to do
+anything** — and your memories are not affected.
+
+`hermes update`, and agent startup for Desktop users who never run it, calls Hermes'
+`memory_provider_migration`: it sees `memory.provider: hindsight` configured, finds no provider on
+disk, looks the name up in the plugin catalog and installs it at the reviewed commit pin. You'll see:
+
+```
+✓ Memory provider 'hindsight' moved out of core — installed its plugin from the catalog
+  (your memory.hindsight settings and data are unchanged).
+```
+
+Your data never lived in the Hermes tree: memories are in your Hindsight bank — Hindsight Cloud, or
+for `local_embedded` the profile directory `~/.hindsight/profiles/<profile>` and its embedded
+PostgreSQL instance. Moving the provider code does not touch any of it, and your
+`~/.hermes/hindsight/config.json` is read exactly as before.
+
+If the migration can't run — offline, or the catalog fetch fails — Hermes prints the manual
+one-liner rather than starting silently without memory:
+
+```bash
+hermes plugins install hindsight
+```
+
+## Updating
+
+The catalog pins this plugin to a specific commit, so updating means moving to the current pin:
+
+```bash
+hermes plugins update hindsight   # re-pin to the catalog's current commit
+```
+
+`hermes plugins list` marks the plugin `update_available` once your installed commit differs from
+the catalog's. Hermes re-fetches the published catalog at most once every 6 hours, so a freshly
+published version can take that long to show up.
+
+Nothing upgrades the plugin on its own: the 6-hour refresh only updates the catalog *metadata*, and
+`hermes update` re-applies the plugin's Python dependencies without moving its pin. The
+`plugins update` above is what actually changes the code.
+
+The catalog entry lives in Nous' repo at
+[`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml),
+which is what records the current pin.
 
 ## Requirements
 
@@ -198,7 +237,66 @@ thread's event loop, so the next client call failed with `Timeout context manage
 inside a task`. If you installed between 2026-09-14 and 2026-09-21, run `hermes update` (or
 `hermes plugins update hindsight`) to move off it.
 
+## Hermes Gateway (Telegram, Discord, Slack)
+
+The provider works across every gateway platform. Hermes builds a fresh agent per message, and the
+provider is re-initialized with it, so auto-recall runs for each turn regardless of platform.
+
+Two settings are worth turning off for customer-facing bots: `recall_indicator` and
+`retain_indicator`, which otherwise print a `👁️ Hindsight` status line into the user's channel.
+
+## Disabling Hermes' built-in memory
+
+Hermes has its own memory store backed by local markdown (`MEMORY.md`, plus a slimmer `USER.md`
+profile). With both active the model may prefer the built-in one, so turn the flat-file stores off:
+
+```bash
+hermes config set memory.memory_enabled false
+hermes config set memory.user_profile_enabled false   # optional: the USER.md profile
+```
+
+Setting both to `false` removes the built-in `memory` tool from the agent entirely. Re-enable later
+by setting the same flags back to `true`.
+
+## Troubleshooting
+
+**Tools don't appear in `/tools`** — the provider skips tool registration when it isn't configured.
+Check `hermes memory status` reports `hindsight` as the active provider and `Status: available`. In
+`memory_mode: context` the tools are hidden on purpose.
+
+**`Status: not available` in `local_embedded`** — the embedded runtime (`hindsight-all`) isn't
+installed. The plugin self-installs it on the availability check; if that is blocked
+(`security.allow_lazy_installs: false`, or a sealed venv) install it yourself:
+`uv pip install --python "$(hermes doctor --python-path)" hindsight-all`, or re-run
+`hermes memory setup`.
+
+**`Timeout context manager should be used inside a task`** — `hindsight-embed` 0.10.0. Run
+`hermes plugins update hindsight` to move to the 0.10.1 floor.
+
+**Local daemon not starting** — check the logs:
+
+```bash
+cat ~/.hermes/logs/hindsight-embed.log     # startup
+cat ~/.hindsight/profiles/<profile>.log    # daemon runtime
+```
+
+**Recall returns nothing** — memories need at least one retain cycle, and extraction is an LLM call.
+Store a fact, then ask about it on a later turn.
+
 ## Development
+
+**Shipping a change reaches nobody on its own.** The catalog pins this directory at a commit, so
+after merging here, open a follow-up PR against `NousResearch/hermes-agent` bumping `sha` and
+`version` together in `plugin-catalog/hindsight.yaml`. Until that lands, installs stay on the old
+commit.
+
+This README is the single source for the docs page. After editing it, regenerate:
+
+```bash
+node hindsight-docs/scripts/sync-hermes-doc.mjs
+```
+
+The docs build runs the same script with `--check`, so a stale page fails the build.
 
 ```bash
 uv sync
