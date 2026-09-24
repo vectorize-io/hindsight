@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "coding-agents" "codex" "composio" "continue" "copilot-cli" "crewai" "cursor" "cursor-cli" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "coding-agents" "codex" "composio" "continue" "copilot-cli" "crewai" "cursor" "cursor-cli" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "hermes" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -149,6 +149,15 @@ if [ -f "$INTEGRATION_DIR/pyproject.toml" ]; then
     print_info "Updating version in $INTEGRATION_DIR/pyproject.toml"
     sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" "$INTEGRATION_DIR/pyproject.toml"
     rm "$INTEGRATION_DIR/pyproject.toml.bak"
+    # hermes also ships a Hermes plugin manifest whose `version` is what `hermes plugins list` and
+    # the Hermes catalog card show. pyproject.toml is not read by Hermes at all, so bumping only
+    # that would leave the version users actually see stuck at whatever it was born with — the
+    # same trap package-lock.json fell into below.
+    if [ -f "$INTEGRATION_DIR/plugin.yaml" ]; then
+        print_info "Updating version in $INTEGRATION_DIR/plugin.yaml"
+        sed -i.bak "s/^version: .*/version: $VERSION/" "$INTEGRATION_DIR/plugin.yaml"
+        rm "$INTEGRATION_DIR/plugin.yaml.bak"
+    fi
 elif [ -f "$INTEGRATION_DIR/package.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/package.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/package.json"

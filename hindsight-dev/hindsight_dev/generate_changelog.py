@@ -166,6 +166,10 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "superagent": IntegrationMeta("hindsight-superagent", "Superagent"),
     "obsidian": IntegrationMeta("@vectorize-io/hindsight-obsidian", "Obsidian"),
     "haystack": IntegrationMeta("hindsight-haystack", "Haystack"),
+    # Git-distributed: Hermes installs the plugin from this repo at a catalog-pinned commit, so
+    # `package_name` is the Hermes plugin id rather than a registry package, and _package_url
+    # points at the source tree (see the carve-out there).
+    "hermes": IntegrationMeta("hindsight", "Hermes Agent"),
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
     "omo": IntegrationMeta("hindsight-omo", "OMO"),
     "composio": IntegrationMeta("hindsight-composio", "Composio"),
@@ -1124,7 +1128,7 @@ def _get_package_name(integration: str) -> str:
 def _package_url(integration: str, package_name: str) -> str:
     # Git-distributed plugin bundles have no npm/pypi package — link to the
     # source tree instead of a registry page.
-    if integration in ("claude-code", "agent-plugin"):
+    if integration in ("claude-code", "agent-plugin", "hermes"):
         return f"https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/{integration}"
     if package_name.startswith("@"):
         return f"https://www.npmjs.com/package/{package_name}"

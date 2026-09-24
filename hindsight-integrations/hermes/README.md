@@ -285,10 +285,30 @@ Store a fact, then ask about it on a later turn.
 
 ## Development
 
-**Shipping a change reaches nobody on its own.** The catalog pins this directory at a commit, so
-after merging here, open a follow-up PR against `NousResearch/hermes-agent` bumping `sha` and
-`version` together in `plugin-catalog/hindsight.yaml`. Until that lands, installs stay on the old
-commit.
+### Releasing
+
+```bash
+./scripts/release-integration.sh hermes patch    # or minor / major / an explicit semver
+```
+
+That bumps the version in **both** `pyproject.toml` and `plugin.yaml` (Hermes reads the latter —
+it is the version `hermes plugins list` and the catalog card show), writes the changelog entry,
+regenerates the docs skill, commits, and pushes the tag `integrations/hermes/vX.Y.Z`.
+
+Then **open a follow-up PR against `NousResearch/hermes-agent`** bumping `sha` and `version`
+together in `plugin-catalog/hindsight.yaml`. Until that lands, installs stay on the old commit —
+the tag alone reaches nobody.
+
+Put the released **commit SHA** in the release notes. Hermes' `--ref` takes a 40-character SHA and
+rejects tag names (`_EXACT_COMMIT_RE`), so a user pinning to a specific release needs the SHA, not
+`v1.1.0`.
+
+**First release only:** the release creates `changelog/integrations/hermes`, and
+`check-integrations.mjs` then requires the doc page to link it. The page is generated, so add the
+link to this README (as the other integrations do, absolute so it also works on GitHub):
+`[View Changelog →](https://hindsight.vectorize.io/changelog/integrations/hermes)`. It cannot go in
+earlier — the docs build runs `onBrokenLinks: 'throw'` and the page does not exist until the
+release commit.
 
 This README is the single source for the docs page. After editing it, regenerate:
 
