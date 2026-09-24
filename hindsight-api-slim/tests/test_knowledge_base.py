@@ -1634,6 +1634,9 @@ class TestAuthorizationWriteDenied:
     @pytest.mark.parametrize(
         "body",
         [
+            # The empty body too: that check moved from the handler into the
+            # engine, and nothing pinned it there before.
+            {},
             {"source_query": None},
             {"tags": None},
             {"max_tokens": None},
