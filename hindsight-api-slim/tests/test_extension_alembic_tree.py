@@ -10,6 +10,7 @@ Runs via: uv run pytest tests/test_extension_alembic_tree.py -v
 
 from __future__ import annotations
 
+import re
 import textwrap
 import uuid
 from pathlib import Path
@@ -17,7 +18,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
-from hindsight_api.extensions.loader import collect_alembic_version_locations
+from hindsight_api.extensions.loader import EXTENSION_KINDS, collect_alembic_version_locations
 from hindsight_api.extensions.tenant import TenantExtension
 
 CORE_ALEMBIC = Path(__file__).resolve().parent.parent / "hindsight_api" / "alembic"
@@ -120,6 +121,26 @@ def test_a_broken_extension_does_not_block_migrations(monkeypatch):
     assert collect_alembic_version_locations() == []
 
 
+def test_extension_kinds_covers_every_base():
+    """Every extension base class must be listed in EXTENSION_KINDS.
+
+    Adding a seventh kind and forgetting this registry fails silently: extensions of
+    that kind are simply never asked for their revisions, and nothing errors. So the
+    family is enumerated from the source tree rather than from the registry itself —
+    a registry cannot prove its own completeness.
+    """
+    declared = {
+        m.group(1)
+        for path in CORE_ALEMBIC.parent.rglob("*.py")
+        for m in re.finditer(r"^class (\w+)\(Extension(?:, ABC)?\):", path.read_text(), re.MULTILINE)
+    }
+    listed = {kind.class_name for kind in EXTENSION_KINDS}
+    assert declared == listed, (
+        f"EXTENSION_KINDS is out of date: {declared - listed} declared but unlisted "
+        f"(their extensions would never contribute migrations), {listed - declared} listed but gone."
+    )
+
+
 def test_the_extension_tree_is_collected(monkeypatch, extension_tree):
     _ProbeExtension.location = str(extension_tree)
     monkeypatch.setenv(
@@ -130,8 +151,7 @@ def test_the_extension_tree_is_collected(monkeypatch, extension_tree):
     assert found == [str(extension_tree.resolve())]
 
 
-@pytest.mark.asyncio
-async def test_core_and_extension_revisions_both_apply(monkeypatch, extension_tree, pg0_db_url):
+def test_core_and_extension_revisions_both_apply(monkeypatch, extension_tree, pg0_db_url):
     """The load-bearing one: BOTH trees run, in one migration, into one schema.
 
     Asserting core applied as well as the extension is the point. Setting

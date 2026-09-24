@@ -3,6 +3,8 @@
 import importlib
 import logging
 import os
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 from hindsight_api.extensions.base import Extension
@@ -125,19 +127,29 @@ def _collect_config(env_prefix: str, prefix: str) -> dict[str, str]:
     return config
 
 
-#: Every extension kind, as (env prefix, base class import path). Used to ask each
-#: configured extension for the Alembic revisions it owns.
+@dataclass(frozen=True)
+class ExtensionKind:
+    """One kind of extension: its env prefix and the base class it must inherit from."""
+
+    prefix: str
+    module_path: str
+    class_name: str
+
+
+#: Every extension kind. Used to ask each configured extension for the Alembic
+#: revisions it owns.
 #:
 #: Listed here rather than discovered, because the set is small, fixed, and the
 #: cost of missing one is silent: an extension whose revisions are never collected
-#: simply never migrates, and nothing fails.
-_EXTENSION_KINDS: tuple[tuple[str, str, str], ...] = (
-    ("TENANT", "hindsight_api.extensions.tenant", "TenantExtension"),
-    ("MEMORIES", "hindsight_api.engine.memories.base", "MemoriesExtension"),
-    ("OPERATION_VALIDATOR", "hindsight_api.extensions.operation_validator", "OperationValidatorExtension"),
-    ("MEMORY_DEFENSE", "hindsight_api.extensions.memory_defense", "MemoryDefenseExtension"),
-    ("HTTP", "hindsight_api.extensions.http", "HttpExtension"),
-    ("MCP", "hindsight_api.extensions.mcp", "MCPExtension"),
+#: simply never migrates, and nothing fails. `test_extension_kinds_covers_every_base`
+#: is the guard against that — it fails if a new base class is added and not listed.
+EXTENSION_KINDS: tuple[ExtensionKind, ...] = (
+    ExtensionKind("TENANT", "hindsight_api.extensions.tenant", "TenantExtension"),
+    ExtensionKind("MEMORIES", "hindsight_api.engine.memories.base", "MemoriesExtension"),
+    ExtensionKind("OPERATION_VALIDATOR", "hindsight_api.extensions.operation_validator", "OperationValidatorExtension"),
+    ExtensionKind("MEMORY_DEFENSE", "hindsight_api.extensions.memory_defense", "MemoryDefenseExtension"),
+    ExtensionKind("HTTP", "hindsight_api.extensions.http", "HttpExtension"),
+    ExtensionKind("MCP", "hindsight_api.extensions.mcp", "MCPExtension"),
 )
 
 
@@ -161,32 +173,31 @@ def collect_alembic_version_locations(env_prefix: str = "HINDSIGHT_API") -> list
     would otherwise contribute its tree twice, and Alembic rejects a duplicate
     version location).
     """
-    import importlib
-    from pathlib import Path
-
     found: list[str] = []
-    for prefix, module_path, class_name in _EXTENSION_KINDS:
+    for kind in EXTENSION_KINDS:
         try:
-            base = getattr(importlib.import_module(module_path), class_name)
-            ext = load_extension(prefix, base, env_prefix=env_prefix)
+            base = getattr(importlib.import_module(kind.module_path), kind.class_name)
+            ext = load_extension(kind.prefix, base, env_prefix=env_prefix)
         except Exception as e:  # noqa: BLE001 - a broken extension must not block migrations
-            logger.warning("Could not load %s extension to collect migrations: %s", prefix, e)
+            logger.warning("Could not load %s extension to collect migrations: %s", kind.prefix, e)
             continue
         if ext is None:
             continue
         try:
             locations = ext.alembic_version_locations()
         except Exception as e:  # noqa: BLE001 - same reason
-            logger.warning("%s extension failed to report its migrations: %s", prefix, e)
+            logger.warning("%s extension failed to report its migrations: %s", kind.prefix, e)
             continue
+        # `or []` is load-bearing: this loop is outside the try above, so a third-party
+        # extension returning None would otherwise raise and fail the whole migration.
         for loc in locations or []:
             if not Path(loc).is_dir():
                 logger.warning(
                     "%s extension names Alembic version location %r, which is not a directory; skipping.",
-                    prefix,
+                    kind.prefix,
                     loc,
                 )
                 continue
             found.append(str(Path(loc).resolve()))
-            logger.info("%s extension contributes Alembic revisions from %s", prefix, loc)
+            logger.info("%s extension contributes Alembic revisions from %s", kind.prefix, loc)
     return list(dict.fromkeys(found))
