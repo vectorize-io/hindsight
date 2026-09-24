@@ -166,6 +166,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "superagent": IntegrationMeta("hindsight-superagent", "Superagent"),
     "obsidian": IntegrationMeta("@vectorize-io/hindsight-obsidian", "Obsidian"),
     "haystack": IntegrationMeta("hindsight-haystack", "Haystack"),
+    "agno": IntegrationMeta("hindsight-agno", "Agno"),
     # Git-distributed: Hermes installs the plugin from this repo at a catalog-pinned commit, so
     # `package_name` is the Hermes plugin id rather than a registry package, and _package_url
     # points at the source tree (see the carve-out there).
