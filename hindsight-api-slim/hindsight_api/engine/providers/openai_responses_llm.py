@@ -241,9 +241,9 @@ class OpenAIResponsesLLM(LLMInterface):
         )
 
     def _supports_reasoning_model(self) -> bool:
-        """Whether the model is an OpenAI reasoning model (gpt-5.x, o1, o3)."""
+        """Whether the model is an OpenAI reasoning model (gpt-5.x, gpt-6, o1, o3)."""
         model_lower = self.model.lower()
-        return any(x in model_lower for x in ["gpt-5", "o1", "o3"])
+        return any(x in model_lower for x in ["gpt-5", "gpt-6", "o1", "o3"])
 
     def supports_vision(self) -> bool:
         """OpenAI's own Responses API — every model it serves reads images."""
