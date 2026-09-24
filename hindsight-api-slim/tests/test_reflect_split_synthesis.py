@@ -15,6 +15,7 @@ flow with a mock LLM.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -91,17 +92,38 @@ class TestSplitContextHistory:
             assert all(e["output"]["query"] == "q" for e in chunk)
         assert _ids_in(chunks) == [f"mem-{i}" for i in range(40)]
 
-    def test_indivisible_oversized_entry_is_token_cut(self):
+    @pytest.mark.parametrize("text", ["y", '"quoted"\\path\n'])
+    def test_indivisible_oversized_entry_is_token_cut(self, text: str) -> None:
         """A single entry (or list-less output) bigger than the budget is the one
         case that cannot be split; it gets token-cut instead of dropped."""
-        giant = {"tool": "expand", "output": {"full_text": "y" * 40_000}}
+        giant = {"tool": "expand", "output": {"full_text": text * 40_000}}
         chunks = split_context_history([giant], _MAX_CONTEXT)
 
         assert len(chunks) == 1 and len(chunks[0]) == 1
         cut = chunks[0][0]
         assert cut["output"]["truncated"] is True
         assert cut["output"]["content"]
-        assert count_prompt_tokens(_render_history_block(cut)) <= _BUDGET_TOKENS + 32
+        assert json.dumps(giant["output"], indent=2, ensure_ascii=False).startswith(cut["output"]["content"])
+        assert count_prompt_tokens(_render_history_block(cut)) <= _BUDGET_TOKENS
+
+    def test_oversized_memory_cut_fits_with_escaped_content(self) -> None:
+        """A cut memory's JSON wrapper must fit without dropping its neighbours."""
+        small = [{"id": name, "text": "a short fact"} for name in ("before", "after")]
+        oversized = {"id": "large", "text": '"quoted"\\path\n' * 2_000}
+        memories = [small[0], oversized, small[1]]
+        history = [{"tool": "recall", "output": {"query": "q", "memories": memories}}]
+        original = json.dumps(history)
+
+        chunks = split_context_history(history, _MAX_CONTEXT)
+
+        assert _ids_in(chunks) == ["before", "after"]
+        cuts = [entry for chunk in chunks for entry in chunk if entry["output"].get("truncated")]
+        assert len(cuts) == 1
+        assert '"id": "large"' in cuts[0]["output"]["content"]
+        assert json.dumps(history) == original
+        for chunk in chunks:
+            rendered = "".join(_render_history_block(entry) for entry in chunk)
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
 
     def test_budget_floor_prevents_per_entry_fanout(self):
         """A tiny configured budget must not shred the history into one chunk
