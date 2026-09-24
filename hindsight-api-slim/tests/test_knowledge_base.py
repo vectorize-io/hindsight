@@ -1664,6 +1664,28 @@ class TestAuthorizationWriteDenied:
         assert "Orders" not in resp.text
         assert _write_ops(validator) == []
 
+    @pytest.mark.parametrize("body", [{"tags": []}, {"max_tokens": 0}, {"name": ""}])
+    async def test_empty_but_supplied_values_still_authorize(self, api_client, kb_bank, memory, monkeypatch, body):
+        """The near misses of the guard above: supplied-but-empty is a real change.
+
+        `tags: []` in particular is the documented fix for a page whose tags match
+        no memory, so the guard has to test "is not None", never truthiness — a
+        falsy value must still reach the validator rather than be dismissed as a
+        no-op.
+        """
+        bank_id, ids = kb_bank
+        operation = (
+            BankWriteOperation.RENAME_KNOWLEDGE_NODE if "name" in body else BankWriteOperation.UPDATE_KNOWLEDGE_PAGE
+        )
+        validator = _kb_validator(reject_write=operation)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json=body,
+        )
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [operation]
+
     async def test_delete_denied(self, api_client, kb_bank, memory, monkeypatch):
         bank_id, ids = kb_bank
         validator = _kb_validator(reject_write=BankWriteOperation.DELETE_KNOWLEDGE_NODE)

@@ -7162,7 +7162,6 @@ def _register_routes(app: FastAPI):
             # A patch that resolves to no semantic change (an empty body, or one of
             # explicit nulls) is rejected by the engine with a 400 before it reads
             # anything, so it can't return node metadata unauthorized.
-            page_fields = {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
             # One call, one transaction: a rename must not survive the move that
             # fails after it, which is what left clients retrying against a tree
             # they never asked for.
@@ -7171,9 +7170,11 @@ def _register_routes(app: FastAPI):
                 node_id=node_id,
                 name=body.name,
                 parent_id=body.parent_id if "parent_id" in body.model_fields_set else KEEP_PARENT,
-                source_query=body.source_query if "source_query" in page_fields else None,
-                tags=body.tags if "tags" in page_fields else None,
-                max_tokens=body.max_tokens if "max_tokens" in page_fields else None,
+                # Each page option defaults to None on the model, so an absent field
+                # and an explicit null are the same "not supplied" the engine expects.
+                source_query=body.source_query,
+                tags=body.tags,
+                max_tokens=body.max_tokens,
                 # Only the trigger fields the client stated: the engine patches them over
                 # the page's current trigger, and a full dump would carry this model's own
                 # defaults (mode="full", exclude_mental_models=False) into every update.
@@ -7185,7 +7186,7 @@ def _register_routes(app: FastAPI):
             # A new source query means the content is stale — rebuild it. Scheduled
             # only once the patch has committed, so a refresh is never queued for a
             # change that rolled back.
-            if "source_query" in page_fields and body.source_query is not None and updated.get("mental_model_id"):
+            if body.source_query is not None and updated.get("mental_model_id"):
                 await app.state.memory.submit_async_refresh_mental_model(
                     bank_id=bank_id,
                     mental_model_id=updated["mental_model_id"],

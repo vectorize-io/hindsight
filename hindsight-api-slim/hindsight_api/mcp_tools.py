@@ -2558,6 +2558,9 @@ async def _do_update_knowledge_node(
     # page on a cron schedule does not reset how or from what it rebuilds.
     trigger_patch = _mental_model_trigger_patch(trigger, refresh_after_consolidation=refresh_after_consolidation)
     page_update = source_query is not None or tags is not None or max_tokens is not None or trigger_patch is not None
+    # The engine raises on a no-op patch too (it must: a no-op authorizes nothing,
+    # so falling through would read the node for an unvalidated caller). Kept here
+    # so an agent gets a tool error it can act on rather than an exception.
     if name is None and parent_id is None and not page_update:
         return {
             "error": "Provide name, parent_id, source_query, tags, max_tokens, "
