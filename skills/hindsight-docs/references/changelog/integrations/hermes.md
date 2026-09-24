@@ -12,6 +12,8 @@ For the source code, see [`hindsight-integrations/hermes`](https://github.com/ve
 
 ## [1.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/hermes/v1.1.0)
 
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/hermes/v1.1.0)
+
 **Breaking Changes**
 
 - Removed the previous Hindsight-Hermes integration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/cf0537ba7" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>cf0537ba7</a>
