@@ -71,19 +71,52 @@ hermes plugins install hindsight
 
 ## Updating
 
-The catalog pins this plugin to a specific commit, so updating means moving to the current pin:
+**Nothing updates the plugin on its own.** Whichever mode you choose below, the code only moves
+when you run a command. In particular `hermes update` does *not* move it: it reinstalls the
+plugin's Python dependencies and leaves the checkout where it is. If you used the built-in
+provider, that is the one habit worth unlearning — memory improvements no longer arrive as a side
+effect of updating Hermes.
+
+Hermes re-fetches the published catalog at most once every 6 hours, so a freshly released version
+can take that long to even appear as available.
+
+### Follow the official pin (default)
+
+What you get from `hermes plugins install hindsight`: the commit Nous reviewed and pinned in their
+catalog.
 
 ```bash
-hermes plugins update hindsight   # re-pin to the catalog's current commit
+hermes plugins update hindsight    # move to the catalog's current pin
 ```
 
-`hermes plugins list` marks the plugin `update_available` once your installed commit differs from
-the catalog's. Hermes re-fetches the published catalog at most once every 6 hours, so a freshly
-published version can take that long to show up.
+`hermes plugins list` flags the plugin `update_available` once your installed commit differs from
+the catalog's. Re-running `hermes plugins install hindsight` does **not** update it — it refuses
+with "already exists"; `plugins update` is the command that re-pins.
 
-Nothing upgrades the plugin on its own: the 6-hour refresh only updates the catalog *metadata*, and
-`hermes update` re-applies the plugin's Python dependencies without moving its pin. The
-`plugins update` above is what actually changes the code.
+### Pin a specific release
+
+For a version you choose and freeze, install with an explicit commit:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes \
+  --force --ref <40-character-commit-sha>
+```
+
+`--ref` takes a full commit SHA and **rejects tag names**, so take the SHA from the release notes
+of the [release](https://github.com/vectorize-io/hindsight/releases) you want rather than typing
+`v1.0.1`. A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately
+refuses to move it — install again with a new `--ref` when you want a different version.
+
+### Track the latest development code
+
+For fixes before they reach the catalog. Install from the source path rather than the catalog name:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
+hermes plugins update hindsight    # now a git pull of our main branch
+```
+
+Unreviewed by definition — you get whatever is on `main` at the moment you run it.
 
 The catalog entry lives in Nous' repo at
 [`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml),
