@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -291,6 +292,7 @@ class TestReflectAgentMocked:
         """Create mock search/recall functions."""
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1556,6 +1558,7 @@ class TestContextOverflowBehavior:
         large_memories = [{"id": f"mem-{i}", "content": f"Memory fact number {i}: " + "A" * 200} for i in range(20)]
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": large_memories}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1645,6 +1648,7 @@ class TestNoAnswerFailsHard:
     def mock_functions(self):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1873,6 +1877,7 @@ class TestMentalModelShortCircuitRealLLM:
 
         return {
             "search_mental_models_fn": AsyncMock(side_effect=search_mental_models_fn),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": observations or []}),
             "recall_fn": AsyncMock(return_value={"memories": recall_memories or []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -2059,6 +2064,7 @@ class TestReflectIncrementalCache:
             "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "x"}]}),
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }
 
@@ -2145,6 +2151,7 @@ class TestReflectShortIdAliases:
             ),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-uuid-1", "text": "a fact"}]}),
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }
 
@@ -2205,6 +2212,7 @@ class TestReflectFinishesThroughDone:
             "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1", "text": "o"}]}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "m"}]}),
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }
 
@@ -2280,3 +2288,63 @@ class TestReflectFinishesThroughDone:
 
         assert result.text == "synthesized"
         provider.call.assert_awaited()
+
+
+class TestReflectKeepsItsPrefixStable:
+    """Everything reflect re-sends each turn must be byte-identical to the last turn.
+
+    A prompt that only GROWS is what a cached prefix needs — and on hybrid/local
+    models (Ollama, llama.cpp), a prompt that diverges early forces a full
+    re-prefill of the whole accumulated conversation instead of resuming, which
+    is #3865. reflect controls two of the three inputs: the system prompt and the
+    tools array. (``tool_choice`` still varies per turn while the retrieval
+    sequence is forced — that is the part #4469 tracks, and it is measured but
+    not changed here.)
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_system_prompt_and_tools_never_change_within_one_reflect(self):
+        def _tc(cid, name):
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
+            )
+
+        provider = _StepCacheProvider(
+            scripted=[
+                _tc("0", "search_mental_models"),
+                _tc("1", "search_observations"),
+                _tc("2", "recall"),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="3", name="done", arguments={"answer": "A"})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+        sent: list[tuple[str, str]] = []
+        original = provider.call_with_tools
+
+        async def _record(*, messages, tools, **kwargs):
+            system = next((m["content"] for m in messages if m.get("role") == "system"), "")
+            sent.append((system, json.dumps(tools, sort_keys=True)))
+            return await original(messages=messages, tools=tools, **kwargs)
+
+        provider.call_with_tools = _record
+
+        await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            search_mental_models_fn=AsyncMock(return_value={"mental_models": [{"id": "mm-1", "content": "c"}]}),
+            read_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
+            search_observations_fn=AsyncMock(return_value={"observations": [{"id": "obs-1", "text": "o"}]}),
+            recall_fn=AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "m"}]}),
+            expand_fn=AsyncMock(return_value={"memories": []}),
+            has_mental_models=True,
+            budget="high",
+            max_iterations=8,
+        )
+
+        assert len(sent) >= 3, f"expected several turns, got {len(sent)}"
+        assert len({s for s, _ in sent}) == 1, "the system prompt changed mid-reflect"
+        assert len({t for _, t in sent}) == 1, "the tools array changed mid-reflect"

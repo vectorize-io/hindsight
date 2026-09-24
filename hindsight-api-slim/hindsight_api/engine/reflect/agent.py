@@ -69,6 +69,11 @@ _TOOL_ARG_MAX_TOKENS = 16000
 #: which is why it stays a plain constant here rather than a ``config`` field.
 DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS = 5000
 
+#: Default budget for one ``read_mental_models`` call. Pages are whole documents, so
+#: this is the ceiling on how much page text one read can put in the conversation —
+#: the bound ``search_mental_models`` never had when it returned five of them whole.
+DEFAULT_MENTAL_MODELS_READ_MAX_TOKENS = 6000
+
 
 @dataclass(frozen=True)
 class ReflectToolTokenLimits:
@@ -88,6 +93,7 @@ class ReflectToolTokenLimits:
     recall_max_tokens: int
     recall_chunk_max_tokens: int
     observations_max_tokens: int
+    mental_models_read_max_tokens: int
 
 
 def _resolve_tool_arg_ceiling(remaining_context_tokens: int | None, concurrent_calls: int) -> int:
@@ -114,6 +120,7 @@ _SHIPPED_DEFAULT_TOOL_LIMITS = ReflectToolTokenLimits(
     recall_max_tokens=DEFAULT_RECALL_MAX_TOKENS,
     recall_chunk_max_tokens=DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     observations_max_tokens=DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+    mental_models_read_max_tokens=DEFAULT_MENTAL_MODELS_READ_MAX_TOKENS,
 )
 
 
@@ -455,7 +462,10 @@ def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool
     for model in models:
         if model.get("is_stale") is not False:
             return False
-        if not str(model.get("content") or "").strip():
+        # A search hit carries a snippet, not the page (see presentation of
+        # search_mental_models); a page read in full carries ``content``. Either
+        # proves the page has something in it to answer from.
+        if not str(model.get("snippet") or model.get("content") or "").strip():
             return False
     return True
 
@@ -506,6 +516,7 @@ async def run_reflect_agent(
     query: str,
     bank_profile: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -542,6 +553,7 @@ async def run_reflect_agent(
             query,
             bank_profile,
             search_mental_models_fn,
+            read_mental_models_fn,
             search_observations_fn,
             recall_fn,
             expand_fn,
@@ -563,6 +575,7 @@ async def _run_reflect_agent_inner(
     query: str,
     bank_profile: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -602,6 +615,7 @@ async def _run_reflect_agent_inner(
         query: Question to answer
         bank_profile: Bank profile with name and mission
         search_mental_models_fn: Tool callback for searching mental models (query, max_results) -> result
+        read_mental_models_fn: Tool callback reading mental models in full (ids, max_tokens) -> result
         search_observations_fn: Tool callback for searching observations (query, max_results) -> result
         recall_fn: Tool callback for recall (query, max_tokens) -> result
         expand_fn: Tool callback for expand (memory_ids, depth) -> result
@@ -1383,6 +1397,7 @@ async def _run_reflect_agent_inner(
                 _execute_tool_with_timing(
                     tc.model_copy(update={"arguments": presenter.resolve(tc.arguments)}),
                     search_mental_models_fn,
+                    read_mental_models_fn,
                     search_observations_fn,
                     recall_fn,
                     expand_fn,
@@ -1452,6 +1467,11 @@ async def _run_reflect_agent_inner(
                             f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
                             "releasing forced lower-level retrieval to auto."
                         )
+
+                if normalized_tool_name == "read_mental_models" and isinstance(output, dict):
+                    for page in output.get("mental_models", []):
+                        if "id" in page:
+                            available_mental_model_ids.add(page["id"])
 
                 if (
                     normalized_tool_name == "search_observations"
@@ -1791,6 +1811,7 @@ async def _process_done_tool(
 async def _execute_tool_with_timing(
     tc: "LLMToolCall",
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -1827,6 +1848,7 @@ async def _execute_tool_with_timing(
                 tc.name,
                 tc.arguments,
                 search_mental_models_fn,
+                read_mental_models_fn,
                 search_observations_fn,
                 recall_fn,
                 expand_fn,
@@ -1869,6 +1891,7 @@ async def _execute_tool(
     tool_name: str,
     args: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -1899,6 +1922,21 @@ async def _execute_tool(
         if error:
             return {"error": error}
         return await search_mental_models_fn(query, max_results)
+
+    elif tool_name == "read_mental_models":
+        page_ids = args.get("mental_model_ids") or []
+        if not page_ids:
+            return {"error": "read_mental_models requires mental_model_ids"}
+        max_tokens, error = _parse_tool_int_arg_or_error(
+            args,
+            "max_tokens",
+            default=token_limits.mental_models_read_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
+        if error:
+            return {"error": error}
+        return await read_mental_models_fn(page_ids, max_tokens)
 
     elif tool_name == "search_observations":
         query = args.get("query")

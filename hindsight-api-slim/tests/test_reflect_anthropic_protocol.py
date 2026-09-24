@@ -87,6 +87,7 @@ async def test_parallel_and_hallucinated_tool_batch_serializes_validly():
             query="test query",
             bank_profile={"name": "Test", "mission": "Testing"},
             search_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
+            read_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
             search_observations_fn=AsyncMock(return_value={"observations": []}),
             recall_fn=AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             expand_fn=AsyncMock(return_value={"memories": []}),

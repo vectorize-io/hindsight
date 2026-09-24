@@ -324,6 +324,9 @@ def build_system_prompt_for_tools(
                 [
                     "- User-curated summaries about specific topics",
                     "- HIGHEST quality - manually created and maintained",
+                    "- Search returns the best match in full and a SNIPPET of the others; call "
+                    "read_mental_models on any id whose snippet looks like it answers the question, and read it "
+                    "before answering from it",
                     "- If a relevant mental model exists and is FRESH, it may fully answer the question",
                     "- Check `is_stale` field - if stale, also verify with lower levels",
                 ],
@@ -398,6 +401,25 @@ def build_system_prompt_for_tools(
         parts.append(f"### {idx}. {header}{suffix}")
         parts.extend(body)
         parts.append("")
+
+    # The order is stated, not enforced per turn: pinning one tool per turn changes
+    # the tools/tool_config on every call, which invalidates a cached prefix and, on
+    # hybrid/local models, forces a full re-prefill of the whole conversation
+    # (#3865, #4469). Saying it here keeps every request a growing prefix of the
+    # last one.
+    if len(levels) > 1:
+        plan = " → ".join(header.split(" (")[0].split(" - ")[0].title() for header, _ in levels)
+        parts.extend(
+            [
+                "## Search Plan",
+                f"Work down the levels in order ({plan}) before you answer:",
+                "- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.",
+                "- Stop descending as soon as what you have answers the question — a fresh mental model often does.",
+                "- Go deeper when the level above is stale, thin, or silent on what was asked.",
+                "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.",
+                "",
+            ]
+        )
 
     parts.extend(
         [

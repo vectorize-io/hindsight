@@ -54,7 +54,7 @@ class ToolResultPresenter:
         self._alias_by_id: dict[str, str] = {}
         self._id_by_alias: dict[str, str] = {}
         self._counters: dict[str, int] = {}
-        self._shown: set[str] = set()
+        self._shown: set[tuple[str, str]] = set()
 
     def alias(self, raw_id: str, prefix: str) -> str:
         existing = self._alias_by_id.get(raw_id)
@@ -94,10 +94,14 @@ class ToolResultPresenter:
                         items.append(item)
                         continue
                     alias = self.alias(str(item["id"]), _LISTS[key])
-                    if item["id"] in self._shown:
+                    # Keyed by the list it arrived in, not by id alone: a mental model
+                    # comes back as a snippet from a search and as full text from a
+                    # read, and the read is the one the model asked for.
+                    seen_key = (key, str(item["id"]))
+                    if seen_key in self._shown:
                         shown.setdefault(key, []).append(alias)
                         continue
-                    self._shown.add(item["id"])
+                    self._shown.add(seen_key)
                     items.append(self._present_item(item, key, alias))
                 out[key] = items
             elif key == "chunks" and isinstance(value, dict):

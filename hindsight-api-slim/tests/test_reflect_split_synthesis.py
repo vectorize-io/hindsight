@@ -164,6 +164,7 @@ class TestSplitSynthesisAgentFlow:
     def _functions(recall_payload: dict):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value=recall_payload),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -399,6 +400,7 @@ class TestSplitSynthesisRealLLM:
 
         functions = {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": memories}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
