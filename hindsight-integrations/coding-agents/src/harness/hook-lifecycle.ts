@@ -221,6 +221,14 @@ const standardSessionStart = (harness: string): SessionStartHookSpec => ({
   }),
 });
 
+/**
+ * Grok Build also runs the hooks in ~/.claude/settings.json (its Claude compatibility layer), so
+ * without this gate every Grok session would run Claude Code's hooks next to Grok's own: a second
+ * SessionStart injection, a second recall per prompt, and a retain tagged claude-code. Grok's hook
+ * runner sets the reserved GROK_HOOK_EVENT on every hook process; Claude Code never does.
+ */
+const notGrokHosted = (): boolean => !process.env.GROK_HOOK_EVENT;
+
 export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
   "claude-code": {
     configStyle: "nested",
@@ -229,11 +237,12 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "UserPromptSubmit", entry: "claude-hook.js", timeout: 30 },
       stop: { event: "Stop", entry: "claude-stop-hook.js", timeout: 60 },
     },
-    sessionStart: standardSessionStart("claude-code"),
-    prompt: claudePrompt,
+    sessionStart: { ...standardSessionStart("claude-code"), accept: notGrokHosted },
+    prompt: { ...claudePrompt, accept: notGrokHosted },
     retain: {
       hostTimeoutSec: 60,
       harness: "claude-code",
+      accept: notGrokHosted,
       parse: (ev) => ({
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,

@@ -1361,6 +1361,15 @@ function stripUnmarkedGrokEntries(toml: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
+/**
+ * Grok Build reads hooks from `~/.grok/hooks/*.json` (Claude's nested matcher-group shape) and
+ * from `[[hooks.<Event>]]` tables in config.toml. Both load, but Grok's config validator does not
+ * know the `hooks` key, so every `grok inspect` flags a config.toml hook block as an
+ * "unrecognized config key". The hooks directory is the documented global location and draws no
+ * warning, so the hooks live in a file this package owns; config.toml keeps only the MCP server.
+ */
+const grokHooksPath = (c: InstallCtx) => join(c.home, ".grok", "hooks", "hindsight.json");
+
 const grok: HarnessInstaller = {
   name: "grok-build",
   detect: (c) => onPath("grok") || existsSync(join(c.home, ".grok")),
@@ -1369,7 +1378,8 @@ const grok: HarnessInstaller = {
     const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
     // REPLACE any previous block rather than skipping when one exists. Skipping made this
     // install-once-only: after the package moved, a re-install silently left the old (now dead)
-    // paths in place, which is exactly the case `install` is meant to repair.
+    // paths in place, which is exactly the case `install` is meant to repair. Replacing also
+    // drops the hook tables older releases kept in this block.
     const stripped = existing.replace(GROK_BLOCK_RE, "\n");
     // Entries an older release wrote WITHOUT the markers must go too: TOML forbids redefining a
     // table, so appending on top of them leaves a file Grok cannot parse — it then reports "No MCP
@@ -1377,15 +1387,9 @@ const grok: HarnessInstaller = {
     const withoutOurs = hasUnmarkedGrokEntries(stripped)
       ? stripUnmarkedGrokEntries(stripped)
       : stripped;
-    // Grok executes this shell command verbatim. Quote the absolute script path so a globally
-    // installed package still works when its installation directory contains spaces.
-    const command = (entry: string) => JSON.stringify(`node "${join(c.dist, entry)}"`);
     const tomlString = (value: string) => JSON.stringify(value);
     const block =
       `\n${GROK_MARKER_START}\n` +
-      `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
-      `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
       `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
       `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
     const next = `${withoutOurs.replace(/\n*$/, "\n")}${block}`;
@@ -1401,8 +1405,14 @@ const grok: HarnessInstaller = {
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, next);
+
+    const hooksPath = grokHooksPath(c);
+    const file = readJson(hooksPath);
+    const hooks = file.hooks && typeof file.hooks === "object" ? file.hooks : {};
+    mergeHarnessHooks(hooks, "grok-build", c.dist);
+    writeJson(hooksPath, { ...file, hooks });
     installSkill(c, "grok-build");
-    c.log?.(`grok-build: native hooks + MCP installed in ${path}`);
+    c.log?.(`grok-build: hooks installed in ${hooksPath}, MCP in ${path}`);
   },
   uninstall(c) {
     const path = join(c.home, ".grok", "config.toml");
@@ -1416,6 +1426,16 @@ const grok: HarnessInstaller = {
       // dropping our entries cannot make that worse and is usually what repairs it.
       const safe = parseGrokToml(cleaned) !== null || parseGrokToml(existing) === null;
       if (cleaned !== existing && safe) writeFileSync(path, cleaned);
+    }
+    const hooksPath = grokHooksPath(c);
+    if (existsSync(hooksPath)) {
+      const file = readJson(hooksPath);
+      if (file.hooks && typeof file.hooks === "object") {
+        stripHarnessHooks(file.hooks, "grok-build");
+        if (!Object.keys(file.hooks).length) delete file.hooks;
+      }
+      if (Object.keys(file).length) writeJson(hooksPath, file);
+      else rmSync(hooksPath);
     }
     uninstallSkill(c, "grok-build");
     c.log?.("grok-build: native hooks + MCP + skill removed");

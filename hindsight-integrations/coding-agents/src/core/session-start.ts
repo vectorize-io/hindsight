@@ -129,6 +129,8 @@ export interface SessionStartOutput {
 export interface SessionStartHookSpec {
   harness: string;
   parse(event: Record<string, unknown>): { cwd?: string; sessionId?: string };
+  /** Optional event gate, evaluated before config loading: false makes the hook a silent no-op. */
+  accept?(event: Record<string, unknown>): boolean;
   emit(output: SessionStartOutput): unknown;
 }
 
@@ -361,6 +363,7 @@ export async function runSessionStartHook(
     } catch {
       return; // no/invalid event: stay silent
     }
+    if (spec.accept && !spec.accept(ev)) return;
     const { harness } = spec;
     const { cwd: rawCwd, sessionId } = spec.parse(ev);
     const cwd = rawCwd || process.cwd();
