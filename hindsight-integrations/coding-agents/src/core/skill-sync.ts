@@ -59,12 +59,14 @@ export function syncCompanionSkill(
  */
 export function readPackagedSkill(
   srcDir = packagedSkillDir()
-): { location: string; description: string; content: string } | undefined {
+): { location: string; path: string; description: string; content: string } | undefined {
   try {
-    const raw = readFileSync(join(srcDir, "SKILL.md"), "utf8");
+    const path = join(srcDir, "SKILL.md");
+    const raw = readFileSync(path, "utf8");
     const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
     return {
       location: srcDir,
+      path,
       description: frontmatter ? (/^description:\s*(.+)$/m.exec(frontmatter[1])?.[1] ?? "") : "",
       content: frontmatter ? raw.slice(frontmatter[0].length) : raw,
     };

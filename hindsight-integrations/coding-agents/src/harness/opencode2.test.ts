@@ -137,6 +137,7 @@ describe("opencode2 adapter", () => {
     expect(fake.skills).toHaveLength(1);
     expect(fake.skills[0].id).toBe("hindsight-coding-agent");
     expect(fake.skills[0].name).toBe("hindsight-coding-agent");
+    expect(fake.skills[0].path).toMatch(/skill[\\/]SKILL\.md$/);
     expect(fake.skills[0].description).toContain("Hindsight");
     expect(fake.skills[0].content).toContain("Hindsight Coding-Agent Memory");
     // Frontmatter is split out, not handed to the host as part of the body.
