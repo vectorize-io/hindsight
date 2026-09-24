@@ -283,6 +283,36 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     # Set the script location (where alembic versions are stored)
     _set_alembic_main_option(alembic_cfg, "script_location", script_location)
 
+    # Extension-owned revisions, applied on the same lifecycle as core's: same run,
+    # same advisory lock, same `alembic_version` table.
+    #
+    # `version_locations` must include core's own directory explicitly. Alembic does
+    # NOT fall back to `script_location/versions` once this is set, so omitting it
+    # would silently reduce the run to the extensions' revisions — a migration that
+    # appears to succeed while applying none of core's.
+    #
+    # Each extension tree is independent: its own base, its own head, its own row in
+    # `alembic_version`. That is why `command.upgrade(..., "heads")` below is plural
+    # and always was — it already applies every branch. Alembic gives no ordering
+    # BETWEEN independent branches, so a revision needing core first declares
+    # `depends_on`; see `Extension.alembic_version_locations`.
+    # Imported here, not at module import: the loader imports extension modules,
+    # and migrations.py is itself imported by paths that must not drag an
+    # extension's dependency tree in with them.
+    from .extensions.loader import collect_alembic_version_locations
+
+    extension_locations = collect_alembic_version_locations()
+    if extension_locations:
+        core_versions = str(Path(script_location) / "versions")
+        _set_alembic_main_option(
+            alembic_cfg,
+            "version_locations",
+            os.pathsep.join([core_versions, *extension_locations]),
+        )
+        logger.info(
+            "Including %d extension migration location(s) alongside core", len(extension_locations)
+        )
+
     # Set the database URL
     _set_alembic_main_option(alembic_cfg, "sqlalchemy.url", database_url)
 

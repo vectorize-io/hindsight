@@ -123,3 +123,70 @@ def _collect_config(env_prefix: str, prefix: str) -> dict[str, str]:
             config[config_key] = value
 
     return config
+
+
+#: Every extension kind, as (env prefix, base class import path). Used to ask each
+#: configured extension for the Alembic revisions it owns.
+#:
+#: Listed here rather than discovered, because the set is small, fixed, and the
+#: cost of missing one is silent: an extension whose revisions are never collected
+#: simply never migrates, and nothing fails.
+_EXTENSION_KINDS: tuple[tuple[str, str, str], ...] = (
+    ("TENANT", "hindsight_api.extensions.tenant", "TenantExtension"),
+    ("MEMORIES", "hindsight_api.engine.memories.base", "MemoriesExtension"),
+    ("OPERATION_VALIDATOR", "hindsight_api.extensions.operation_validator", "OperationValidatorExtension"),
+    ("MEMORY_DEFENSE", "hindsight_api.extensions.memory_defense", "MemoryDefenseExtension"),
+    ("HTTP", "hindsight_api.extensions.http", "HttpExtension"),
+    ("MCP", "hindsight_api.extensions.mcp", "MCPExtension"),
+)
+
+
+def collect_alembic_version_locations(env_prefix: str = "HINDSIGHT_API") -> list[str]:
+    """Every Alembic version directory the configured extensions own.
+
+    Asked once per migration run and passed to Alembic as ``version_locations``
+    alongside core's own, so an extension's revisions are applied on the same
+    lifecycle, under the same advisory lock, and recorded in the same
+    ``alembic_version`` table as core's.
+
+    Loading an extension here must never break migrations. An extension that
+    cannot be imported, or that raises while answering, is skipped with a warning:
+    the alternative is that a misconfigured extension makes the database
+    unmigratable, which is a far worse failure than that extension's own state
+    being out of date. A path that does not exist is skipped for the same reason —
+    Alembic treats a missing version location as a hard error.
+
+    Paths are de-duplicated in order, since two extension kinds may be served by
+    one class (a package that provides both a tenant and a memories extension
+    would otherwise contribute its tree twice, and Alembic rejects a duplicate
+    version location).
+    """
+    import importlib
+    from pathlib import Path
+
+    found: list[str] = []
+    for prefix, module_path, class_name in _EXTENSION_KINDS:
+        try:
+            base = getattr(importlib.import_module(module_path), class_name)
+            ext = load_extension(prefix, base, env_prefix=env_prefix)
+        except Exception as e:  # noqa: BLE001 - a broken extension must not block migrations
+            logger.warning("Could not load %s extension to collect migrations: %s", prefix, e)
+            continue
+        if ext is None:
+            continue
+        try:
+            locations = ext.alembic_version_locations()
+        except Exception as e:  # noqa: BLE001 - same reason
+            logger.warning("%s extension failed to report its migrations: %s", prefix, e)
+            continue
+        for loc in locations or []:
+            if not Path(loc).is_dir():
+                logger.warning(
+                    "%s extension names Alembic version location %r, which is not a directory; skipping.",
+                    prefix,
+                    loc,
+                )
+                continue
+            found.append(str(Path(loc).resolve()))
+            logger.info("%s extension contributes Alembic revisions from %s", prefix, loc)
+    return list(dict.fromkeys(found))
