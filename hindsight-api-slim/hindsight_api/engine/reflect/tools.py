@@ -34,9 +34,10 @@ _SNIPPET_CHARS = 280
 #: results before they reach the model.
 #:
 #: These are scoring and provenance internals, not evidence: the agent cites by
-#: ``id``, ``based_on`` persists only id/text/type/context, and the expand tool
-#: takes ``memory_ids`` and resolves chunks server-side -- so nothing downstream
-#: needs them, while on real banks they measure several times the size of the
+#: ``id``, ``based_on`` re-reads the cited memories' provenance from the store
+#: (``MemoryEngine._evidence_as_stored``), and the expand tool takes
+#: ``memory_ids`` and resolves chunks server-side -- so nothing downstream needs
+#: them here, while on real banks they measure several times the size of the
 #: observation text they accompany.
 #:
 #: Identity, text, dates, tags and ``source_fact_ids`` are deliberately kept.

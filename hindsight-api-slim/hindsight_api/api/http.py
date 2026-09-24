@@ -1044,7 +1044,7 @@ async def _attach_to_recall_results(
     request_context: RequestContext,
     carried: "dict[str, tuple[str | None, list[str]]] | None" = None,
 ) -> None:
-    """Add ``attachments`` to recall results — the same per-fact edge as :func:`_attach_to_memories`.
+    """Add ``attachments`` to recall results and reflect evidence — the per-fact edge of :func:`_attach_to_memories`.
 
     Recall already reports the chunk each fact came from, and a chunk lists every
     attachment its text references; that is strictly coarser. A chunk holding a
