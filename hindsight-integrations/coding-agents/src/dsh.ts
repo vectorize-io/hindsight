@@ -185,8 +185,8 @@ function workspaceFor(root: string): Workspace | undefined {
  * Start this repo's cold-check + background seed once.
  *
  * Fire-and-forget by design: `agent/session-start` is an emit that no extension point awaits, and
- * the Web UI must not wait on a network round-trip to open a session. The first prompt tolerates an
- * empty knowledge preamble until this resolves.
+ * the Web UI must not wait on a network round-trip to open a session. Nothing the first prompt
+ * needs comes from here — it builds its own knowledge preamble from that session's page list.
  */
 function ensureSeeded(workspace: Workspace): void {
   workspace.seeded ??= workspace.core.seedIfCold(workspace.root);

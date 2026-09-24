@@ -827,6 +827,7 @@ export class HindsightClient {
     }
     let created = 0;
     let updated = 0;
+    let vanished = 0; // deleted under us mid-run — neither re-synced nor unchanged
     for (const page of pages) {
       const hit = existing.get(page.name.toLowerCase());
       const body = {
@@ -895,7 +896,10 @@ export class HindsightClient {
         }
         // The node vanished under us (a concurrent delete). Skip it — the remaining pages are
         // still worth syncing, and the run's summary line is still worth logging.
-        if (r.status === 404) continue;
+        if (r.status === 404) {
+          vanished++;
+          continue;
+        }
         updated++;
       }
     }
@@ -903,7 +907,8 @@ export class HindsightClient {
     this.log(
       `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
         `${created} created, ${updated} re-synced, ` +
-        `${pages.length - created - updated} unchanged` +
+        `${pages.length - created - updated - vanished} unchanged` +
+        (vanished ? `, ${vanished} deleted under us` : "") +
         (initiatives ? `, ${initiatives} initiative pages re-synced` : "")
     );
   }
@@ -942,7 +947,9 @@ export class HindsightClient {
       // 405/501 this used to test for never arrive (see `pagesUnsupported`). No latch here — a
       // node that has gone missing says nothing about the server's capabilities, and nothing about
       // the pages after it either, so skip it rather than abandoning the rest of the re-sync (this
-      // `break`ed while the status still carried a server-wide meaning).
+      // `break`ed while the status still carried a server-wide meaning). If it is the BANK that
+      // went rather than one node, this costs one wasted PATCH per initiative page instead of one
+      // total — bounded by the folder's size, and the next session re-syncs from scratch anyway.
       if (r.status === 404) continue;
       updated++;
     }

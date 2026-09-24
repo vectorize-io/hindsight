@@ -171,7 +171,7 @@ export function createPiExtension(harness: string): ExtensionFactory {
 
     for (const spec of core.toolSpecs()) pi.registerTool(toPiTool(spec));
 
-    // Fire-and-forget cold seed (bank check + background git seed + knowledge preamble); the first
+    // Fire-and-forget cold seed (bank check + background git seed); the first
     // before_agent_start awaits it via createPiHooks.
     const sessionStart = core.seedIfCold(repoPath);
     const hooks = createPiHooks(core, harness, sessionStart);

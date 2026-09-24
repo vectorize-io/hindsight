@@ -158,22 +158,22 @@ async function injectRecall(
 /**
  * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
  * curated knowledge pages first (search), and only when none match fall back to a raw recall
- * over the bank's memories. Returns the memory body to inject, or undefined when both came
- * back empty or failed. Never throws.
+ * over the bank's memories. Returns the memory body to inject, or a nullish value when both came
+ * back empty or failed — the caller only asks whether there IS a body, so the sources' tri-state
+ * is passed through rather than flattened. Never throws.
  */
 async function reflectFallback(
   harness: string,
   prompt: string,
   client: HookClient
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
   const deadline = Date.now() + HOOK_FALLBACK_BUDGET_MS;
   const remaining = () => Math.max(deadline - Date.now(), 1);
   return (
     (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
     // Event name predates the `injectRecall` rename and is kept: it is a logged contract that
     // other tools read, so renaming it would silently break them.
-    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations")) ??
-    undefined
+    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations"))
   );
 }
 
@@ -213,12 +213,13 @@ export async function buildHookOutput(args: {
   let reflectAnswer = cached.reflectAnswer;
   let reflectAttempts = cached.reflectAttempts ?? 0;
   let reflectRanThisTurn = false;
-  // Set ONLY by the catch below. An empty answer is not a failure: reflect can legitimately have
-  // nothing to say on a sparse bank (diag records that as reflect_empty), and reporting it as a
-  // failure would tell the user the plugin broke on exactly the sessions where it did not.
+  // Set by whichever source actually FAILED — reflect's catch, or a pages/recall helper returning
+  // undefined. An empty answer is not a failure: a source can legitimately have nothing to say on a
+  // sparse bank (diag records reflect_empty), and reporting that would tell the user the plugin
+  // broke on exactly the sessions where it did not.
   let reflectFailed = false;
   // Set when reflect timed out / 5xx'd and a retrieval-only fallback supplied the memory instead.
-  let fallback: string | undefined;
+  let fallback: string | null | undefined;
   const deferInitialReflect = cached.deferInitialReflect === true;
   if (deferInitialReflect) {
     // A new bank has no useful history yet. Do not burn the once-per-session synthesis on prompt
@@ -369,7 +370,8 @@ export async function buildHookOutput(args: {
     // The failure is already in the diag trail and plugin.log, but both are files nobody is
     // tailing mid-session, so a memory-less session looked exactly like a healthy one (#3443).
     // One terse line pointing at the trail — not an explanation, and not advice to the agent:
-    // this fires at most once per session, on the turn reflect ran.
+    // this fires only on a turn that actually attempted a source, so at most
+    // HOOK_INJECT_ATTEMPTS times per session.
     notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
   }
 

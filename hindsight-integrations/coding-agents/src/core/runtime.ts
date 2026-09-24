@@ -5,7 +5,8 @@
  * the host-specific injection, toast, and incremental-transcript responsibilities.
  *
  * A harness adapter feeds it three normalized events and reads two values back:
- *   - seedIfCold(repoPath)          : plugin load -> cold-check auto-seed + compute the page preamble
+ *   - seedIfCold(repoPath)          : plugin load -> cold-check auto-seed (the page preamble is
+ *                                     NOT computed here; onPrompt builds it per session)
  *   - onPrompt(sessionId, prompt)   : each user turn -> recall + build this turn's injection
  *   - getInjection(sessionId)       : the system-prompt text to inject this turn (or undefined)
  *   - toolSpecs()                   : the hindsight_* knowledge/recall tools to register natively
@@ -149,7 +150,7 @@ export class RuntimeCore {
       }
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {
-      /* seeding + preamble are best-effort — a cold-check failure never breaks the agent */
+      /* seeding is best-effort — a cold-check failure never breaks the agent */
     }
   }
 

@@ -242,10 +242,9 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
       const core = new RuntimeCore(client, bankId, cfg, harness, dir);
       const cleanup = await wireOpencode2Runtime(core, ctx);
 
-      // SessionStart-equivalent: cold-check the bank, kick off the background engine, compute the
-      // knowledge preamble. Fire-and-forget — this host BLOCKS ITS BOOT on plugin setup, so it must
-      // never gate startup on a network round-trip. onPrompt tolerates an empty preamble until it
-      // resolves.
+      // SessionStart-equivalent: cold-check the bank and kick off the background engine.
+      // Fire-and-forget — this host BLOCKS ITS BOOT on plugin setup, so it must never gate startup
+      // on a network round-trip, and onPrompt needs nothing from it (it builds its own preamble).
       void core.seedIfCold(projectDir);
 
       return cleanup;
