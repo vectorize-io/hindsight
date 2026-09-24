@@ -88,7 +88,7 @@ export interface RetainHookSpec {
  *  that can deduplicate a resubmitted write (see core/retain-cursor.ts). */
 interface RetainClient {
   retain: HindsightClient["retain"];
-  supportsIdempotentRetain: HindsightClient["supportsIdempotentRetain"];
+  supportsAppendRetain: HindsightClient["supportsAppendRetain"];
 }
 
 /**

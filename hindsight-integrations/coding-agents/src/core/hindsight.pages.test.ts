@@ -20,6 +20,46 @@ const settledTrigger = (name: string) => pageTriggerFor(buildPageTrigger(), "rep
 
 afterEach(() => vi.restoreAllMocks());
 
+describe("HindsightClient append capability", () => {
+  it("rejects append when the bank cannot store document text", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/version"),
+        json: { api_version: "0.10.1" },
+      },
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/config"),
+        json: { config: { store_document_text: false }, overrides: {} },
+      },
+    ]);
+
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.supportsAppendRetain()).resolves.toBe(false);
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://x/version",
+      "http://x/v1/default/banks/repo-a/config",
+    ]);
+  });
+
+  it("accepts append when the resolved bank config stores document text", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/version"),
+        json: { api_version: "0.10.1" },
+      },
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/config"),
+        json: { config: { store_document_text: true }, overrides: {} },
+      },
+    ]);
+
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.supportsAppendRetain()).resolves.toBe(true);
+  });
+});
+
 function stubFetch(calls: any[], jsonImpl: () => Promise<unknown> = async () => ({ ok: true })) {
   vi.stubGlobal(
     "fetch",

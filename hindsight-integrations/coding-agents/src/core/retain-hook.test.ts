@@ -133,7 +133,7 @@ describe("buildRetain", () => {
       transcriptPath: file,
       readTranscript: readCodexTranscript,
       cursors: memoryCursorStore(),
-      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+      client: { retain, bank: "test-bank", supportsAppendRetain: async () => true },
     };
     writeFileSync(file, lines.join("\n"));
     await buildRetain(args);
@@ -230,7 +230,7 @@ describe("buildRetain", () => {
       transcriptPath: file,
       readTranscript: readCodexTranscript,
       cursors,
-      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+      client: { retain, bank: "test-bank", supportsAppendRetain: async () => true },
     };
     writeFileSync(file, lines.join("\n"));
     await buildRetain(args);
@@ -484,7 +484,7 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
       client: {
         retain,
         bank: "coding-agent::repo",
-        supportsIdempotentRetain: async () => true,
+        supportsAppendRetain: async () => true,
       } as unknown as HindsightClient,
     };
   };
@@ -619,7 +619,7 @@ describe("runRetainHook honors retainSessions", () => {
     const retain = vi.fn().mockResolvedValue(undefined);
     const makeClient = vi.fn(() => ({
       retain,
-      supportsIdempotentRetain: async () => false,
+      supportsAppendRetain: async () => false,
     })) as unknown as Parameters<typeof runRetainHook>[1];
     return { retain, makeClient };
   };
