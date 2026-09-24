@@ -1513,6 +1513,16 @@ describe("grok-build installer", () => {
     expect(readJson(hooksPath(ctx))).toEqual({ hooks: { Stop: [mine] } });
   });
 
+  it("replaces a Grok hooks file whose hooks are not an object", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(hooksPath(ctx)), { recursive: true });
+    writeFileSync(hooksPath(ctx), JSON.stringify({ hooks: [] }));
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    expect(Object.keys(readJson(hooksPath(ctx)).hooks)).toEqual(
+      expect.arrayContaining(["SessionStart", "UserPromptSubmit", "Stop"])
+    );
+  });
+
   it("uninstall deletes a Grok hooks file left empty", () => {
     const ctx = makeCtx();
     run(["install", "grok-build"], ctx);

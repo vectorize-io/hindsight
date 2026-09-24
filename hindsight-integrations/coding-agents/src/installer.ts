@@ -103,6 +103,10 @@ export interface InstallCtx {
   ) => number | null | undefined;
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function readJson(path: string): Record<string, any> {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -1407,8 +1411,9 @@ const grok: HarnessInstaller = {
     writeFileSync(path, next);
 
     const hooksPath = grokHooksPath(c);
-    const file = readJson(hooksPath);
-    const hooks = file.hooks && typeof file.hooks === "object" ? file.hooks : {};
+    const read = readJson(hooksPath);
+    const file = isPlainObject(read) ? read : {};
+    const hooks = isPlainObject(file.hooks) ? file.hooks : {};
     mergeHarnessHooks(hooks, "grok-build", c.dist);
     writeJson(hooksPath, { ...file, hooks });
     installSkill(c, "grok-build");
@@ -1429,8 +1434,9 @@ const grok: HarnessInstaller = {
     }
     const hooksPath = grokHooksPath(c);
     if (existsSync(hooksPath)) {
-      const file = readJson(hooksPath);
-      if (file.hooks && typeof file.hooks === "object") {
+      const read = readJson(hooksPath);
+      const file = isPlainObject(read) ? read : {};
+      if (isPlainObject(file.hooks)) {
         stripHarnessHooks(file.hooks, "grok-build");
         if (!Object.keys(file.hooks).length) delete file.hooks;
       }
