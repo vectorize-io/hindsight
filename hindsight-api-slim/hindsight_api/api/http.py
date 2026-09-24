@@ -7159,12 +7159,10 @@ def _register_routes(app: FastAPI):
             # what KEEP_PARENT stands in for. Page options live on the backing
             # mental model and each applies only when supplied (so tags=[] clears,
             # distinct from "not provided").
+            # A patch that resolves to no semantic change (an empty body, or one of
+            # explicit nulls) is rejected by the engine with a 400 before it reads
+            # anything, so it can't return node metadata unauthorized.
             page_fields = {"source_query", "tags", "max_tokens", "trigger"} & body.model_fields_set
-            if body.name is None and "parent_id" not in body.model_fields_set and not page_fields:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update",
-                )
             # One call, one transaction: a rename must not survive the move that
             # fails after it, which is what left clients retrying against a tree
             # they never asked for.

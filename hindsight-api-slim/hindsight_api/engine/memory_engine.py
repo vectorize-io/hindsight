@@ -19596,6 +19596,12 @@ class MemoryEngine(MemoryEngineInterface):
         moving = not isinstance(parent_id, KeepParentSentinel)
         new_parent: str | None = parent_id if not isinstance(parent_id, KeepParentSentinel) else None
         page_options = source_query is not None or tags is not None or max_tokens is not None or trigger is not None
+        if name is None and not moving and not page_options:
+            # Nothing to change — so there is no write operation to authorize, and
+            # falling through would read the node out of the bank and return its
+            # metadata to a caller the validator never got to judge. A body of
+            # explicit nulls ("not supplied", per the contract above) lands here.
+            raise ValueError("Provide name, parent_id, source_query, tags, max_tokens, and/or trigger to update")
         if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 

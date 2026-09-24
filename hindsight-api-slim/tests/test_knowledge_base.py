@@ -1631,6 +1631,36 @@ class TestAuthorizationWriteDenied:
         # Rejected before touching the backing mental model — a single write hook.
         assert _write_ops(validator) == [BankWriteOperation.UPDATE_KNOWLEDGE_PAGE]
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"source_query": None},
+            {"tags": None},
+            {"max_tokens": None},
+            {"trigger": None},
+            {"name": None, "source_query": None},
+        ],
+    )
+    async def test_explicit_null_patch_is_rejected_before_any_read(
+        self, api_client, kb_bank, memory, monkeypatch, body
+    ):
+        """A null page field means "not supplied", so the patch changes nothing.
+
+        It used to slip past the "nothing to update" check, run no write
+        validator at all, and still hand back the node's metadata — a read of
+        another tenant's tree for anyone the validator would have denied.
+        """
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json=body,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Orders" not in resp.text
+        assert _write_ops(validator) == []
+
     async def test_delete_denied(self, api_client, kb_bank, memory, monkeypatch):
         bank_id, ids = kb_bank
         validator = _kb_validator(reject_write=BankWriteOperation.DELETE_KNOWLEDGE_NODE)
