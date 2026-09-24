@@ -1257,6 +1257,44 @@ class MemoriesExtension(Extension, ABC):
                 out[bank_id] = counts
         return out
 
+    async def run_store_migration(self, *, migration_id: str) -> "tuple[int, int]":
+        """Ask the store to apply a named migration to every bank in the calling tenant.
+
+        Returns ``(enqueued, namespaces)``. A store that keeps derived state of its own needs a way
+        to bring EXISTING data up to what a new build expects; this is that way, and it is named
+        rather than numbered so that asking for something the deployed store does not have fails
+        loudly instead of quietly deciding there was nothing to do.
+
+        Triggering only. The work may run behind the call — a store is free to hand it to whatever
+        component owns writing its index — so a caller polls :meth:`store_migration_status` rather
+        than assuming completion on return.
+
+        Must be idempotent: re-triggering while a run is in flight adds nothing, which is what lets
+        a caller retry freely and recover from a crash part-way by simply running it again.
+
+        **The store does not record which migrations have been applied — the caller does.** Here
+        that is alembic, which already sequences per tenant, holds the locks and keeps the version
+        table. A second record inside the store would only disagree with it.
+
+        Does nothing by default: a store with no derived state of its own has nothing to migrate.
+        """
+        return (0, 0)
+
+    async def store_migration_status(self, *, migration_id: str) -> "tuple[int, int]":
+        """How far a store migration has got in the calling tenant: ``(remaining, stuck)``.
+
+        Done when ``remaining`` is 0.
+
+        ``stuck`` counts units the store has retried without progress. It is not a terminal state —
+        the store may keep trying — but a caller waiting for a migration has to be able to tell
+        "still working" from "will never finish", and without that signal one poison-pill unit makes
+        it poll forever.
+
+        ``(0, 0)`` by default, which reads as "nothing outstanding" for a store that migrates
+        nothing.
+        """
+        return (0, 0)
+
     async def list_banks_by_write(self, *, limit: int = 100, page_token: str = "") -> "BankWritePage":
         """One page of this store's banks, most recently written first, plus the next cursor.
 
