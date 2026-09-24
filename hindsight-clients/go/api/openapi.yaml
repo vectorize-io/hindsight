@@ -11615,6 +11615,29 @@ components:
         occurred_end:
           nullable: true
           type: string
+        mentioned_at:
+          nullable: true
+          type: string
+        document_id:
+          nullable: true
+          type: string
+        chunk_id:
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        metadata:
+          additionalProperties:
+            type: string
+          nullable: true
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - text
       title: ReflectFact

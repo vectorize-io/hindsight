@@ -15,7 +15,7 @@ import re
 import time
 import traceback
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
@@ -566,7 +566,8 @@ class RecallResult(BaseModel):
         description=(
             "Attachments this fact was drawn from, as recorded per fact at extraction time — the "
             "same edge the memory read endpoints return, not everything its chunk happened to "
-            "carry. A fact stated in prose reports none. Omitted when there are none."
+            "carry. A fact stated in prose reports none; an observation reports those of the facts "
+            "it was consolidated from. Omitted when there are none."
         ),
     )
 
@@ -998,6 +999,7 @@ async def _attach_to_memories(
     It is per fact, not per chunk: a chunk carrying a screenshot also carries the
     prose around it, and showing the screenshot against every fact from that one
     LLM call attributes the diagram to the paragraph that never mentioned it.
+    An observation shows the attachments of the facts it was consolidated from.
 
     One lookup for the whole page, not one per memory.
 
@@ -1008,6 +1010,7 @@ async def _attach_to_memories(
     back from a table the store never wrote.
     """
     unit_ids: list[str] = []
+    observation_ids: list[str] = []
     carried: dict[str, tuple[str | None, list[str]]] = {}
     for item in items:
         if not isinstance(item, dict):
@@ -1016,11 +1019,16 @@ async def _attach_to_memories(
         if not item.get("id"):
             continue
         unit_ids.append(item["id"])
+        # The list view names the type `fact_type`, the detail view `type`.
+        if (item.get("fact_type") or item.get("type")) == "observation":
+            observation_ids.append(str(item["id"]))
         if ids is not None:
             carried[str(item["id"])] = (item.get("document_id"), list(ids))
     if not unit_ids:
         return
-    by_unit = await memory_app.attachments_for_memories(bank_id, unit_ids, request_context, carried=carried)
+    by_unit = await memory_app.attachments_for_memories(
+        bank_id, unit_ids, request_context, carried=carried, observation_ids=observation_ids
+    )
     if not by_unit:
         return
     for item in items:
@@ -1032,7 +1040,7 @@ async def _attach_to_memories(
 async def _attach_to_recall_results(
     memory_app: "MemoryEngine",
     bank_id: str,
-    results: "list[RecallResult]",
+    results: "Sequence[RecallResult | ReflectFact]",
     request_context: RequestContext,
     carried: "dict[str, tuple[str | None, list[str]]] | None" = None,
 ) -> None:
@@ -1055,7 +1063,13 @@ async def _attach_to_recall_results(
     unit_ids = [result.id for result in results if result.id]
     if not unit_ids:
         return
-    by_unit = await memory_app.attachments_for_memories(bank_id, unit_ids, request_context, carried=carried)
+    by_unit = await memory_app.attachments_for_memories(
+        bank_id,
+        unit_ids,
+        request_context,
+        carried=carried,
+        observation_ids=[result.id for result in results if result.id and result.type == "observation"],
+    )
     if not by_unit:
         return
     for result in results:
@@ -1652,6 +1666,18 @@ class ReflectFact(BaseModel):
     context: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
+    mentioned_at: str | None = None
+    document_id: str | None = None
+    chunk_id: str | None = None
+    tags: list[str] | None = None
+    metadata: dict[str, str] | None = None
+    attachments: list[ChunkAttachment] | None = Field(
+        default=None,
+        description=(
+            "Attachments this memory was drawn from — the same per-fact edge recall reports. "
+            "An observation reports those of the facts it was consolidated from. Omitted when there are none."
+        ),
+    )
 
 
 class ReflectDirective(BaseModel):
@@ -6328,6 +6354,7 @@ def _register_routes(app: FastAPI):
                 memories = []
                 mental_models = []
                 directives = []
+                carried: dict[str, tuple[str | None, list[str]]] = {}
                 for fact_type, facts in core_result.based_on.items():
                     if fact_type == "directives":
                         # Directives are dicts with id, name, content (not MemoryFact objects)
@@ -6359,8 +6386,18 @@ def _register_routes(app: FastAPI):
                                     context=fact.context,
                                     occurred_start=fact.occurred_start,
                                     occurred_end=fact.occurred_end,
+                                    mentioned_at=fact.mentioned_at,
+                                    document_id=fact.document_id,
+                                    chunk_id=fact.chunk_id,
+                                    tags=fact.tags,
+                                    metadata=fact.metadata,
                                 )
                             )
+                            if fact.attachment_ids is not None:
+                                carried[fact.id] = (fact.document_id, fact.attachment_ids)
+                # The evidence is what a client shows beside the answer, so it gets the
+                # attachments recall would have shown for the same memories.
+                await _attach_to_recall_results(app.state.memory, bank_id, memories, request_context, carried=carried)
                 based_on_result = ReflectBasedOn(memories=memories, mental_models=mental_models, directives=directives)
 
             # Build trace (tool_calls + llm_calls + observations) if tool_calls is requested

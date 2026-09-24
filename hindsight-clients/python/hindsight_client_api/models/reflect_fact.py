@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -32,7 +33,13 @@ class ReflectFact(BaseModel):
     context: Optional[StrictStr] = None
     occurred_start: Optional[StrictStr] = None
     occurred_end: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "context", "occurred_start", "occurred_end"]
+    mentioned_at: Optional[StrictStr] = None
+    document_id: Optional[StrictStr] = None
+    chunk_id: Optional[StrictStr] = None
+    tags: Optional[List[StrictStr]] = None
+    metadata: Optional[Dict[str, StrictStr]] = None
+    attachments: Optional[List[ChunkAttachment]] = None
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "chunk_id", "tags", "metadata", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,6 +80,13 @@ class ReflectFact(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in attachments (list)
+        _items = []
+        if self.attachments:
+            for _item_attachments in self.attachments:
+                if _item_attachments:
+                    _items.append(_item_attachments.to_dict())
+            _dict['attachments'] = _items
         # set to None if id (nullable) is None
         # and model_fields_set contains the field
         if self.id is None and "id" in self.model_fields_set:
@@ -98,6 +112,36 @@ class ReflectFact(BaseModel):
         if self.occurred_end is None and "occurred_end" in self.model_fields_set:
             _dict['occurred_end'] = None
 
+        # set to None if mentioned_at (nullable) is None
+        # and model_fields_set contains the field
+        if self.mentioned_at is None and "mentioned_at" in self.model_fields_set:
+            _dict['mentioned_at'] = None
+
+        # set to None if document_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.document_id is None and "document_id" in self.model_fields_set:
+            _dict['document_id'] = None
+
+        # set to None if chunk_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.chunk_id is None and "chunk_id" in self.model_fields_set:
+            _dict['chunk_id'] = None
+
+        # set to None if tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.tags is None and "tags" in self.model_fields_set:
+            _dict['tags'] = None
+
+        # set to None if metadata (nullable) is None
+        # and model_fields_set contains the field
+        if self.metadata is None and "metadata" in self.model_fields_set:
+            _dict['metadata'] = None
+
+        # set to None if attachments (nullable) is None
+        # and model_fields_set contains the field
+        if self.attachments is None and "attachments" in self.model_fields_set:
+            _dict['attachments'] = None
+
         return _dict
 
     @classmethod
@@ -115,7 +159,13 @@ class ReflectFact(BaseModel):
             "type": obj.get("type"),
             "context": obj.get("context"),
             "occurred_start": obj.get("occurred_start"),
-            "occurred_end": obj.get("occurred_end")
+            "occurred_end": obj.get("occurred_end"),
+            "mentioned_at": obj.get("mentioned_at"),
+            "document_id": obj.get("document_id"),
+            "chunk_id": obj.get("chunk_id"),
+            "tags": obj.get("tags"),
+            "metadata": obj.get("metadata"),
+            "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })
         return _obj
 

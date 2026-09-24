@@ -5546,7 +5546,7 @@ export type RecallResult = {
   /**
    * Attachments
    *
-   * Attachments this fact was drawn from, as recorded per fact at extraction time — the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none.
+   * Attachments this fact was drawn from, as recorded per fact at extraction time — the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none; an observation reports those of the facts it was consolidated from. Omitted when there are none.
    */
   attachments?: Array<ChunkAttachment> | null;
 };
@@ -5685,6 +5685,34 @@ export type ReflectFact = {
    * Occurred End
    */
   occurred_end?: string | null;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+  /**
+   * Document Id
+   */
+  document_id?: string | null;
+  /**
+   * Chunk Id
+   */
+  chunk_id?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string> | null;
+  /**
+   * Metadata
+   */
+  metadata?: {
+    [key: string]: string;
+  } | null;
+  /**
+   * Attachments
+   *
+   * Attachments this memory was drawn from — the same per-fact edge recall reports. An observation reports those of the facts it was consolidated from. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
