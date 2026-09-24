@@ -7157,11 +7157,12 @@ def _register_routes(app: FastAPI):
             # parent_id is applied only when present in the body, so passing null
             # moves the node to the root (distinct from "not provided"), which is
             # what KEEP_PARENT stands in for. Page options live on the backing
-            # mental model and each applies only when supplied (so tags=[] clears,
-            # distinct from "not provided").
-            # A patch that resolves to no semantic change (an empty body, or one of
-            # explicit nulls) is rejected by the engine with a 400 before it reads
-            # anything, so it can't return node metadata unauthorized.
+            # mental model and take the opposite convention: null there means "not
+            # changing this", while an empty VALUE is a real change (tags=[] clears
+            # them). So a body that is null all the way down changes nothing at all,
+            # and the engine rejects it with a 400 before reading anything — a no-op
+            # authorizes no operation, and would otherwise hand the node's metadata
+            # to a caller the validator never got to judge.
             # One call, one transaction: a rename must not survive the move that
             # fails after it, which is what left clients retrying against a tree
             # they never asked for.
