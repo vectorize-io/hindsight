@@ -42,7 +42,7 @@ async def model(client, llm, bank_id, settled) -> str:
     return created.mental_model_id
 
 
-async def test_two_requests_in_flight_share_one_operation(client, bank_id, model):
+async def test_two_requests_in_flight_share_one_operation(client, bank_id, model, settled):
     """Back to back, no wait between them. The second joins the first rather than
     queueing a rival — the caller gets an operation id either way, and it is the
     same id.
@@ -61,6 +61,11 @@ async def test_two_requests_in_flight_share_one_operation(client, bank_id, model
         claimed = await client.operations.get_operation_status(bank_id, first.operation_id)
         assert claimed.status != "pending", "the second refresh queued a rival while the first was still pending"
 
+    # Nothing below needs the refresh, but an in-flight one outlives the test: the
+    # next test resets the stub rulebook, and the refresh's LLM calls would then
+    # land unscripted and fail *that* test instead of this one.
+    await settled(bank_id)
+
 
 async def test_the_bank_does_not_accumulate_a_refresh_per_request(client, bank_id, model, settled):
     """The #3487 shape. Five requests, and the queue must not grow five deep.
@@ -73,10 +78,11 @@ async def test_the_bank_does_not_accumulate_a_refresh_per_request(client, bank_i
     for _ in range(5):
         await client.mental_models.refresh_mental_model(bank_id, model)
         queued = await client.operations.list_operations(
-            bank_id, type="refresh_mental_model", status="pending", limit=100
+            bank_id, type="refresh_mental_model", status="pending", limit=1
         )
         assert queued.total <= 1, f"{queued.total} refreshes queued for one model"
 
+    # Drain before the rulebook is reset for the next test — see the comment above.
     await settled(bank_id)
 
 
