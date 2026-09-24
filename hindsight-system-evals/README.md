@@ -117,6 +117,20 @@ To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
 HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED=true uv run pytest evals/test_05_refresh_cost.py
 ```
 
+**`test_06` — reflect reads the page it was given.** The only suite where the
+page layer is live: the others create their pages with `exclude_mental_models`, so
+`has_mental_models` is false and reflect is never offered the page tools at all.
+This one builds the page, then asks the page's own question and checks reflect
+went to the page layer (from the tool trace) and that the answer says what the
+page says (judged against the page, not the corpus gold — whether the page itself
+converged is `test_01`'s grade).
+
+It exists because that layer changed: `search_mental_models` used to return five
+pages whole, and now returns the best hit whole plus a snippet of the others, with
+`read_mental_models` for the rest. It is what showed that snippets *alone* let the
+model answer from a snippet without ever reading the page, which is why the best
+hit still arrives in full.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels

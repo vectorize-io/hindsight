@@ -37,7 +37,8 @@ The reflect agent runs in a loop with access to these tools:
 
 | Tool | Purpose | Priority |
 |------|---------|----------|
-| `search_mental_models` | User-curated summaries | Highest (check first) |
+| `search_mental_models` | User-curated summaries — best match in full, a snippet of the others | Highest (check first) |
+| `read_mental_models` | Full text of the pages returned as snippets | When a snippet looks relevant |
 | `search_observations` | Consolidated knowledge | High |
 | `recall` | Raw facts (ground truth) | Fallback |
 | `expand` | Get more context for a memory | As needed |

@@ -78,6 +78,30 @@ def test_an_item_already_shown_is_referenced_not_repeated():
     assert again["already_shown"] == {"observations": ["o1"]}
 
 
+def test_reading_a_page_seen_as_a_snippet_returns_its_text():
+    """The dedupe keys on the shape, not the id alone.
+
+    `search_mental_models` shows the best hit whole and the rest as snippets, so
+    the SAME page id legitimately comes back twice: once truncated, once in full
+    from the `read_mental_models` the model then issues. Keying on the id alone
+    answered that read with `already_shown` and an empty list — the model asked
+    for the page and was handed nothing, which the system story
+    `test_35_mental_model_reads` caught end to end.
+    """
+    presenter = ToolResultPresenter()
+    presenter.present({"mental_models": [{"id": "uuid-a", "snippet": "Alice lives in", "content_chars": 407}]})
+
+    read = presenter.present({"mental_models": [{"id": "uuid-a", "content": "Alice lives in Berlin."}]})
+
+    assert [p["content"] for p in read["mental_models"]] == ["Alice lives in Berlin."]
+    assert "already_shown" not in read
+    # A second read of the same page is still a back-reference.
+    assert presenter.present({"mental_models": [{"id": "uuid-a", "content": "Alice lives in Berlin."}]}) == {
+        "mental_models": [],
+        "already_shown": {"mental_models": ["p1"]},
+    }
+
+
 def test_chunks_lose_their_long_keys_and_bookkeeping():
     out = ToolResultPresenter().present(
         {

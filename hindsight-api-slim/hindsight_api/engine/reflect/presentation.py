@@ -94,10 +94,12 @@ class ToolResultPresenter:
                         items.append(item)
                         continue
                     alias = self.alias(str(item["id"]), _LISTS[key])
-                    # Keyed by the list it arrived in, not by id alone: a mental model
-                    # comes back as a snippet from a search and as full text from a
-                    # read, and the read is the one the model asked for.
-                    seen_key = (key, str(item["id"]))
+                    # Keyed by the list AND by whether this is the full text: a mental
+                    # model comes back as a snippet from a search and as full text from
+                    # a read, and the read is the one the model asked for. Keying on the
+                    # id alone suppressed that read entirely — the page came back as
+                    # `already_shown` and the model never saw more than the snippet.
+                    seen_key = (key, str(item["id"]), "content" in item)
                     if seen_key in self._shown:
                         shown.setdefault(key, []).append(alias)
                         continue
