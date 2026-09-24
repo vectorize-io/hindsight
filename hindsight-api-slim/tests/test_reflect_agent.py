@@ -118,6 +118,24 @@ class TestMentalModelFreshnessHelper:
         output = {"mental_models": [{"id": "mm-1", "content": "   ", "is_stale": False}]}
         assert _all_mental_models_are_usable_and_fresh(output) is False
 
+    def test_a_snippet_counts_as_usable_content(self):
+        """A search now returns the runner-up pages as a snippet, not as `content`.
+
+        Reading only `content` made every result but the top hit look empty, which
+        kept the forced ladder running past a set of fresh, relevant pages.
+        """
+        output = {
+            "mental_models": [
+                {"id": "mm-1", "content": "The best hit, whole.", "is_stale": False},
+                {"id": "mm-2", "snippet": "The runner-up, truncated", "content_chars": 900, "is_stale": False},
+            ]
+        }
+        assert _all_mental_models_are_usable_and_fresh(output) is True
+
+    def test_a_blank_snippet_is_not_usable(self):
+        output = {"mental_models": [{"id": "mm-1", "snippet": "  ", "is_stale": False}]}
+        assert _all_mental_models_are_usable_and_fresh(output) is False
+
     def test_empty_list_is_vacuously_usable(self):
         # The caller gates on a non-empty list separately; the helper itself is
         # only responsible for freshness/content of the models it is given.
@@ -2257,6 +2275,10 @@ class TestReflectFinishesThroughDone:
         # prompt that would re-send every tool result as text.
         closing, previous = provider.calls[-1], provider.calls[-2]
         assert closing["tool_choice"].function_name == "done"
+        # Its own trace scope: the standalone synthesis records "final", and the two
+        # paths cost differently, so a reader must be able to tell them apart.
+        assert [c.scope for c in result.llm_trace][-1] == "closing_done"
+        assert not any(c.scope == "final" for c in result.llm_trace), "the standalone prompt must not have run"
         assert closing["n_messages"] == previous["n_messages"] + 1
 
     @pytest.mark.asyncio

@@ -73,10 +73,13 @@ async def _page_then_reflect(client: Hindsight, bank_id: str, settled: SettleFn,
             question_id=f"{question_id}-from-page",
             category=question.category,
             correct=verdict.meets_criteria,
-            hit_trap=not page_tools,
+            # Not a trap: a trap is a stored falsehood the answer repeated, counted
+            # on its own in the report. "Never went to the page layer" is a
+            # different failure, and it lands in ``reason`` and in the assert below.
+            hit_trap=False,
             bank_id=bank_id,
             page_id=outcome.page_id,
-            reason=verdict.reasoning,
+            reason=f"page tools used: {page_tools or 'none'} — {verdict.reasoning}",
         )
     )
     log.info("%s: grounded=%s page_tools=%s answer=%s", question_id, verdict.meets_criteria, page_tools, answer[:200])

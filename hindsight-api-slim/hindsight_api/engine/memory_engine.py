@@ -15390,8 +15390,13 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
         async def read_mental_models_fn(page_ids: list[str], max_tokens: int) -> dict[str, Any]:
+            # Honours the same exclusion the search does: a refresh excludes the page
+            # it is regenerating, and a read that ignored that would let the page be
+            # rebuilt from its own previous text.
+            excluded = set(exclude_mental_model_ids or [])
+            wanted = [pid for pid in page_ids if pid not in excluded]
             async with backend.acquire() as conn:
-                return await tool_read_mental_models(conn, bank_id, page_ids, max_tokens=max_tokens)
+                return await tool_read_mental_models(conn, bank_id, wanted, max_tokens=max_tokens)
 
         # Get reflect source facts config (hierarchical: env → tenant → bank)
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -15687,6 +15692,17 @@ class MemoryEngine(MemoryEngineInterface):
             )
             based_on["mental-models"] = []
             seen_model_ids: set[str] = set()
+            # A search now returns the best-ranked page whole and the others as a
+            # snippet, so a citation built from the search output alone would carry
+            # the truncated text (or, for the pages the model then read, nothing at
+            # all). Collect what `read_mental_models` returned first and prefer it.
+            read_contents: dict[str, str] = {
+                str(read_model["id"]): read_model.get("content", "")
+                for trace_call in agent_result.tool_trace
+                if trace_call.tool == "read_mental_models"
+                for read_model in trace_call.output.get("mental_models", [])
+                if read_model.get("id")
+            }
             for tc in agent_result.tool_trace:
                 if tc.tool == "get_mental_model":
                     # Single model lookup (with full details)
@@ -15722,7 +15738,9 @@ class MemoryEngine(MemoryEngineInterface):
                             seen_model_ids.add(model_id)
                             # Add to based_on as MemoryFact with type "mental-models"
                             model_name = model.get("name", "")
-                            model_content = model.get("content", "")
+                            model_content = (
+                                read_contents.get(model_id) or model.get("content") or model.get("snippet", "")
+                            )
                             based_on["mental-models"].append(
                                 MemoryFact(
                                     id=model_id,

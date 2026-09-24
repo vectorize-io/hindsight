@@ -402,19 +402,21 @@ def build_system_prompt_for_tools(
         parts.extend(body)
         parts.append("")
 
-    # The order is stated, not enforced per turn: pinning one tool per turn changes
-    # the tools/tool_config on every call, which invalidates a cached prefix and, on
-    # hybrid/local models, forces a full re-prefill of the whole conversation
-    # (#3865, #4469). Saying it here keeps every request a growing prefix of the
-    # last one.
+    # Stating the ladder here, rather than only forcing it turn by turn: the agent
+    # still pins the first turns with ``tool_choice`` (see ``forced_sequence`` in
+    # agent.py), but a model that has read the plan keeps following it once the
+    # forcing stops, instead of answering from whatever the last forced turn left.
     if len(levels) > 1:
-        plan = " → ".join(header.split(" (")[0].split(" - ")[0].title() for header, _ in levels)
+        names = [header.split(" (")[0].split(" - ")[0].title() for header, _ in levels]
         parts.extend(
             [
                 "## Search Plan",
-                f"Work down the levels in order ({plan}) before you answer:",
+                f"Work down the levels in order ({' → '.join(names)}) before you answer:",
                 "- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.",
-                "- Stop descending as soon as what you have answers the question — a fresh mental model often does.",
+                # Named from the levels actually offered: on a bank with no mental
+                # models the top level is observations, and pointing at a layer the
+                # model has no tool for is how #1724 happened.
+                f"- Stop descending as soon as what you have answers the question — fresh {names[0]} often do.",
                 "- Go deeper when the level above is stale, thin, or silent on what was asked.",
                 "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.",
                 "",

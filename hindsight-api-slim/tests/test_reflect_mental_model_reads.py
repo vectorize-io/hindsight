@@ -46,7 +46,7 @@ async def test_the_budget_stops_before_a_page_that_would_cross_it():
     out = await tool_read_mental_models(conn, "bank", ["mm-a", "mm-b"], max_tokens=100)
 
     assert [p["name"] for p in out["mental_models"]] == ["Small"]
-    assert out["not_read"] == ["Huge"]
+    assert out["not_read"] == ["mm-b"], "named by id, so the model can ask for it again on its own"
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,10 @@ async def test_the_model_can_read_a_page_it_only_saw_as_a_snippet(client, llm, b
     llm.on_step("reflect").returns_text("Alice travelled to Lisbon and Porto.")
 
     response = await client.areflect(
-        bank_id=bank_with_two_pages, query="Where has Alice travelled?", include_tool_calls=True
+        bank_id=bank_with_two_pages,
+        query="Where has Alice travelled?",
+        include_tool_calls=True,
+        include_facts=True,
     )
 
     reads = _tool_calls(response, "read_mental_models")
@@ -125,3 +128,10 @@ async def test_the_model_can_read_a_page_it_only_saw_as_a_snippet(client, llm, b
     (read_page,) = reads[0].output["mental_models"]
     assert read_page["id"] == snippet_page["id"]
     assert read_page["content"].strip().endswith(tail), "reading a page returns its text, not another snippet"
+
+    # The citation carries what the model actually read. Built from the search
+    # output alone it carried the truncated snippet — or, for a page that only
+    # arrived as a snippet, nothing at all but the page's name.
+    cited = [m for m in (response.based_on.mental_models or []) if snippet_page["id"] in (m.id or "")]
+    assert cited, f"the page the answer was read from must be cited: {response.based_on.mental_models}"
+    assert tail in cited[0].text, "the citation shows the page's full text, not the snippet"

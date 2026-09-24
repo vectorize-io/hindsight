@@ -915,7 +915,11 @@ async def _run_reflect_agent_inner(
         total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
         llm_trace.append(
             {
-                "scope": "final",
+                # Its own scope, not the "final" the standalone synthesis records:
+                # they are different calls with different costs — this one rides the
+                # prefix the provider already holds — and a reader (or a test) has to
+                # be able to tell which path produced the answer.
+                "scope": "closing_done",
                 "duration_ms": int((time.time() - llm_start) * 1000),
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
@@ -1925,7 +1929,11 @@ async def _execute_tool(
 
     elif tool_name == "read_mental_models":
         page_ids = args.get("mental_model_ids") or []
-        if not page_ids:
+        # A model that passes one id as a bare string would otherwise be iterated
+        # character by character into a read of nothing.
+        if isinstance(page_ids, str):
+            page_ids = [page_ids]
+        if not isinstance(page_ids, list) or not page_ids:
             return {"error": "read_mental_models requires mental_model_ids"}
         max_tokens, error = _parse_tool_int_arg_or_error(
             args,

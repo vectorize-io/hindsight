@@ -54,7 +54,7 @@ class ToolResultPresenter:
         self._alias_by_id: dict[str, str] = {}
         self._id_by_alias: dict[str, str] = {}
         self._counters: dict[str, int] = {}
-        self._shown: set[tuple[str, str]] = set()
+        self._shown: set[tuple[str, str, bool]] = set()
 
     def alias(self, raw_id: str, prefix: str) -> str:
         existing = self._alias_by_id.get(raw_id)

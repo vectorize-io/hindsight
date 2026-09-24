@@ -86,7 +86,7 @@ def test_reading_a_page_seen_as_a_snippet_returns_its_text():
     from the `read_mental_models` the model then issues. Keying on the id alone
     answered that read with `already_shown` and an empty list — the model asked
     for the page and was handed nothing, which the system story
-    `test_35_mental_model_reads` caught end to end.
+    `test_37_mental_model_reads` caught end to end.
     """
     presenter = ToolResultPresenter()
     presenter.present({"mental_models": [{"id": "uuid-a", "snippet": "Alice lives in", "content_chars": 407}]})

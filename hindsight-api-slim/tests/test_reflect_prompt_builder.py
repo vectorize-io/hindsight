@@ -160,7 +160,7 @@ You have access to THREE levels of knowledge. Use them in this order:
 ## Search Plan
 Work down the levels in order (Mental Models → Observations → Raw Facts) before you answer:
 - Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
-- Stop descending as soon as what you have answers the question — a fresh mental model often does.
+- Stop descending as soon as what you have answers the question — fresh Mental Models often do.
 - Go deeper when the level above is stale, thin, or silent on what was asked.
 - Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """
@@ -184,7 +184,7 @@ You have access to TWO levels of knowledge. Use them in this order:
 ## Search Plan
 Work down the levels in order (Mental Models → Raw Facts) before you answer:
 - Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
-- Stop descending as soon as what you have answers the question — a fresh mental model often does.
+- Stop descending as soon as what you have answers the question — fresh Mental Models often do.
 - Go deeper when the level above is stale, thin, or silent on what was asked.
 - Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """
@@ -209,7 +209,7 @@ You have access to TWO levels of knowledge. Use them in this order:
 ## Search Plan
 Work down the levels in order (Observations → Raw Facts) before you answer:
 - Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
-- Stop descending as soon as what you have answers the question — a fresh mental model often does.
+- Stop descending as soon as what you have answers the question — fresh Observations often do.
 - Go deeper when the level above is stale, thin, or silent on what was asked.
 - Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """

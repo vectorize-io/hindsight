@@ -129,7 +129,7 @@ async def tool_search_mental_models(
     Returns:
         Dict with matching mental models including content and freshness info
     """
-    from ..memory_engine import _mental_model_stale_scope_from_row, fq_table
+    from ..memory_engine import _knowledge_snippet, _mental_model_stale_scope_from_row, fq_table
     from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
 
     # Build filters dynamically
@@ -256,7 +256,13 @@ async def tool_search_mental_models(
                 **(
                     {"content": content}
                     if top_hit
-                    else {"snippet": content[:_SNIPPET_CHARS].strip(), "content_chars": len(content)}
+                    # ``_knowledge_snippet`` so a page with no body reads as
+                    # empty-on-purpose rather than as a blank match — the same
+                    # wording the knowledge-page search gives for the same state.
+                    else {
+                        "snippet": _knowledge_snippet(content)[:_SNIPPET_CHARS].strip(),
+                        "content_chars": len(content),
+                    }
                 ),
                 "tags": row["tags"] or [],
                 # The store path carries relevance beside the rows (its SELECT hydrates only what
@@ -319,7 +325,9 @@ async def tool_read_mental_models(
         content = row["content"] or ""
         cost = count_prompt_tokens(content)
         if pages and spent + cost > max_tokens:
-            omitted.append(row["name"])
+            # The id, not the name: ``not_read`` is a retry list, and the model can
+            # only ask again with an id.
+            omitted.append(str(row["id"]))
             continue
         spent += cost
         last_refreshed_at = row["last_refreshed_at"]
