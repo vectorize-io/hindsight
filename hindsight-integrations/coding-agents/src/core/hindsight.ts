@@ -893,7 +893,9 @@ export class HindsightClient {
           );
           return;
         }
-        if (r.status === 404) return; // bank (or node) vanished under us — retry next session
+        // The node vanished under us (a concurrent delete). Skip it — the remaining pages are
+        // still worth syncing, and the run's summary line is still worth logging.
+        if (r.status === 404) continue;
         updated++;
       }
     }
@@ -938,8 +940,10 @@ export class HindsightClient {
       );
       // 404 only: `req` throws on every other non-ok status it was not told to tolerate, so the
       // 405/501 this used to test for never arrive (see `pagesUnsupported`). No latch here — a
-      // bank or node that has gone missing is not a verdict on the server's capabilities.
-      if (r.status === 404) break;
+      // node that has gone missing says nothing about the server's capabilities, and nothing about
+      // the pages after it either, so skip it rather than abandoning the rest of the re-sync (this
+      // `break`ed while the status still carried a server-wide meaning).
+      if (r.status === 404) continue;
       updated++;
     }
     return updated;

@@ -11,8 +11,10 @@ import type { UsageCursorStore } from "./usage";
 export interface SessionCache {
   turns?: number;
   reflectAnswer?: string; // present (even "") = reflect already resolved this session
-  /** How many times auto-reflect has been ATTEMPTED this session. A failure leaves `reflectAnswer`
-   *  unset so a later turn can retry; this bounds that retry (see HOOK_REFLECT_ATTEMPTS). */
+  /** How many times auto-inject has been ATTEMPTED this session — every source, not just reflect.
+   *  A failure leaves `reflectAnswer` unset so a later turn can retry; this bounds that retry (see
+   *  HOOK_INJECT_ATTEMPTS). Named for reflect like `reflectAnswer` above, whose name also predates
+   *  the other two sources. */
   reflectAttempts?: number;
   /** SessionStart saw a new/empty bank; consume this on prompt one, then allow reflect. */
   deferInitialReflect?: boolean;

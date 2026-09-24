@@ -499,7 +499,22 @@ describe("buildHookOutput", () => {
     expect(out.context).not.toContain("synthesis was unavailable");
   });
 
-  it("autoInject pages/recall: an empty or failed retrieval injects nothing and no notice", async () => {
+  it("autoInject recall: an EMPTY retrieval injects nothing and stays silent", async () => {
+    const client = makeClient({ recallObservations: vi.fn(async () => []) });
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg: resolveConfig({ autoInject: "recall" }),
+      client,
+      cacheFile,
+    });
+    expect(out.context ?? "").not.toContain("<hindsight_memory>");
+    // Nothing to say is not a failure — announcing one would report a break on the sessions
+    // where the plugin worked and the bank was simply sparse.
+    expect(out.notice).toBeUndefined();
+  });
+
+  it("autoInject recall: a FAILED retrieval says so, like a failed reflect", async () => {
     const client = makeClient({
       recallObservations: vi.fn(async () => {
         throw new Error("boom");
@@ -513,7 +528,8 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(out.context ?? "").not.toContain("<hindsight_memory>");
-    expect(out.notice).toBeUndefined();
+    // These modes used to stay silent, so a memory-less turn looked identical to a healthy one.
+    expect(out.notice).toContain("no memory this turn");
   });
 
   it("autoReflect false: never calls reflect, injects no memory block", async () => {

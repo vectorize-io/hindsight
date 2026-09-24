@@ -93,7 +93,7 @@ const HOOK_FALLBACK_BUDGET_MS = 7_000;
 /** How many turns auto-inject may FAIL on before a session gives up on memory. The budget is
  *  turns, not time: each retry costs another full attempt (up to `reflectTimeoutMs` on the
  *  reflect path), so a dead server spends this many turns before every later turn is free. */
-const HOOK_REFLECT_ATTEMPTS = 2;
+const HOOK_INJECT_ATTEMPTS = 2;
 
 /**
  * What to cache for a once-per-session auto-injection, given what the source returned.
@@ -105,7 +105,7 @@ const HOOK_REFLECT_ATTEMPTS = 2;
  */
 function resolveInjection(got: string | null | undefined, attempts: number): string | undefined {
   if (got != null) return got;
-  return got === null || attempts >= HOOK_REFLECT_ATTEMPTS ? "" : undefined;
+  return got === null || attempts >= HOOK_INJECT_ATTEMPTS ? "" : undefined;
 }
 
 /** Knowledge-page search for the prompt, formatted for injection. `null` = it ran and nothing
@@ -227,31 +227,32 @@ export async function buildHookOutput(args: {
   } else if (cfg.autoInject === "pages" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAttempts++;
-    reflectAnswer = resolveInjection(
-      await injectPages(
-        harness,
-        prompt,
-        client,
-        HOOK_FALLBACK_BUDGET_MS,
-        "inject_pages",
-        PAGE_INJECT_LEAD
-      ),
-      reflectAttempts
+    const got = await injectPages(
+      harness,
+      prompt,
+      client,
+      HOOK_FALLBACK_BUDGET_MS,
+      "inject_pages",
+      PAGE_INJECT_LEAD
     );
+    // `undefined` is the search FAILING, distinct from `null` (it ran, nothing matched). These
+    // modes stayed silent on a failure while reflect announced one — the same turn looked healthy
+    // whether memory was unavailable or simply had nothing to say.
+    if (got === undefined) reflectFailed = true;
+    reflectAnswer = resolveInjection(got, reflectAttempts);
   } else if (cfg.autoInject === "recall" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAttempts++;
-    reflectAnswer = resolveInjection(
-      await injectRecall(
-        harness,
-        prompt,
-        client,
-        HOOK_FALLBACK_BUDGET_MS,
-        "inject_recall",
-        RECALL_INJECT_LEAD
-      ),
-      reflectAttempts
+    const got = await injectRecall(
+      harness,
+      prompt,
+      client,
+      HOOK_FALLBACK_BUDGET_MS,
+      "inject_recall",
+      RECALL_INJECT_LEAD
     );
+    if (got === undefined) reflectFailed = true; // see the pages branch above
+    reflectAnswer = resolveInjection(got, reflectAttempts);
   } else if (cfg.autoInject === "reflect" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
     reflectAttempts++;

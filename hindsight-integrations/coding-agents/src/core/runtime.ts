@@ -48,8 +48,6 @@ export class RuntimeCore {
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
   private notify?: (title: string, message: string) => void;
-  /** Fallback knowledge preamble from plugin load. Each session prefers its OWN roster (onPrompt). */
-  private preamble = "";
 
   constructor(
     private readonly client: HindsightClient,
@@ -104,10 +102,12 @@ export class RuntimeCore {
 
   /**
    * Plugin load (SessionStart-equivalent): on a cold repo, deterministically start the background
-   * git-log seed + codebase survey, and compute a knowledge-page preamble (tool guide + roster).
-   * That preamble is only onPrompt's FALLBACK — each session rebuilds it from its own roster, since
-   * this runs once per process and these hosts outlive every session (#4607). Reuses the exact
-   * hook-harness logic (`buildSessionStartContext`) so opencode seeds identically. Never throws.
+   * git-log seed + codebase survey. Reuses the exact hook-harness logic
+   * (`buildSessionStartContext`) so opencode seeds identically. Never throws.
+   *
+   * It deliberately does NOT keep that call's knowledge preamble. This runs once per PROCESS and
+   * these hosts outlive every session, so a roster captured here is stale for every session but
+   * the first — `onPrompt` builds its own from the session's live page list (#4607).
    */
   async seedIfCold(repoPath: string | undefined): Promise<void> {
     // Anti-recursion: a headless survey session runs the agent (which loads this plugin) with
@@ -147,7 +147,6 @@ export class RuntimeCore {
         log.info(this.harness, plain);
         this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
       }
-      this.preamble = out.additionalContext ?? "";
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {
       /* seeding + preamble are best-effort — a cold-check failure never breaks the agent */
@@ -181,21 +180,17 @@ export class RuntimeCore {
     });
 
     const blocks: string[] = [];
-    // The preamble is the SessionStart-equivalent; inject it once, on the first turn (later turns get
-    // the periodic refresh below). Empty until seedIfCold resolves — if the first prompt races ahead
-    // of plugin-load seeding, the roster refresh still delivers the tool guide on cadence.
+    // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
+    // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
+    // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
+    // existed told every later session "No knowledge pages yet" while the same turn's memory block
+    // listed pages by id (#4607).
     if (turns === 1) {
-      // Rebuilt from THIS session's roster, not the one plugin load happened to see. These hosts
-      // outlive every session, so a preamble frozen at load told each new session "no knowledge
-      // pages yet" for the life of the process — while the very same turn's memory block listed
-      // pages by id (#4607). `seedIfCold`'s preamble is only the fallback for a session whose own
-      // roster fetch came back empty (new bank, or the list request failed).
-      const fresh = output.pages.length
-        ? buildKnowledgePreamble(output.pages, {
-            reflectOnNewGoals: this.cfg.autoInject !== "reflect",
-          })
-        : this.preamble;
-      if (fresh) blocks.push(fresh);
+      blocks.push(
+        buildKnowledgePreamble(output.pages, {
+          reflectOnNewGoals: this.cfg.autoInject !== "reflect",
+        })
+      );
     }
     if (output.context) blocks.push(output.context);
     // OpenCode has no user-message hook channel; use its native toast instead of stderr, which

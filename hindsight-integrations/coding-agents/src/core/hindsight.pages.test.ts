@@ -93,6 +93,25 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(c.knowledgePagesSupported).toBe(true);
   });
 
+  it("search latches on its OWN endpoint-missing 404 — it is not only reached via listPages", async () => {
+    // Before, search parsed a server's own 404 into `results: undefined` -> [], so a deployment
+    // with no knowledge-base API reported "nothing matched" forever instead of saying the feature
+    // is missing. The pre-existing test only ever reached the already-latched guard.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        json: async () => ({ detail: "Not Found" }),
+      })) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.searchKnowledgePages("architecture")).rejects.toMatchObject({
+      code: "knowledge_pages_unavailable",
+    });
+    expect(c.knowledgePagesSupported).toBe(false);
+  });
+
   it("listPages reads the knowledge-base tree — never /mental-models", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ roots: [] }));
