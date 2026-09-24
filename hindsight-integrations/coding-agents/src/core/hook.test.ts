@@ -135,7 +135,7 @@ describe("buildHookOutput", () => {
     expect(second.context).toContain("REFLECT_ANSWER");
   });
 
-  it("reflect rejection: caches '' (no retry next turn), no throw, no context at all", async () => {
+  it("reflect rejection: retried once on a later turn, then cached '' — no throw, no context", async () => {
     const cfg = resolveConfig({});
     const client = makeClient({
       reflect: vi.fn(async () => {
@@ -154,17 +154,18 @@ describe("buildHookOutput", () => {
     // ...but the turn is NOT silent: one line pointing at the diag trail (#3443).
     expect(t1.notice).toContain("no memory this turn");
     expect(t1.notice).toContain(diagFilePath());
-    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    // A failure is not an answer: nothing is cached, so a later turn can still get memory (#4607).
+    const afterT1 = JSON.parse(readFileSync(cacheFile, "utf8"));
+    expect(afterT1.reflectAnswer).toBeUndefined();
+    expect(afterT1.reflectAttempts).toBe(1);
 
-    await buildHookOutput({
-      harness: "claude-code",
-      prompt: UNRELATED_PROMPT,
-      cfg,
-      client,
-      cacheFile,
-    });
-    // The failure is cached as "" — reflect is NOT retried on the next turn.
-    expect(client.reflect).toHaveBeenCalledTimes(1);
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(2);
+    // Second failure exhausts the budget — now it IS cached, so a dead server costs 2 turns, not every turn.
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(2);
   });
 
   it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
@@ -198,7 +199,7 @@ describe("buildHookOutput", () => {
     expect(failed.error).toContain("upstream LLM rejected the turn");
   });
 
-  it("the notice fires ONCE — the turn reflect failed, not on later turns", async () => {
+  it("the notice fires on the turns reflect ran, and stops once the retries are spent", async () => {
     const cfg = resolveConfig({});
     const client = makeClient({
       reflect: vi.fn(async () => {
@@ -207,7 +208,9 @@ describe("buildHookOutput", () => {
     });
     const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
     expect((await buildHookOutput(args)).notice).toContain("no memory this turn");
-    // Turn 2 does not re-run reflect, so re-announcing a failure it did not observe would nag.
+    // Turn 2 retries (and fails) — it observed the failure, so it says so.
+    expect((await buildHookOutput(args)).notice).toContain("no memory this turn");
+    // Turn 3 does not re-run reflect, so re-announcing a failure it did not observe would nag.
     expect((await buildHookOutput(args)).notice).toBeUndefined();
   });
 
@@ -367,7 +370,8 @@ describe("buildHookOutput", () => {
       expect(client.recallObservations).toHaveBeenCalledTimes(1);
       expect(out.context).not.toContain("<hindsight_memory>");
       expect(out.notice).toContain("no memory this turn");
-      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+      // Retryable: neither reflect nor the fallbacks produced memory, so a later turn may try again.
+      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
     });
 
     it("4xx or a transport error does NOT fall back: every endpoint would fail the same way", async () => {

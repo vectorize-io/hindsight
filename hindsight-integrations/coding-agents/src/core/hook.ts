@@ -90,6 +90,9 @@ interface HookClient {
  *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
 const HOOK_FALLBACK_BUDGET_MS = 7_000;
 
+/** How many turns auto-reflect may fail on before a session gives up on synthesis. */
+const HOOK_REFLECT_ATTEMPTS = 2;
+
 /** Knowledge-page search for the prompt, formatted for injection; undefined when nothing matched
  *  or the search failed (recorded as `event` / `${event}_failed`). Never throws. */
 async function injectPages(
@@ -161,8 +164,11 @@ export interface HookOutput {
   context?: string;
   /** User-facing line(s) — set only on the reflect turn (its goal + result preview). */
   notice?: string;
-  /** Page count from the session's roster cache — 0 signals a bank the engine never built. */
-  pagesKnown?: number;
+  /** This session's knowledge-page roster, from the shared per-session cache. The SINGLE source
+   *  of truth for every page-derived block in a turn: the persistent-plugin runtime rebuilds its
+   *  SessionStart preamble from this too, so a turn can no longer be told both "no pages yet" and
+   *  a list of pages in the same context (#4607). Empty also signals a bank the engine never built. */
+  pages: PageRef[];
 }
 
 /**
@@ -187,6 +193,7 @@ export async function buildHookOutput(args: {
   // knowledge pages first and reserves reflection for gaps. Whatever the source, its body is
   // cached as `reflectAnswer` (the field name predates the other sources).
   let reflectAnswer = cached.reflectAnswer;
+  let reflectAttempts = cached.reflectAttempts ?? 0;
   let reflectRanThisTurn = false;
   // Set ONLY by the catch below. An empty answer is not a failure: reflect can legitimately have
   // nothing to say on a sparse bank (diag records that as reflect_empty), and reporting it as a
@@ -223,6 +230,7 @@ export async function buildHookOutput(args: {
       )) ?? "";
   } else if (cfg.autoInject === "reflect" && reflectAnswer === undefined) {
     reflectRanThisTurn = true;
+    reflectAttempts++;
     const t0 = Date.now();
     // Previously clamped to a hardcoded 20s, which made a raised reflectTimeoutMs dead config on
     // this path (#4398); the 20s now lives in the default instead. Not clamped: a user who raises reflectTimeoutMs past the host's prompt-hook timeout (30s on
@@ -245,7 +253,12 @@ export async function buildHookOutput(args: {
         answer: reflectAnswer.slice(0, 8000),
       });
     } catch (e) {
-      reflectAnswer = ""; // ran and failed — don't retry every turn; the diag trail records it
+      // A failure is RETRYABLE, not an answer. Caching "" here meant one timeout on the session's
+      // first prompt disabled synthesis for the ENTIRE session, with no second chance — and against
+      // a real server a reflect near the timeout is a coin flip, not an edge case (#4607). Leaving
+      // it undefined lets a later turn try again; the attempt counter bounds that, so a server
+      // that is simply down costs HOOK_REFLECT_ATTEMPTS turns and then stops.
+      reflectAnswer = reflectAttempts >= HOOK_REFLECT_ATTEMPTS ? "" : undefined;
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
         error: describeError(e),
@@ -290,6 +303,7 @@ export async function buildHookOutput(args: {
   writeSessionCache(cacheFile, {
     turns,
     reflectAnswer,
+    reflectAttempts,
     pages: { atTurn: stale ? turns : (cached.pages?.atTurn ?? turns), list: pages },
   } satisfies SessionCache);
 
@@ -335,7 +349,7 @@ export async function buildHookOutput(args: {
     notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
   }
 
-  return { context: kept.length ? kept.join("\n\n") : undefined, notice, pagesKnown: pages.length };
+  return { context: kept.length ? kept.join("\n\n") : undefined, notice, pages };
 }
 
 /** Run one hook invocation: stdin event in, (maybe) an injection object on stdout. */
@@ -412,7 +426,7 @@ export async function runHook(
   if (
     cfg.autoSeed !== false &&
     client.knowledgePagesSupported !== false &&
-    output.pagesKnown === 0
+    output.pages.length === 0
   ) {
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }

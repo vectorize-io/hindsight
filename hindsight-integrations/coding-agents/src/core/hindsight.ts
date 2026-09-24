@@ -175,6 +175,24 @@ export class KnowledgePagesUnavailableError extends Error {
   }
 }
 
+/**
+ * Is this 404 "that bank does not exist" rather than "this server has no knowledge-base API"?
+ *
+ * The two are indistinguishable by status alone, and conflating them latched the knowledge-page
+ * capability off for the whole process on the FIRST session in a new bank — the bank is created by
+ * the first retain, so a session-start page read always precedes it (#4607). The server answers
+ * `{"detail":"Bank 'x' not found"}`; an unrouted path answers FastAPI's bare `{"detail":"Not Found"}`.
+ */
+async function isBankMissing(r: Response): Promise<boolean> {
+  try {
+    // Consumes the body, which is safe: every 404 caller below returns without reading it.
+    const j = (await r.json()) as { detail?: unknown };
+    return /bank\b.*\bnot found/i.test(String(j?.detail ?? ""));
+  } catch {
+    return false; // unparseable body: treat as the endpoint being absent, the safer old behaviour
+  }
+}
+
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
 /** Default cap on concurrent retain-related requests; configurable via `maxParallelRetains`. */
@@ -653,16 +671,28 @@ export class HindsightClient {
   }
 
   /**
+   * Latch `knowledgePagesSupported = false` iff this response really means the endpoint is absent.
+   * Returns whether it latched. A bank-not-found 404 is NOT a capability verdict — it is the
+   * expected answer before the bank's first retain — so it must never cache a negative (#4607).
+   */
+  private async pagesUnsupported(r: Response): Promise<boolean> {
+    if (![404, 405, 501].includes(r.status)) return false;
+    if (r.status === 404 && (await isBankMissing(r))) return false;
+    this.knowledgePagesSupported = false;
+    return true;
+  }
+
+  /**
    * The bank's knowledge-base tree (folders + pages, nested). The tree carries names, source
    * queries and staleness but NOT synthesized content, so it is cheap enough to poll.
    */
   async tree(): Promise<KnowledgeNode[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
     const r = await this.req("GET", this.bankUrl("/knowledge-base/tree"));
-    if ([404, 405, 501].includes(r.status)) {
-      this.knowledgePagesSupported = false;
-      throw new KnowledgePagesUnavailableError();
-    }
+    if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
+    // Bank not created yet: it genuinely has no pages, and the capability stays UNKNOWN so the
+    // next call (after the first retain mints the bank) asks again instead of short-circuiting.
+    if (r.status === 404) return [];
     this.knowledgePagesSupported = true;
     try {
       return ((await r.json()) as { roots?: KnowledgeNode[] }).roots ?? [];
@@ -794,11 +824,14 @@ export class HindsightClient {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
         // the outcome we wanted anyway, so tolerate it rather than failing the whole run.
         const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), body, [409]);
-        if ([404, 405, 501].includes(r.status)) {
-          this.knowledgePagesSupported = false;
+        if (await this.pagesUnsupported(r)) {
           this.log(
             `[bank] knowledge pages unavailable on ${this.apiUrl}; continuing without pages`
           );
+          return;
+        }
+        if (r.status === 404) {
+          this.log(`[bank] ${this.bank} does not exist yet; pages seed on the next session`);
           return;
         }
         if (r.status !== 409) created++;
@@ -836,13 +869,13 @@ export class HindsightClient {
           this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
           patch
         );
-        if ([404, 405, 501].includes(r.status)) {
-          this.knowledgePagesSupported = false;
+        if (await this.pagesUnsupported(r)) {
           this.log(
             `[bank] knowledge pages unavailable on ${this.apiUrl}; continuing without pages`
           );
           return;
         }
+        if (r.status === 404) return; // bank (or node) vanished under us — retry next session
         updated++;
       }
     }

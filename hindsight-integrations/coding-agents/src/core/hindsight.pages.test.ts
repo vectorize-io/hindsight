@@ -55,6 +55,32 @@ describe("HindsightClient knowledge-page reads", () => {
     });
   });
 
+  it("a bank-not-found 404 is NOT a missing endpoint: no pages, no latched capability", async () => {
+    // The bank is minted by the first retain, so the first session in a new bank ALWAYS reads
+    // pages before it exists. Latching there disabled knowledge pages for the whole process (#4607).
+    let status = 404;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        status === 404
+          ? { ok: false, status: 404, json: async () => ({ detail: "Bank 'repo-a' not found" }) }
+          : {
+              ok: true,
+              status: 200,
+              json: async () => ({ roots: [{ id: "kp-1", kind: "page", name: "Core concepts" }] }),
+            }
+      ) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // Once the bank exists, the very same client sees its pages — no restart needed.
+    status = 200;
+    expect(await c.listPages()).toEqual({ items: [{ id: "kp-1", name: "Core concepts" }] });
+    expect(c.knowledgePagesSupported).toBe(true);
+  });
+
   it("listPages reads the knowledge-base tree — never /mental-models", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ roots: [] }));
