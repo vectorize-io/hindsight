@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
@@ -24,8 +24,9 @@ export async function GET(
     const limit = searchParams.get("limit") || "100";
     const offset = searchParams.get("offset") || "0";
 
+    const query = new URLSearchParams({ limit, offset });
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`,
+      dataplaneBankUrl(bankId, `/documents/${encodeURIComponent(documentId)}/chunks?${query}`),
       {
         headers: getDataplaneHeaders(),
       }
