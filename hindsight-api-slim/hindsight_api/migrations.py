@@ -309,9 +309,7 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
             "version_locations",
             os.pathsep.join([core_versions, *extension_locations]),
         )
-        logger.info(
-            "Including %d extension migration location(s) alongside core", len(extension_locations)
-        )
+        logger.info("Including %d extension migration location(s) alongside core", len(extension_locations))
 
     # Set the database URL
     _set_alembic_main_option(alembic_cfg, "sqlalchemy.url", database_url)
