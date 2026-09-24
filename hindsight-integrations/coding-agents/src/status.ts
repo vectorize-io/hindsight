@@ -28,7 +28,7 @@ if (!BANK) {
   process.exit(1);
 }
 
-const resolved0 = BANK ? applyBankConfig(cfg0, BANK) : { cfg: cfg0, bankId: BANK };
+const resolved0 = BANK ? applyBankConfig(cfg0, BANK, REPO) : { cfg: cfg0, bankId: BANK };
 const cfg = resolved0.cfg;
 const FINAL_BANK = resolved0.bankId ?? BANK;
 const client = new HindsightClient({
