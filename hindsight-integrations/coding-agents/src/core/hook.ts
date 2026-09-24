@@ -348,9 +348,9 @@ export async function buildHookOutput(args: {
   }
   const kept = blocks.filter(Boolean);
 
-  // User-facing notice ONLY on the turn reflect actually ran (showing its assigned goal and a
-  // preview of what came back). Ordinary turns stay silent — page knowledge is now pulled via
-  // the hindsight_search_knowledge_pages tool, which is visible as a real tool call.
+  // User-facing notice ONLY on a turn that actually ran a source (reflect, pages or recall),
+  // showing its assigned goal and a preview of what came back. Ordinary turns stay silent — page
+  // knowledge is pulled via the hindsight_search_knowledge_pages tool, a visible tool call.
   let notice: string | undefined;
   if (fallback) {
     // Silent: the session still got memory, just not a synthesis. The notice used to say which
