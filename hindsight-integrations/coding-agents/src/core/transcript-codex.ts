@@ -4,6 +4,8 @@
  * `type:"response_item"` lines whose `payload` is one of:
  *   - message (role user/assistant/developer; content is `input_text`/`output_text` blocks)
  *   - function_call        (tool call: name + arguments JSON string)
+ *   - custom_tool_call     (tool call: name + free-form input; JSON for most tools, JavaScript for
+ *                           the code-mode `exec` tool)
  *   - function_call_output (tool result: output string)
  *   - reasoning            (encrypted internal chain-of-thought — dropped, like Claude `thinking`)
  *
@@ -21,6 +23,12 @@
  * before any reply. When a rollout has those events they are the only source of user turns, so no
  * text of the injected blocks has to be recognised. Rollouts without them (older Codex) fall back to
  * the response_item plus a prefix check for the startup message.
+ *
+ * Action turns: in code mode Codex routes shell and MCP calls through one `exec` custom_tool_call
+ * whose input is JavaScript, so the call itself names neither the command nor the MCP tool. Each
+ * inner call is recorded as an `item_completed` `McpToolCall` / `CommandExecution` right after it.
+ * When a rollout has those items they are the source of these actions and the wrapping `exec` calls
+ * are skipped so nothing is counted twice; rollouts without them keep the call-record path.
  *
  * `developer`-role messages carry Codex's system prompt AND our hook-injected context
  * (<hindsight_knowledge>, <hindsight_memories>, <user_feedback>), so dropping them entirely is what
@@ -43,7 +51,14 @@ interface Payload {
   arguments?: string;
   input?: string;
   output?: string;
-  item?: { type?: string; content?: ContentItem[] };
+  item?: {
+    type?: string;
+    content?: ContentItem[];
+    server?: unknown;
+    tool?: unknown;
+    arguments?: unknown;
+    command?: unknown;
+  };
 }
 interface RolloutLine {
   type?: string;
@@ -86,6 +101,51 @@ function isUserMessageEvent(line: RolloutLine): boolean {
   );
 }
 
+const TOOL_ITEM_TYPES = new Set(["McpToolCall", "CommandExecution"]);
+
+function isToolItemEvent(line: RolloutLine): boolean {
+  return (
+    line.type === "event_msg" &&
+    line.payload?.type === "item_completed" &&
+    TOOL_ITEM_TYPES.has(line.payload.item?.type ?? "")
+  );
+}
+
+function parseArgs(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+const SHELL_RE = /(?:^|\/)(?:sh|bash|zsh|dash|ksh|fish)$/;
+
+/** The script of a `["/bin/zsh", "-lc", script]` style wrapper; other argv is joined as is. */
+function commandText(command: unknown): string {
+  if (typeof command === "string") return command;
+  if (!Array.isArray(command) || !command.every((c) => typeof c === "string")) return "";
+  const argv: string[] = command;
+  if (argv.length === 3 && SHELL_RE.test(argv[0]) && /^-[a-z]*c$/.test(argv[1])) return argv[2];
+  return argv.join(" ");
+}
+
+/** Action line for a McpToolCall / CommandExecution item, named like the tool the model called
+ *  (`mcp__<server>__<tool>`, as Claude and Codex's own code mode name MCP tools; `exec_command`). */
+function toolItemAction(item: NonNullable<Payload["item"]>): string | undefined {
+  if (item.type === "McpToolCall") {
+    if (typeof item.tool !== "string" || !item.tool) return undefined;
+    const name =
+      typeof item.server === "string" && item.server
+        ? `mcp__${item.server}__${item.tool}`
+        : item.tool;
+    return actionLine(name, parseArgs(item.arguments));
+  }
+  const command = commandText(item.command).trim();
+  return command ? actionLine("exec_command", { command }) : undefined;
+}
+
 /** Parse a Codex rollout JSONL into normalized markdown turns (text + tool calls/results).
  *  Drops developer/system + synthetic-startup + reasoning + injected memory + empty turns.
  *  Never throws on bad lines. */
@@ -102,6 +162,7 @@ export function readCodexTranscript(path: string): TransportTurn[] {
     }
   }
   const userFromEvents = lines.some(isUserMessageEvent);
+  const actionsFromEvents = lines.some(isToolItemEvent);
 
   const turns: TransportTurn[] = [];
   const push = (role: string, raw: string, stamp: { timestamp?: string } = {}) => {
@@ -111,6 +172,11 @@ export function readCodexTranscript(path: string): TransportTurn[] {
   for (const line of lines) {
     if (isUserMessageEvent(line)) {
       push("user", contentText(line.payload?.item?.content), stampOf(line));
+      continue;
+    }
+    if (isToolItemEvent(line)) {
+      const action = toolItemAction(line.payload?.item ?? {});
+      if (action) turns.push({ role: "action", content: action, ...stampOf(line) });
       continue;
     }
     if (line.type !== "response_item") continue;
@@ -128,6 +194,8 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       (p.type === "function_call" || p.type === "custom_tool_call") &&
       typeof p.name === "string"
     ) {
+      // Code-mode wrapper: its inner calls already came from the McpToolCall/CommandExecution items.
+      if (actionsFromEvents && p.type === "custom_tool_call" && p.name === "exec") continue;
       // Codex CLI/Desktop emits both legacy function_call and current custom_tool_call records.
       // Keep one compact action representation and never retain raw arguments.
       const rawInput = p.type === "function_call" ? p.arguments : p.input;
