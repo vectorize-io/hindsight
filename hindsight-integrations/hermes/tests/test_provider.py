@@ -44,6 +44,31 @@ def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     assert _retain_item(fake)["metadata"]["message_count"] == "4"
 
 
+def test_retain_every_n_turns_uses_banks_hermes_when_top_level_missing(provider):
+    instance, fake = provider({"banks": {"hermes": {"bankId": "team", "retain_every_n_turns": 2}}})
+    assert instance._retain_every_n_turns == 2
+    instance.sync_turn("one", "1")
+    assert fake.retains == []
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+    assert len(fake.retains) == 1
+
+
+def test_retain_every_n_turns_top_level_overrides_banks_hermes(provider):
+    instance, _ = provider({
+        "retain_every_n_turns": 3,
+        "banks": {"hermes": {"retain_every_n_turns": 2}},
+    })
+    assert instance._retain_every_n_turns == 3
+    instance.shutdown()
+
+
+def test_retain_every_n_turns_defaults_to_one_without_either_setting(provider):
+    instance, _ = provider({"banks": {"hermes": {"bankId": "team"}}})
+    assert instance._retain_every_n_turns == 1
+    instance.shutdown()
+
+
 def test_auto_retain_off_stores_nothing(provider):
     instance, fake = provider({"auto_retain": False})
     instance.sync_turn("hello", "hi")
