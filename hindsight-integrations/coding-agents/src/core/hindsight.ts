@@ -176,20 +176,31 @@ export class KnowledgePagesUnavailableError extends Error {
 }
 
 /**
- * Is this 404 "that bank does not exist" rather than "this server has no knowledge-base API"?
+ * Does this 404 mean the server has no knowledge-base API, rather than "that bank does not exist yet"?
  *
- * The two are indistinguishable by status alone, and conflating them latched the knowledge-page
- * capability off for the whole process on the FIRST session in a new bank — the bank is created by
- * the first retain, so a session-start page read always precedes it (#4607). The server answers
- * `{"detail":"Bank 'x' not found"}`; an unrouted path answers FastAPI's bare `{"detail":"Not Found"}`.
+ * The two are indistinguishable by status, and conflating them latched the knowledge-page capability
+ * off for the whole process on the FIRST session in a new bank — the bank is minted by the first
+ * retain, so a session-start page read always precedes it (#4607).
+ *
+ * It matches the ENDPOINT-missing shape (FastAPI answers an unrouted path with exactly
+ * `{"detail":"Not Found"}`), deliberately NOT the bank-missing wording. Matching the bank error
+ * instead would hang the fix on a message the API is free to rephrase, and the day it did, #4607
+ * would come back with no test failing. This way a reworded bank error simply fails to match: the
+ * capability stays unknown and the next call retries, which is the safe direction to be wrong in.
  */
-async function isBankMissing(r: Response): Promise<boolean> {
+async function isEndpointMissing(r: Response): Promise<boolean> {
   try {
     // Consumes the body, which is safe: every 404 caller below returns without reading it.
     const j = (await r.json()) as { detail?: unknown };
-    return /bank\b.*\bnot found/i.test(String(j?.detail ?? ""));
+    return (
+      String(j?.detail ?? "")
+        .trim()
+        .toLowerCase() === "not found"
+    );
   } catch {
-    return false; // unparseable body: treat as the endpoint being absent, the safer old behaviour
+    // No JSON body at all (a proxy's HTML 404, a bare gateway response). Our API always answers
+    // bank-not-found in JSON, so this is not it — latch, as this code did before the fix.
+    return true;
   }
 }
 
@@ -674,10 +685,12 @@ export class HindsightClient {
    * Latch `knowledgePagesSupported = false` iff this response really means the endpoint is absent.
    * Returns whether it latched. A bank-not-found 404 is NOT a capability verdict — it is the
    * expected answer before the bank's first retain — so it must never cache a negative (#4607).
+   *
+   * Only 404 is tested: `req` throws on every other non-ok status it was not told to tolerate, so
+   * the 405/501 this used to check for never reach a caller in the first place.
    */
   private async pagesUnsupported(r: Response): Promise<boolean> {
-    if (![404, 405, 501].includes(r.status)) return false;
-    if (r.status === 404 && (await isBankMissing(r))) return false;
+    if (r.status !== 404 || !(await isEndpointMissing(r))) return false;
     this.knowledgePagesSupported = false;
     return true;
   }

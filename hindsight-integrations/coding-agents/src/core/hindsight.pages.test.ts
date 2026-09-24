@@ -59,11 +59,12 @@ describe("HindsightClient knowledge-page reads", () => {
     // The bank is minted by the first retain, so the first session in a new bank ALWAYS reads
     // pages before it exists. Latching there disabled knowledge pages for the whole process (#4607).
     let status = 404;
+    let detail = "Bank 'repo-a' not found";
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         status === 404
-          ? { ok: false, status: 404, json: async () => ({ detail: "Bank 'repo-a' not found" }) }
+          ? { ok: false, status: 404, json: async () => ({ detail }) }
           : {
               ok: true,
               status: 200,
@@ -72,6 +73,12 @@ describe("HindsightClient knowledge-page reads", () => {
       ) as any
     );
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // The latch keys on the ENDPOINT-missing body, not the bank error's wording, so rephrasing
+    // that message cannot quietly reinstate the bug.
+    detail = "No bank named repo-a";
     expect(await c.listPages()).toEqual({ items: [] });
     expect(c.knowledgePagesSupported).toBeUndefined();
 
@@ -256,8 +263,10 @@ describe("HindsightClient.seedPages", () => {
       "fetch",
       vi.fn(async (url: string, init: any) => {
         calls.push({ url, method: init?.method });
+        // Exactly what FastAPI answers for an unrouted path — the shape that identifies a server
+        // without the knowledge-base API, as opposed to a 404 for a bank that does not exist yet.
         if (url.endsWith("/knowledge-base/tree"))
-          return { ok: false, status: 404, json: async () => ({}) } as any;
+          return { ok: false, status: 404, json: async () => ({ detail: "Not Found" }) } as any;
         return { ok: true, status: 200, json: async () => ({}) } as any;
       }) as any
     );
