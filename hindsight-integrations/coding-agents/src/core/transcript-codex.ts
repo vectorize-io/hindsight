@@ -24,11 +24,8 @@
  * text of the injected blocks has to be recognised. Rollouts without them (older Codex) fall back to
  * the response_item plus a prefix check for the startup message.
  *
- * Action turns: in code mode Codex routes shell and MCP calls through one `exec` custom_tool_call
- * whose input is JavaScript, so the call itself names neither the command nor the MCP tool. Each
- * inner call is recorded as an `item_completed` `McpToolCall` / `CommandExecution` right after it.
- * When a rollout has those items they are the source of these actions and the wrapping `exec` calls
- * are skipped so nothing is counted twice; rollouts without them keep the call-record path.
+ * Action turns: code-mode `exec` input is JavaScript, so its inner calls come from the
+ * `McpToolCall` / `CommandExecution` items instead, and the `exec` wrapper is skipped.
  *
  * `developer`-role messages carry Codex's system prompt AND our hook-injected context
  * (<hindsight_knowledge>, <hindsight_memories>, <user_feedback>), so dropping them entirely is what
@@ -131,8 +128,7 @@ function commandText(command: unknown): string {
   return argv.join(" ");
 }
 
-/** Action line for a McpToolCall / CommandExecution item, named like the tool the model called
- *  (`mcp__<server>__<tool>`, as Claude and Codex's own code mode name MCP tools; `exec_command`). */
+/** MCP tools are named `mcp__<server>__<tool>`, as in Claude transcripts. */
 function toolItemAction(item: NonNullable<Payload["item"]>): string | undefined {
   if (item.type === "McpToolCall") {
     if (typeof item.tool !== "string" || !item.tool) return undefined;
@@ -194,7 +190,7 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       (p.type === "function_call" || p.type === "custom_tool_call") &&
       typeof p.name === "string"
     ) {
-      // Code-mode wrapper: its inner calls already came from the McpToolCall/CommandExecution items.
+      // Already covered by its tool items.
       if (actionsFromEvents && p.type === "custom_tool_call" && p.name === "exec") continue;
       // Codex CLI/Desktop emits both legacy function_call and current custom_tool_call records.
       // Keep one compact action representation and never retain raw arguments.
