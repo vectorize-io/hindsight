@@ -25,6 +25,7 @@ It means nothing. That is the entire point of this post, and you can stop readin
 - **Hermes migrates you automatically** on `hermes update` or on first agent start. You will see a one-line confirmation and nothing else.
 - **The plugin now lives in the Hindsight repo** and is maintained by the Hindsight team rather than shipped inside Hermes.
 - **New users install it from the catalog**: `hermes plugins install hindsight`, then `hermes memory setup`.
+- **`hermes update` does not update the plugin.** `hermes plugins update hindsight` does. You can also freeze a version with `--ref`, or track our `main` branch.
 - **One genuine gotcha**, and it predates this change: `hermes plugins enable` does not activate a memory provider.
 
 ## What actually happened
@@ -47,10 +48,14 @@ The migration is automatic. Run `hermes update`, or just start an agent with a H
 
 ```
 ✓ Memory provider 'hindsight' moved out of core — installed its plugin from the
-  catalog (your memory.hindsight settings and data are unchanged)
+  catalog (your memory.hindsight settings and data are unchanged).
 ```
 
 Afterwards the plugin sits in `~/.hermes/plugins/hindsight/` and your `config.yaml` picks up `plugins.enabled: [hindsight]`. That is the whole migration.
+
+We ran it on a machine still on the bundled provider to check. Two things are worth knowing before you do. The update is **interactive**: it asks whether to prepare the plugin's Python dependencies, and answers nothing on its own, so an unattended run will sit at the prompt rather than finish. And if you have local modifications in the Hermes tree, it stashes them before updating and asks whether to restore them, printing a `git stash apply <sha>` you will want to keep.
+
+Afterwards, `~/.hermes/plugins/.install-metadata.json` records exactly what you got: the catalog pin, the source repo, and the resolved commit. Ours came through as version 1.0.1 pinned at `176f8c2d`.
 
 One condition to be aware of: automatic installation depends on `security.allow_lazy_installs`, which is on by default. If you have turned it off, Hermes will not install anything behind your back. It logs a single line telling you to run `hermes plugins install hindsight` yourself.
 
@@ -63,15 +68,9 @@ hermes plugins install hindsight
 hermes memory setup    # select "hindsight"
 ```
 
-The setup wizard installs dependencies into the Hermes venv via `uv`, walks you through configuration, and offers to seed the bank with a starter memory template. It warns before overwriting a bank that is already configured, and you can skip the template entirely.
+Hindsight is in the catalog, so the name is all you need on the first line. The setup wizard then installs dependencies into the Hermes venv via `uv`, walks you through configuration, and offers to seed the bank with a starter memory template. It warns before overwriting a bank that is already configured, and you can skip the template entirely.
 
-You can also point `hermes plugins install` directly at the source rather than the catalog name, which is the form to use if you want a specific revision:
-
-```bash
-hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
-```
-
-Dependencies installed this way survive `hermes update`.
+Do not skip the second command. More on why below.
 
 ## The one thing that trips people up
 
@@ -97,17 +96,51 @@ For completeness, since the move is a good moment to check you are on the right 
 
 Embedded mode starts the daemon in the background on first use and stops it after five minutes of inactivity. It works with any OpenAI-compatible endpoint, so llama.cpp, vLLM and LM Studio are all fine: choose `openai_compatible` and give it a base URL. If you want the Hindsight web UI against your embedded instance, that is `hindsight-embed -p hermes ui start`.
 
-## Where updates come from now
+## Updating: the habit to unlearn
 
-This is the part genuinely worth understanding, because it is new.
+This is the one thing that genuinely changes for you, and it is a habit rather than a command.
 
-The Hermes catalog entry for Hindsight pins our directory at a specific commit. That means a change we merge does not reach you the moment we merge it. The pin has to move first, which takes a follow-up PR to `hermes-agent` bumping the commit and the version together.
+**Nothing updates the plugin on its own.** In particular, `hermes update` does *not* move it. It reinstalls the plugin's Python dependencies and leaves the checkout exactly where it is. If you came from the bundled provider, that is the assumption to drop: memory improvements no longer arrive as a side effect of updating Hermes.
 
-In practice: **the catalog pin is the release boundary.** If you are tracking a fix, what you are waiting for is the pin bump, not our merge. On your side, updates arrive through `hermes update`, or you can update just this plugin with `hermes plugins update hindsight`.
+There are three ways to decide which version you run.
 
-The plugin is currently version 1.0.1. It requires Hermes 0.21.4 or newer and `hindsight-client >= 0.10.1`, and it auto-upgrades the client on session start if it finds an older one.
+### Follow the official pin
 
-**If you installed between 14 and 21 September 2026, update now.** `hindsight-embed` 0.10.0 breaks `local_embedded` outright: its daemon probe cleared the calling thread's event loop, so the next client call failed with `Timeout context manager should be used inside a task`. That is why the floor is 0.10.1 rather than the 0.6.1 the plugin actually needs at the API level. Run `hermes update` or `hermes plugins update hindsight` and you are off it.
+The default, and the right answer for almost everyone. This is what `hermes plugins install hindsight` gives you: the commit Nous reviewed and pinned in their catalog.
+
+```bash
+hermes plugins update hindsight    # move to the catalog's current pin
+```
+
+`hermes plugins list` flags the plugin `update_available` once your installed commit differs from the catalog's. Note that re-running `hermes plugins install hindsight` does **not** update it — it refuses with "already exists." `plugins update` is the command that re-pins.
+
+Two consequences of the pin worth internalising. A change we merge does not reach you when we merge it; the pin has to move first, which takes a follow-up PR to `hermes-agent`. And Hermes re-fetches the published catalog at most once every six hours, so a freshly released version can take that long to even appear as available. If something we shipped today is not showing up, that is usually why.
+
+### Pin a specific release
+
+For a version you choose and freeze:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes \
+  --force --ref <40-character-commit-sha>
+```
+
+Two things about `--ref`. It takes a full commit SHA and **rejects tag names**, so take the SHA from the [release notes](https://github.com/vectorize-io/hindsight/releases) rather than typing `v1.0.1`. And a `--ref` install is marked pinned, so `hermes plugins update hindsight` will deliberately refuse to move it. That is the point — you asked to be frozen. Install again with a new `--ref` when you want a different version.
+
+### Track the latest development code
+
+For fixes before they reach the catalog. Install from the source path rather than the catalog name:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
+hermes plugins update hindsight    # now a git pull of our main branch
+```
+
+Same update command, different meaning: installed this way, it follows our `main`. Unreviewed by definition — you get whatever is there the moment you run it. Useful if you are chasing a fix we just landed or testing something with us; not what we would run in production.
+
+The catalog entry itself lives in Nous' repo at [`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml), which is what records the current pin.
+
+**One update you should not defer.** If you installed between 14 and 21 September 2026, `hindsight-embed` 0.10.0 breaks `local_embedded` outright: its daemon probe cleared the calling thread's event loop, so the next client call failed with `Timeout context manager should be used inside a task`. That is why the client floor is 0.10.1 rather than the 0.6.1 the plugin needs at the API level. Here `hermes update` *is* the fix, because the problem is a dependency rather than the plugin code.
 
 ## One default worth knowing about
 
