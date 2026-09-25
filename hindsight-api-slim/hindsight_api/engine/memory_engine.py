@@ -2473,6 +2473,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._pg0_port = _parsed_pg0.port
         self._pg0_username = _parsed_pg0.username
         self._pg0_password = _parsed_pg0.password
+        self._pg0_config = _parsed_pg0.config
         if self._use_pg0:
             self.db_url = None
         else:
@@ -5268,6 +5269,8 @@ class MemoryEngine(MemoryEngineInterface):
                     kwargs["username"] = self._pg0_username
                 if self._pg0_password is not None:
                     kwargs["password"] = self._pg0_password
+                if self._pg0_config is not None:
+                    kwargs["config"] = self._pg0_config
                 pg0 = EmbeddedPostgres(**kwargs)
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()

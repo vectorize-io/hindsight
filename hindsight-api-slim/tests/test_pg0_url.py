@@ -49,6 +49,38 @@ def test_empty_instance_falls_back_to_default():
     assert parse_pg0_url("pg0://:5544") == Pg0Url(is_pg0=True, instance_name="hindsight", port=5544)
 
 
+@pytest.mark.parametrize(
+    ("db_url", "expected"),
+    [
+        (
+            "pg0?max_connections=300",
+            Pg0Url(is_pg0=True, instance_name="hindsight", config={"max_connections": "300"}),
+        ),
+        (
+            "pg0://mydb:5544?max_connections=300&shared_buffers=256MB",
+            Pg0Url(
+                is_pg0=True,
+                instance_name="mydb",
+                port=5544,
+                config={"max_connections": "300", "shared_buffers": "256MB"},
+            ),
+        ),
+        (
+            "pg0://alice:pw?d@mydb?max_connections=300",
+            Pg0Url(
+                is_pg0=True,
+                instance_name="mydb",
+                username="alice",
+                password="pw?d",
+                config={"max_connections": "300"},
+            ),
+        ),
+    ],
+)
+def test_query_string_becomes_postgres_settings(db_url: str, expected: Pg0Url):
+    assert parse_pg0_url(db_url) == expected
+
+
 def test_non_pg0_url_passthrough():
     parsed = parse_pg0_url("postgresql://user:pwd@localhost:5432/db")
     assert parsed == Pg0Url(is_pg0=False)
@@ -101,6 +133,7 @@ def test_empty_password_after_colon_is_empty_string():
         ("pg0://alice:s3cret@mydb:5544", "alice", "s3cret"),
         ("pg0://alice:@mydb:5544", "alice", ""),
         ("pg0://mydb:5544", None, None),
+        ("pg0://mydb:5544?max_connections=300", None, None),
     ],
 )
 async def test_memory_engine_forwards_pg0_credentials(
@@ -131,7 +164,9 @@ async def test_memory_engine_forwards_pg0_credentials(
         with pytest.raises(_StopInitialization):
             await engine.initialize()
 
-    if expected_username is None:
+    if "?" in db_url:
+        embedded_postgres.assert_called_once_with(name="mydb", port=5544, config={"max_connections": "300"})
+    elif expected_username is None:
         embedded_postgres.assert_called_once_with(name="mydb", port=5544)
     else:
         embedded_postgres.assert_called_once_with(
