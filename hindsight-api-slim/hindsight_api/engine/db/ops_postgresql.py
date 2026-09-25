@@ -1047,7 +1047,7 @@ class PostgreSQLOps(DataAccessOps):
         per_entity_limit: int,
         window: UpdatedWindow,
     ) -> LinkExpansionRows:
-        # v0.5.6 array ops: unnest, &&, COUNT(DISTINCT) on source_memory_ids.
+        # Array ops on source_memory_ids: unnest, a per-source @> GIN probe, COUNT(DISTINCT).
         #
         # The window bounds the observations that come *back*, not the source facts
         # traversed to reach them: an observation is in the window when it was itself
