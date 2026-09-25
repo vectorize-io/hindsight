@@ -419,6 +419,37 @@ async def test_postgresql_fused_query_is_one_statement():
 
 
 @pytest.mark.asyncio
+async def test_postgresql_candidates_probe_gin_once_per_connected_source():
+    """Structural (no live DB): pins the #4715 candidate lookup.
+
+    One `&& <every connected source>` probe rechecks each matched row against a
+    ~17k-element array on hub-heavy banks (5-21s, 8 in parallel timed out). The
+    per-source `@>` probe must stay fenced with OFFSET 0 and keep `fact_type`
+    out, or the planner ANDs every probe with a full observations-index scan
+    (84-185s on the reporter's bank).
+    """
+    conn = AsyncMock()
+    conn.fetch.return_value = []
+    await PostgreSQLOps().expand_observations(
+        conn,
+        "memory_units",
+        "unit_entities",
+        "memory_links",
+        [uuid.uuid4()],
+        100,
+        200,
+        UpdatedWindow(after=None, before=None, first_param_index=3),
+    )
+    sql = " ".join(conn.fetch.await_args.args[0].split())
+
+    assert "array_agg(" not in sql, "connected sources must not be collapsed into one probe array"
+    probe = sql[sql.index("candidate_ids AS (") : sql.index("candidates AS (")]
+    assert "m.source_memory_ids @> ARRAY[cs.source_id]" in probe
+    assert "OFFSET 0" in probe, "the fence keeps fact_type from being pushed into the probe"
+    assert "fact_type" not in probe
+
+
+@pytest.mark.asyncio
 async def test_oracle_fused_query_is_one_statement():
     """Structural (no Oracle runtime): Oracle emits ONE statement, three arms.
 

@@ -20,6 +20,7 @@ uv run perf-test --output results.json  # save JSON results
 | `recall` | Pre-populated bank recall: 4-way parallel retrieval (semantic, BM25, graph, temporal), RRF fusion, percentile latency |
 | `graph-maintenance` | `run_graph_maintenance_job` in isolation after a batch of deletes: relink pass wall-clock broken down by probe (semantic ANN vs temporal), plus entity/cooccurrence prune counts (#1919) |
 | `graph-maintenance-contention` | The maintenance cooccurrence sweep **under concurrent retain load** — drives `prune_stale_cooccurrences` against retain-shaped sorted cooccurrence upserts and counts how many maintenance passes the resulting deadlock silently drops (#2529). See below |
+| `observation-hubs` | `expand_observations` on a COPY-loaded bank shaped like #4715 (270k units, 50k observations, 8.4M links, 138k-degree hub entities at `--scale huge`; smaller scales load a fraction). Times 8 seed sets one by one and in parallel under a 60s statement timeout, and prints a per-set result digest so a query change can be checked for identical output across commits |
 | `stats` | `/stats` endpoint (`get_bank_stats`): uncached aggregation latency (node/link counts + entity rollup join) vs. cached latency, plus cache speedup. Runs with the result cache **disabled** (TTL=0) so the headline numbers are the real per-poll cost |
 
 #### `graph-maintenance-contention` (#2529)
