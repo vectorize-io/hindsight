@@ -1801,6 +1801,7 @@ class TestDoneToolStringDocument:
     def mock_functions(self):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),

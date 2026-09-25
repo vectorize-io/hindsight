@@ -3903,12 +3903,7 @@ export type MemoryItem = {
    * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags — useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
    */
   observation_scopes?:
-    | "per_tag"
-    | "combined"
-    | "all_combinations"
-    | "shared"
-    | Array<Array<string>>
-    | null;
+    "per_tag" | "combined" | "all_combinations" | "shared" | Array<Array<string>> | null;
   /**
    * Strategy
    *
@@ -7211,12 +7206,7 @@ export type ListMemoriesData = {
      * Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
      */
     time_field?:
-      | "created_at"
-      | "updated_at"
-      | "mentioned_at"
-      | "occurred_start"
-      | "occurred_end"
-      | null;
+      "created_at" | "updated_at" | "mentioned_at" | "occurred_start" | "occurred_end" | null;
     /**
      * Start Date
      *
