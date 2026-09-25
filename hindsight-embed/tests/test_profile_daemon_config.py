@@ -417,12 +417,12 @@ def test_daemon_preserves_uv_python_for_nested_uvx(temp_home, monkeypatch):
     assert captured["popen_env"]["UV_PYTHON"] == "3.13"
 
 
-def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
+def test_windows_popen_uses_windowless_process_flags(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     On Windows the daemon must be spawned with
-    `creationflags=DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP` (the POSIX
-    `start_new_session` doesn't exist there) AND stdout/stderr must be
-    redirected, since DETACHED_PROCESS leaves the child with no console.
+    `creationflags=CREATE_NO_WINDOW|CREATE_NEW_PROCESS_GROUP`, preserving a
+    windowless console for descendants such as uvx's uv child (#4562).
+    Standard streams must still be redirected away from the parent.
     """
     import subprocess
     from unittest.mock import MagicMock, patch
@@ -432,6 +432,7 @@ def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
     # These subprocess constants only exist on Windows CPython; patch them in
     # so the test passes on Linux/macOS CI too. Values from Win32 API docs.
     monkeypatch.setattr(subprocess, "DETACHED_PROCESS", 0x00000008, raising=False)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
 
     manager = DaemonEmbedManager()
@@ -443,6 +444,7 @@ def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
         popen_called[0] = True
         proc = MagicMock()
         proc.pid = 12345
+        proc.poll.return_value = None
         return proc
 
     def fake_is_running(profile=""):
@@ -456,19 +458,21 @@ def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
         patch.object(manager, "is_running", side_effect=fake_is_running),
         patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Windows"),
     ):
-        manager._start_daemon(
+        assert manager._start_daemon(
             config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
             profile="",
         )
 
     kwargs = captured["kwargs"]
-    expected_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    expected_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     assert kwargs.get("creationflags") == expected_flags
+    # Windows ignores CREATE_NO_WINDOW if DETACHED_PROCESS is also set.
+    assert not kwargs["creationflags"] & subprocess.DETACHED_PROCESS
     assert "start_new_session" not in kwargs
     assert kwargs.get("stdin") is subprocess.DEVNULL
     assert kwargs.get("stderr") is subprocess.STDOUT
-    # stdout must be a real file handle, not None — a None stdout under
-    # DETACHED_PROCESS crashes the child on first write.
+    assert kwargs.get("close_fds") is True
+    # stdout must still go to the daemon log instead of the parent's terminal.
     assert kwargs.get("stdout") is not None
 
 
