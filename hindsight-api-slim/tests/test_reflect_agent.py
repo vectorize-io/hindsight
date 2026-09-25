@@ -33,6 +33,26 @@ from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLM
 from tests.llm_judge import assert_meets_criteria
 
 
+@pytest.fixture
+def mock_functions():
+    """The agent's tool callbacks, all stubbed.
+
+    Module-level and shared by every class in this file on purpose. These are
+    REQUIRED keyword arguments of run_reflect_agent, so a per-class copy that
+    misses one is invisible until that class runs: three copies had drifted when
+    read_mental_models_fn was added, and the class whose copy went unupdated died
+    on a TypeError in every test (#4774). One definition, so a new callback is
+    added once and reaches every class.
+    """
+    return {
+        "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+        "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+        "search_observations_fn": AsyncMock(return_value={"observations": []}),
+        "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
+        "expand_fn": AsyncMock(return_value={"memories": []}),
+    }
+
+
 class TestToolNameNormalization:
     """Test tool name normalization for various LLM output formats."""
 
@@ -304,17 +324,6 @@ class TestReflectAgentMocked:
             )
         )
         return llm
-
-    @pytest.fixture
-    def mock_functions(self):
-        """Create mock search/recall functions."""
-        return {
-            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "search_observations_fn": AsyncMock(return_value={"observations": []}),
-            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
-            "expand_fn": AsyncMock(return_value={"memories": []}),
-        }
 
     @staticmethod
     def _mm_call(call_id: str = "1", query: str = "test query") -> LLMToolCallResult:
@@ -1723,16 +1732,6 @@ class TestNoAnswerFailsHard:
         )
         return llm
 
-    @pytest.fixture
-    def mock_functions(self):
-        return {
-            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "search_observations_fn": AsyncMock(return_value={"observations": []}),
-            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
-            "expand_fn": AsyncMock(return_value={"memories": []}),
-        }
-
     @staticmethod
     def _recall_then(done_arguments: dict) -> list[LLMToolCallResult]:
         """Gather evidence first, so ``done`` is not rejected by the evidence guardrail."""
@@ -1857,16 +1856,6 @@ class TestDoneToolStringDocument:
             )
         )
         return llm
-
-    @pytest.fixture
-    def mock_functions(self):
-        return {
-            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
-            "search_observations_fn": AsyncMock(return_value={"observations": []}),
-            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
-            "expand_fn": AsyncMock(return_value={"memories": []}),
-        }
 
     @staticmethod
     def _recall_then(done_arguments: dict) -> list[LLMToolCallResult]:
