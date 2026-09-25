@@ -73,9 +73,16 @@ async def test_the_provenance_stamp_reaches_the_model(client, llm, mixed_bank):
 
     memories = _recalled(response)
     assert memories, "recall returned nothing"
+
+    # Every fact, not just the handbook's: a stamp that survives on one document
+    # and is lost on another ranks the sources wrongly rather than not at all.
     stamped = {memory["text"]: memory.get("metadata") for memory in memories}
-    policy = next(text for text in stamped if POLICY in text)
-    assert stamped[policy] == GUIDE, f"the handbook fact lost its provenance: {stamped}"
+    expected = {POLICY: GUIDE, HEARSAY: TALK}
+    for text, metadata in stamped.items():
+        want = next((m for fragment, m in expected.items() if fragment in text), None)
+        assert want is not None, f"recall returned a fact this test did not seed: {text!r}"
+        assert metadata == want, f"{text!r} lost its provenance: got {metadata!r}, want {want!r}"
+    assert any(POLICY in text for text in stamped), f"the handbook fact never came back: {stamped}"
 
 
 async def test_a_document_with_no_metadata_sends_none(client, llm, bank_id, settled):
