@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
 import {
+  commitsSince,
   gitLogNewestAuthorDate,
   gitLogText,
   ingestGitLog,
@@ -19,6 +20,10 @@ function initRepo(d: string): void {
   execFileSync("git", ["-C", d, "init", "-q"]);
   execFileSync("git", ["-C", d, "config", "user.email", "test@example.com"]);
   execFileSync("git", ["-C", d, "config", "user.name", "Test User"]);
+}
+
+function commit(d: string, message: string): void {
+  execFileSync("git", ["-C", d, "commit", "-q", "--allow-empty", "-m", message]);
 }
 
 afterEach(() => {
@@ -186,5 +191,30 @@ describe("syncGitLog", () => {
     expect(listDocumentIds.mock.calls[0][0]).toMatch(/^gitlog-head:/);
     expect(listDocumentIds.mock.calls[0][1]).toBe("all_strict");
     expect(retain).not.toHaveBeenCalled();
+  });
+});
+
+describe("commitsSince", () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "hs-commits-since-"));
+    initRepo(dir);
+  });
+
+  it("counts the commits on HEAD that a full sha lacks", () => {
+    commit(dir, "feat: one");
+    const first = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" });
+    commit(dir, "feat: two");
+
+    expect(commitsSince(dir, first.trim())).toBe(1);
+  });
+
+  it("never hands git a value from the bank that is not a full sha", () => {
+    commit(dir, "feat: one");
+    const planted = join(dir, "planted");
+
+    // A tag or document id starting with "-" would reach `git rev-list` as an option, and
+    // `--output=<path>..HEAD` creates that file before git rejects the command.
+    expect(commitsSince(dir, `--output=${planted}`)).toBeNull();
+    expect(existsSync(`${planted}..HEAD`)).toBe(false);
   });
 });

@@ -89,7 +89,7 @@ describe("background git stderr isolation", () => {
       run(
         directory(),
         `console.log(JSON.stringify([
-      api.gitHeadSha(repo), api.hasGitHistory(repo), api.commitsSince(repo, 'missing'),
+      api.gitHeadSha(repo), api.hasGitHistory(repo), api.commitsSince(repo, '0'.repeat(40)),
       api.gitLogText(repo, 10), api.gitLogNewestAuthorDate(repo)
     ]));`
       )
