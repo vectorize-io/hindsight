@@ -54,8 +54,11 @@ export function syncCompanionSkill(
 
 /**
  * The packaged skill in the shape a host that registers skills IN MEMORY wants (opencode2's
- * `ctx.skill.transform`): the frontmatter `description` the host matches on, the body, and the
- * on-disk directory it came from. Read at setup, so `npm update -g` upgrades this copy too.
+ * `ctx.skill.transform`): the frontmatter `description` the host matches on, the body, and where
+ * it came from on disk. opencode v2 (2.0.16+) requires `path`, the absolute SKILL.md file, and
+ * rejects a draft without it (#4732); `location`, the directory, was the field sent before that
+ * and stays for earlier v2 hosts, so both go out. Read at setup, so `npm update -g` upgrades this
+ * copy too.
  */
 export function readPackagedSkill(
   srcDir = packagedSkillDir()
