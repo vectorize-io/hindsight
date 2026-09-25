@@ -188,6 +188,39 @@ describe("ControlPlaneClient.deleteOperation", () => {
   });
 });
 
+describe("ControlPlaneClient.listDocumentChunks", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 10, offset: 0 }), { status: 200 })
+    );
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("keeps a slash in the document id inside one path segment", async () => {
+    await client.listDocumentChunks({
+      document_id: "folder/example",
+      bank_id: "bank/a",
+      limit: 10,
+      offset: 5,
+    });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/api/documents/folder%2Fexample/chunks?");
+    expect(url).not.toContain("/api/documents/folder/example/");
+    expect(url).toContain("bank_id=bank%2Fa");
+    expect(url).toContain("limit=10");
+    expect(url).toContain("offset=5");
+  });
+});
+
 describe("ControlPlaneClient direct fetch error formatting", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   let client: ControlPlaneClient;

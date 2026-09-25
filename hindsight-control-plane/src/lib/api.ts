@@ -1063,7 +1063,7 @@ export class ControlPlaneClient {
       total: number;
       limit: number;
       offset: number;
-    }>(`/api/documents/${params.document_id}/chunks?${queryParams}`);
+    }>(`/api/documents/${encodeURIComponent(params.document_id)}/chunks?${queryParams}`);
   }
 
   /**
