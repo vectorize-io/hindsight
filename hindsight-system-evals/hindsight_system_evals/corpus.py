@@ -41,6 +41,10 @@ class HardFact:
     id: str
     text: str
     cluster: str
+    #: Document metadata stored with the fact. The source-priority corpus uses it
+    #: to record whether a fact came from the handbook or from a conversation;
+    #: empty everywhere else.
+    metadata: dict[str, str] = field(default_factory=dict)
     #: What this fact is ABOUT. Facts sharing a subject must be ingested in the
     #: same wave: split across waves, the later batch reads as a correction of the
     #: earlier one and gets superseded -- which is how "Release 0.9.3 reached

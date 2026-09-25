@@ -42,6 +42,11 @@ class AnswerOutcome:
     correct_reason: str = ""
     hit_trap: bool = False
     trap_reason: str = ""
+    #: Provenance of the corpus facts the tools returned, in the order they came
+    #: back. Only populated when the corpus marks its facts (see ``sources``); it is how
+    #: a source-priority run says whether the handbook reached the model before
+    #: the chatter did, which the answer alone cannot tell you.
+    source_order: list[str] = field(default_factory=list)
 
     @property
     def blame(self) -> str:
@@ -74,11 +79,15 @@ async def ask(client: Hindsight, bank_id: str, question: HardQuestion, facts: li
     gold_ids = set(question.gold)
     gold_texts = {fact.text for fact in facts if fact.id in gold_ids}
     outcome.gold_total = len(gold_texts)
+    marked = [(fact.text, ",".join(sorted(fact.metadata.values()))) for fact in facts if fact.metadata]
     seen: set[str] = set()
     for call in (response.trace.tool_calls if response.trace else None) or []:
         if query := (call.input or {}).get("query"):
             outcome.queries.append(f"{call.tool}({query})")
         payload = json.dumps(call.output or {}, ensure_ascii=False, default=str)
         seen.update(text for text in gold_texts if text in payload)
+        for text, marker in marked:
+            if text in payload and marker not in outcome.source_order:
+                outcome.source_order.append(marker)
     outcome.gold_retrieved = len(seen)
     return outcome

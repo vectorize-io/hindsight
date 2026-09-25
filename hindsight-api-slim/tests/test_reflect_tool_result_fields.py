@@ -54,6 +54,19 @@ class DropUnreadFieldsTests(unittest.TestCase):
         for field in ("id", "text", "occurred_start", "tags", "source_fact_ids", "entities"):
             self.assertIn(field, trimmed, f"{field} is load-bearing and must survive the trim")
 
+    def test_metadata_reaches_the_agent(self):
+        """A document's own metadata is evidence, not plumbing.
+
+        It is where a bank records WHERE a document came from. Once extraction
+        has flattened a handbook and a chat transcript into equally flat
+        assertions, that stamp is the only thing left that separates a policy
+        from someone's opinion — and it is useless if the model never sees it.
+        Dropped here until then, which silently made "prefer the guide over the
+        chatter" unexpressible without new configuration.
+        """
+        trimmed = _drop_unread_fields(_dumped_observation())
+        self.assertEqual(trimmed["metadata"], {"ingest_batch": "b-17"})
+
     def test_missing_fields_are_not_an_error(self):
         """Results legitimately omit these — `_prune_nulls` runs first."""
         self.assertEqual(_drop_unread_fields({"id": "obs-1"}), {"id": "obs-1"})
