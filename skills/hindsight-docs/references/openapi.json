@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.10.0"
+    "version": "0.10.1"
   },
   "paths": {
     "/health": {
@@ -4701,6 +4701,276 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/aliases": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "List the bank's aliases",
+        "description": "Extra bank ids that reach this bank. Every endpoint accepts an alias wherever it accepts a bank id, so callers can be moved onto a new id in phases while the old one keeps working.",
+        "operationId": "list_bank_aliases",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Add an alias to the bank",
+        "description": "Give the bank another id to answer to. Nothing is copied or moved: the bank keeps its own id and all of its data, and the alias is only a second way to reach it \u2014 which is what makes it a zero-downtime alternative to renaming.\n\nReturns 409 if the name is already a bank or another alias.",
+        "operationId": "create_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBankAliasRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/aliases/{alias}": {
+      "patch": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Show this alias in place of the bank id",
+        "description": "Present the bank under one of its aliases. Purely cosmetic: the bank keeps its own `bank_id`, which every other part of the system \u2014 authorisation, metering, exports, audit logs \u2014 continues to use.\n\nPromoting an alias demotes whichever one was shown before, so a bank is presented under at most one alias. Send `primary: false` to go back to showing its own id.",
+        "operationId": "set_bank_alias_primary",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBankAliasPrimaryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Remove an alias from the bank",
+        "description": "Stop an id reaching this bank. The bank and its memories are untouched; only the extra name goes away, and callers still using it get the same 404 (or new empty bank) they would have got before it existed.",
+        "operationId": "delete_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}": {
       "put": {
         "tags": [
@@ -5952,6 +6222,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ObservationScopesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/consolidation-strategies/preview": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Preview consolidation strategies",
+        "description": "Report which of the bank's existing observation scopes each consolidation strategy would apply to, for a draft `consolidation_strategies` value (nothing is saved). Uses the same matching and first-strategy-wins rule as consolidation. Scans up to 10,000 distinct scopes; `complete` is false beyond that and the counts are lower bounds. Scopes with no observations yet do not exist and are not counted.",
+        "operationId": "preview_consolidation_strategies",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsolidationStrategiesPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationStrategiesPreview"
                 }
               }
             }
@@ -7876,6 +8218,63 @@
           "mission": "I was born in Texas. I am a software engineer with 10 years of experience."
         }
       },
+      "BankAliasEntry": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Whether this alias is shown in place of the bank's own id. Display only \u2014 the bank keeps its id, and everything that names a bank still uses it. At most one alias per bank can be primary, and none has to be.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "BankAliasEntry",
+        "description": "One id a bank answers to."
+      },
+      "BankAliasesResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "The bank's own id, which an alias never replaces"
+          },
+          "aliases": {
+            "items": {
+              "$ref": "#/components/schemas/BankAliasEntry"
+            },
+            "type": "array",
+            "title": "Aliases",
+            "description": "Extra ids that also reach this bank, the primary one first then oldest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "aliases"
+        ],
+        "title": "BankAliasesResponse",
+        "description": "Response model for a bank's aliases.",
+        "example": {
+          "aliases": [
+            {
+              "alias": "user-123",
+              "primary": true
+            },
+            {
+              "alias": "legacy-user123",
+              "primary": false
+            }
+          ],
+          "bank_id": "user123"
+        }
+      },
       "BankConfigResponse": {
         "properties": {
           "bank_id": {
@@ -8018,6 +8417,26 @@
             ],
             "title": "Last Write At",
             "description": "When anything was last written to this bank: a document retained (including appends to an existing document) or a fact stored. Null if the bank is empty."
+          },
+          "display_alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Alias",
+            "description": "The alias this bank is presented under, when one was promoted. Display only: `bank_id` remains the bank's identity everywhere else. Null when no alias is primary, in which case show `bank_id`."
+          },
+          "matched_aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Aliases",
+            "description": "Aliases of this bank that matched the search `q`. Empty when no search was made, or when the bank matched on its own id or name \u2014 so a non-empty value explains a result whose `bank_id` does not contain the search text."
           }
         },
         "type": "object",
@@ -8680,7 +9099,22 @@
               }
             ],
             "title": "Observation Scope Limits",
-            "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+            "description": "DEPRECATED \u2014 use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+          },
+          "consolidation_strategies": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConsolidationStrategySpec"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Strategies",
+            "description": "Per-scope consolidation settings: [{\"scopes\": [{\"tags\": [\"company:*\"]}], \"observations_mission\": \"Record only generalized trends.\", \"max_observations_per_scope\": 20}]. Each strategy lists the rules it claims scopes with \u2014 a rule's tags are fnmatch globs that must all be on the scope, and its \"tags_match\" decides whether the scope may carry others (\"all\", the default) or not (\"exact\"). The rules are alternatives: any one matching claims the scope. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset \u2014 and every scope no strategy claims \u2014 uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief."
           },
           "reflect_source_facts_max_tokens": {
             "anyOf": [
@@ -9644,6 +10078,175 @@
         "title": "ConsolidationResponse",
         "description": "Response model for consolidation trigger endpoint."
       },
+      "ConsolidationScopePattern": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "fnmatch tag patterns, e.g. company:*"
+          },
+          "tags_match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags Match",
+            "description": "\"all\" (the default when omitted): the scope has every tag in the rule, other tags allowed. \"exact\": exactly these tags and no others."
+          }
+        },
+        "type": "object",
+        "title": "ConsolidationScopePattern",
+        "description": "One rule of a consolidation strategy: tags, and how they must match.\n\n``tags`` may be empty \u2014 that is a rule still being filled in, which the editor\nsaves as typed and consolidation ignores. The type pins the *shape*, not\ncompleteness: a string where the tag list belongs is rejected at the door\ninstead of being stored and silently ignored for the life of the bank.\n\nUnknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`\non the write path rather than by ``extra=\"forbid\"`` here: that would put\n``additionalProperties: false`` in the schema, which openapi-generator cannot\nprocess (\"Codegen Property not yet supported in getPydanticType\")."
+      },
+      "ConsolidationStrategiesPreview": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyPreview"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "default": {
+            "$ref": "#/components/schemas/DefaultScopesPreview"
+          },
+          "scopes_scanned": {
+            "type": "integer",
+            "title": "Scopes Scanned",
+            "description": "Distinct scopes the preview was computed over"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete",
+            "description": "False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies",
+          "default",
+          "scopes_scanned",
+          "complete"
+        ],
+        "title": "ConsolidationStrategiesPreview",
+        "description": "Which existing observation scopes each consolidation strategy would apply to."
+      },
+      "ConsolidationStrategiesPreviewRequest": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationStrategySpec"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "Draft consolidation_strategies value"
+          },
+          "sample_limit": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Sample Limit",
+            "description": "Example scopes returned per rule",
+            "default": 5
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies"
+        ],
+        "title": "ConsolidationStrategiesPreviewRequest",
+        "description": "A draft consolidation_strategies value to preview against existing scopes."
+      },
+      "ConsolidationStrategySpec": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationScopePattern"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "description": "Alternatives: the strategy claims a scope when any rule matches it"
+          },
+          "observations_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations Mission"
+          },
+          "max_observations_per_scope": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Observations Per Scope"
+          },
+          "consolidation_source_facts_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens"
+          },
+          "consolidation_source_facts_max_tokens_per_observation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens Per Observation"
+          }
+        },
+        "type": "object",
+        "title": "ConsolidationStrategySpec",
+        "description": "One `consolidation_strategies` entry: the rules it claims scopes with, and\nthe observation settings those scopes use. Every setting is optional; unset\nones come from the bank-wide values."
+      },
+      "CreateBankAliasRequest": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias",
+            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias."
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Also show the bank under this alias, replacing whichever alias is shown today.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "CreateBankAliasRequest",
+        "description": "Request model for adding an alias to a bank.",
+        "example": {
+          "alias": "user-123"
+        }
+      },
       "CreateBankRequest": {
         "properties": {
           "name": {
@@ -10204,6 +10807,33 @@
         ],
         "title": "CreateWebhookRequest",
         "description": "Request model for registering a webhook."
+      },
+      "DefaultScopesPreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "DefaultScopesPreview",
+        "description": "The scopes no strategy claims \u2014 they consolidate under the bank-wide settings."
       },
       "DeleteDocumentResponse": {
         "properties": {
@@ -11896,6 +12526,18 @@
             "title": "Is Stale",
             "description": "Pages only, populated by the tree endpoint. True when a memory in *this page's* scope \u2014 its tags and fact types \u2014 has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           },
+          "last_refresh_failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refresh Failed At",
+            "description": "Pages only: when this page's most recent refresh failed, in ISO format, or null when the last one succeeded. While it is set the page does not rebuild itself on its trigger \u2014 see the same field on the mental model. An explicit refresh still runs."
+          },
           "trigger": {
             "anyOf": [
               {
@@ -12018,12 +12660,12 @@
               }
             ],
             "title": "Body",
-            "description": "The page's synthesized markdown body."
+            "description": "The page's synthesized markdown body, exactly as stored. Empty until a refresh writes one \u2014 unlike `markdown`, which says so in words. Build a UI's own empty state off this field; read `markdown` to show the document itself."
           },
           "markdown": {
             "type": "string",
             "title": "Markdown",
-            "description": "The full markdown document: YAML frontmatter + markdown body."
+            "description": "The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document."
           }
         },
         "type": "object",
@@ -12081,7 +12723,8 @@
           },
           "snippet": {
             "type": "string",
-            "title": "Snippet"
+            "title": "Snippet",
+            "description": "The page's opening text. A page whose body is still empty says so in words \u2014 'No content yet.' \u2014 rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index."
           },
           "score": {
             "type": "number",
@@ -14432,6 +15075,18 @@
             "title": "Last Memory Seen At",
             "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet."
           },
+          "last_refresh_failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refresh Failed At",
+            "description": "When this model's most recent refresh failed, in ISO format, or null when the last one succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, `refresh_cron`) skip the model \u2014 a refresh that cannot succeed is not retried on every tick. An explicit refresh still runs, and a successful one clears this. The failure itself, with its reason, is in the model's history."
+          },
           "created_at": {
             "anyOf": [
               {
@@ -16292,7 +16947,7 @@
               }
             ],
             "title": "Attachments",
-            "description": "Attachments this fact was drawn from, as recorded per fact at extraction time \u2014 the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none."
+            "description": "Attachments this fact was drawn from, as recorded per fact at extraction time \u2014 the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none; an observation reports those of the facts it was consolidated from. Omitted when there are none."
           }
         },
         "type": "object",
@@ -16515,6 +17170,82 @@
               }
             ],
             "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments this memory was drawn from \u2014 the same per-fact edge recall reports. An observation reports those of the facts it was consolidated from. Omitted when there are none."
           }
         },
         "type": "object",
@@ -17322,6 +18053,21 @@
         "title": "RunSettingModel",
         "description": "A setting that shapes the operation without appearing in its prompt.\n\nChunk sizes decide how the input is cut before extraction runs, so they change\nwhat comes back while contributing no prompt text \u2014 they cannot be blocks, which\npartition the message, and these are in none of it."
       },
+      "SetBankAliasPrimaryRequest": {
+        "properties": {
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "True to present the bank under this alias; False to go back to its own id."
+          }
+        },
+        "type": "object",
+        "required": [
+          "primary"
+        ],
+        "title": "SetBankAliasPrimaryRequest",
+        "description": "Request model for showing (or no longer showing) an alias in place of the bank id."
+      },
       "SourceFactsIncludeOptions": {
         "properties": {
           "max_tokens": {
@@ -17340,6 +18086,109 @@
         "type": "object",
         "title": "SourceFactsIncludeOptions",
         "description": "Options for including source facts for observation-type results."
+      },
+      "StrategyPreview": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "False when the server would ignore this strategy (no usable rule, or no setting)"
+          },
+          "claimed_count": {
+            "type": "integer",
+            "title": "Claimed Count",
+            "description": "Existing scopes this strategy actually applies to"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyRulePreview"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "One entry per rule, aligned with the request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "claimed_count",
+          "rules"
+        ],
+        "title": "StrategyPreview",
+        "description": "Preview of one strategy, aligned by position with the request."
+      },
+      "StrategyRulePreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count",
+            "description": "Existing scopes this rule matches"
+          },
+          "taken_count": {
+            "type": "integer",
+            "title": "Taken Count",
+            "description": "Of those, how many an earlier strategy wins, so this one has no effect"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "description": "Observations across the matching scopes"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples",
+            "description": "The most populous matching scopes, up to sample_limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "taken_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "StrategyRulePreview",
+        "description": "What one rule (one entry of a strategy's `scopes`) matches among existing scopes."
+      },
+      "StrategyScopePreview": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The scope's tags (sorted)"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Observations in this scope"
+          },
+          "handled_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handled By",
+            "description": "Index of the strategy that actually applies to this scope (the first that claims it), or null when no strategy does and Default applies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags",
+          "count",
+          "handled_by"
+        ],
+        "title": "StrategyScopePreview",
+        "description": "One existing observation scope in a consolidation-strategy preview."
       },
       "TagGroupAnd-Input": {
         "properties": {

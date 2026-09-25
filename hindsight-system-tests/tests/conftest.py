@@ -54,6 +54,37 @@ def hindsight_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> I
     server.stop()
 
 
+@pytest.fixture(scope="session")
+def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A second server whose reranker is TypeSafe, pointed at the stub.
+
+    The reranker provider is server-level — it is not in `_CONFIGURABLE_FIELDS`, so
+    no bank can switch to it — which is why this costs a whole process rather than a
+    bank setting. Session-scoped and started lazily, so only the stories that ask
+    for it pay for it.
+    """
+    log_path: Path = tmp_path_factory.mktemp("typesafe-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_RERANKER_PROVIDER": "typesafe",
+            "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY": "stub-key",
+            "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES": "true",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=typesafe_server.url)
+    yield client
+    await client.aclose()
+
+
 @pytest.fixture
 def llm(stubs: Stubs) -> LLMStub:
     """The chat-completions rulebook. Declare what the model says before acting."""
@@ -64,6 +95,12 @@ def llm(stubs: Stubs) -> LLMStub:
 def _reset_stubs(stubs: Stubs) -> Iterator[None]:
     stubs.reset()
     yield
+    # A net, not the mechanism: ``async with llm.hold(...)`` releases inside the story,
+    # which is what keeps a parked call from outliving the bank it belongs to. This
+    # catches the story that never entered the block, or died before it — the stub
+    # server and its rulebook are session-scoped, so one wedged request would
+    # otherwise reach the next test.
+    stubs.llm.release_all()
 
 
 @pytest.fixture(autouse=True)

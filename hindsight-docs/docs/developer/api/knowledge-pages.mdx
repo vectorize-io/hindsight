@@ -86,6 +86,7 @@ Returns the whole knowledge base as a nested tree of folders and pages. Page bod
 | `description` | The page's source query — the question that rebuilds it |
 | `timestamp` | Last refresh for a page, last update for a folder |
 | `is_stale` | Pages only: `true` when a memory in *this page's* scope has been written since the page last read the memories (see below) |
+| `last_refresh_failed_at` | Pages only: when this page's last refresh failed, or `null` when it succeeded. While it is set the page does not rebuild itself on its trigger — an explicit refresh still runs, and a successful one clears it |
 | `managed` | `true` when the node is flagged as system-owned rather than hand-authored |
 
 ### How `is_stale` is decided

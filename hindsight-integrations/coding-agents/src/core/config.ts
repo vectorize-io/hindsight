@@ -25,10 +25,13 @@ import {
 import {
   type CustomPagesConfig,
   DEFAULT_PAGE_TRIGGER_CRON,
+  DEFAULT_RETAIN_EXTRACTION_MODE,
   isHashedCron,
   PAGE_NAMES,
   type PagesConfig,
   parseHashedCron,
+  RETAIN_EXTRACTION_MODES,
+  type RetainExtractionMode,
 } from "./missions";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
@@ -223,8 +226,9 @@ export interface RawConfig {
   /** Let the plugin shape the bank's own configuration — the retain strategies it writes under,
    *  the `knowledge` entity-label group, and (on a bank that has none) the missions (default true).
    *
-   *  Writing is strictly ADDITIVE: the plugin adds what the bank does not already define and never
-   *  overwrites an existing value, so an edit made in the control plane survives (#3927). Set false
+   *  Writing is ADDITIVE: the plugin adds what the bank does not already define and never
+   *  overwrites an existing value, so an edit made in the control plane survives (#3927) — except
+   *  the extraction mode of its own strategies, which follows `retainExtractionMode`. Set false
    *  to keep it out of the bank's configuration entirely — for a bank you shape yourself, or share
    *  with non-coding work. That bank should then define the strategies this plugin retains under
    *  (`git`, `gitlog`, `conversation`, `document`, `survey`): the server does not reject a retain
@@ -232,6 +236,13 @@ export interface RawConfig {
    *  instead — so a diff, a transcript and a survey marker all get the same generic treatment.
    *  Knowledge pages are seeded either way (see `pageTriggerType`). */
   manageBankConfig?: boolean;
+  /** How the server extracts memories from what this plugin retains — sessions, commits, documents
+   *  (default "concise"). One of "concise", "verbose", "verbatim", "chunks" (store the text with no
+   *  extraction). Every Stop writes the session back, so this is what each turn costs: "verbose"
+   *  extracts more detail at several times the tokens. Kept in sync on the plugin's own retain
+   *  strategies on every session start, so changing it reaches an existing bank too (unless
+   *  `manageBankConfig` is false). Anything else falls back to the default. */
+  retainExtractionMode?: RetainExtractionMode;
   /** How consolidation groups the observations this plugin's memories feed (default "shared" — one
    *  global scope per bank, so every agent working a repo builds ONE set of beliefs; see
    *  DEFAULT_OBSERVATION_SCOPES). "combined" restores the server default of one scope per distinct
@@ -297,6 +308,7 @@ export interface Config {
   retainTags: string[];
   retainMetadata: Record<string, string>;
   manageBankConfig: boolean;
+  retainExtractionMode: RetainExtractionMode;
   observationScopes: ObservationScopes;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -539,6 +551,9 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // write sessions back by default, every harness
     manageBankConfig: raw.manageBankConfig ?? true,
+    retainExtractionMode: RETAIN_EXTRACTION_MODES.includes(raw.retainExtractionMode!)
+      ? raw.retainExtractionMode!
+      : DEFAULT_RETAIN_EXTRACTION_MODE,
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || DEFAULT_REFLECT_TIMEOUT_MS,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
@@ -694,6 +709,7 @@ const ENV_KEYS = {
   // a map, so it flattens cleanly; its sibling retainMetadata stays file-only for the reason above.
   retainTags: "HINDSIGHT_RETAIN_TAGS",
   manageBankConfig: "HINDSIGHT_MANAGE_BANK_CONFIG",
+  retainExtractionMode: "HINDSIGHT_RETAIN_EXTRACTION_MODE",
 } as const satisfies Partial<Record<keyof RawConfig, string>>;
 
 /** Fields parsed as booleans/numbers/comma-separated lists; everything else is taken as a string. */

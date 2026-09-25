@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import pytest
 
 from hindsight_api.engine.memory_engine import (
-    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
@@ -3271,11 +3270,17 @@ class TestRefreshSkipsEmptyScope:
         """The reported shape: a page created with its bank, before anything is retained."""
         bank_id = f"test-mm-empty-full-{uuid.uuid4().hex[:8]}"
         await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        # Seeded with real content, not the empty body a fresh page carries: the
+        # assertion below is about PRESERVING what the document already said, and an
+        # empty body would pass it whether the skip preserved the content or wiped
+        # it. The bank still has nothing to reflect over — the sibling check excludes
+        # the model being refreshed — so the skip under test is unchanged.
+        existing = "# Coding Style\n\nTabs, and no clever one-liners."
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content=existing,
             request_context=request_context,
         )
         calls = self._stub_reflect(memory)
@@ -3291,7 +3296,7 @@ class TestRefreshSkipsEmptyScope:
             "slots it needs to ingest anything (#3875)"
         )
         assert refreshed is not None
-        assert refreshed["content"].strip() == MENTAL_MODEL_PENDING_CONTENT, (
+        assert refreshed["content"].strip() == existing, (
             "the document must be preserved, not overwritten from an empty synthesis"
         )
         reflect_response = refreshed["reflect_response"]
@@ -3311,7 +3316,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         await memory.retain_batch_async(
@@ -3470,7 +3475,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": False},
             request_context=request_context,
         )
@@ -3478,7 +3483,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding (isolated)",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": True},
             request_context=request_context,
         )
@@ -3511,7 +3516,7 @@ class TestRefreshSkipsEmptyScope:
                 bank_id=bank_id,
                 name=f"Page {i}",
                 source_query=f"topic {i}",
-                content=MENTAL_MODEL_PENDING_CONTENT,
+                content="",
                 trigger={"exclude_mental_models": False},
                 request_context=request_context,
             )
@@ -3527,6 +3532,42 @@ class TestRefreshSkipsEmptyScope:
         assert calls == [], (
             "five pages created with the bank each ran a full reflect over an empty "
             "graph, holding the LLM slots the bank needed to seed itself (#3875)"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_legacy_placeholder_siblings_are_not_sources_either(self, memory: MemoryEngine, request_context):
+        """The same bank-init shape, on a deployment upgraded mid-life.
+
+        Pages are created empty now, but a bank that pre-dates that still holds
+        "Generating content..." in every page that has not refreshed. Those are
+        unrefreshed pages by every other measure, and counting them as readable
+        siblings — merely because the column is not empty — re-opens #3875 for
+        exactly the banks the emptiness check protects.
+        """
+        bank_id = f"test-mm-siblings-legacy-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        pages = [
+            await memory.create_mental_model(
+                bank_id=bank_id,
+                name=f"Page {i}",
+                source_query=f"topic {i}",
+                content="Generating content...",
+                trigger={"exclude_mental_models": False},
+                request_context=request_context,
+            )
+            for i in range(3)
+        ]
+        calls = self._stub_reflect(memory)
+
+        for page in pages:
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=page["id"], request_context=request_context
+            )
+
+        assert calls == [], (
+            "a sibling still holding the legacy placeholder was counted as something "
+            "to reflect over, so every page ran a full reflect over an empty graph"
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)

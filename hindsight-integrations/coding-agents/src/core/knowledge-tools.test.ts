@@ -162,10 +162,15 @@ describe("buildKnowledgeTools", () => {
     expect(client.searchKnowledgePages).toHaveBeenCalledWith("upload retries");
     // No `score`: the server's RRF number tops out near 0.03, so a model reading it treats its best
     // hit as 3% relevant. Rank order carries the ranking.
-    expect(JSON.parse(result.content[0].text)).toEqual([
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.pages).toEqual([
       { page: "Uploader guide", page_id: "p1", snippet: "Uploads retry with backoff…" },
       { page: "Auth notes", page_id: "p2", snippet: "Tokens rotate daily." },
     ]);
+    // The credit reminder rides with the hits: the session guide has scrolled away by the time a
+    // search lands mid-session, and a paraphrased snippet otherwise gets absorbed uncredited.
+    expect(payload.crediting).toContain("From Hindsight memory");
+    expect(payload.crediting).toContain("paraphrased");
   });
 
   it("hindsight_read_knowledge_page returns the body once, with a dated field the model can judge", async () => {

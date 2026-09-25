@@ -1,6 +1,4 @@
----
-sidebar_position: 1
----
+
 
 # Python Client
 
@@ -22,15 +20,15 @@ from hindsight_client import Hindsight
 client = Hindsight(base_url="http://localhost:8888")
 
 # Retain a memory
-client.retain(bank_id="my-bank", content="Alice works at Google")
+client.retain(bank_id="python-sdk-bank", content="Alice works at Google")
 
 # Recall memories
-results = client.recall(bank_id="my-bank", query="What does Alice do?")
+results = client.recall(bank_id="python-sdk-bank", query="What does Alice do?")
 for r in results.results:
     print(r.text)
 
 # Reflect - generate a contextual answer
-answer = client.reflect(bank_id="my-bank", query="Tell me about Alice")
+answer = client.reflect(bank_id="python-sdk-bank", query="Tell me about Alice")
 print(answer.text)
 ```
 
@@ -46,15 +44,17 @@ client = Hindsight(
 )
 
 # Core operations
-client.retain(bank_id="test", content="Hello world")
-results = client.recall(bank_id="test", query="Hello")
+client.retain(bank_id="python-sdk-test", content="Hello world")
+results = client.recall(bank_id="python-sdk-test", query="Hello")
 
-# Organized API namespaces
-client.banks.create(bank_id="test", name="Test Bank")
-models = client.mental_models.list(bank_id="test")
-directives = client.directives.list(bank_id="test")
-memories = client.memories.list(bank_id="test")
+# Bank, mental model, directive and memory helpers
+client.create_bank(bank_id="python-sdk-test", name="Test Bank")
+models = client.list_mental_models(bank_id="python-sdk-test")
+directives = client.list_directives(bank_id="python-sdk-test")
+memories = client.list_memories(bank_id="python-sdk-test")
 ```
+
+For operations the helper methods don't cover, the client also exposes the full generated API as async namespaces (`client.banks`, `client.memory`, `client.documents`, `client.mental_models`, `client.directives`, ...). Their methods must be awaited.
 
 ## Core Operations
 
@@ -76,7 +76,7 @@ The async client method is available as `await client.aget_version()`.
 ```python
 # Simple
 client.retain(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     content="Alice works at Google as a software engineer",
 )
 
@@ -84,7 +84,7 @@ client.retain(
 from datetime import datetime
 
 client.retain(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     content="Alice got promoted",
     context="career update",
     timestamp=datetime(2024, 1, 15),
@@ -98,7 +98,7 @@ client.retain(
 
 ```python
 client.retain_batch(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     items=[
         {"content": "Alice works at Google", "context": "career"},
         {"content": "Bob is a data scientist", "context": "career"},
@@ -111,9 +111,9 @@ client.retain_batch(
 ### Recall (Search)
 
 ```python
-# Simple - returns list of RecallResult
+# Simple - returns a RecallResponse
 results = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
 )
 
@@ -122,7 +122,7 @@ for r in results.results:
 
 # With options
 results = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
     types=["world", "observation"],  # Filter by fact type
     max_tokens=4096,
@@ -135,7 +135,7 @@ results = client.recall(
 ```python
 # Returns RecallResponse with source chunks
 response = client.recall(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What does Alice do?",
     types=["world", "experience"],
     budget="mid",
@@ -147,15 +147,16 @@ response = client.recall(
 print(f"Found {len(response.results)} memories")
 for r in response.results:
     print(f"  - {r.text}")
-    if r.chunks:
-        print(f"    Source: {r.chunks[0].text[:100]}...")
+    chunk = (response.chunks or {}).get(r.chunk_id)
+    if chunk:
+        print(f"    Source: {chunk.text[:100]}...")
 ```
 
 ### Reflect (Generate Response)
 
 ```python
 answer = client.reflect(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     query="What should I know about Alice?",
     budget="low",  # low, mid, or high
     context="preparing for a meeting",
@@ -170,7 +171,7 @@ print(answer.text)  # Generated response
 
 ```python
 client.create_bank(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     name="Assistant",
     mission="You're a helpful AI assistant - keep track of user preferences and conversation history.",
     disposition={
@@ -185,7 +186,7 @@ client.create_bank(
 
 ```python
 client.list_memories(
-    bank_id="my-bank",
+    bank_id="python-sdk-bank",
     type="world",  # Optional: filter by type
     search_query="Alice",  # Optional: text search
     limit=100,
@@ -205,18 +206,18 @@ async def main():
     client = Hindsight(base_url="http://localhost:8888")
 
     # Async retain
-    await client.aretain(bank_id="my-bank", content="Hello world")
+    await client.aretain(bank_id="python-sdk-bank", content="Hello world")
 
     # Async recall
-    results = await client.arecall(bank_id="my-bank", query="Hello")
-    for r in results:
+    results = await client.arecall(bank_id="python-sdk-bank", query="Hello")
+    for r in results.results:
         print(r.text)
 
     # Async reflect
-    answer = await client.areflect(bank_id="my-bank", query="What did I say?")
+    answer = await client.areflect(bank_id="python-sdk-bank", query="What did I say?")
     print(answer.text)
 
-    client.close()
+    await client.aclose()
 
 asyncio.run(main())
 ```
@@ -227,7 +228,7 @@ asyncio.run(main())
 from hindsight_client import Hindsight
 
 with Hindsight(base_url="http://localhost:8888") as client:
-    client.retain(bank_id="my-bank", content="Hello")
-    results = client.recall(bank_id="my-bank", query="Hello")
+    client.retain(bank_id="python-sdk-bank", content="Hello")
+    results = client.recall(bank_id="python-sdk-bank", query="Hello")
 # Client automatically closed
 ```

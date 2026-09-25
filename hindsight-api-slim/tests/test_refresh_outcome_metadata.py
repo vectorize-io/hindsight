@@ -105,6 +105,35 @@ async def test_completed_refresh_enriches_result_metadata(bank_with_model, reque
     assert meta["based_on_counts"] == {"world": 3, "mental-models": 1}
 
 
+@pytest.mark.asyncio
+async def test_a_preserved_legacy_placeholder_is_not_populated_content(bank_with_model, request_context, monkeypatch):
+    """An upgraded bank's placeholder body is not synthesis, however long it is.
+
+    Pages are created empty now, but a bank upgraded from a version that wrote
+    "Generating content..." still holds those rows, and a skipped refresh preserves
+    that body. ``populated_content`` exists so a monitoring layer can tell "refreshed
+    with real content" from "refreshed empty" without reading the document, and a
+    length check alone reports the placeholder as the former.
+    """
+    memory, bank_id, mm = bank_with_model
+
+    operation_id = await _submit_with_fake_refresh(
+        memory,
+        monkeypatch,
+        bank_id,
+        mm,
+        request_context,
+        _fake_refreshed("Generating content...", {}),
+    )
+
+    status = await memory.get_operation_status(
+        bank_id=bank_id, operation_id=operation_id, request_context=request_context
+    )
+    meta = status["result_metadata"]
+    assert meta["content_len"] == len("Generating content...")
+    assert meta["populated_content"] is False
+
+
 # ---------------------------------------------------------------------------
 # What the refresh did with the document (#3274)
 # ---------------------------------------------------------------------------
@@ -153,7 +182,7 @@ def _patch_delta_llm(monkeypatch, memory: MemoryEngine, *, returns) -> None:
             raise returns
         return LLMCallResult(content=DeltaOperationList.model_validate({"operations": returns}), usage=TokenUsage())
 
-    monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
+    monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", fake_call)
 
 
 @dataclass

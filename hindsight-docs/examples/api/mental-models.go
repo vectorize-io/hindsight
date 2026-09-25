@@ -183,6 +183,44 @@ func main() {
 	}
 	// [/docs:get-mental-model-history]
 
+	// [docs:mental-model-detail]
+	// List: metadata only, the default (smallest response)
+	client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Execute()
+
+	// List with content but without provenance chains (opt-in)
+	client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
+
+	// Get one model — full detail is the default here
+	client.MentalModelsAPI.GetMentalModel(ctx, mmBankID, mentalModelID).Execute()
+	// [/docs:mental-model-detail]
+
+	// [docs:dry-run-refresh]
+	// Preview what a refresh would do, without writing anything
+	preview, _, err := client.MentalModelsAPI.DryRunRefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Mode: %s, would persist: %v\n", preview.GetEffectiveMode(), preview.GetWouldPersist())
+	fmt.Println(preview.GetDiff())
+	// [/docs:dry-run-refresh]
+
+	// [docs:keep-trace]
+	// Record how every refresh (scheduled ones too) reached its result
+	mode := "delta"
+	keepTrace := true
+	_, _, err = client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+		UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+			Trigger: *hindsight.NewNullableMentalModelTriggerInput(&hindsight.MentalModelTriggerInput{
+				Mode:      &mode,
+				KeepTrace: &keepTrace,
+			}),
+		}).Execute()
+	if err != nil {
+		panic(err)
+	}
+	// [/docs:keep-trace]
+
 	// [docs:delete-mental-model]
 	// Delete a mental model
 	client.MentalModelsAPI.DeleteMentalModel(ctx, mmBankID, mentalModelID).Execute()

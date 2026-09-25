@@ -368,8 +368,24 @@
             }
           ],
           "default": null,
-          "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
+          "description": "DEPRECATED \u2014 use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
           "title": "Observation Scope Limits"
+        },
+        "consolidation_strategies": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConsolidationStrategySpec"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-scope consolidation settings: [{\"scopes\": [{\"tags\": [\"company:*\"]}], \"observations_mission\": \"Record only generalized trends.\", \"max_observations_per_scope\": 20}]. Each strategy lists the rules it claims scopes with \u2014 a rule's tags are fnmatch globs that must all be on the scope, and its \"tags_match\" decides whether the scope may carry others (\"all\", the default) or not (\"exact\"). The rules are alternatives: any one matching claims the scope. A strategy may set any of observations_mission, max_observations_per_scope, consolidation_source_facts_max_tokens and consolidation_source_facts_max_tokens_per_observation; each is optional. Exactly one strategy applies to a scope: the first in the list that claims it. Whatever that strategy leaves unset \u2014 and every scope no strategy claims \u2014 uses the bank-wide value; a later strategy never fills the gaps. Supersedes observation_scope_limits. Lets one bank be federated across user/team/company tag scopes, each consolidating under its own brief.",
+          "title": "Consolidation Strategies"
         },
         "reflect_source_facts_max_tokens": {
           "anyOf": [
@@ -768,6 +784,97 @@
         "source_query"
       ],
       "title": "BankTemplateMentalModel",
+      "type": "object"
+    },
+    "ConsolidationScopePattern": {
+      "description": "One rule of a consolidation strategy: tags, and how they must match.\n\n``tags`` may be empty \u2014 that is a rule still being filled in, which the editor\nsaves as typed and consolidation ignores. The type pins the *shape*, not\ncompleteness: a string where the tag list belongs is rejected at the door\ninstead of being stored and silently ignored for the life of the bank.\n\nUnknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`\non the write path rather than by ``extra=\"forbid\"`` here: that would put\n``additionalProperties: false`` in the schema, which openapi-generator cannot\nprocess (\"Codegen Property not yet supported in getPydanticType\").",
+      "properties": {
+        "tags": {
+          "description": "fnmatch tag patterns, e.g. company:*",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "tags_match": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\"all\" (the default when omitted): the scope has every tag in the rule, other tags allowed. \"exact\": exactly these tags and no others.",
+          "title": "Tags Match"
+        }
+      },
+      "title": "ConsolidationScopePattern",
+      "type": "object"
+    },
+    "ConsolidationStrategySpec": {
+      "description": "One `consolidation_strategies` entry: the rules it claims scopes with, and\nthe observation settings those scopes use. Every setting is optional; unset\nones come from the bank-wide values.",
+      "properties": {
+        "scopes": {
+          "description": "Alternatives: the strategy claims a scope when any rule matches it",
+          "items": {
+            "$ref": "#/$defs/ConsolidationScopePattern"
+          },
+          "title": "Scopes",
+          "type": "array"
+        },
+        "observations_mission": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observations Mission"
+        },
+        "max_observations_per_scope": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Observations Per Scope"
+        },
+        "consolidation_source_facts_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consolidation Source Facts Max Tokens"
+        },
+        "consolidation_source_facts_max_tokens_per_observation": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consolidation Source Facts Max Tokens Per Observation"
+        }
+      },
+      "title": "ConsolidationStrategySpec",
       "type": "object"
     },
     "LabelGroup": {

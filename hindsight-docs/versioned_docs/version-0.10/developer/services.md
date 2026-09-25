@@ -1,6 +1,12 @@
+
+import {Flow} from '@vectorize-io/interfig';
+import services from '@vectorize-io/interfig/figures/services';
+
 # Services
 
 Hindsight consists of three services that can run together or separately depending on your deployment needs.
+
+<Flow {...services.props} />
 
 ## API Service
 

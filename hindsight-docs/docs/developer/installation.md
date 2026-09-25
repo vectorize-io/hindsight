@@ -422,12 +422,12 @@ client.retain(bank_id="alice", content="Alice prefers concise answers.")
 results = client.recall(bank_id="alice", query="How should I respond to Alice?")
 ```
 
-See the [Python SDK](../sdks/python.md) for the full API reference.
+See the [Python SDK](../sdks/python.mdx) for the full API reference.
 
 ---
 
 ## Next Steps
 
-- [Configuration](./configuration.md) — Environment variables and settings
+- [Configuration](./configuration.mdx) — Environment variables and settings
 - [Models](./models.mdx) — ML models and providers
 - [Monitoring](./monitoring.md) — Metrics and observability

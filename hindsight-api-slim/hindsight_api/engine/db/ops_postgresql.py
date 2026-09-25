@@ -16,7 +16,7 @@ from .ops import (
     TagListingParts,
     UpdatedWindow,
     bank_serialization_sql,
-    document_serialization_sql,
+    key_serialization_sql,
     memory_unit_columns,
 )
 from .result import ResultRow
@@ -1718,7 +1718,7 @@ class PostgreSQLOps(DataAccessOps):
               AND o.operation_type = $1
               AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
               AND {bank_serialization_sql(table, "o")}
-              AND {document_serialization_sql(table, "o")}
+              AND {key_serialization_sql(table, "o")}
             ORDER BY o.created_at
             LIMIT $2
             FOR UPDATE SKIP LOCKED
@@ -1772,7 +1772,7 @@ class PostgreSQLOps(DataAccessOps):
         cursor off the result. Within the rotated bank the row is index-ordered
         rather than that bank's oldest — sorting by ``created_at`` there would
         need an index on ``(bank_id, created_at)`` and cost 12 s without one, and
-        per-document order is held by ``document_serialization_sql`` regardless.
+        per-key order is held by ``key_serialization_sql`` regardless.
         """
         params: list = [bank_cursor]
         exclusion = ""
@@ -1789,7 +1789,7 @@ class PostgreSQLOps(DataAccessOps):
               AND o.operation_type != 'consolidation'
               AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
               AND {bank_serialization_sql(table, "o")}
-              AND {document_serialization_sql(table, "o")}{exclusion}"""
+              AND {key_serialization_sql(table, "o")}{exclusion}"""
 
         return await conn.fetch(
             f"""

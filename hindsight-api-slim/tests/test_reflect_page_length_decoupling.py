@@ -76,6 +76,7 @@ def _mock_llm(final_answer: str = "Synthesized final answer."):
 
 def _mock_functions():
     return {
+        "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
         "search_mental_models_fn": AsyncMock(
             return_value={"mental_models": [{"id": "mm-1", "name": "Prefs", "content": "Fresh.", "is_stale": False}]}
         ),

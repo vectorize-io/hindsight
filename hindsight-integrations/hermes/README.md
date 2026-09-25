@@ -2,13 +2,21 @@
 
 Long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval. Supports cloud, local embedded, and local external modes.
 
-A [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory-provider plugin. It used to ship inside Hermes as `plugins/memory/hindsight/`; Nous Research moved every memory provider out of the core tree and handed this one over, so it now lives here and is maintained by the Hindsight team. This directory is the live source, and the Hermes catalog entry points here.
+A [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory-provider plugin, installed from
+the Hermes plugin catalog. It used to ship inside Hermes as `plugins/memory/hindsight/`; Nous Research
+moved every memory provider out of the core tree, so it is now maintained by the Hindsight team in
+[vectorize-io/hindsight](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/hermes)
+and the catalog pins it from there.
+
+[View Changelog →](https://hindsight.vectorize.io/changelog/integrations/hermes)
 
 ## Install
 
+Hindsight is in the Hermes plugin catalog, so the name is all you need:
+
 ```bash
-hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
-hermes memory setup    # select "hindsight"
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ```
 
 Dependencies in `pyproject.toml` are installed into the Hermes venv automatically and survive `hermes update`.
@@ -19,20 +27,89 @@ Dependencies in `pyproject.toml` are installed into the Hermes venv automaticall
 the mode-dependent extras (`local_embedded` needs `hindsight-all`, not just the client), so
 `plugins install` on its own leaves the provider reporting "not available" in embedded mode.
 
-While Hermes still bundles `plugins/memory/hindsight/`, **the bundled copy wins** — provider lookup
-is bundled → `~/.hermes/plugins/` → project → entry point, first hit wins, so installing this plugin
-alongside the bundled one is inert. When Hermes drops the bundled copy, `hermes update` migrates
-existing users automatically via `hermes_cli/memory_provider_migration.py`, which resolves the
-provider name against the Hermes plugin catalog. Submitting that entry is **our** job per the
-handoff notes, which makes `plugin-catalog-entry.yaml` (to be PR'd into `NousResearch/hermes-agent`
-as `plugin-catalog/hindsight.yaml`) a hard prerequisite of their removal — see the comments in that
-file.
-
 `local_embedded` mode needs `hindsight-all`, which `pyproject.toml` deliberately does not declare
 (it would push the local-ML stack onto cloud-mode users). The setup wizard installs it, and
-`embedded.py::_ensure_local_runtime` self-installs it on the availability check as a backstop, so
-embedded mode no longer depends on the `if provider_name == "hindsight"` special case in Hermes
-core's `memory_setup.py` — which leaves the tree when the bundled provider does.
+`embedded.py::_ensure_local_runtime` self-installs it on the availability check as a backstop.
+
+## Coming from the built-in provider
+
+Hindsight used to ship inside Hermes as `plugins/memory/hindsight/`. Nous Research removed that copy
+on 2026-09-23 and the provider now installs from the catalog instead. **You do not need to do
+anything** — and your memories are not affected.
+
+`hermes update`, and agent startup for Desktop users who never run it, calls Hermes'
+`memory_provider_migration`: it sees `memory.provider: hindsight` configured, finds no provider on
+disk, looks the name up in the plugin catalog and installs it at the reviewed commit pin. You'll see:
+
+```
+✓ Memory provider 'hindsight' moved out of core — installed its plugin from the catalog
+  (your memory.hindsight settings and data are unchanged).
+```
+
+Your data never lived in the Hermes tree: memories are in your Hindsight bank — Hindsight Cloud, or
+for `local_embedded` the profile directory `~/.hindsight/profiles/<profile>` and its embedded
+PostgreSQL instance. Moving the provider code does not touch any of it, and your
+`~/.hermes/hindsight/config.json` is read exactly as before.
+
+If the migration can't run — offline, or the catalog fetch fails — Hermes prints the manual
+one-liner rather than starting silently without memory:
+
+```bash
+hermes plugins install hindsight
+```
+
+## Updating
+
+**Nothing updates the plugin on its own.** Whichever mode you choose below, the code only moves
+when you run a command. In particular `hermes update` does *not* move it: it reinstalls the
+plugin's Python dependencies and leaves the checkout where it is. If you used the built-in
+provider, that is the one habit worth unlearning — memory improvements no longer arrive as a side
+effect of updating Hermes.
+
+Hermes re-fetches the published catalog at most once every 6 hours, so a freshly released version
+can take that long to even appear as available.
+
+### Follow the official pin (default)
+
+What you get from `hermes plugins install hindsight`: the commit Nous reviewed and pinned in their
+catalog.
+
+```bash
+hermes plugins update hindsight    # move to the catalog's current pin
+```
+
+`hermes plugins list` flags the plugin `update_available` once your installed commit differs from
+the catalog's. Re-running `hermes plugins install hindsight` does **not** update it — it refuses
+with "already exists"; `plugins update` is the command that re-pins.
+
+### Pin a specific release
+
+For a version you choose and freeze, install with an explicit commit:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes \
+  --force --ref <40-character-commit-sha>
+```
+
+`--ref` takes a full commit SHA and **rejects tag names**, so take the SHA from the release notes
+of the [release](https://github.com/vectorize-io/hindsight/releases) you want rather than typing
+`v1.0.1`. A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately
+refuses to move it — install again with a new `--ref` when you want a different version.
+
+### Track the latest development code
+
+For fixes before they reach the catalog. Install from the source path rather than the catalog name:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes
+hermes plugins update hindsight    # now a git pull of our main branch
+```
+
+Unreviewed by definition — you get whatever is on `main` at the moment you run it.
+
+The catalog entry lives in Nous' repo at
+[`plugin-catalog/hindsight.yaml`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hindsight.yaml),
+which is what records the current pin.
 
 ## Requirements
 
@@ -186,9 +263,95 @@ Available in `hybrid` and `tools` memory modes:
 
 ## Client Version
 
-Requires `hindsight-client >= 0.6.1`. The plugin auto-upgrades on session start if an older version is detected.
+Requires `hindsight-client >= 0.10.1` and, for `local_embedded`, `hindsight-embed >= 0.10.1`. The plugin
+auto-upgrades the client on session start if an older version is detected.
+
+The floor is 0.10.1 rather than the 0.6.1 this plugin needs at the API level because
+`hindsight-embed` 0.10.0 breaks `local_embedded` outright: its daemon probe cleared the calling
+thread's event loop, so the next client call failed with `Timeout context manager should be used
+inside a task`. If you installed between 2026-09-14 and 2026-09-21, run `hermes update` (or
+`hermes plugins update hindsight`) to move off it.
+
+## Hermes Gateway (Telegram, Discord, Slack)
+
+The provider works across every gateway platform. Hermes builds a fresh agent per message, and the
+provider is re-initialized with it, so auto-recall runs for each turn regardless of platform.
+
+Two settings are worth turning off for customer-facing bots: `recall_indicator` and
+`retain_indicator`, which otherwise print a `👁️ Hindsight` status line into the user's channel.
+
+## Disabling Hermes' built-in memory
+
+Hermes has its own memory store backed by local markdown (`MEMORY.md`, plus a slimmer `USER.md`
+profile). With both active the model may prefer the built-in one, so turn the flat-file stores off:
+
+```bash
+hermes config set memory.memory_enabled false
+hermes config set memory.user_profile_enabled false   # optional: the USER.md profile
+```
+
+Setting both to `false` removes the built-in `memory` tool from the agent entirely. Re-enable later
+by setting the same flags back to `true`.
+
+## Troubleshooting
+
+**Tools don't appear in `/tools`** — the provider skips tool registration when it isn't configured.
+Check `hermes memory status` reports `hindsight` as the active provider and `Status: available`. In
+`memory_mode: context` the tools are hidden on purpose.
+
+**`Status: not available` in `local_embedded`** — the embedded runtime (`hindsight-all`) isn't
+installed. The plugin self-installs it on the availability check; if that is blocked
+(`security.allow_lazy_installs: false`, or a sealed venv) install it yourself:
+`uv pip install --python "$(hermes doctor --python-path)" hindsight-all`, or re-run
+`hermes memory setup`.
+
+**`Timeout context manager should be used inside a task`** — `hindsight-embed` 0.10.0. Run
+`hermes plugins update hindsight` to move to the 0.10.1 floor.
+
+**Local daemon not starting** — check the logs:
+
+```bash
+cat ~/.hermes/logs/hindsight-embed.log     # startup
+cat ~/.hindsight/profiles/<profile>.log    # daemon runtime
+```
+
+**Recall returns nothing** — memories need at least one retain cycle, and extraction is an LLM call.
+Store a fact, then ask about it on a later turn.
 
 ## Development
+
+### Releasing
+
+```bash
+./scripts/release-integration.sh hermes patch    # or minor / major / an explicit semver
+```
+
+That bumps the version in **both** `pyproject.toml` and `plugin.yaml` (Hermes reads the latter —
+it is the version `hermes plugins list` and the catalog card show), writes the changelog entry,
+regenerates the docs skill, commits, and pushes the tag `integrations/hermes/vX.Y.Z`.
+
+Then **open a follow-up PR against `NousResearch/hermes-agent`** bumping `sha` and `version`
+together in `plugin-catalog/hindsight.yaml`. Until that lands, installs stay on the old commit —
+the tag alone reaches nobody.
+
+Put the released **commit SHA** in the release notes. Hermes' `--ref` takes a 40-character SHA and
+rejects tag names (`_EXACT_COMMIT_RE`), so a user pinning to a specific release needs the SHA, not
+`v1.1.0`.
+
+**First release only:** the release creates `changelog/integrations/hermes`, and
+`check-integrations.mjs` then requires the doc page to link it. The page is generated, so add the
+link to this README (as the other integrations do, absolute so it also works on GitHub):
+`[View Changelog →](https://hindsight.vectorize.io/changelog/integrations/hermes)`. It cannot go in
+earlier — the docs build runs `onBrokenLinks: 'throw'` and the page does not exist until the
+release commit.
+
+This README is the single source for the docs page. After editing it, regenerate:
+
+```bash
+node hindsight-docs/scripts/sync-hermes-doc.mjs
+```
+
+The docs build runs the same script with `--check`, so a stale page fails the build.
 
 ```bash
 uv sync

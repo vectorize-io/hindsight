@@ -12,6 +12,10 @@ Today we're releasing Hindsight 0.4.0, which introduces two powerful learning ca
 
 <!-- truncate -->
 
+import {Flow} from '@vectorize-io/interfig';
+import observations from '@vectorize-io/interfig/figures/observations';
+import mentalModelsApi from '@vectorize-io/interfig/figures/mental-models-api';
+
 ## Two Levels of Learning
 
 Hindsight 0.4.0 introduces a hierarchical learning system:
@@ -58,15 +62,7 @@ After every `retain()` call, Hindsight's consolidation engine runs automatically
 3. **Synthesizes observations** that capture higher-order insights
 4. **Tracks evidence** linking each observation to its supporting facts
 
-```mermaid
-graph LR
-    A[New Facts] --> B[Consolidation Engine]
-    B --> C{Existing Observation?}
-    C -->|Yes| D[Refine Observation]
-    C -->|No| E[Create Observation]
-    D --> F[Observations]
-    E --> F
-```
+<Flow {...observations.props} />
 
 ### Evidence-Based Evolution
 
@@ -108,15 +104,7 @@ While observations are created automatically, **mental models** give you explici
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+<Flow {...mentalModelsApi.props} />
 
 ### Why Use Mental Models?
 

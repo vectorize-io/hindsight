@@ -37,6 +37,12 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 #: Scope key the route class uses to hand unknown parameter names to this middleware.
 SCOPE_IGNORED_PARAMS = "hindsight.ignored_params"
 
+#: Set by the route class when the request named a bank by an alias, to the alias it
+#: used. Nothing downstream routes on it -- the path param already carries the real
+#: bank id by then -- it is here so logs and traces can tell which id a caller sent,
+#: which is the whole question during a phased migration off an old one.
+SCOPE_RESOLVED_ALIAS = "hindsight.resolved_alias"
+
 
 def _header_safe(value: str) -> bytes:
     """Encode an attacker-supplied string for use as a header value.

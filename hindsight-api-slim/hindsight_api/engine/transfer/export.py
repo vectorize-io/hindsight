@@ -111,6 +111,12 @@ _SKIP_TABLES = frozenset(
         # documents.original_text already holds the extracted text, which is what
         # the replay needs.
         "file_storage",
+        # Aliases are routing identity, not bank content: they say which ids reach
+        # THIS bank on THIS deployment. Carrying them would make an import or clone
+        # claim the source's ids — silently stealing its traffic on the same
+        # instance, and failing the alias-vs-bank check on another. Add them to the
+        # target deliberately, once it is the bank you mean to route to.
+        "bank_aliases",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with

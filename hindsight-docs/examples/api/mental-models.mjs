@@ -129,7 +129,7 @@ console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
 // Update a mental model's metadata
 const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
     name: 'Updated Team Communication Preferences',
-    trigger: { refresh_after_consolidation: true },
+    trigger: { refreshAfterConsolidation: true },
 });
 
 console.log(`Updated name: ${updated.name}`);
@@ -144,6 +144,32 @@ for (const entry of history) {
     console.log(`Previous content: ${entry.previous_content}`);
 }
 // [/docs:get-mental-model-history]
+
+// [docs:mental-model-detail]
+// List: metadata only, the default (smallest response)
+await client.listMentalModels(BANK_ID);
+
+// List with content but without provenance chains (opt-in)
+await client.listMentalModels(BANK_ID, { detail: 'content' });
+
+// Get one model — full detail is the default here
+await client.getMentalModel(BANK_ID, mentalModelId);
+// [/docs:mental-model-detail]
+
+// [docs:dry-run-refresh]
+// Preview what a refresh would do, without writing anything
+const preview = await client.dryRunRefreshMentalModel(BANK_ID, mentalModelId);
+
+console.log(`Mode: ${preview.effective_mode}, would persist: ${preview.would_persist}`);
+console.log(preview.diff);
+// [/docs:dry-run-refresh]
+
+// [docs:keep-trace]
+// Record how every refresh (scheduled ones too) reached its result
+await client.updateMentalModel(BANK_ID, mentalModelId, {
+    trigger: { mode: 'delta', keepTrace: true },
+});
+// [/docs:keep-trace]
 
 // [docs:delete-mental-model]
 // Delete a mental model

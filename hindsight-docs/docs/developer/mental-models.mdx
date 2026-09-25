@@ -2,19 +2,16 @@
 sidebar_position: 6
 ---
 
+import {Flow} from '@vectorize-io/interfig';
+import mentalModelsFigure from '@vectorize-io/interfig/figures/mental-models';
+
 # Mental Models
 
 A **mental model** is a standing answer to a question about a bank. You define the question once; Hindsight writes the answer, keeps it stored, and rewrites it in the background as the bank learns more.
 
 Where [observations](./observations) are produced automatically and are atomic — one belief at a time — a mental model is deliberately curated: you decide which questions deserve a permanent, always-current answer.
 
-```mermaid
-graph LR
-    A[Raw facts] --> B[Observations]
-    B --> C[Mental model]
-    A --> C
-    C --> D[Your application]
-```
+<Flow {...mentalModelsFigure.props} />
 
 ---
 

@@ -87,6 +87,26 @@ class TestRenderDocument:
         assert doc.count("---") == 2
         assert doc.rstrip().endswith("---")
 
+    def test_empty_body_can_say_so_for_a_reader(self):
+        """The read surfaces opt in; the export bundle does not.
+
+        Frontmatter and nothing else reads as a page that failed to render rather
+        than one nobody has written, which is what sends an agent off to create a
+        second page for the topic. It stays off by default because this same
+        renderer writes the export bundle, where the notice would come back as
+        ordinary content the next time the bundle is read.
+        """
+        doc = page_markdown.render_document(_mm(content=""), notice_when_empty=True)
+        assert page_markdown.EMPTY_PAGE_NOTICE in doc
+
+        exported = page_markdown.render_document(_mm(content=""))
+        assert page_markdown.EMPTY_PAGE_NOTICE not in exported
+
+    def test_a_real_body_is_never_replaced_by_the_notice(self):
+        doc = page_markdown.render_document(_mm(), notice_when_empty=True)
+        assert "One row per order." in doc
+        assert page_markdown.EMPTY_PAGE_NOTICE not in doc
+
 
 class TestReservedFiles:
     def test_index_links_each_page(self):

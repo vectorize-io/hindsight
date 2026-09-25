@@ -110,6 +110,34 @@ Extensions have access to an `ExtensionContext` that provides:
 - `run_migration(schema)` - Run database migrations for a schema
 - `get_memory_engine()` - Get the MemoryEngine interface
 
+### Shipping your own database migrations
+
+An extension that keeps state of its own returns the directory holding its Alembic
+revision files, and they are applied in the same migration run as Hindsight's own —
+same ordering guarantees, same `alembic_version` table:
+
+```python
+class MyExtension(TenantExtension):
+    def alembic_version_locations(self) -> list[str]:
+        return [str(Path(__file__).parent / "alembic" / "versions")]
+```
+
+The directory holds revision files only — there is no `env.py`; Hindsight's own
+configures the schema and the connection. The tree is independent of Hindsight's: give
+its first revision `down_revision = None` and a `branch_labels` naming your extension,
+so an operator can address it (`alembic upgrade <label>@head`).
+
+Independent branches have no ordering between them. A revision that needs a Hindsight
+table to exist first must say so explicitly, which orders it without making Hindsight's
+revision its parent:
+
+```python
+depends_on = ("a1b2c3d4e5f6",)   # a Hindsight revision id
+```
+
+A directory that does not exist is skipped with a warning rather than failing the
+migration — a misconfigured extension must never leave a database unmigratable.
+
 ### Example: Custom TenantExtension with JWT
 
 ```python

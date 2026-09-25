@@ -4,11 +4,11 @@ sidebar_position: 6
 
 # Programmatic API (Node.js)
 
-The `@vectorize-io/hindsight-all` npm package is the Node.js equivalent of the Python [`hindsight-all`](./hindsight-all.md) package. It lets your Node code spawn and supervise a local Hindsight daemon without deploying any server infrastructure — pair it with [`@vectorize-io/hindsight-client`](./nodejs.md) for memory operations.
+The `@vectorize-io/hindsight-all` npm package is the Node.js equivalent of the Python [`hindsight-all`](./hindsight-all.md) package. It lets your Node code spawn and supervise a local Hindsight daemon without deploying any server infrastructure — pair it with [`@vectorize-io/hindsight-client`](./nodejs.mdx) for memory operations.
 
 The daemon runs as a **separate OS process** on `127.0.0.1` (not in your Node process). Your code talks to it over HTTP via `HindsightClient`.
 
-This package **does not ship an HTTP client** — it only owns the server process. Once the daemon is running, talk to it with [`@vectorize-io/hindsight-client`](./nodejs.md) against `server.getBaseUrl()`. The two packages compose: one owns the process, the other owns the API surface.
+This package **does not ship an HTTP client** — it only owns the server process. Once the daemon is running, talk to it with [`@vectorize-io/hindsight-client`](./nodejs.mdx) against `server.getBaseUrl()`. The two packages compose: one owns the process, the other owns the API surface.
 
 ## How it works
 
@@ -86,4 +86,4 @@ For a remote Hindsight API, skip the server entirely and point `HindsightClient`
 | `getBaseUrl()` | `string` | `http://host:port` — pass this straight to `HindsightClient`. |
 | `getProfile()` | `string` | The profile name this server operates on. |
 
-For memory operations (retain, recall, reflect, bank management) use [`@vectorize-io/hindsight-client`](./nodejs.md).
+For memory operations (retain, recall, reflect, bank management) use [`@vectorize-io/hindsight-client`](./nodejs.mdx).

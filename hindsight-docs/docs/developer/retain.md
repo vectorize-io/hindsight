@@ -2,19 +2,16 @@
 sidebar_position: 2
 ---
 
+import {Flow} from '@vectorize-io/interfig';
+import retainFigure from '@vectorize-io/interfig/figures/retain';
+
 # Retain: How Hindsight Stores Memories
 
 When you call `retain()`, Hindsight transforms conversations and documents into structured, searchable memories that preserve meaning and context.
 
 ## What Retain Does
 
-```mermaid
-graph LR
-    A[Your Content] --> B[Extract Facts]
-    B --> C[Identify Entities]
-    C --> D[Build Connections]
-    D --> E[Memory Bank]
-```
+<Flow {...retainFigure.props} />
 
 ---
 
@@ -224,6 +221,12 @@ Facts that came from the prose have no `attachments`, even when the same documen
 is full of pictures. So an attachment shown next to a memory means the model
 looked at it to produce that memory — it is evidence, not decoration.
 
+An observation carries the attachments of the facts it was consolidated from, so
+a screenshot still reaches you when recall or reflect answers from the
+observation rather than the raw fact. Reflect's `based_on` (with
+`include.facts`) returns each cited memory with its `attachments`, plus the
+`document_id`, `chunk_id`, `tags` and `metadata` it was stored with.
+
 ### What to expect from charts and tables
 
 An attachment carrying structured data is transcribed rather than summarised:
@@ -247,11 +250,11 @@ not all of them.
 - If that model cannot read images — or if Hindsight cannot tell, which is the
   case for gateway backends serving mixed catalogues — the retain is refused
   with `422` rather than dropping the attachment silently. See
-  [`HINDSIGHT_API_LLM_VISION`](/developer/configuration#llm-configuration).
+  [`HINDSIGHT_API_LLM_VISION`](/developer/configuration#llm-provider).
 - Batch retain (`HINDSIGHT_API_RETAIN_BATCH_ENABLED`) cannot carry attachments,
   and also refuses with `422`.
 
-This is different from [`POST /files/retain`](/developer/configuration#file-conversion),
+This is different from [`POST /files/retain`](/developer/configuration#file-processing),
 which converts a whole file to markdown as its **own** document. That is still the
 right tool for a scanned report you want parsed — but it separates the file from
 the prose that referred to it, which is exactly what inline attachments avoid.

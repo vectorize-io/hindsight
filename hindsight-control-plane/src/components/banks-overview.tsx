@@ -56,6 +56,8 @@ function toBankInfo(bank: Record<string, unknown>): BankInfo {
     created_at: (bank.created_at as string) ?? null,
     updated_at: (bank.updated_at as string) ?? null,
     fact_count: (bank.fact_count as number) ?? 0,
+    matched_aliases: (bank.matched_aliases as string[]) ?? [],
+    display_alias: (bank.display_alias as string) ?? null,
     last_document_at: (bank.last_document_at as string) ?? null,
     last_write_at: (bank.last_write_at as string) ?? null,
   };

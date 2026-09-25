@@ -71,7 +71,9 @@ _ON_CONFLICT_DO_UPDATE_RE = re.compile(
     r"\bON\s+CONFLICT\s*\((?:[^()]*|\([^()]*\))*\)\s*DO\s+UPDATE\s+SET\b", re.IGNORECASE
 )
 
-_RETURNING_RE = re.compile(r"\bRETURNING\s+(.+)", re.IGNORECASE | re.DOTALL)
+# A PG RETURNING clause. "RETURNING <type>" (e.g. JSON_MERGEPATCH(..., :1 RETURNING CLOB))
+# is an Oracle JSON-function returning clause, not a statement-level RETURNING.
+_RETURNING_RE = re.compile(r"\bRETURNING\s+(?!(?:CLOB|BLOB|VARCHAR2|JSON)\b)(.+)", re.IGNORECASE | re.DOTALL)
 
 _ANY_RE = re.compile(r"=\s*ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 _NOT_ALL_RE = re.compile(r"!=\s*ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
@@ -319,13 +321,18 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # $N → :N
     query = _PG_PARAM_RE.sub(r":\1", query)
 
-    # JSONB merge operator: col || :N::jsonb → JSON_MERGEPATCH(col, :N)
+    # JSONB merge operator: col || :N::jsonb → JSON_MERGEPATCH(col, :N RETURNING CLOB)
     # Must happen BEFORE cast strip so we can detect ::jsonb
-    query = re.sub(r"(\w+)\s*\|\|\s*(:\w+)::jsonb", r"JSON_MERGEPATCH(\1, \2)", query, flags=re.IGNORECASE)
+    # RETURNING CLOB is required: without it JSON_MERGEPATCH returns VARCHAR2(4000)
+    # with NULL ON ERROR, so a merged document over 4000 bytes silently becomes NULL
+    # (e.g. ORA-01407 when updating the NOT NULL banks.config column).
+    query = re.sub(
+        r"(\w+)\s*\|\|\s*(:\w+)::jsonb", r"JSON_MERGEPATCH(\1, \2 RETURNING CLOB)", query, flags=re.IGNORECASE
+    )
 
     # JSONB merge with complex left-hand expression (e.g. COALESCE(...)):
     #   COALESCE(col, '[]'::jsonb) || :N::jsonb
-    #   → JSON_MERGEPATCH(COALESCE(col, TO_CLOB('[]')), :N)
+    #   → JSON_MERGEPATCH(COALESCE(col, TO_CLOB('[]')), :N RETURNING CLOB)
     # The simple \w+ regex above won't match a closing paren.  We also
     # wrap any JSON string literals inside the COALESCE with TO_CLOB to
     # prevent ORA-00932 (CHAR vs CLOB type mismatch with CLOB columns).
@@ -334,7 +341,7 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
         bind_param = m.group(2)
         # Wrap any 'literal'::jsonb inside COALESCE with TO_CLOB
         coalesce_expr = re.sub(r"'([^']*)'::(jsonb|json)", r"TO_CLOB('\1')", coalesce_expr, flags=re.IGNORECASE)
-        return f"JSON_MERGEPATCH({coalesce_expr}, {bind_param})"
+        return f"JSON_MERGEPATCH({coalesce_expr}, {bind_param} RETURNING CLOB)"
 
     query = re.sub(
         r"(COALESCE\([^)]+\))\s*\|\|\s*(:\w+)::jsonb",
@@ -357,6 +364,27 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     query = re.sub(
         r"""\((\w+)\s*->>\s*'(\w+)'\)::boolean\s*=\s*(true|false)""",
         _rewrite_json_bool,
+        query,
+        flags=re.IGNORECASE,
+    )
+
+    # NOT (col::jsonb @> '{"is_parent": true}'::jsonb) — used by list_operations
+    # (exclude_parents). _JSONB_CONTAINS_RE only handles bind params, so the literal
+    # form would reach Oracle verbatim. Must run BEFORE the cast strip. Keeps PG's
+    # three-valued logic: a NULL column makes NOT (NULL @> ...) NULL, i.e. excluded.
+    def _rewrite_not_jsonb_is_parent(m: re.Match) -> str:
+        col = m.group(1)
+        return (
+            f"({col} IS NOT NULL AND ("
+            f"CASE WHEN JSON_VALUE({col}, '$.type()') = 'object' "
+            f"AND JSON_VALUE({col}, '$.is_parent.type()') = 'boolean' "
+            f"AND JSON_VALUE({col}, '$.is_parent') = 'true' "
+            f"THEN 1 ELSE 0 END = 0))"
+        )
+
+    query = re.sub(
+        r"""NOT\s*\(\s*(\w+)(?:::jsonb)?\s*@>\s*'\{\s*["']?is_parent["']?\s*:\s*true\s*\}'(?:::jsonb)?\s*\)""",
+        _rewrite_not_jsonb_is_parent,
         query,
         flags=re.IGNORECASE,
     )
@@ -621,6 +649,36 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
 # ---------------------------------------------------------------------------
 # oracledb lazy import
 # ---------------------------------------------------------------------------
+
+
+def _oracle_connect_params(dsn: str) -> dict[str, Any]:
+    """Turn the configured database URL into oracledb connect kwargs.
+
+    Accepts ``oracle://user:pass@host:port/service`` and, for Autonomous
+    Database / TCPS setups that need a full connect descriptor or TNS alias,
+    ``oracle://user:pass@/?dsn=<descriptor-or-alias>``. Credentials are
+    URL-decoded, so passwords containing ``#``, ``@`` or ``%`` work when
+    percent-encoded in the URL. Anything that is not an ``oracle://`` URL is
+    passed through as the dsn.
+    """
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    parsed = urlparse(dsn)
+    if parsed.scheme not in ("oracle", "oracle+oracledb"):
+        return {"dsn": dsn}
+    params: dict[str, Any] = {
+        "user": unquote(parsed.username) if parsed.username else None,
+        "password": unquote(parsed.password) if parsed.password else None,
+    }
+    descriptor = parse_qs(parsed.query).get("dsn")
+    if descriptor and descriptor[0]:
+        params["dsn"] = descriptor[0]
+    else:
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 1521
+        service = parsed.path.lstrip("/") if parsed.path else "FREEPDB1"
+        params["dsn"] = f"{host}:{port}/{service}"
+    return params
 
 
 def _import_oracledb():
@@ -964,6 +1022,11 @@ class OracleConnection(DatabaseConnection):
     # -- DML methods ------------------------------------------------------
 
     async def execute(self, query: str, *args: Any, timeout: float | None = None) -> str:
+        # PostgreSQL planner/session GUCs (SET LOCAL enable_seqscan, lock_timeout,
+        # hnsw.ef_search, ...) have no Oracle equivalent; running them raises
+        # ORA-00922. They are tuning hints scoped to the transaction, so skip them.
+        if query.lstrip().upper().startswith("SET LOCAL "):
+            return "SET"
         orig_query = query
         query, ignore_dup, ret_cols = _rewrite_pg_to_oracle(query)
         cursor = self._conn.cursor()
@@ -1267,20 +1330,8 @@ class OracleBackend(DatabaseBackend):
 
         self._acquire_warn_threshold_s = get_config().db_acquire_warn_threshold_ms / 1000.0
 
-        # Parse URL-format DSN (oracle://user:pass@host:port/service)
-        from urllib.parse import urlparse
-
-        parsed = urlparse(dsn)
         pool_kwargs: dict[str, Any] = {"min": min_size, "max": max_size, "stmtcachesize": statement_cache_size}
-        if parsed.scheme in ("oracle", "oracle+oracledb"):
-            pool_kwargs["user"] = parsed.username
-            pool_kwargs["password"] = parsed.password
-            host = parsed.hostname or "localhost"
-            port = parsed.port or 1521
-            service = parsed.path.lstrip("/") if parsed.path else "FREEPDB1"
-            pool_kwargs["dsn"] = f"{host}:{port}/{service}"
-        else:
-            pool_kwargs["dsn"] = dsn
+        pool_kwargs.update(_oracle_connect_params(dsn))
 
         self._pool = oracledb.create_pool_async(**pool_kwargs)
 

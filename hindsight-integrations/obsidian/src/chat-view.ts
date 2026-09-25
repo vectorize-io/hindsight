@@ -360,6 +360,7 @@ export class ChatView extends ItemView {
           bankId: this.plugin.getBankId(),
           budget: this.plugin.settings.defaultBudget,
           rememberConversations: this.plugin.settings.rememberConversations,
+          observationScopes: this.plugin.settings.observationScopes,
           tagGroups: this.scopeTagGroups(),
           debug: this.plugin.settings.debugLogging,
         },

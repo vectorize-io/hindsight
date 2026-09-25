@@ -387,11 +387,20 @@ A mission only means something once you can see the prompt it lands in. `POST /v
 
 The operation is the whole request. Everything that shapes the prompt is read from the bank — its resolved config, profile and directives — and the runtime data an operation would be given is a fixed bracketed placeholder:
 
-```bash
-curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
-  -H "Content-Type: application/json" \
-  -d '{"operation": "retain"}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="prompts-preview" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="prompts-preview" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="prompts-preview" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="prompts-preview" language="go" />
+</TabItem>
+</Tabs>
 
 For `retain`, add `"strategy": "<name>"` to render under one of the bank's named retain strategies. Omit it and the bank's `retain_default_strategy` applies — exactly as it does for a retain that names none — so what you see is what retain would send. The response echoes the strategy that applied in `strategy`, and lists the bank's strategy names in `strategies` so a picker needs no second call.
 
@@ -633,7 +642,110 @@ To apply **every** active directive regardless of tags, set `apply_all_directive
 
 ---
 
-## Document export & import
+## Bank transfer (export & import)
+
+Move a bank — or just its documents — between banks and instances **without re-running the LLM**. One archive format, one pair of endpoints, and three flags that decide what travels:
+
+| Flag | Default | What it carries |
+|------|---------|-----------------|
+| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, the maintenance queues — and what the bank synthesized from all of it: mental models, their refresh history, and the knowledge-page tree over them. |
+| `include_bank_config` | `true` | How the bank is set up: its config overrides, directives, and webhooks. |
+| `include_history` | `false` | `audit_log` and `llm_requests`. |
+
+Mental models and knowledge pages count as **data**, not configuration. A mental model is a reading of the bank's facts and cites them by id in its `based_on` evidence, so carrying it without them would restore a synthesis whose grounding resolves to nothing. Their refresh history follows them for the same reason.
+
+Embeddings and database ids are never carried: facts are re-embedded with the *target* bank's model and entities are re-resolved against it, so an archive moves cleanly to an instance configured with a different embedding model, vector extension, or text-search backend.
+
+Webhooks travel with `include_bank_config`. When copying a bank whose webhooks point at a per-bank consumer, export with `include_bank_config=false`, or delete them on the copy.
+
+### Export
+
+`POST /v1/default/banks/{bank_id}/transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive). Returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-export" language="go" />
+</TabItem>
+</Tabs>
+
+A document subset must also pass `include_bank_config=false` (and leave `include_history` off). Bank-level sections cannot be scoped to documents, so the server rejects that combination with `400`.
+
+### Import
+
+`POST /v1/default/banks/{bank_id}/transfer/import` — multipart upload (`file` = the ZIP), also a background operation.
+
+| Mode | Behaviour |
+|------|-----------|
+| `restore` (default) | Writes a whole bank into `target_bank_id`, which **must not already exist**. This is how a bank is moved to another instance, or copied under a new id. |
+| `merge` | Folds the archive's documents into `{bank_id}`. `document_conflict` decides what happens to document ids that already exist: `skip` (default), `replace`, `new-id`. |
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-import" language="go" />
+</TabItem>
+</Tabs>
+
+The include flags apply here too, and can only narrow: they restore a subset of what the archive holds, never more.
+
+In `restore` mode the operation is recorded against `{bank_id}` — the bank in the URL — because the target bank does not exist yet. Poll that bank's operations endpoint for status and the per-component counts.
+
+A restore carries the operations log as history, not as work: anything still in flight when the bank was exported is left behind, so a copied bank never re-runs the original's queued retains or re-fires its webhooks. In-flight work belongs to the bank that was exported — and a clone runs *inside* one such operation, so carrying them would put the clone's own unfinished record in the copy.
+
+### Clone a bank
+
+`POST /v1/default/banks/{bank_id}/clone` — copy a bank into a new one in a single call, without handling an archive yourself. This is the export and import above run back to back on this instance: nothing is re-extracted and no LLM is called, so the clone's facts are exactly the source's, re-embedded with the same model.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="clone-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="clone-bank" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="clone-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="clone-bank" language="go" />
+</TabItem>
+</Tabs>
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `target_bank_id` | — | Required. The bank to create; it must not already exist. |
+| `include_data` | `true` | Copy the memories, everything backing them, and the mental models and knowledge pages synthesized from them. |
+| `include_bank_config` | `true` | Copy the bank's config overrides, directives and webhooks. |
+| `include_history` | `false` | Copy `audit_log` and `llm_requests`. |
+
+The clone is independent from the moment it is made: later retains, consolidation and edits on either bank leave the other alone.
+
+The operation is recorded against the **source** bank, because the target does not exist yet — poll the source's operations endpoint for status and the per-component counts.
+
+:::warning A clone inherits the source's webhooks
+Webhooks are part of a bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass `include_bank_config=false`, or delete them on the clone, when they point at a per-bank consumer.
+:::
+
+### Document export & import (superseded)
+
+The endpoints below still work exactly as documented and are unchanged; new integrations should use `/transfer/export` and `/transfer/import` above, which carry the same document archives plus the bank's own configuration.
 
 Move documents — and the facts already extracted from them — between banks **without re-running the LLM**. Useful for testing a different embedding model, or copying data between banks/instances without paying for re-extraction. The archive carries documents, raw chunks, and extracted facts (entities by canonical name, causal links) — but **no embeddings or database ids**. On import, facts are re-embedded with the *target* bank's model and entities/links are recomputed against it, so imported documents are integrated with whatever already exists there.
 
@@ -641,23 +753,20 @@ Move documents — and the facts already extracted from them — between banks *
 
 `POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# 1. Submit the export (whole bank; add ?document_id=… to scope it)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
-# -> {"operation_id": "…", "status": "pending"}
-
-# 2. Poll until completed
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{
-#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
-#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
-
-# 3. Download the archive
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-export" language="go" />
+</TabItem>
+</Tabs>
 
 | Query param | Description |
 |-------------|-------------|
@@ -674,15 +783,20 @@ The archive lives as long as its export **operation record** — indefinitely by
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
 
-```bash
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/document-transfer?on_conflict=replace"
-# -> {"operation_id": "…", "status": "pending"}
-
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{"documents_imported":3,"facts_imported":42,"observations_imported":5,...}}
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-import" language="go" />
+</TabItem>
+</Tabs>
 
 `on_conflict` controls what happens when a document id already exists in the target bank:
 

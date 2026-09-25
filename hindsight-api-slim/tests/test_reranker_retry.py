@@ -188,6 +188,7 @@ class TestEveryRemoteRerankerRetries:
                 "siliconflow",
                 {"reranker_siliconflow_api_key": "k", "reranker_siliconflow_base_url": "https://example.invalid"},
             ),
+            ("typesafe", {"reranker_typesafe_api_key": "k"}),
             ("alibaba", {"reranker_alibaba_api_key": "k"}),
             ("google", {"reranker_google_project_id": "p"}),
             ("litellm", {"reranker_litellm_api_base": "https://example.invalid"}),

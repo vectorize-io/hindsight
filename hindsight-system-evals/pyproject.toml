@@ -20,6 +20,9 @@ dependencies = [
     "google-genai>=1.0.0",
     "google-auth>=2.0.0",
     "hindsight-client",
+    # This package creates the run's database and drops it afterwards; the
+    # server's own venv is a subprocess away and cannot do the cleanup for us.
+    "pg0-embedded>=0.15.0",
 ]
 
 [tool.uv.sources]

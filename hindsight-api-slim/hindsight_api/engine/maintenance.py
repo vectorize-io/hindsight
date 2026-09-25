@@ -528,6 +528,7 @@ class MaintenanceLoop:
         skipped_unknown = 0
         skipped_fresh = 0
         skipped_in_flight = 0
+        skipped_paused = 0
         for row in due:
             schema = row["schema_name"]
             bank_id = row["bank_id"]
@@ -572,7 +573,9 @@ class MaintenanceLoop:
                     skip_if_in_flight=True,
                     automatic=True,
                 )
-                if result.get("deduplicated"):
+                if result.get("paused"):
+                    skipped_paused += 1
+                elif result.get("deduplicated"):
                     skipped_in_flight += 1
                 else:
                     submitted += 1
@@ -581,10 +584,11 @@ class MaintenanceLoop:
             finally:
                 _current_schema.reset(token)
 
-        if submitted or skipped_unknown or skipped_fresh or skipped_in_flight:
+        if submitted or skipped_unknown or skipped_fresh or skipped_in_flight or skipped_paused:
             logger.info(
                 f"Scheduled mental model refresh: scheduled {submitted} model(s)"
                 + (f", {skipped_fresh} up-to-date" if skipped_fresh else "")
                 + (f", {skipped_in_flight} already in flight" if skipped_in_flight else "")
+                + (f", {skipped_paused} paused after a failed refresh" if skipped_paused else "")
                 + (f", skipped {skipped_unknown} in unrecognized schema(s)" if skipped_unknown else "")
             )

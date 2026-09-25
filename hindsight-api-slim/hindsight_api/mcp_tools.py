@@ -269,6 +269,11 @@ class MCPToolsConfig:
     # How to resolve bank_id for operations
     bank_id_resolver: Callable[[], str | None]
 
+    # Maps an aliased bank id onto the bank's canonical one, for the same reason the
+    # HTTP route class does (see hindsight_api.engine.bank_aliases). Set by
+    # register_mcp_tools, which has the engine; None leaves every id untouched.
+    bank_alias_resolver: Callable[[str], Awaitable[str]] | None = None
+
     # How to resolve API key for tenant auth (optional)
     api_key_resolver: Callable[[], str | None] | None = None
 
@@ -322,6 +327,22 @@ class _ToolError(Exception):
     Distinct from an unexpected exception: "no such memory" is a normal answer,
     not a bug, so it must not fill the log with tracebacks.
     """
+
+
+async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None) -> str | None:
+    """The session's bank, or the explicit one a multi-bank tool was given.
+
+    The **session** bank needs no work here: the transport resolved any alias when
+    the connection's id entered the process (see ``api/mcp.py``), so the contextvar
+    already holds a real bank id. Only an id passed as a tool *argument* has
+    bypassed that edge, so only that one is resolved — which also keeps every
+    session-bank tool call free of a database round trip it does not need.
+    """
+    if bank_id is None:
+        return config.bank_id_resolver()
+    if config.bank_alias_resolver is None:
+        return bank_id
+    return await config.bank_alias_resolver(bank_id)
 
 
 async def _run_tool(
@@ -380,7 +401,7 @@ async def _run_tool(
         return _error_json(message, **extra) if as_json else {"error": str(message), **extra}
 
     try:
-        target_bank = bank_id or config.bank_id_resolver()
+        target_bank = await _resolve_bank(config, bank_id)
         if target_bank is None:
             return _err("No bank_id configured")
         return _ok(await run(target_bank))
@@ -560,6 +581,15 @@ def register_mcp_tools(
         memory: MemoryEngine instance
         config: Tool configuration
     """
+    if config.bank_alias_resolver is None:
+        # Wired here because this is where the engine is in scope. The MCP transport
+        # has already set the tenant schema contextvar the lookup is keyed on (see
+        # api/mcp.py), so by the time a tool runs this resolves in the right tenant.
+        async def _resolve_alias(bank_id: str) -> str:
+            return await memory.resolve_bank_alias(bank_id, request_context=_get_request_context(config))
+
+        config.bank_alias_resolver = _resolve_alias
+
     tools_to_register = config.tools or {
         "retain",
         "sync_retain",
@@ -738,7 +768,7 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
     async def _get_enabled_tools() -> set[str] | None:
         """Return the enabled tool set for the current bank, or None if unrestricted."""
-        bank_id = config.bank_id_resolver()
+        bank_id = await _resolve_bank(config, None)
         if not bank_id:
             return None
         request_context = _get_request_context(config)
@@ -968,7 +998,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
                 update_mode: How to handle existing documents with the same document_id. 'replace' (default) or 'append' (concatenates new content to existing).
             """
-            target_bank = bank_id or config.bank_id_resolver()
+            target_bank = await _resolve_bank(config, bank_id)
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
@@ -1027,7 +1057,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
                 update_mode: How to handle existing documents with the same document_id. 'replace' (default) or 'append' (concatenates new content to existing).
             """
-            target_bank = config.bank_id_resolver()
+            target_bank = await _resolve_bank(config, None)
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
@@ -1094,7 +1124,7 @@ def _register_sync_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                 bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
             """
-            target_bank = bank_id or config.bank_id_resolver()
+            target_bank = await _resolve_bank(config, bank_id)
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
@@ -1154,7 +1184,7 @@ def _register_sync_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                 document_id: Optional document ID to associate this memory with
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
             """
-            target_bank = config.bank_id_resolver()
+            target_bank = await _resolve_bank(config, None)
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
@@ -1246,7 +1276,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
-                target_bank = bank_id or config.bank_id_resolver()
+                target_bank = await _resolve_bank(config, bank_id)
                 if target_bank is None:
                     return "Error: No bank_id configured"
 
@@ -1343,7 +1373,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     it, so do not use it to restrict results to a period.
             """
             try:
-                target_bank = config.bank_id_resolver()
+                target_bank = await _resolve_bank(config, None)
                 if target_bank is None:
                     return {"error": "No bank_id configured", "results": []}
 
@@ -1442,7 +1472,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
             """
             try:
-                target_bank = bank_id or config.bank_id_resolver()
+                target_bank = await _resolve_bank(config, bank_id)
                 if target_bank is None:
                     return "Error: No bank_id configured"
 
@@ -1535,7 +1565,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
             """
             try:
-                target_bank = config.bank_id_resolver()
+                target_bank = await _resolve_bank(config, None)
                 if target_bank is None:
                     return {"error": "No bank_id configured", "text": ""}
 
@@ -1872,7 +1902,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             bank_id=target_bank,
             name=name,
             source_query=source_query,
-            content="Generating content...",
+            content="",
             mental_model_id=mental_model_id,
             tags=tags,
             max_tokens=max_tokens,
@@ -2479,7 +2509,7 @@ async def _do_get_knowledge_page(
         "description": node.get("source_query"),
         "tags": page.display_tags,
         "timestamp": node.get("last_refreshed_at") or node.get("created_at"),
-        "markdown": page_markdown.render_document(node),
+        "markdown": page_markdown.render_document(node, notice_when_empty=True),
     }
 
 
@@ -2511,7 +2541,7 @@ async def _do_create_knowledge_page(
         bank_id=target_bank,
         name=name,
         source_query=source_query,
-        content="Generating content...",
+        content="",
         parent_id=parent_id,
         tags=tags or None,
         max_tokens=max_tokens,
@@ -2558,6 +2588,9 @@ async def _do_update_knowledge_node(
     # page on a cron schedule does not reset how or from what it rebuilds.
     trigger_patch = _mental_model_trigger_patch(trigger, refresh_after_consolidation=refresh_after_consolidation)
     page_update = source_query is not None or tags is not None or max_tokens is not None or trigger_patch is not None
+    # The engine raises on a no-op patch too (it must: a no-op authorizes nothing,
+    # so falling through would read the node for an unvalidated caller). Kept here
+    # so an agent gets a tool error it can act on rather than an exception.
     if name is None and parent_id is None and not page_update:
         return {
             "error": "Provide name, parent_id, source_query, tags, max_tokens, "
@@ -4263,7 +4296,7 @@ def _register_get_bank_stats(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
         """
         try:
-            target_bank = bank_id or config.bank_id_resolver()
+            target_bank = await _resolve_bank(config, bank_id)
             if target_bank is None:
                 return _error_json("No bank_id configured")
 

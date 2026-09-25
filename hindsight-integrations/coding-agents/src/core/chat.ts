@@ -240,8 +240,12 @@ async function writeSession(
 ): Promise<void> {
   if (!turns.length) return;
   const refId = `conversation:${sessionId}`;
-  const appendSupported = Boolean(cursors) && (await supportsAppend(client));
   const cursor = cursors?.read(sessionId);
+  // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
+  // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
+  // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
+  const appendSupported =
+    Boolean(cursors) && (cursor?.appendSupported === true || (await supportsAppend(client)));
   const plan = planRetain(turns, cursor, { appendSupported, bank: client.bank });
   // Appends built but never confirmed. A replace rewrites the whole document from the same
   // transcript, so it SUBSUMES them; on every other path they go out first, oldest first, before
@@ -288,6 +292,7 @@ async function writeSession(
     turns: turns.length,
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
+    ...(appendSupported ? { appendSupported: true } : {}),
   };
   // Still ours to retry only while the cursor holds the claim we write below.
   const stillOurs = () => {

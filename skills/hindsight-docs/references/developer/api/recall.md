@@ -76,7 +76,25 @@ hindsight memory recall my-bank "What does Alice do?"
 ### Go
 
 ```go
-# Section 'recall-basic' not found in api/recall.go
+response, _, _ := client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "What does Alice do?",
+	}).Execute()
+
+// response.Results is a slice of RecallResult, each with:
+// - Id:            fact ID
+// - Text:          the extracted fact
+// - Type:          "world", "experience", or "observation"
+// - Context:       context label set during retain
+// - Tags:          []string of tags
+// - Entities:      []string of entity names linked to this fact
+// - OccurredStart: ISO datetime of when the event started
+// - OccurredEnd:   ISO datetime of when the event ended
+// - MentionedAt:   ISO datetime of when the fact was retained
+// - DocumentId:    document this fact belongs to
+for _, r := range response.GetResults() {
+	fmt.Println(r.GetText())
+}
 ```
 
 ---
@@ -141,13 +159,28 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 ### Go
 
 ```go
-# Section 'recall-world-only' not found in api/recall.go
+// Only world facts (objective information)
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "Where does Alice work?",
+		Types: []string{"world"},
+	}).Execute()
 ```
 ```go
-# Section 'recall-experience-only' not found in api/recall.go
+// Only experience (conversations and events)
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "What have I recommended?",
+		Types: []string{"experience"},
+	}).Execute()
 ```
 ```go
-# Section 'recall-observations-only' not found in api/recall.go
+// Only observations (consolidated knowledge)
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "What patterns have I learned?",
+		Types: []string{"observation"},
+	}).Execute()
 ```
 
 > **💡 About Observations**
@@ -196,7 +229,20 @@ hindsight memory recall my-bank "How are Alice and Bob connected?" --budget high
 ### Go
 
 ```go
-# Section 'recall-budget-levels' not found in api/recall.go
+budgetLow := hindsight.LOW
+// Quick lookup
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:  "Alice's email",
+		Budget: &budgetLow,
+	}).Execute()
+
+// Deep exploration
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:  "How are Alice and Bob connected?",
+		Budget: &budgetHigh,
+	}).Execute()
 ```
 
 ### max_tokens
@@ -239,7 +285,21 @@ hindsight memory recall my-bank "Alice's email" --max-tokens 500
 ### Go
 
 ```go
-# Section 'recall-token-budget' not found in api/recall.go
+// Fill up to 4K tokens of context with relevant memories
+mt4k := int32(4096)
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "What do I know about Alice?",
+		MaxTokens: &mt4k,
+	}).Execute()
+
+// Smaller budget for quick lookups
+mt500 := int32(500)
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "Alice's email",
+		MaxTokens: &mt500,
+	}).Execute()
 ```
 
 ### query_timestamp
@@ -331,7 +391,26 @@ hindsight memory recall my-bank "What patterns have I learned about Alice?" \
 ### Go
 
 ```go
-# Section 'recall-source-facts' not found in api/recall.go
+// Recall observations and include their source facts
+maxSFTokens := int32(4096)
+sfOpts := hindsight.SourceFactsIncludeOptions{MaxTokens: &maxSFTokens}
+obsResponse, _, _ := client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "What patterns have I learned about Alice?",
+		Types: []string{"observation"},
+		Include: &hindsight.IncludeOptions{
+			SourceFacts: *hindsight.NewNullableSourceFactsIncludeOptions(&sfOpts),
+		},
+	}).Execute()
+
+for _, obs := range obsResponse.GetResults() {
+	fmt.Printf("Observation: %s\n", obs.GetText())
+	for _, factID := range obs.GetSourceFactIds() {
+		if fact, ok := obsResponse.GetSourceFacts()[factID]; ok {
+			fmt.Printf("  - [%s] %s\n", fact.GetType(), fact.GetText())
+		}
+	}
+}
 ```
 
 #### entities
@@ -419,7 +498,14 @@ hindsight memory recall my-bank "communication preferences" \
 ### Go
 
 ```go
-# Section 'recall-with-tags' not found in api/recall.go
+// Filter recall to only memories tagged for a specific user
+tagsMatch := "any"
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "What feedback did the user give?",
+		Tags:      []string{"user:alice"},
+		TagsMatch: &tagsMatch,
+	}).Execute()
 ```
 
 Use this for **shared global knowledge + user-specific** patterns, where untagged memories represent information everyone should see.
@@ -463,7 +549,14 @@ hindsight memory recall my-bank "communication preferences" \
 ### Go
 
 ```go
-# Section 'recall-tags-strict' not found in api/recall.go
+// Strict mode: only return memories that have matching tags (exclude untagged)
+tagsMatchStrict := "any_strict"
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "What did the user say?",
+		Tags:      []string{"user:alice"},
+		TagsMatch: &tagsMatchStrict,
+	}).Execute()
 ```
 
 Use this when memories are **fully partitioned by tags** and untagged memories should never be visible.
@@ -507,7 +600,14 @@ hindsight memory recall my-bank "communication tools" \
 ### Go
 
 ```go
-# Section 'recall-tags-all-mode' not found in api/recall.go
+// AND matching, includes untagged memories
+tagsMatchAllMode := "all"
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "communication tools",
+		Tags:      []string{"user:alice", "team"},
+		TagsMatch: &tagsMatchAllMode,
+	}).Execute()
 ```
 
 Use this when memories must belong to a **specific intersection** of scopes (e.g., only memories relevant to both a user and a project), while still surfacing shared global knowledge.
@@ -551,7 +651,14 @@ hindsight memory recall my-bank "communication tools" \
 ### Go
 
 ```go
-# Section 'recall-tags-all' not found in api/recall.go
+// AND matching: require ALL specified tags to be present
+tagsMatchAll := "all_strict"
+client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query:     "What bugs were reported?",
+		Tags:      []string{"user:alice", "bug-report"},
+		TagsMatch: &tagsMatchAll,
+	}).Execute()
 ```
 
 Use this for strict scope enforcement where a memory must explicitly belong to **all** specified contexts.

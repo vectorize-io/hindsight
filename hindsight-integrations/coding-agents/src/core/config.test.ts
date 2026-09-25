@@ -187,6 +187,26 @@ describe("manageBankConfig (#3927)", () => {
   });
 });
 
+describe("retainExtractionMode (#4560)", () => {
+  it("defaults to concise and rejects an unknown mode", () => {
+    expect(resolveConfig({}).retainExtractionMode).toBe("concise");
+    expect(resolveConfig({ retainExtractionMode: "custom" as never }).retainExtractionMode).toBe(
+      "concise"
+    );
+    expect(resolveConfig({ retainExtractionMode: "verbose" }).retainExtractionMode).toBe("verbose");
+  });
+
+  it("is settable per bank and from the environment", () => {
+    const cfg = resolveConfig({
+      banks: { "coding-agent::big": { retainExtractionMode: "chunks" } },
+    });
+    expect(applyBankConfig(cfg, "coding-agent::big").cfg.retainExtractionMode).toBe("chunks");
+    expect(
+      readEnvConfig({ HINDSIGHT_RETAIN_EXTRACTION_MODE: "verbose" }).retainExtractionMode
+    ).toBe("verbose");
+  });
+});
+
 describe("banks.<bankId> overrides (per-repo opt-in/out, applied AFTER bank resolution)", () => {
   it("overrides behavioral fields for the matching bank only; others untouched", () => {
     const cfg = resolveConfig({

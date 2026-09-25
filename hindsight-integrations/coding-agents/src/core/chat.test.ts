@@ -148,6 +148,22 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(second[2]).toBe("conversation:s1"); // same document id — append targets it
   });
 
+  it("remembers a confirmed append capability, so a failed probe on a later Stop still appends (#4560)", async () => {
+    const cursors = memoryCursorStore();
+    await write(stubClient().client, turns(2), cursors);
+    // The next Stop is a fresh hook process whose GET /version times out.
+    const probe = vi.fn().mockRejectedValue(new Error("timeout"));
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const next = {
+      retain,
+      bank: "coding-agent::repo",
+      supportsIdempotentRetain: probe,
+    } as unknown as HindsightClient;
+    await write(next, turns(4), cursors);
+    expect(probe).not.toHaveBeenCalled();
+    expect(retain.mock.calls[0][5].updateMode).toBe("append");
+  });
+
   it("sends a stable v5 operation_id so a resubmitted write is not applied twice", async () => {
     const a = stubClient();
     const b = stubClient();
@@ -206,6 +222,7 @@ describe("retainLiveSession — incremental write-back", () => {
       turns: 6,
       fingerprint: expect.any(String),
       bank: "coding-agent::repo",
+      appendSupported: true,
     });
   });
 

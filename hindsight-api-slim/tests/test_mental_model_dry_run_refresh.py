@@ -102,7 +102,7 @@ def patch_delta_llm(monkeypatch):
             # `call` returns the envelope; `returns` is the payload the test canned.
             return LLMCallResult(content=returns, usage=TokenUsage())
 
-        monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
+        monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", fake_call)
         return calls
 
     return _install
@@ -178,6 +178,38 @@ class TestDryRunPersistsNothing:
 
 class TestDryRunExplainsTheModeDecision:
     """Delta silently degrades to full in several ways. The dry run names which."""
+
+    async def test_a_legacy_placeholder_is_not_a_delta_baseline(
+        self, memory: MemoryEngine, request_context: RequestContext, patch_reflect, patch_delta_llm
+    ):
+        """The guard that lets this ship without a data migration.
+
+        A page created before pages were created empty still holds
+        "Generating content...", and has never refreshed — so it has no
+        ``last_refreshed_source_query``, which turns delta ON. Were the placeholder
+        allowed to count as a baseline, that first refresh would take the delta path,
+        and operations that do not apply fail it with
+        ``refresh_failed_delta_not_applied``, which preserves the existing content —
+        leaving the page stuck on the placeholder permanently.
+        """
+        bank_id = await _make_bank(memory, request_context, "test-dryrun-legacy")
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="Generating content...",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        patch_reflect(memory, text="# Team\n\nFresh synthesis.")
+        delta_calls = patch_delta_llm(memory, returns='{"operations": []}')
+
+        result = await memory.dry_run_refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        assert result.effective_mode == "full"
+        assert result.mode_fallback_reason == "no_baseline_content"
+        assert delta_calls == [], "a placeholder is not a document to edit"
 
     async def test_delta_without_baseline_reports_no_baseline_content(
         self, memory: MemoryEngine, request_context: RequestContext, patch_reflect, patch_delta_llm

@@ -13,6 +13,7 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 {/* Import raw source files */}
 import mainMethodsPy from '!!raw-loader!@site/examples/api/main-methods.py';
 import mainMethodsMjs from '!!raw-loader!@site/examples/api/main-methods.mjs';
+import mainMethodsSh from '!!raw-loader!@site/examples/api/main-methods.sh';
 import mainMethodsGo from '!!raw-loader!@site/examples/api/main-methods.go';
 
 :::tip Prerequisites
@@ -31,18 +32,7 @@ Store conversations, documents, and facts into a memory bank.
 <CodeSnippet code={mainMethodsMjs} section="main-retain" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Store a single fact
-hindsight memory retain my-bank "Alice joined Google in March 2024 as a Senior ML Engineer"
-
-# Store from a file
-hindsight memory retain-files my-bank conversation.txt --context "Daily standup"
-
-# Store multiple files
-hindsight memory retain-files my-bank docs/
-```
-
+<CodeSnippet code={mainMethodsSh} section="main-retain" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={mainMethodsGo} section="main-retain" language="go" />
@@ -67,21 +57,7 @@ Search for relevant memories using multi-strategy retrieval.
 <CodeSnippet code={mainMethodsMjs} section="main-recall" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Basic search
-hindsight memory recall my-bank "What does Alice do at Google?"
-
-# Search with options
-hindsight memory recall my-bank "What happened last spring?" \
-    --budget high \
-    --max-tokens 8192 \
-    --fact-type world,experience
-
-# Verbose output
-hindsight memory recall my-bank "Tell me about Alice" -v
-```
-
+<CodeSnippet code={mainMethodsSh} section="main-recall" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={mainMethodsGo} section="main-recall" language="go" />
@@ -106,15 +82,7 @@ Generate disposition-aware responses using memories and observations.
 <CodeSnippet code={mainMethodsMjs} section="main-reflect" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Basic reflect
-hindsight memory reflect my-bank "Should we adopt TypeScript for our backend?"
-
-# With higher reasoning budget
-hindsight memory reflect my-bank "Analyze our tech stack" --budget high
-```
-
+<CodeSnippet code={mainMethodsSh} section="main-reflect" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={mainMethodsGo} section="main-reflect" language="go" />

@@ -238,7 +238,9 @@ class LlamaCppServer:
                 raise RuntimeError(f"llama.cpp server exited with code {self._process.returncode}.\nstderr: {stderr}")
 
             try:
-                async with aiohttp.ClientSession(timeout=per_phase_timeout(5.0)) as client:
+                # trust_env stays off: this probes the llama.cpp process we just spawned
+                # on localhost, which must never be routed through an egress proxy.
+                async with aiohttp.ClientSession(timeout=per_phase_timeout(5.0), trust_env=False) as client:
                     async with client.get(url) as resp:
                         if resp.status == 200:
                             logger.info(f"llama.cpp server ready on port {self.port}")

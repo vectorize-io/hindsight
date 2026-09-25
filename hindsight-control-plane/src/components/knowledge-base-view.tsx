@@ -52,6 +52,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
 import { StalenessBadge } from "./staleness-badge";
+import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attempts";
 import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { KnowledgeSearchDialog } from "./knowledge-search-dialog";
@@ -67,6 +68,9 @@ const ROOT_ID = "";
 // How often the tree view silently re-polls so page stats (last refresh / sync
 // status) stay live while pages refresh in the background.
 const AUTO_REFRESH_MS = 12000;
+
+/** Shared empty map, so a TreeRow without in-flight data does not remount on every render. */
+const EMPTY_ATTEMPTS: Map<string, RefreshAttempt> = new Map();
 
 function flatten(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNode[] {
   for (const n of nodes) {
@@ -243,6 +247,7 @@ export function KnowledgeBaseView() {
       tags: [],
       timestamp: null,
       is_stale: null,
+      last_refresh_failed_at: null,
       trigger: null,
       children: roots,
     }),
@@ -254,6 +259,20 @@ export function KnowledgeBaseView() {
   // doesn't carry it); updates as the auto-refresh poll refreshes the tree.
   const selectedStale = useMemo(
     () => (selected ? (allNodes.find((n) => n.id === selected.id)?.is_stale ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // Same read the mental-model list does: a page whose refresh is still being
+  // retried is not paused yet, so neither the tree nor the header may say it is.
+  const refreshAttempts = useRefreshAttempts(currentBank, AUTO_REFRESH_MS);
+
+  // Read from the same tree node as the staleness above: a page whose refresh keeps
+  // failing stops rebuilding itself, and the header must not keep promising it will.
+  const selectedRefreshFailedAt = useMemo(
+    () =>
+      selected
+        ? (allNodes.find((n) => n.id === selected.id)?.last_refresh_failed_at ?? null)
+        : null,
     [selected, allNodes]
   );
 
@@ -549,6 +568,7 @@ export function KnowledgeBaseView() {
                   onOpenPage={openPage}
                   onAddChild={openCreate}
                   onDelete={setDeleteTarget}
+                  refreshAttempts={refreshAttempts}
                   t={t}
                 />
                 {roots.length === 0 && (
@@ -648,6 +668,8 @@ export function KnowledgeBaseView() {
                   isStale={selectedStale}
                   trigger={selectedTrigger}
                   lastRefreshedAt={selected.timestamp}
+                  refreshFailedAt={selectedRefreshFailedAt}
+                  attempt={selectedMmId ? refreshAttempts.get(selectedMmId) : undefined}
                 />
               ) : (
                 <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
@@ -880,6 +902,7 @@ export function TreeRow({
   onOpenPage,
   onAddChild,
   onDelete,
+  refreshAttempts = EMPTY_ATTEMPTS,
   t,
 }: {
   node: KnowledgeNode;
@@ -892,6 +915,9 @@ export function TreeRow({
   onOpenPage: (id: string) => void;
   onAddChild?: (kind: "folder" | "page", parentId: string) => void;
   onDelete?: (node: KnowledgeNode) => void;
+  /** In-flight refreshes by mental-model id, so a page being retried is not called paused.
+   *  Optional: a read-only tree (the home view) shows the tree without polling for them. */
+  refreshAttempts?: Map<string, RefreshAttempt>;
   t: ReturnType<typeof useTranslations>;
 }) {
   const isFolder = node.kind === "folder";
@@ -945,7 +971,15 @@ export function TreeRow({
                 needs the width, but the meaning, colours and tooltips are the same
                 ones the page header and the mental-model list show. */}
             {!isFolder && (
-              <StalenessBadge isStale={node.is_stale} trigger={node.trigger} variant="dot" />
+              <StalenessBadge
+                isStale={node.is_stale}
+                trigger={node.trigger}
+                refreshFailedAt={node.last_refresh_failed_at}
+                retrying={Boolean(
+                  node.mental_model_id && refreshAttempts.has(node.mental_model_id)
+                )}
+                variant="dot"
+              />
             )}
           </div>
           {!isFolder && (
@@ -1026,6 +1060,7 @@ export function TreeRow({
               onOpenPage={onOpenPage}
               onAddChild={onAddChild}
               onDelete={onDelete}
+              refreshAttempts={refreshAttempts}
               t={t}
             />
           ))}

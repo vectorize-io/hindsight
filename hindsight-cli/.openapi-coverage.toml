@@ -39,6 +39,7 @@ list_document_chunks = "UI-only endpoint for the control plane document detail d
 # Observation scope enumeration powers the control-plane scope filter/clusters;
 # not a useful end-user CLI command.
 list_observation_scopes = "UI-only endpoint for the control plane observation scope filter"
+preview_consolidation_strategies = "UI-only endpoint for the control plane consolidation strategy editor"
 
 # Reprocess triggers an async retain re-run; exposed in the control plane UI only.
 reprocess_document = "UI-only endpoint for the control plane document detail dialog"
@@ -188,3 +189,9 @@ trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation and 
 
 [fields.update_mental_model]
 trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation, --trigger-refresh-cron, --trigger-min-refresh-interval-seconds, --trigger-tags-match, --trigger-keep-trace and --trigger-exclude-mental-models on `mental-model update`; the update merges these over the model's stored trigger, so the remaining nested fields (fact_types, tag_groups, response_schema, recall_* budgets) are left untouched and stay API-only."
+
+[fields.create_bank_alias]
+primary = "Creating an alias never changes which id the bank is displayed under; `bank alias primary` is the one command that does, so the two stay separate actions."
+
+[fields.set_bank_alias_primary]
+primary = "Exposed inverted as `--clear` on `bank alias primary`: the command's whole purpose is to promote, so the flag only has to express the opposite."

@@ -652,15 +652,10 @@ async def test_delete_bank(api_client):
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id not in bank_ids
 
-    # Stats should show zero data (profile auto-creates empty bank)
+    # Reads now 404, the same as for a bank that never existed. The process caches bank rows, so
+    # this also checks the delete dropped that entry instead of leaving the bank readable.
     response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
-    assert response.status_code == 200
-    stats = response.json()
-    assert stats["total_nodes"] == 0
-    assert stats["total_documents"] == 0
-
-    # Clean up the auto-created empty bank
-    await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2321,10 +2316,16 @@ async def test_patch_authorizes_and_reads_profile_once(api_client, memory, monke
     assert response.status_code == 200, response.text
 
     validator = _make_operation_validator()
-    authenticate = AsyncMock(wraps=memory._authenticate_tenant)
+    # The tenant EXTENSION, not the engine method that calls it. A request now
+    # enters the engine twice — the route class resolves the bank id (it may be an
+    # alias, and aliases live in the tenant's schema) before the endpoint's own
+    # call — but that must not cost two identity lookups, which is the expense this
+    # test exists to catch. `RequestContext.authenticated_schema` memoises the
+    # first one, so the extension is asked exactly once per request.
+    authenticate = AsyncMock(wraps=memory._tenant_extension.authenticate)
     ensure_bank_exists = AsyncMock(wraps=memory._ensure_bank_exists)
     monkeypatch.setattr(memory, "_operation_validator", validator)
-    monkeypatch.setattr(memory, "_authenticate_tenant", authenticate)
+    monkeypatch.setattr(memory._tenant_extension, "authenticate", authenticate)
     monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
 
     response = await api_client.patch(f"/v1/default/banks/{bank_id}", json={"name": "Updated"})

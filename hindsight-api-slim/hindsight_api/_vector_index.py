@@ -339,7 +339,11 @@ def per_bank_index_min_submit_interval_seconds() -> int:
 
 
 def bootstrap_extension(conn: Connection, ext: str) -> None:
-    """Install the configured vector extension and any prerequisites if possible."""
+    """Install the configured vector extension and any prerequisites if possible.
+
+    ``create_extension`` skips anything already installed, so this issues no
+    DDL on a database that is already set up.
+    """
     normalized = validate_extension(ext)
     for name, cascade in _EXTENSION_INSTALL_PLAN[normalized]:
         create_extension(conn, name, cascade=cascade)

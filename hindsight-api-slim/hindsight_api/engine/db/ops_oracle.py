@@ -17,7 +17,7 @@ from .ops import (
     TagListingParts,
     UpdatedWindow,
     bank_serialization_sql,
-    document_serialization_sql,
+    key_serialization_sql,
     memory_unit_columns,
 )
 from .result import DictResultRow as ResultRow
@@ -1446,7 +1446,7 @@ class OracleOps(DataAccessOps):
               AND o.operation_type = $1
               AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
               AND {bank_serialization_sql(table, "o")}
-              AND {document_serialization_sql(table, "o")}
+              AND {key_serialization_sql(table, "o")}
             ORDER BY o.created_at
             LIMIT $2
             FOR UPDATE SKIP LOCKED
@@ -1485,7 +1485,7 @@ class OracleOps(DataAccessOps):
                   AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
                   AND o.operation_id != ALL($1::uuid[])
                   AND {bank_serialization_sql(table, "o")}
-                  AND {document_serialization_sql(table, "o")}
+                  AND {key_serialization_sql(table, "o")}
                 ORDER BY o.created_at
                 LIMIT $2
                 FOR UPDATE SKIP LOCKED
@@ -1502,7 +1502,7 @@ class OracleOps(DataAccessOps):
               AND o.operation_type != 'consolidation'
               AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
               AND {bank_serialization_sql(table, "o")}
-              AND {document_serialization_sql(table, "o")}
+              AND {key_serialization_sql(table, "o")}
             ORDER BY o.created_at
             LIMIT $1
             FOR UPDATE SKIP LOCKED

@@ -55,6 +55,129 @@ describe("HindsightClient knowledge-page reads", () => {
     });
   });
 
+  it("a bank-not-found 404 is NOT a missing endpoint: no pages, no latched capability", async () => {
+    // The bank is minted by the first retain, so the first session in a new bank ALWAYS reads
+    // pages before it exists. Latching there disabled knowledge pages for the whole process (#4607).
+    let status = 404;
+    let detail = "Bank 'repo-a' not found";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        status === 404
+          ? { ok: false, status: 404, json: async () => ({ detail }) }
+          : {
+              ok: true,
+              status: 200,
+              json: async () => ({ roots: [{ id: "kp-1", kind: "page", name: "Core concepts" }] }),
+            }
+      ) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // The latch keys on the ENDPOINT-missing body, not the bank error's wording, so rephrasing
+    // that message cannot quietly reinstate the bug.
+    detail = "No bank named repo-a";
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // Search goes through the same check, so it too reports "no pages yet" without latching.
+    detail = "Bank 'repo-a' not found";
+    expect(await c.searchKnowledgePages("architecture")).toEqual([]);
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // Once the bank exists, the very same client sees its pages — no restart needed.
+    status = 200;
+    expect(await c.listPages()).toEqual({ items: [{ id: "kp-1", name: "Core concepts" }] });
+    expect(c.knowledgePagesSupported).toBe(true);
+  });
+
+  it("search latches on its OWN endpoint-missing 404 — it is not only reached via listPages", async () => {
+    // Before, search parsed a server's own 404 into `results: undefined` -> [], so a deployment
+    // with no knowledge-base API reported "nothing matched" forever instead of saying the feature
+    // is missing. The pre-existing test only ever reached the already-latched guard.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        json: async () => ({ detail: "Not Found" }),
+      })) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.searchKnowledgePages("architecture")).rejects.toMatchObject({
+      code: "knowledge_pages_unavailable",
+    });
+    expect(c.knowledgePagesSupported).toBe(false);
+  });
+
+  it("a 404 with no JSON body at all still latches (a proxy, not our API answering)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        json: async () => {
+          throw new Error("Unexpected token < in JSON");
+        },
+      })) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.listPages()).rejects.toMatchObject({ code: "knowledge_pages_unavailable" });
+    expect(c.knowledgePagesSupported).toBe(false);
+  });
+
+  it("seedPages: a bank that does not exist yet writes nothing and does not latch", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        calls.push({ url, method: init?.method });
+        // The tree is empty (bank missing), then the first create 404s for the same reason.
+        return url.includes("/knowledge-base/")
+          ? { ok: false, status: 404, json: async () => ({ detail: "Bank 'repo-a' not found" }) }
+          : ({ ok: true, status: 200, json: async () => ({}) } as any);
+      }) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.seedPages()).resolves.toBeUndefined();
+    expect(c.knowledgePagesSupported).toBeUndefined();
+    // It stops at the first create rather than 404ing once per page.
+    expect(calls.filter((x) => x.method === "POST").length).toBe(1);
+  });
+
+  it("seedPages: a page deleted under us is skipped, not the rest of the sync", async () => {
+    // This used to `return`, abandoning every page after the missing one — and the summary line.
+    const patched: string[] = [];
+    const drifted = PAGES.map((p, i) => ({
+      id: `kp-${i}`,
+      kind: "page" as const,
+      name: p.name,
+      description: "stale query", // forces a source_query PATCH on every page
+      trigger: settledTrigger(p.name),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        if (url.endsWith("/knowledge-base/tree"))
+          return { ok: true, status: 200, json: async () => ({ roots: drifted }) } as any;
+        if (init?.method === "PATCH") {
+          patched.push(url);
+          // The first page has vanished; every later one still patches fine.
+          return patched.length === 1
+            ? ({ ok: false, status: 404, json: async () => ({ detail: "Node not found" }) } as any)
+            : ({ ok: true, status: 200, json: async () => ({}) } as any);
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as any;
+      }) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+    expect(patched.length).toBe(PAGES.length);
+    expect(c.knowledgePagesSupported).toBe(true);
+  });
+
   it("listPages reads the knowledge-base tree — never /mental-models", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ roots: [] }));
@@ -230,8 +353,10 @@ describe("HindsightClient.seedPages", () => {
       "fetch",
       vi.fn(async (url: string, init: any) => {
         calls.push({ url, method: init?.method });
+        // Exactly what FastAPI answers for an unrouted path — the shape that identifies a server
+        // without the knowledge-base API, as opposed to a 404 for a bank that does not exist yet.
         if (url.endsWith("/knowledge-base/tree"))
-          return { ok: false, status: 404, json: async () => ({}) } as any;
+          return { ok: false, status: 404, json: async () => ({ detail: "Not Found" }) } as any;
         return { ok: true, status: 200, json: async () => ({}) } as any;
       }) as any
     );
@@ -503,6 +628,57 @@ describe("HindsightClient.seedPages", () => {
     expect(patches[0].body).toEqual({
       trigger: pageTriggerFor(buildPageTrigger(), "repo-a", "Typo-tolerant tag matching"),
     });
+  });
+
+  it("an initiative page deleted under us is skipped, not the rest of the folder", async () => {
+    // This used to `break`, so one vanished page abandoned every initiative after it.
+    const drifted = (id: string, name: string) => ({
+      id,
+      kind: "page",
+      name,
+      description: "Summarize the initiative",
+      trigger: { tags_match: "all", refresh_after_consolidation: true },
+    });
+    const patched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        if (url.endsWith("/knowledge-base/tree"))
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              roots: [
+                ...PAGES.map((p, i) => ({
+                  id: `kp-${i}`,
+                  kind: "page",
+                  name: p.name,
+                  description: p.source_query,
+                  trigger: settledTrigger(p.name),
+                })),
+                {
+                  id: "folder-initiatives",
+                  kind: "folder",
+                  name: "Initiatives",
+                  children: [drifted("kp-init-1", "Gone"), drifted("kp-init-2", "Still here")],
+                },
+              ],
+            }),
+          } as any;
+        if (init?.method === "PATCH") {
+          patched.push(url);
+          return patched.length === 1
+            ? ({ ok: false, status: 404, json: async () => ({ detail: "Node not found" }) } as any)
+            : ({ ok: true, status: 200, json: async () => ({}) } as any);
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as any;
+      }) as any
+    );
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+    expect(patched).toHaveLength(2);
+    expect(patched[1]).toContain("kp-init-2");
+    expect(c.knowledgePagesSupported).toBe(true);
   });
 
   // "manual" is the one policy whose refresh field is falsy, so the server drops no counterpart:

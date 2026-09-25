@@ -26,7 +26,7 @@ If you guessed the system prompt, you're wrong for two of the three operations t
 - Active blocks concatenate byte-for-byte into the real prompt, and there's a test pinning that against the actual builder.
 - A setting you switched off comes back as an inactive block, positioned where it would have landed.
 - The endpoint refuses to accept your sample text or a candidate mission, on purpose.
-- Shipped in v0.10.0 for self-hosted, and coming soon to Hindsight Cloud.
+- Shipped in v0.10.0, available on Hindsight Cloud and for self-hosted deployments.
 
 ## Why the mission moved
 

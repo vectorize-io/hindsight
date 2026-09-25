@@ -151,6 +151,11 @@ mutate it (`RuntimeError: dictionary changed size during iteration` at best; a C
 extension handed borrowed references into a resizing dict can segfault). Prefer
 warm-once-under-a-lock over locking the hot path.
 
+### Documentation Code Examples
+- **Every code example in `hindsight-docs/docs/` that calls Hindsight must come from a tested example file, never an inline fenced block.** That means SDK calls (Python, Node.js, Go), `hindsight ...` CLI commands, and `curl` against `/v1/...`. Put the code in `hindsight-docs/examples/api/<page>.{py,mjs,sh,go}` between `# [docs:<section>]` / `# [/docs:<section>]` markers (`//` in JS/Go), and show it with `<CodeSnippet code={...} section="<section>" language="..." />` (see `docs/developer/api/memory-banks.mdx`). CI runs every example file against a live server (`scripts/test-doc-examples.sh`), so a renamed method or flag breaks the build instead of silently breaking the docs.
+- Give tabs for every language whose SDK or CLI supports the call, like the sibling sections on the page. A `.md` page that needs a snippet becomes `.mdx`.
+- Fine to leave inline: install commands, env/config snippets, endpoint signature lines (`GET /v1/...`), JSON request/response shapes, and commands that need infra CI can't run (embedded server startup, admin DB commands, FUSE mounts).
+
 ### Branch Hygiene
 - **Always start new feature branches from `origin/main`** — rebase to ensure a clean base.
 - **Only include commits relevant to the PR/branch/feature** — no unrelated changes. If the branch contains commits that don't belong, they must be removed before merging.
@@ -418,7 +423,7 @@ If a migration adds a new PostgreSQL table (look for `CREATE TABLE` / `op.create
 If the diff adds a new configuration field (a new `ENV_*` / `HINDSIGHT_*` env var
 in `hindsight-api-slim/hindsight_api/config.py`):
 - **`.env.example`** (repo root) — must add the variable (commented if optional)
-  alongside the docs entry in `hindsight-docs/docs/developer/configuration.md`.
+  alongside the docs entry in `hindsight-docs/docs/developer/configuration.mdx`.
   A flag added to `config.py` but absent from `.env.example` is a **should fix**.
 - **`hindsight-embed/hindsight_embed/env.example`** — the bundled copy must stay
   byte-identical to the repo-root `.env.example` (it seeds embed/profile configs).
@@ -455,6 +460,12 @@ Any new httpx use or sync HTTP call in production code is a **must fix** — see
 SDK client where an async one exists, a sync call pushed into `to_thread` /
 `run_in_executor`, an `aiohttp.ClientSession` created outside `LoopLocalSession`, and any
 `# noqa: TID251` that is not configuring or classifying a third-party SDK.
+
+### 11g. Check docs code examples come from tested snippets
+
+If the diff touches `hindsight-docs/docs/**`, look for new or changed fenced blocks (```` ```python ````, ```` ```bash ````, ```` ```typescript ````, ```` ```go ````, …) that call Hindsight: SDK client methods, `hindsight <cmd>` CLI commands, or `curl` to `/v1/...`. Each must be a `<CodeSnippet>` backed by a section in `hindsight-docs/examples/api/` (see Documentation Code Examples). Also check the example file actually exercises the call (not just prints it) and cleans up its banks. Flag an inline API example as a **must fix**.
+
+The live `/developer/...` URLs serve the latest snapshot in `hindsight-docs/versioned_docs/version-<latest>/`, not `docs/` (that is `/developer/next/`); a release syncs `docs/` into it. A docs fix meant to be live before the next release must be copied into that snapshot too.
 
 ### 11d. Check concurrency primitives
 
@@ -516,6 +527,7 @@ Present a clear summary organized by severity:
   harness, dialect, provider or language variant that skips a lifecycle step the others perform
 - An `asyncio` lock/semaphore/event created at import time or owned by a process-wide
   singleton, or a `threading.Lock` held across an `await` (see step 11d)
+- An inline docs code example that calls Hindsight (SDK, CLI, or `curl /v1/...`) instead of a `<CodeSnippet>` from a tested `hindsight-docs/examples/api/` file (see step 11g)
 - A change that works on only some of the supported interpreters, 3.11 through 3.14
   (see Supported interpreters)
 

@@ -103,7 +103,7 @@ console.log(`Created: ${doc.created_at}`);
 // [/docs:document-get]
 
 
-// [docs:document-update]
+// [docs:document-update-tags]
 // Fix tags on a document retained with the wrong scope
 const { data: updateResult, error: updateError } = await sdk.updateDocument({
     client: apiClient,
@@ -123,7 +123,7 @@ await sdk.updateDocument({
     path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
     body: { tags: [] }
 });
-// [/docs:document-update]
+// [/docs:document-update-tags]
 
 
 // [docs:document-delete]

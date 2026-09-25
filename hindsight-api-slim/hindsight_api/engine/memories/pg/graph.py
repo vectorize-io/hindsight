@@ -46,6 +46,13 @@ from ..base import EntityPrunePassResult, RelinkPassResult
 
 logger = logging.getLogger(__name__)
 
+
+def _as_uuid(value: Any) -> uuid_module.UUID:
+    """Coerce an id to UUID. ``id::text`` comes back as str on PostgreSQL, but the Oracle
+    backend drops the cast and decodes RAW(16) id columns straight to UUID."""
+    return value if isinstance(value, uuid_module.UUID) else uuid_module.UUID(str(value))
+
+
 # Mirrors the ``top_k`` default in ``compute_semantic_links_ann`` at retain
 # time. If you change one, change the other — otherwise victims would either
 # never reach the cap (probe returns less than the cap) or stay perpetually
@@ -506,7 +513,7 @@ async def resolve_entity_names(
     uuids: list = []
     for raw in {str(e) for e in entity_ids}:
         try:
-            uuids.append(uuid_module.UUID(raw))
+            uuids.append(_as_uuid(raw))
         except (ValueError, AttributeError, TypeError):
             continue
     if not uuids:
@@ -691,7 +698,7 @@ async def _relink_batch(
     # Load each victim's metadata. Victims whose units were deleted between
     # enqueue and now silently drop out — exactly the no-op behaviour we want
     # for stale queue rows.
-    victim_uuids = [uuid_module.UUID(vid) for vid in victim_ids]
+    victim_uuids = [_as_uuid(vid) for vid in victim_ids]
     victim_rows = await conn.fetch(
         f"""
         SELECT id::text AS id, event_date, fact_type, embedding::text AS embedding
@@ -707,7 +714,7 @@ async def _relink_batch(
     if not victim_rows:
         return 0
 
-    alive_uuids = [uuid_module.UUID(row["id"]) for row in victim_rows]
+    alive_uuids = [_as_uuid(row["id"]) for row in victim_rows]
 
     # Count current outgoing temporal/semantic links per victim so we only
     # probe for the ones genuinely below cap. Saves the bulk of the work when
@@ -733,7 +740,7 @@ async def _relink_batch(
     new_links: list[tuple] = []
 
     if temporal_needs:
-        lateral_unit_ids = [uuid_module.UUID(r["id"]) for r in temporal_needs if r["event_date"] is not None]
+        lateral_unit_ids = [_as_uuid(r["id"]) for r in temporal_needs if r["event_date"] is not None]
         lateral_event_dates = [
             _normalize_datetime(r["event_date"]) for r in temporal_needs if r["event_date"] is not None
         ]

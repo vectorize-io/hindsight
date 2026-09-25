@@ -51,8 +51,42 @@ hindsight bank create my-bank
 ### Go
 
 ```go
-# Section 'create-bank' not found in api/memory-banks.go
+client.BanksAPI.CreateOrUpdateBank(ctx, "my-bank").
+	CreateBankRequest(hindsight.CreateBankRequest{}).Execute()
 ```
+
+## Aliases {#aliases}
+
+An **alias** is an extra id a bank answers to. Every endpoint that accepts a bank id accepts its aliases too, so an alias is a second way in to the same bank — nothing is copied, moved or duplicated.
+
+This exists because a bank's id is the key on all of its data, so changing it means rewriting every row and cutting all clients over at once (that is [`rename-bank`](../admin-cli.md#rename-bank), and it needs downtime). An alias lets you do the same migration in phases: add the new id, move clients across a few at a time while both ids work, and stop when nothing calls the old one.
+
+```
+POST   /v1/default/banks/{bank_id}/aliases             {"alias": "new-id"}
+GET    /v1/default/banks/{bank_id}/aliases
+PATCH  /v1/default/banks/{bank_id}/aliases/{alias}     {"primary": true}
+DELETE /v1/default/banks/{bank_id}/aliases/{alias}
+```
+
+### Showing a bank under an alias
+
+Once callers have moved, the control plane can present the bank under the new id instead of the one it was created with. `PATCH` with `primary: true` promotes an alias; `primary: false` returns the bank to showing its own id without removing the alias.
+
+This is **display only**. `bank_id` remains the bank's identity: authorisation, metering, exports and audit logs all continue to use it, and it is what every response reports. The control plane shows the real id alongside the alias so the two are never confused.
+
+- **Optional, with no default.** A bank's own id is not an alias, so "not shown under an alias" is the normal state.
+- **At most one.** Promoting an alias demotes whichever one was shown before, in a single transaction.
+- **It cannot outlive the alias.** Deleting the promoted alias returns the bank to showing its own id.
+
+**What to know:**
+
+- **A bank can have several aliases**, so more than one old id can be retired at a time.
+- **A name is unique across banks and aliases.** Adding one that already names a bank or another alias returns `409`, so an alias can never reach two banks.
+- **An alias never replaces the bank's own id.** The real id keeps working and is what every response reports, including responses to requests made through an alias. Removing a bank's real id is not possible — that is what `rename-bank` is for.
+- **Deleting an alias only closes that door.** The bank and its memories are untouched, and callers still using the removed id get exactly what they got before it existed.
+- **Deleting a bank removes its aliases**, freeing those names for reuse.
+- **Aliases are not carried by export, import or clone.** They describe which ids reach a bank on *this* deployment, so a copy does not inherit them — add them to the target deliberately.
+- **A change takes a few seconds to reach every API replica.** See [`HINDSIGHT_API_BANK_ALIAS_CACHE_TTL_SECONDS`](../configuration.md#bank-alias-cache).
 
 ## Bank Configuration
 
@@ -284,7 +318,16 @@ hindsight bank create architect-bank \
 ### Go
 
 ```go
-# Section 'bank-with-disposition' not found in api/memory-banks.go
+client.BanksAPI.CreateOrUpdateBank(ctx, "architect-bank").
+	CreateBankRequest(hindsight.CreateBankRequest{
+		ReflectMission: *hindsight.NewNullableString(hindsight.PtrString(
+			"You're a senior software architect - keep track of system designs, " +
+				"technology decisions, and architectural patterns. Prefer simplicity over cutting-edge.",
+		)),
+		DispositionSkepticism: *hindsight.NewNullableInt32(hindsight.PtrInt32(4)),
+		DispositionLiteralism: *hindsight.NewNullableInt32(hindsight.PtrInt32(4)),
+		DispositionEmpathy:    *hindsight.NewNullableInt32(hindsight.PtrInt32(2)),
+	}).Execute()
 ```
 
 | Value | Behaviour |
@@ -406,10 +449,44 @@ A mission only means something once you can see the prompt it lands in. `POST /v
 
 The operation is the whole request. Everything that shapes the prompt is read from the bank — its resolved config, profile and directives — and the runtime data an operation would be given is a fixed bracketed placeholder:
 
+### Python
+
+```python
+from hindsight_client_api.models import PromptPreviewRequest
+
+preview = await client.banks.preview_prompt("my-bank", PromptPreviewRequest(operation="retain"))
+for message in preview.messages:
+    print(message.role, len(message.blocks))
+```
+
+### Node.js
+
+```javascript
+const { data: preview } = await sdk.previewPrompt({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    body: { operation: 'retain' },
+});
+for (const message of preview.messages) console.log(message.role, message.blocks.length);
+```
+
+### CLI
+
 ```bash
-curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
+curl --fail-with-body -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
   -H "Content-Type: application/json" \
   -d '{"operation": "retain"}'
+```
+
+### Go
+
+```go
+preview, _, err := client.BanksAPI.PreviewPrompt(ctx, "my-bank").
+	PromptPreviewRequest(hindsight.PromptPreviewRequest{Operation: hindsight.PtrString("retain")}).
+	Execute()
+for _, message := range preview.Messages {
+	fmt.Println(message.Role, len(message.Blocks))
+}
 ```
 
 For `retain`, add `"strategy": "<name>"` to render under one of the bank's named retain strategies. Omit it and the bank's `retain_default_strategy` applies — exactly as it does for a retain that names none — so what you see is what retain would send. The response echoes the strategy that applied in `strategy`, and lists the bank's strategy names in `strategies` so a picker needs no second call.
@@ -527,7 +604,19 @@ hindsight bank set-config my-bank \
 ### Go
 
 ```go
-# Section 'update-bank-config' not found in api/memory-banks.go
+client.BanksAPI.UpdateBankConfig(ctx, "my-bank").
+	BankConfigUpdate(hindsight.BankConfigUpdate{
+		Updates: map[string]interface{}{
+			"retain_mission": "Always include technical decisions, API design choices, and architectural trade-offs. " +
+				"Ignore meeting logistics and social exchanges.",
+			"retain_extraction_mode": "verbose",
+			"observations_mission": "Observations are stable facts about people and projects. " +
+				"Always include preferences, skills, and recurring patterns. Ignore one-off events.",
+			"disposition_skepticism": 4,
+			"disposition_literalism": 4,
+			"disposition_empathy":    2,
+		},
+	}).Execute()
 ```
 
 You can update any subset of fields — only the keys you provide are changed.
@@ -565,7 +654,11 @@ hindsight bank config my-bank --overrides-only
 ### Go
 
 ```go
-# Section 'get-bank-config' not found in api/memory-banks.go
+// Returns resolved config (server defaults merged with bank overrides) and the raw overrides
+result, _, _ := client.BanksAPI.GetBankConfig(ctx, "my-bank").Execute()
+// result.Config     — full resolved configuration
+// result.Overrides  — only fields overridden at the bank level
+fmt.Println("Config keys:", len(result.GetConfig()))
 ```
 
 The response distinguishes:
@@ -598,7 +691,8 @@ hindsight bank reset-config my-bank -y
 ### Go
 
 ```go
-# Section 'reset-bank-config' not found in api/memory-banks.go
+// Remove all bank-level overrides, reverting to server defaults
+client.BanksAPI.ResetBankConfig(ctx, "my-bank").Execute()
 ```
 
 This removes all bank-level overrides. The bank reverts to server-wide defaults (set via environment variables).
@@ -672,7 +766,14 @@ hindsight directive create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-directive' not found in api/directives.go
+// Create a directive (hard rule for reflect)
+directive, _, _ := client.DirectivesAPI.CreateDirective(ctx, bankID).
+	CreateDirectiveRequest(hindsight.CreateDirectiveRequest{
+		Name:    "Formal Language",
+		Content: "Always respond in formal English, avoiding slang and colloquialisms.",
+	}).Execute()
+
+fmt.Printf("Created directive: %s\n", directive.GetId())
 ```
 
 ### Listing Directives
@@ -708,7 +809,16 @@ hindsight directive list "$BANK_ID"
 ### Go
 
 ```go
-# Section 'list-directives' not found in api/directives.go
+// List all directives in a bank
+directives, _, _ := client.DirectivesAPI.ListDirectives(ctx, bankID).Execute()
+
+for _, d := range directives.GetItems() {
+	content := d.GetContent()
+	if len(content) > 50 {
+		content = content[:50]
+	}
+	fmt.Printf("- %s: %s...\n", d.GetName(), content)
+}
 ```
 
 ### Updating Directives
@@ -740,13 +850,21 @@ console.log(`Directive active: ${updated.is_active}`);
 ### CLI
 
 ```bash
-# Section 'update-directive' not found in api/directives.sh
+# Update a directive (e.g., disable without deleting)
+hindsight directive update "$BANK_ID" "$DIRECTIVE_ID" --is-active false
 ```
 
 ### Go
 
 ```go
-# Section 'update-directive' not found in api/directives.go
+// Update a directive (e.g., disable without deleting)
+isActiveFalse := false
+updated, _, _ := client.DirectivesAPI.UpdateDirective(ctx, bankID, directiveID).
+	UpdateDirectiveRequest(hindsight.UpdateDirectiveRequest{
+		IsActive: *hindsight.NewNullableBool(&isActiveFalse),
+	}).Execute()
+
+fmt.Printf("Directive active: %v\n", updated.GetIsActive())
 ```
 
 ### Deleting Directives
@@ -771,13 +889,15 @@ await client.deleteDirective(BANK_ID, directiveId);
 ### CLI
 
 ```bash
-# Section 'delete-directive' not found in api/directives.sh
+# Delete a directive
+hindsight directive delete "$BANK_ID" "$DIRECTIVE_ID" -y
 ```
 
 ### Go
 
 ```go
-# Section 'delete-directive' not found in api/directives.go
+// Delete a directive
+client.DirectivesAPI.DeleteDirective(ctx, bankID, directiveID).Execute()
 ```
 
 ### Directives vs Disposition
@@ -811,19 +931,77 @@ Webhooks travel with `include_bank_config`. When copying a bank whose webhooks p
 
 `POST /v1/default/banks/{bank_id}/transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive). Returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# Whole bank, memories + config, no history
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export"
+### Python
+
+```python
+# Whole bank, memories + config, no history.
+# Submits the export, polls the operation, downloads the ZIP.
+archive = await client.aexport_bank("transfer-py")
 
 # Just the memories
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?include_bank_config=false"
+memories_only = await client.aexport_bank("transfer-py", include_bank_config=False)
+
+# Specific documents (a document subset carries no bank-level sections).
+# The low-level call only submits; poll the returned operation yourself.
+submission = await client.bank_transfer.export_bank_transfer(
+    "transfer-py", document_id=["doc-1", "doc-2"], include_bank_config=False
+)
+```
+
+### Node.js
+
+```javascript
+// Whole bank, memories + config, no history.
+// Submits the export, polls the operation, downloads the ZIP.
+const archive = await client.exportBank('transfer-js');
+
+// Just the memories
+const memoriesOnly = await client.exportBank('transfer-js', { includeBankConfig: false });
+
+// Specific documents (a document subset carries no bank-level sections).
+// The low-level call only submits; poll the returned operation yourself.
+const { data: subset } = await sdk.exportBankTransfer({
+    client: apiClient,
+    path: { bank_id: 'transfer-js' },
+    query: { document_id: ['doc-1', 'doc-2'], include_bank_config: false },
+});
+```
+
+### CLI
+
+```bash
+# Whole bank, memories + config, no history
+curl --fail-with-body -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/transfer/export"
+
+# Just the memories
+curl --fail-with-body -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/transfer/export?include_bank_config=false"
 
 # Specific documents (a document subset carries no bank-level sections)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?document_id=doc-1&document_id=doc-2"
+curl --fail-with-body -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/transfer/export?document_id=doc-1&document_id=doc-2&include_bank_config=false"
 ```
+
+### Go
+
+```go
+// Whole bank, memories + config, no history
+whole, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").Execute()
+
+// Just the memories
+memoriesOnly, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").
+	IncludeBankConfig(false).Execute()
+
+// Specific documents (a document subset carries no bank-level sections)
+subset, _, err := client.BankTransferAPI.ExportBankTransfer(ctx, "transfer-go").
+	DocumentId([]string{"doc-1", "doc-2"}).IncludeBankConfig(false).Execute()
+
+// Each returns an operation id: poll it, then download result_metadata["storage_key"]
+fmt.Println(whole.OperationId, memoriesOnly.OperationId, subset.OperationId)
+```
+
+A document subset must also pass `include_bank_config=false` (and leave `include_history` off). Bank-level sections cannot be scoped to documents, so the server rejects that combination with `400`.
 
 ### Import
 
@@ -834,14 +1012,71 @@ curl -X POST -H "Authorization: Bearer $API_KEY" \
 | `restore` (default) | Writes a whole bank into `target_bank_id`, which **must not already exist**. This is how a bank is moved to another instance, or copied under a new id. |
 | `merge` | Folds the archive's documents into `{bank_id}`. `document_conflict` decides what happens to document ids that already exist: `skip` (default), `replace`, `new-id`. |
 
-```bash
+### Python
+
+```python
 # Restore a bank under a new id
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/import?target_bank_id=my-bank-copy"
+operation_id = await client.aimport_bank("transfer-py", archive, target_bank_id="transfer-py-copy")
+# The restore is recorded against the bank in the URL — poll it there
+status = await client.operations.get_operation_status("transfer-py", operation_id)
 
 # Merge an archive's documents into an existing bank
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/transfer/import?mode=merge&document_conflict=replace"
+submission = await client.bank_transfer.import_bank_transfer(
+    "transfer-py-other",
+    ("transfer-py.zip", archive),
+    mode="merge",
+    document_conflict="replace",
+)
+```
+
+### Node.js
+
+```javascript
+// Restore a bank under a new id
+const restoreId = await client.importBank('transfer-js', new Blob([archive]), {
+    targetBankId: 'transfer-js-copy',
+});
+// The restore is recorded against the bank in the URL — poll it there
+const { data: restoreStatus } = await sdk.getOperationStatus({
+    client: apiClient,
+    path: { bank_id: 'transfer-js', operation_id: restoreId },
+});
+
+// Merge an archive's documents into an existing bank
+const { data: merge } = await sdk.importBankTransfer({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other' },
+    query: { mode: 'merge', document_conflict: 'replace' },
+    body: { file: new Blob([archive]) },
+});
+```
+
+### CLI
+
+```bash
+# Restore a bank under a new id
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -F "file=@transfer-bank.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/transfer/import?target_bank_id=transfer-bank-copy"
+
+# Merge an archive's documents into an existing bank
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -F "file=@transfer-bank.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/transfer/import?mode=merge&document_conflict=replace"
+```
+
+### Go
+
+```go
+// Restore a bank under a new id
+file, _ := os.Open(archivePath) // the ZIP downloaded from the export
+restore, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go").
+	File(file).TargetBankId("transfer-go-copy").Execute()
+// The restore is recorded against the bank in the URL — poll it there
+status, _, err := client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", restore.OperationId).Execute()
+
+// Merge an archive's documents into an existing bank
+file, _ = os.Open(archivePath)
+merge, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go-other").
+	File(file).Mode("merge").DocumentConflict("replace").Execute()
 ```
 
 The include flags apply here too, and can only narrow: they restore a subset of what the archive holds, never more.
@@ -850,14 +1085,240 @@ In `restore` mode the operation is recorded against `{bank_id}` — the bank in 
 
 A restore carries the operations log as history, not as work: anything still in flight when the bank was exported is left behind, so a copied bank never re-runs the original's queued retains or re-fires its webhooks. In-flight work belongs to the bank that was exported — and a clone runs *inside* one such operation, so carrying them would put the clone's own unfinished record in the copy.
 
+### Import facts extracted outside Hindsight
+
+An archive doesn't have to come from an export. If you run your own extraction pipeline, build the archive yourself and import it with `mode=merge`: your chunks and facts are stored as given — no LLM call, no re-chunking — while Hindsight still re-embeds the facts, resolves their entities against the bank, builds the semantic, temporal, entity and causal links, and — like a retain — fires `retain.completed` webhooks and auto-consolidation when the bank has them enabled.
+
+The archive is a ZIP with a `manifest.json` and one JSON file per document under `documents/`:
+
+```text
+import.zip
+├── manifest.json            {"schema_version": 1, "source_bank_id": "external"}
+└── documents/
+    └── session-2026-09-22.json
+```
+
+A document file:
+
+```json
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "tags": ["source:pi"],
+  "chunks": [{ "chunk_index": 0, "chunk_text": "Caller-defined source region..." }],
+  "facts": [
+    {
+      "text": "The user prefers lightweight local speech recognition models.",
+      "fact_type": "experience",
+      "chunk_index": 0,
+      "context": "Discussion of local speech recognition",
+      "mentioned_at": "2026-09-22T18:34:00Z",
+      "occurred_start": "2026-09-22T18:34:00Z",
+      "occurred_end": "2026-09-22T18:34:00Z",
+      "entities": ["Parakeet"],
+      "metadata": { "source_turn": "143" },
+      "tags": ["source:pi"],
+      "observation_scopes": "shared",
+      "causal_relations": []
+    }
+  ]
+}
+```
+
+| Fact field | Description |
+|------------|-------------|
+| `text` | Required. The memory, as it will be recalled. |
+| `fact_type` | Required. `world` or `experience`. |
+| `chunk_index` | Optional. The chunk in `chunks` this fact came from. |
+| `context`, `metadata`, `tags`, `observation_scopes` | Optional. Same meaning as on a retain item, set per fact. |
+| `mentioned_at`, `occurred_start`, `occurred_end` | Optional ISO 8601 dates. With none of them set, the fact is dated at import time. |
+| `entities` | Optional entity names, resolved against the bank's existing entities. |
+| `causal_relations` | Optional. `[{"relation_type": "caused_by", "target_fact_index": N}]`, where `N` is the position of another fact in the same document's `facts` list. |
+
+Metadata and dates live on each fact; a document carries no metadata or timestamp of its own. Re-sending a document id follows `document_conflict` (`replace` to overwrite it).
+
+### Python
+
+```python
+import io
+import json
+import zipfile
+
+doc = {
+    "id": "session-2026-09-22",
+    "original_text": "Full original session text...",
+    "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+    "facts": [
+        {
+            "text": "The user prefers lightweight local speech recognition models.",
+            "fact_type": "experience",
+            "chunk_index": 0,
+            "mentioned_at": "2026-09-22T18:34:00Z",
+            "entities": ["Parakeet"],
+        }
+    ],
+}
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("manifest.json", json.dumps({"schema_version": 1, "source_bank_id": "external"}))
+    z.writestr(f"documents/{doc['id']}.json", json.dumps(doc))
+
+submission = await client.bank_transfer.import_bank_transfer(
+    "transfer-py-other",
+    ("import.zip", buf.getvalue()),
+    mode="merge",
+    document_conflict="replace",
+)
+```
+
+### Node.js
+
+```javascript
+import { crc32 } from 'node:zlib';
+
+// Minimal uncompressed ZIP writer (Node has none built in); a library like jszip works too.
+function zip(files) {
+    const locals = [], centrals = [];
+    let offset = 0;
+    for (const [name, text] of Object.entries(files)) {
+        const n = Buffer.from(name), d = Buffer.from(text), crc = crc32(d);
+        const local = Buffer.alloc(30);
+        local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x21, 12);
+        local.writeUInt32LE(crc, 14); local.writeUInt32LE(d.length, 18); local.writeUInt32LE(d.length, 22);
+        local.writeUInt16LE(n.length, 26);
+        const central = Buffer.alloc(46);
+        central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(0x21, 14); central.writeUInt32LE(crc, 16); central.writeUInt32LE(d.length, 20);
+        central.writeUInt32LE(d.length, 24); central.writeUInt16LE(n.length, 28); central.writeUInt32LE(offset, 42);
+        locals.push(local, n, d);
+        centrals.push(central, n);
+        offset += 30 + n.length + d.length;
+    }
+    const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+    const count = Object.keys(files).length;
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10);
+    end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, dir, end]);
+}
+
+const doc = {
+    id: 'session-2026-09-22',
+    original_text: 'Full original session text...',
+    chunks: [{ chunk_index: 0, chunk_text: 'Caller-defined source region...' }],
+    facts: [{
+        text: 'The user prefers lightweight local speech recognition models.',
+        fact_type: 'experience',
+        chunk_index: 0,
+        mentioned_at: '2026-09-22T18:34:00Z',
+        entities: ['Parakeet'],
+    }],
+};
+const archiveZip = zip({
+    'manifest.json': JSON.stringify({ schema_version: 1, source_bank_id: 'external' }),
+    [`documents/${doc.id}.json`]: JSON.stringify(doc),
+});
+
+const { data: external } = await sdk.importBankTransfer({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other' },
+    query: { mode: 'merge', document_conflict: 'replace' },
+    body: { file: new Blob([archiveZip]) },
+});
+```
+
+### CLI
+
+```bash
+mkdir -p external/documents
+echo '{"schema_version": 1, "source_bank_id": "external"}' > external/manifest.json
+cat > external/documents/session-2026-09-22.json <<'JSON'
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+  "facts": [{
+    "text": "The user prefers lightweight local speech recognition models.",
+    "fact_type": "experience",
+    "chunk_index": 0,
+    "mentioned_at": "2026-09-22T18:34:00Z",
+    "entities": ["Parakeet"]
+  }]
+}
+JSON
+(cd external && zip -qr ../import.zip manifest.json documents)
+
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -F "file=@import.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/transfer/import?mode=merge&document_conflict=replace"
+```
+
+### Go
+
+```go
+doc := map[string]any{
+	"id":            "session-2026-09-22",
+	"original_text": "Full original session text...",
+	"chunks":        []map[string]any{{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}},
+	"facts": []map[string]any{{
+		"text":         "The user prefers lightweight local speech recognition models.",
+		"fact_type":    "experience",
+		"chunk_index":  0,
+		"mentioned_at": "2026-09-22T18:34:00Z",
+		"entities":     []string{"Parakeet"},
+	}},
+}
+zipPath := filepath.Join(os.TempDir(), "import.zip")
+out, _ := os.Create(zipPath)
+zw := zip.NewWriter(out)
+w, _ := zw.Create("manifest.json")
+json.NewEncoder(w).Encode(map[string]any{"schema_version": 1, "source_bank_id": "external"})
+w, _ = zw.Create("documents/session-2026-09-22.json")
+json.NewEncoder(w).Encode(doc)
+zw.Close()
+out.Close()
+
+file, _ = os.Open(zipPath)
+external, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go-other").
+	File(file).Mode("merge").DocumentConflict("replace").Execute()
+```
+
 ### Clone a bank
 
 `POST /v1/default/banks/{bank_id}/clone` — copy a bank into a new one in a single call, without handling an archive yourself. This is the export and import above run back to back on this instance: nothing is re-extracted and no LLM is called, so the clone's facts are exactly the source's, re-embedded with the same model.
 
+### Python
+
+```python
+operation_id = await client.aclone_bank("transfer-py", "transfer-py-clone")
+# The operation is recorded against the source bank
+status = await client.operations.get_operation_status("transfer-py", operation_id)
+```
+
+### Node.js
+
+```javascript
+const cloneId = await client.cloneBank('transfer-js', 'transfer-js-clone');
+// The operation is recorded against the source bank
+const { data: cloneStatus } = await sdk.getOperationStatus({
+    client: apiClient,
+    path: { bank_id: 'transfer-js', operation_id: cloneId },
+});
+```
+
+### CLI
+
 ```bash
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/agent-42/clone?target_bank_id=agent-43"
+curl --fail-with-body -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/clone?target_bank_id=transfer-bank-clone"
 # -> {"operation_id": "…", "status": "pending"}
+```
+
+### Go
+
+```go
+clone, _, err := client.BankTransferAPI.CloneBank(ctx, "transfer-go").
+	TargetBankId("transfer-go-clone").Execute()
+// The operation is recorded against the source bank
+status, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", clone.OperationId).Execute()
 ```
 
 | Query param | Default | Description |
@@ -884,22 +1345,68 @@ Move documents — and the facts already extracted from them — between banks *
 
 `POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
+### Python
+
+```python
+# Submits the export (whole bank; pass document_ids=[...] to scope it),
+# polls the operation until completed, downloads the archive.
+archive = await client.aexport_documents("transfer-py")
+with open("transfer-py-documents.zip", "wb") as f:
+    f.write(archive)
+```
+
+### Node.js
+
+```javascript
+// Submits the export (whole bank; pass { documentIds: [...] } to scope it),
+// polls the operation until completed, downloads the archive.
+const docArchive = await client.exportDocuments('transfer-js');
+await writeFile('transfer-js-documents.zip', docArchive);
+```
+
+### CLI
+
 ```bash
 # 1. Submit the export (whole bank; add ?document_id=… to scope it)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
+OPERATION_ID=$(curl -sf -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/document-transfer/export" | jq -r .operation_id)
 # -> {"operation_id": "…", "status": "pending"}
 
 # 2. Poll until completed
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
+until [ "$(curl -s -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/operations/$OPERATION_ID" | jq -r .status)" = completed ]; do
+  sleep 1
+done
+DOWNLOAD_URL=$(curl -s -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-bank/operations/$OPERATION_ID" | jq -r .result_metadata.download_url)
 # -> {"status":"completed","result_metadata":{
-#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
-#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
+#      "download_url":"/v1/default/files/download/banks/transfer-bank/exports/…/transfer.zip",
+#      "storage_key":"banks/transfer-bank/exports/…/transfer.zip","byte_size":12345,"filename":"transfer-bank-documents.zip"}}
 
 # 3. Download the archive
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
+curl -sf -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL$DOWNLOAD_URL" -o transfer-bank-documents.zip
+```
+
+### Go
+
+```go
+// 1. Submit the export (whole bank; add .DocumentId([]string{...}) to scope it)
+export, _, err := client.DocumentTransferAPI.ExportDocuments(ctx, "transfer-go").Execute()
+
+// 2. Poll until completed
+var done *hindsight.OperationStatusResponse
+for {
+	done, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", export.OperationId).Execute()
+	if err != nil || done.Status == "completed" || done.Status == "failed" {
+		break
+	}
+	time.Sleep(time.Second)
+}
+
+// 3. Download the archive (the client saves it to a temp file)
+zipFile, _, err := client.DocumentTransferAPI.
+	DownloadFile(ctx, done.ResultMetadata["storage_key"].(string)).Execute()
 ```
 
 | Query param | Description |
@@ -916,14 +1423,56 @@ The archive lives as long as its export **operation record** — indefinitely by
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
 
+### Python
+
+```python
+with open("transfer-py-documents.zip", "rb") as f:
+    submission = await client.document_transfer.import_documents(
+        "transfer-py-other", ("transfer-py-documents.zip", f.read()), on_conflict="replace"
+    )
+
+status = await client.operations.get_operation_status("transfer-py-other", submission.operation_id)
+# status.result_metadata -> {"documents_imported": 3, "facts_imported": 42, "observations_imported": 5, ...}
+```
+
+### Node.js
+
+```javascript
+const { data: docImport } = await sdk.importDocuments({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other' },
+    query: { on_conflict: 'replace' },
+    body: { file: new Blob([await readFile('transfer-js-documents.zip')]) },
+});
+
+const { data: docImportStatus } = await sdk.getOperationStatus({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other', operation_id: docImport.operation_id },
+});
+// docImportStatus.result_metadata -> { documents_imported: 3, facts_imported: 42, observations_imported: 5, ... }
+```
+
+### CLI
+
 ```bash
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/document-transfer?on_conflict=replace"
+OPERATION_ID=$(curl -sf -H "Authorization: Bearer $API_KEY" -F "file=@transfer-bank-documents.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/document-transfer?on_conflict=replace" | jq -r .operation_id)
 # -> {"operation_id": "…", "status": "pending"}
 
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/operations/$OPERATION_ID"
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/operations/$OPERATION_ID"
 # -> {"status":"completed","result_metadata":{"documents_imported":3,"facts_imported":42,"observations_imported":5,...}}
+```
+
+### Go
+
+```go
+file, _ = os.Open(zipFile.Name())
+imported, _, err := client.DocumentTransferAPI.ImportDocuments(ctx, "transfer-go-other").
+	File(file).OnConflict("replace").Execute()
+
+status, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go-other", imported.OperationId).Execute()
+// status.ResultMetadata -> {"documents_imported": 3, "facts_imported": 42, "observations_imported": 5, ...}
 ```
 
 `on_conflict` controls what happens when a document id already exists in the target bank:

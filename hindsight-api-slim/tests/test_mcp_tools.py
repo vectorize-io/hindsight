@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
+from hindsight_api.api import page_markdown
 from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.mcp_tools import (
     KNOWLEDGE_ROOT_PARENT,
@@ -173,6 +174,10 @@ _KNOWLEDGE_PAGE: dict[str, Any] = {
 def mock_memory():
     """Create a mock MemoryEngine with all MCP tool methods."""
     memory = MagicMock()
+    # Tools given an explicit `bank_id=` resolve it through the engine (the session
+    # bank is resolved at the transport edge instead, so most tools never call this).
+    # A bank reached by its own id resolves to itself.
+    memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
 
     # Mental model methods — simulate engine detail filtering
     async def _list_mental_models(**kwargs):
@@ -789,7 +794,10 @@ class TestCreateMentalModel:
         call_kwargs = mock_memory.create_mental_model.call_args.kwargs
         assert call_kwargs["name"] == "Test Model"
         assert call_kwargs["source_query"] == "What are the user's preferences?"
-        assert call_kwargs["content"] == "Generating content..."
+        assert call_kwargs["content"] == "", (
+            "a page is created with an empty body — a placeholder string would be embedded "
+            "and BM25-indexed, making a brand-new page searchable as its own placeholder"
+        )
         # Verify async refresh was scheduled
         mock_memory.submit_async_refresh_mental_model.assert_called_once()
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["mental_model_id"] == "mm-new"
@@ -2137,6 +2145,21 @@ class TestKnowledgeBaseTools:
         assert result["markdown"].startswith("---\n")
         assert "Run `make deploy`." in result["markdown"]
 
+    async def test_get_page_with_no_body_yet_says_so(self, mock_memory):
+        """The read surface has to pass notice_when_empty, not just support it.
+
+        The flag defaults to off, so dropping it at the call site returns a document
+        that is frontmatter and nothing else — which an agent reads as a page that
+        failed to render rather than one nobody has written, and answers by creating
+        a second page for the topic. Search already says it; reading must agree.
+        """
+        mock_memory.get_knowledge_page.return_value = dict(_KNOWLEDGE_PAGE, content="")
+        mcp = _make_mcp_server(mock_memory, {"get_knowledge_page"}, include_bank_id=True)
+
+        result = json.loads(await _tools(mcp)["get_knowledge_page"].fn(page_id="kp-1"))
+
+        assert page_markdown.EMPTY_PAGE_NOTICE in result["markdown"]
+
     async def test_get_page_not_found(self, mock_memory):
         mock_memory.get_knowledge_page.return_value = None
         mcp = _make_mcp_server(mock_memory, {"get_knowledge_page"}, include_bank_id=True)
@@ -2341,6 +2364,7 @@ class TestKnowledgeBaseTools:
 def mock_memory_with_resolver():
     """Create a mock MemoryEngine with config resolver for bank filtering tests."""
     memory = MagicMock()
+    memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
     memory.retain_batch_async = AsyncMock()
     memory.recall_async = AsyncMock(
         return_value=MagicMock(

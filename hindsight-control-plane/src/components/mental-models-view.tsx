@@ -63,8 +63,13 @@ import {
 } from "./mental-model-trigger-fields";
 import { NextRefresh } from "./next-refresh";
 import { StalenessBadge } from "./staleness-badge";
+import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attempts";
 import { FreshnessLine } from "./freshness-line";
 import { TagChip } from "@/components/ui/facet-chip";
+
+// How often the in-flight refreshes are re-read. A retry gap is 60s by default,
+// so this is fast enough to see one open and close without polling per row.
+const MENTAL_MODEL_POLL_MS = 12000;
 
 interface ReflectResponseBasedOnFact {
   id: string;
@@ -109,6 +114,8 @@ interface MentalModel {
   last_memory_seen_at: string | null;
   /** Whether a memory in this model's own scope has been written since it last read them. */
   is_stale?: boolean | null;
+  /** When the last refresh failed, or null when it succeeded. Set = automatic refreshes paused. */
+  last_refresh_failed_at?: string | null;
   created_at: string;
   reflect_response?: ReflectResponse;
 }
@@ -178,6 +185,10 @@ export function MentalModelsView() {
   };
 
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+
+  // Refreshes still in flight, so a model the worker is still retrying is not
+  // reported as paused (#4532). Polled on the same cadence the list uses.
+  const refreshAttempts = useRefreshAttempts(currentBank, MENTAL_MODEL_POLL_MS);
 
   const handleRowRefresh = async (m: MentalModel) => {
     if (!currentBank) return;
@@ -438,6 +449,8 @@ export function MentalModelsView() {
                               trigger={m.trigger}
                               lastRefreshedAt={m.last_refreshed_at}
                               lastMemorySeenAt={m.last_memory_seen_at}
+                              refreshFailedAt={m.last_refresh_failed_at}
+                              attempt={refreshAttempts.get(m.id)}
                             />
                           </div>
                         </CardContent>
@@ -455,6 +468,7 @@ export function MentalModelsView() {
                   onSelect={setFilesSelectedId}
                   onOpenDetail={setSelectedMentalModel}
                   refreshingIds={refreshingIds}
+                  refreshAttempts={refreshAttempts}
                   onEdit={(target) => {
                     setMentalModelToUpdate(target);
                     setShowUpdateDialog(true);
@@ -1021,6 +1035,7 @@ function FilesView({
   onSelect,
   onOpenDetail,
   refreshingIds,
+  refreshAttempts,
   onEdit,
   onRefresh,
   onClear,
@@ -1031,6 +1046,7 @@ function FilesView({
   onSelect: (id: string) => void;
   onOpenDetail: (m: MentalModel) => void;
   refreshingIds: Set<string>;
+  refreshAttempts: Map<string, RefreshAttempt>;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
   onClear: (m: MentalModel) => void;
@@ -1071,6 +1087,8 @@ function FilesView({
                       <StalenessBadge
                         isStale={m.is_stale}
                         trigger={m.trigger}
+                        refreshFailedAt={m.last_refresh_failed_at}
+                        retrying={refreshAttempts.has(m.id)}
                         variant="dot"
                         className="ml-auto"
                       />
@@ -1087,7 +1105,12 @@ function FilesView({
                       </div>
                     )}
                     <div className="text-[10px] text-muted-foreground/70 truncate mt-0.5">
-                      {t("nextRefreshLabel")}: <NextRefresh trigger={m.trigger} />
+                      {t("nextRefreshLabel")}:{" "}
+                      <NextRefresh
+                        trigger={m.trigger}
+                        refreshFailedAt={m.last_refresh_failed_at}
+                        attempt={refreshAttempts.get(m.id)}
+                      />
                     </div>
                   </div>
                 </button>
@@ -1115,6 +1138,8 @@ function FilesView({
                     trigger={selected.trigger}
                     lastRefreshedAt={selected.last_refreshed_at}
                     lastMemorySeenAt={selected.last_memory_seen_at}
+                    refreshFailedAt={selected.last_refresh_failed_at}
+                    attempt={refreshAttempts.get(selected.id)}
                   />
                   {selected.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">

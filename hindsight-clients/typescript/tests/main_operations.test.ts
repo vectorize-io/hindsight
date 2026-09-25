@@ -417,9 +417,8 @@ describe("TestDeleteBank", () => {
     expect(response).not.toBeNull();
     expect(response!.success).toBe(true);
 
-    // Verify bank data is deleted - memories should be gone
-    const memories = await client.listMemories(bankId);
-    expect(memories.total).toBe(0);
+    // The bank is gone: reading it fails as not found, the same as a bank that never existed
+    await expect(client.listMemories(bankId)).rejects.toThrow(/not found/);
   });
 });
 

@@ -1,10 +1,12 @@
 /**
- * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, Kilo, Cline). It delegates SessionStart and
+ * Host adapter runtime for PERSISTENT-PLUGIN harnesses (opencode, opencode2, Kilo, Cline, dsh, pi,
+ * Prime Agent — every host that loads us once and keeps us). It delegates SessionStart and
  * prompt behavior to the same core lifecycle as fresh-process hook harnesses; this class keeps only
  * the host-specific injection, toast, and incremental-transcript responsibilities.
  *
  * A harness adapter feeds it three normalized events and reads two values back:
- *   - seedIfCold(repoPath)          : plugin load -> cold-check auto-seed + compute the page preamble
+ *   - seedIfCold(repoPath)          : plugin load -> cold-check auto-seed (the page preamble is
+ *                                     NOT computed here; onPrompt builds it per session)
  *   - onPrompt(sessionId, prompt)   : each user turn -> recall + build this turn's injection
  *   - getInjection(sessionId)       : the system-prompt text to inject this turn (or undefined)
  *   - toolSpecs()                   : the hindsight_* knowledge/recall tools to register natively
@@ -19,6 +21,7 @@ import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } fro
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
+import { buildKnowledgePreamble } from "./knowledge-injection";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
@@ -46,7 +49,6 @@ export class RuntimeCore {
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
   private notify?: (title: string, message: string) => void;
-  private preamble = ""; // SessionStart-equivalent knowledge preamble, computed once at seedIfCold
 
   constructor(
     private readonly client: HindsightClient,
@@ -101,9 +103,12 @@ export class RuntimeCore {
 
   /**
    * Plugin load (SessionStart-equivalent): on a cold repo, deterministically start the background
-   * git-log seed + codebase survey, and compute the knowledge-page preamble (tool guide + roster)
-   * that onPrompt injects on the session's first turn. Reuses the exact hook-harness logic
+   * git-log seed + codebase survey. Reuses the exact hook-harness logic
    * (`buildSessionStartContext`) so opencode seeds identically. Never throws.
+   *
+   * It deliberately does NOT keep that call's knowledge preamble. This runs once per PROCESS and
+   * these hosts outlive every session, so a roster captured here is stale for every session but
+   * the first — `onPrompt` builds its own from the session's live page list (#4607).
    */
   async seedIfCold(repoPath: string | undefined): Promise<void> {
     // Anti-recursion: a headless survey session runs the agent (which loads this plugin) with
@@ -143,10 +148,9 @@ export class RuntimeCore {
         log.info(this.harness, plain);
         this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
       }
-      this.preamble = out.additionalContext ?? "";
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {
-      /* seeding + preamble are best-effort — a cold-check failure never breaks the agent */
+      /* seeding is best-effort — a cold-check failure never breaks the agent */
     }
   }
 
@@ -177,10 +181,18 @@ export class RuntimeCore {
     });
 
     const blocks: string[] = [];
-    // The preamble is the SessionStart-equivalent; inject it once, on the first turn (later turns get
-    // the periodic refresh below). Empty until seedIfCold resolves — if the first prompt races ahead
-    // of plugin-load seeding, the roster refresh still delivers the tool guide on cadence.
-    if (turns === 1 && this.preamble) blocks.push(this.preamble);
+    // The SessionStart-equivalent preamble, injected once on the first turn (later turns get the
+    // periodic refresh below). Built HERE, from this session's own roster, rather than reused from
+    // plugin load: that one is a process-lifetime snapshot, so a host started before the pages
+    // existed told every later session "No knowledge pages yet" while the same turn's memory block
+    // listed pages by id (#4607).
+    if (turns === 1) {
+      blocks.push(
+        buildKnowledgePreamble(output.pages, {
+          reflectOnNewGoals: this.cfg.autoInject !== "reflect",
+        })
+      );
+    }
     if (output.context) blocks.push(output.context);
     // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
     // renders inside the TUI input line. The shared output owns when a notice exists.

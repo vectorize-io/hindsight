@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 
@@ -171,7 +172,12 @@ class SupabaseTenantExtension(TenantExtension):
         self._http = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=None, connect=REQUEST_TIMEOUT_SECONDS, sock_read=REQUEST_TIMEOUT_SECONDS
-            )
+            ),
+            # Supabase is an external endpoint, so it goes through the egress proxy
+            # (HTTPS_PROXY/NO_PROXY) like every other upstream the API calls. The check
+            # is inlined rather than imported from hindsight_api: an extension image is
+            # built against a released server, which may not have the helper yet.
+            trust_env=any(os.environ.get(name) for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY")),
         )
 
         # Attempt to fetch JWKS for fast local JWT verification

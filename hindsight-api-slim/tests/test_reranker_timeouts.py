@@ -81,6 +81,12 @@ def _make_config(**overrides) -> HindsightConfig:
             ("_client", "timeout"),
         ),
         (
+            "typesafe",
+            {"reranker_typesafe_api_key": "k"},
+            "reranker_typesafe_timeout",
+            ("timeout",),
+        ),
+        (
             "litellm",
             {"reranker_litellm_api_base": "http://localhost:4000"},
             "reranker_litellm_timeout",
@@ -125,6 +131,7 @@ def test_default_timeouts_preserve_60s_behavior():
     assert config.reranker_zeroentropy_timeout == 60.0
     assert config.reranker_siliconflow_timeout == 60.0
     assert config.reranker_alibaba_timeout == 60.0
+    assert config.reranker_typesafe_timeout == 60.0
     assert config.reranker_litellm_timeout == 60.0
     assert config.reranker_litellm_sdk_timeout == 60.0
     assert config.reranker_google_timeout == 60.0

@@ -110,7 +110,18 @@ Query parameters:
 ### Python
 
 ```python
-# Section 'operations-list' not found in api/operations.py
+# List recent operations for a bank (default: 20 most recent).
+result = await client.operations.list_operations("my-bank")
+for op in result.operations:
+    print(op.id, op.task_type, op.status)
+
+# Filter by status and type.
+pending_recompute = await client.operations.list_operations(
+    "my-bank", status="pending", type="graph_maintenance"
+)
+
+# Hide retain_batch parent rows (show only individual child retain jobs).
+flat = await client.operations.list_operations("my-bank", exclude_parents=True)
 ```
 
 ### Node.js
@@ -149,7 +160,25 @@ hindsight operation list my-bank
 ### Go
 
 ```go
-# Section 'operations-list' not found in api/operations.go
+// List recent operations for a bank (default: 20 most recent).
+recent, _, err := client.OperationsAPI.ListOperations(ctx, "my-bank").Execute()
+if err != nil {
+	log.Fatalf("list operations: %v", err)
+}
+for _, op := range recent.Operations {
+	fmt.Println(op.Id, op.TaskType, op.Status)
+}
+
+// Filter by status and type.
+_, _, _ = client.OperationsAPI.ListOperations(ctx, "my-bank").
+	Status("pending").
+	Type_("graph_maintenance").
+	Execute()
+
+// Hide retain_batch parent rows (show only individual child retain jobs).
+_, _, _ = client.OperationsAPI.ListOperations(ctx, "my-bank").
+	ExcludeParents(true).
+	Execute()
 ```
 
 `items_count` is operation-specific — non-zero only for retain-shaped operations (it counts content items in the submission).
@@ -159,7 +188,13 @@ hindsight operation list my-bank
 ### Python
 
 ```python
-# Section 'operations-get' not found in api/operations.py
+status = await client.operations.get_operation_status("my-bank", seeded_id)
+print(status.status, status.error_message)
+
+# Include the submission payload (can be large for retain batches).
+detailed = await client.operations.get_operation_status(
+    "my-bank", seeded_id, include_payload=True
+)
 ```
 
 ### Node.js
@@ -188,7 +223,16 @@ hindsight operation get my-bank "$OPERATION_ID"
 ### Go
 
 ```go
-# Section 'operations-get' not found in api/operations.go
+status, _, err := client.OperationsAPI.GetOperationStatus(ctx, "my-bank", operationID).Execute()
+if err != nil {
+	log.Fatalf("get status: %v", err)
+}
+fmt.Println(status.Status, status.ErrorMessage)
+
+// Include the submission payload (can be large for retain batches).
+_, _, _ = client.OperationsAPI.GetOperationStatus(ctx, "my-bank", operationID).
+	IncludePayload(true).
+	Execute()
 ```
 
 Query parameters:
@@ -234,7 +278,13 @@ before it could finish: nothing is running, so the cancel takes effect immediate
 ### Python
 
 ```python
-# Section 'operations-cancel' not found in api/operations.py
+# Cancel a pending operation before a worker claims it.
+# Returns 409 if the operation is already processing/completed/failed.
+try:
+    await client.operations.cancel_operation("my-bank", seeded_id)
+except Exception:
+    # Already in a non-pending state — fine for this example.
+    pass
 ```
 
 ### Node.js
@@ -257,7 +307,9 @@ hindsight operation cancel my-bank "$OPERATION_ID"
 ### Go
 
 ```go
-# Section 'operations-cancel' not found in api/operations.go
+// Cancel a pending operation before a worker claims it.
+// Returns 409 if the operation is already processing/completed/failed.
+_, _, _ = client.OperationsAPI.CancelOperation(ctx, "my-bank", operationID).Execute()
 ```
 
 ### Retry a failed operation
@@ -267,7 +319,13 @@ The row's status resets to `pending` and the worker picks it up again. Returns `
 ### Python
 
 ```python
-# Section 'operations-retry' not found in api/operations.py
+# Re-queue a failed (or cancelled) operation.
+# Returns 409 if the operation isn't in failed/cancelled state.
+try:
+    await client.operations.retry_operation("my-bank", seeded_id)
+except Exception:
+    # Operation already in a terminal state we can't retry — fine here.
+    pass
 ```
 
 ### Node.js
@@ -290,7 +348,9 @@ hindsight operation retry my-bank "$OPERATION_ID"
 ### Go
 
 ```go
-# Section 'operations-retry' not found in api/operations.go
+// Re-queue a failed (or cancelled) operation.
+// Returns 409 if the operation isn't in failed/cancelled state.
+_, _, _ = client.OperationsAPI.RetryOperation(ctx, "my-bank", operationID).Execute()
 ```
 
 ## Async retain example
@@ -300,7 +360,24 @@ Submit a batch asynchronously and poll until the operation completes:
 ### Python
 
 ```python
-# Section 'operations-async-retain' not found in api/operations.py
+# Submit a batch asynchronously — the call returns immediately with an
+# operation_id you can poll.
+submission = await client.aretain_batch(
+    bank_id="my-bank",
+    items=[
+        {"content": "Alice joined Google in 2023"},
+        {"content": "Bob prefers Python over JavaScript"},
+    ],
+    retain_async=True,
+)
+op_id = submission.operation_id
+
+while True:
+    s = await client.operations.get_operation_status("my-bank", op_id)
+    if s.status in ("completed", "failed", "cancelled"):
+        print(f"finished: {s.status}")
+        break
+    await asyncio.sleep(2)
 ```
 
 ### Node.js
@@ -350,7 +427,33 @@ done
 ### Go
 
 ```go
-# Section 'operations-async-retain' not found in api/operations.go
+// Submit a large batch asynchronously — the call returns immediately with
+// an operation_id you can poll.
+async := true
+resp, _, err := client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{Content: hindsight.TextContent("Alice joined Google in 2023")},
+			{Content: hindsight.TextContent("Bob prefers Python over JavaScript")},
+		},
+		Async: &async,
+	}).Execute()
+if err != nil {
+	log.Fatalf("retain: %v", err)
+}
+opID := resp.OperationId.Get()
+
+for {
+	s, _, err := client.OperationsAPI.GetOperationStatus(ctx, "my-bank", *opID).Execute()
+	if err != nil {
+		log.Fatalf("poll: %v", err)
+	}
+	if s.Status == "completed" || s.Status == "failed" || s.Status == "cancelled" {
+		fmt.Println("finished:", s.Status)
+		break
+	}
+	time.Sleep(2 * time.Second)
+}
 ```
 
 ## Worker tuning

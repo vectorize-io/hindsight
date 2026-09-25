@@ -61,6 +61,39 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 </TabItem>
 </Tabs>
 
+## Aliases {#aliases}
+
+An **alias** is an extra id a bank answers to. Every endpoint that accepts a bank id accepts its aliases too, so an alias is a second way in to the same bank — nothing is copied, moved or duplicated.
+
+This exists because a bank's id is the key on all of its data, so changing it means rewriting every row and cutting all clients over at once (that is [`rename-bank`](/developer/admin-cli#rename-bank), and it needs downtime). An alias lets you do the same migration in phases: add the new id, move clients across a few at a time while both ids work, and stop when nothing calls the old one.
+
+```
+POST   /v1/default/banks/{bank_id}/aliases             {"alias": "new-id"}
+GET    /v1/default/banks/{bank_id}/aliases
+PATCH  /v1/default/banks/{bank_id}/aliases/{alias}     {"primary": true}
+DELETE /v1/default/banks/{bank_id}/aliases/{alias}
+```
+
+### Showing a bank under an alias
+
+Once callers have moved, the control plane can present the bank under the new id instead of the one it was created with. `PATCH` with `primary: true` promotes an alias; `primary: false` returns the bank to showing its own id without removing the alias.
+
+This is **display only**. `bank_id` remains the bank's identity: authorisation, metering, exports and audit logs all continue to use it, and it is what every response reports. The control plane shows the real id alongside the alias so the two are never confused.
+
+- **Optional, with no default.** A bank's own id is not an alias, so "not shown under an alias" is the normal state.
+- **At most one.** Promoting an alias demotes whichever one was shown before, in a single transaction.
+- **It cannot outlive the alias.** Deleting the promoted alias returns the bank to showing its own id.
+
+**What to know:**
+
+- **A bank can have several aliases**, so more than one old id can be retired at a time.
+- **A name is unique across banks and aliases.** Adding one that already names a bank or another alias returns `409`, so an alias can never reach two banks.
+- **An alias never replaces the bank's own id.** The real id keeps working and is what every response reports, including responses to requests made through an alias. Removing a bank's real id is not possible — that is what `rename-bank` is for.
+- **Deleting an alias only closes that door.** The bank and its memories are untouched, and callers still using the removed id get exactly what they got before it existed.
+- **Deleting a bank removes its aliases**, freeing those names for reuse.
+- **Aliases are not carried by export, import or clone.** They describe which ids reach a bank on *this* deployment, so a copy does not inherit them — add them to the target deliberately.
+- **A change takes a few seconds to reach every API replica.** See [`HINDSIGHT_API_BANK_ALIAS_CACHE_TTL_SECONDS`](/developer/configuration#bank-alias-cache).
+
 ## Bank Configuration
 
 Each memory bank can be configured independently per operation. Configuration can be set via the [bank config API](#updating-configuration), the [Control Plane UI](/), or [server-wide environment variables](/developer/configuration).
@@ -387,11 +420,20 @@ A mission only means something once you can see the prompt it lands in. `POST /v
 
 The operation is the whole request. Everything that shapes the prompt is read from the bank — its resolved config, profile and directives — and the runtime data an operation would be given is a fixed bracketed placeholder:
 
-```bash
-curl -X POST "$HINDSIGHT_URL/v1/default/banks/my-bank/prompts/preview" \
-  -H "Content-Type: application/json" \
-  -d '{"operation": "retain"}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="prompts-preview" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="prompts-preview" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="prompts-preview" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="prompts-preview" language="go" />
+</TabItem>
+</Tabs>
 
 For `retain`, add `"strategy": "<name>"` to render under one of the bank's named retain strategies. Omit it and the bank's `retain_default_strategy` applies — exactly as it does for a retain that names none — so what you see is what retain would send. The response echoes the strategy that applied in `strategy`, and lists the bank's strategy names in `strategies` so a picker needs no second call.
 
@@ -653,19 +695,22 @@ Webhooks travel with `include_bank_config`. When copying a bank whose webhooks p
 
 `POST /v1/default/banks/{bank_id}/transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive). Returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# Whole bank, memories + config, no history
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export"
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-export" language="go" />
+</TabItem>
+</Tabs>
 
-# Just the memories
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?include_bank_config=false"
-
-# Specific documents (a document subset carries no bank-level sections)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/export?document_id=doc-1&document_id=doc-2"
-```
+A document subset must also pass `include_bank_config=false` (and leave `include_history` off). Bank-level sections cannot be scoped to documents, so the server rejects that combination with `400`.
 
 ### Import
 
@@ -676,15 +721,20 @@ curl -X POST -H "Authorization: Bearer $API_KEY" \
 | `restore` (default) | Writes a whole bank into `target_bank_id`, which **must not already exist**. This is how a bank is moved to another instance, or copied under a new id. |
 | `merge` | Folds the archive's documents into `{bank_id}`. `document_conflict` decides what happens to document ids that already exist: `skip` (default), `replace`, `new-id`. |
 
-```bash
-# Restore a bank under a new id
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/transfer/import?target_bank_id=my-bank-copy"
-
-# Merge an archive's documents into an existing bank
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/transfer/import?mode=merge&document_conflict=replace"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-import" language="go" />
+</TabItem>
+</Tabs>
 
 The include flags apply here too, and can only narrow: they restore a subset of what the archive holds, never more.
 
@@ -692,15 +742,91 @@ In `restore` mode the operation is recorded against `{bank_id}` — the bank in 
 
 A restore carries the operations log as history, not as work: anything still in flight when the bank was exported is left behind, so a copied bank never re-runs the original's queued retains or re-fires its webhooks. In-flight work belongs to the bank that was exported — and a clone runs *inside* one such operation, so carrying them would put the clone's own unfinished record in the copy.
 
+### Import facts extracted outside Hindsight
+
+An archive doesn't have to come from an export. If you run your own extraction pipeline, build the archive yourself and import it with `mode=merge`: your chunks and facts are stored as given — no LLM call, no re-chunking — while Hindsight still re-embeds the facts, resolves their entities against the bank, builds the semantic, temporal, entity and causal links, and — like a retain — fires `retain.completed` webhooks and auto-consolidation when the bank has them enabled.
+
+The archive is a ZIP with a `manifest.json` and one JSON file per document under `documents/`:
+
+```text
+import.zip
+├── manifest.json            {"schema_version": 1, "source_bank_id": "external"}
+└── documents/
+    └── session-2026-09-22.json
+```
+
+A document file:
+
+```json
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "tags": ["source:pi"],
+  "chunks": [{ "chunk_index": 0, "chunk_text": "Caller-defined source region..." }],
+  "facts": [
+    {
+      "text": "The user prefers lightweight local speech recognition models.",
+      "fact_type": "experience",
+      "chunk_index": 0,
+      "context": "Discussion of local speech recognition",
+      "mentioned_at": "2026-09-22T18:34:00Z",
+      "occurred_start": "2026-09-22T18:34:00Z",
+      "occurred_end": "2026-09-22T18:34:00Z",
+      "entities": ["Parakeet"],
+      "metadata": { "source_turn": "143" },
+      "tags": ["source:pi"],
+      "observation_scopes": "shared",
+      "causal_relations": []
+    }
+  ]
+}
+```
+
+| Fact field | Description |
+|------------|-------------|
+| `text` | Required. The memory, as it will be recalled. |
+| `fact_type` | Required. `world` or `experience`. |
+| `chunk_index` | Optional. The chunk in `chunks` this fact came from. |
+| `context`, `metadata`, `tags`, `observation_scopes` | Optional. Same meaning as on a retain item, set per fact. |
+| `mentioned_at`, `occurred_start`, `occurred_end` | Optional ISO 8601 dates. With none of them set, the fact is dated at import time. |
+| `entities` | Optional entity names, resolved against the bank's existing entities. |
+| `causal_relations` | Optional. `[{"relation_type": "caused_by", "target_fact_index": N}]`, where `N` is the position of another fact in the same document's `facts` list. |
+
+Metadata and dates live on each fact; a document carries no metadata or timestamp of its own. Re-sending a document id follows `document_conflict` (`replace` to overwrite it).
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="transfer-import-external" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="transfer-import-external" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="transfer-import-external" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="transfer-import-external" language="go" />
+</TabItem>
+</Tabs>
+
 ### Clone a bank
 
 `POST /v1/default/banks/{bank_id}/clone` — copy a bank into a new one in a single call, without handling an archive yourself. This is the export and import above run back to back on this instance: nothing is re-extracted and no LLM is called, so the clone's facts are exactly the source's, re-embedded with the same model.
 
-```bash
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/agent-42/clone?target_bank_id=agent-43"
-# -> {"operation_id": "…", "status": "pending"}
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="clone-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="clone-bank" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="clone-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="clone-bank" language="go" />
+</TabItem>
+</Tabs>
 
 | Query param | Default | Description |
 |-------------|---------|-------------|
@@ -727,23 +853,20 @@ Move documents — and the facts already extracted from them — between banks *
 
 `POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
-```bash
-# 1. Submit the export (whole bank; add ?document_id=… to scope it)
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
-# -> {"operation_id": "…", "status": "pending"}
-
-# 2. Poll until completed
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{
-#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
-#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
-
-# 3. Download the archive
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-export" language="go" />
+</TabItem>
+</Tabs>
 
 | Query param | Description |
 |-------------|-------------|
@@ -760,15 +883,20 @@ The archive lives as long as its export **operation record** — indefinitely by
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
 
-```bash
-curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/document-transfer?on_conflict=replace"
-# -> {"operation_id": "…", "status": "pending"}
-
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/other-bank/operations/$OPERATION_ID"
-# -> {"status":"completed","result_metadata":{"documents_imported":3,"facts_imported":42,"observations_imported":5,...}}
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="document-import" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="document-import" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="document-import" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="document-import" language="go" />
+</TabItem>
+</Tabs>
 
 `on_conflict` controls what happens when a document id already exists in the target bank:
 

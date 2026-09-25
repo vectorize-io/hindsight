@@ -61,6 +61,28 @@ def test_bootstrap_extension_scann_installs_vector_before_alloydb_scann():
     assert conn.created_extensions() == ["vector", "alloydb_scann"]
 
 
+def test_bootstrap_extension_skips_ddl_when_installed():
+    """An installed extension must not be re-created.
+
+    CREATE EXTENSION IF NOT EXISTS is a no-op on a writable session but an
+    error on a read-only one, and that pointless failure aborts the
+    transaction — which used to strand the migration advisory lock (#4611).
+    """
+    conn = FakePgConnection(extensions={"vector": ("public", True)})
+
+    bootstrap_extension(conn, "pgvector")
+
+    assert conn.created_extensions() == []
+
+
+def test_bootstrap_extension_still_installs_when_missing():
+    conn = FakePgConnection()
+
+    bootstrap_extension(conn, "pgvector")
+
+    assert conn.created_extensions() == ["vector"]
+
+
 def test_migration_bootstrap_vchord_skips_pgvector_preflight():
     conn = FakePgConnection()
 

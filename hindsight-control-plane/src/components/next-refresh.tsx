@@ -19,13 +19,35 @@ type TriggerLike = {
  */
 export function NextRefresh({
   trigger,
+  refreshFailedAt,
+  attempt,
   className,
 }: {
   trigger?: TriggerLike | null;
+  /** ISO time of the last failed refresh, or null when the last one succeeded. */
+  refreshFailedAt?: string | null;
+  /** A refresh that is queued or running for this model, if any. */
+  attempt?: { nextAttemptAt: string | null } | null;
   className?: string;
 }) {
   const t = useTranslations("mentalModels");
   const cron = trigger?.refresh_cron?.trim();
+
+  // An attempt that has not finished outranks everything else: the failure stamp
+  // is written on the first failed attempt, while the worker still has retries
+  // left, so the next thing to happen is that retry — and its time is known.
+  if (attempt) {
+    return (
+      <span className={className}>
+        {attempt.nextAttemptAt
+          ? t("nextRefreshRetrying", { time: formatRelativeTime(attempt.nextAttemptAt) })
+          : t("nextRefreshRunning")}
+      </span>
+    );
+  }
+  // A failed refresh pauses the automatic triggers until one succeeds (#4532), so
+  // naming the next scheduled run here would promise something nothing will do.
+  if (refreshFailedAt) return <span className={className}>{t("nextRefreshPaused")}</span>;
 
   if (cron) {
     const next = nextCronRun(cron);

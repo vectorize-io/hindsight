@@ -493,7 +493,7 @@ def _patch_op_calls(monkeypatch, memory: MemoryEngine, *, retraction_ops, delta_
         ops = _resolve_block_markers(retraction_ops if is_retraction else delta_ops, messages[1]["content"])
         return LLMCallResult(content=DeltaOperationList.model_validate({"operations": ops}), usage=TokenUsage())
 
-    monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
+    monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", fake_call)
     return calls
 
 
@@ -682,7 +682,7 @@ async def test_failed_unsay_keeps_the_citation_so_the_next_refresh_retries(
     async def exploding_call(*, messages, **kwargs):
         raise RuntimeError("provider is down")
 
-    monkeypatch.setattr(memory._reflect_llm_config, "call", exploding_call)
+    monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", exploding_call)
 
     refreshed = await memory.refresh_mental_model(
         bank_id=bank_id, mental_model_id=mm_id, request_context=request_context

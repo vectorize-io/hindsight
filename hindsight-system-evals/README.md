@@ -81,6 +81,56 @@ a 9B — so a green run means "extraction is sound on this model", not "the
 regression cannot return". The test that fails on that is
 `hindsight-api-slim/tests/test_fact_extraction_nullable_dimensions.py`.
 
+**`test_05` — refresh cost.** Not a quality grade: a baseline of what a
+knowledge-page refresh spends. Every LLM call the refresh makes is read back from
+`/llm-requests` — input, cached and output tokens, and the prompt — for a full
+rebuild and for a delta after a small wave of new facts. Behind it: on real
+project banks a refresh sent 30–90k-token synthesis prompts, because a tool's
+`max_tokens` counts fact text only and the JSON around each fact is 3–4× larger
+(#4566). That missed the 30s call deadline (#4568), ended searches before
+`recall` ran (#4563), and billed metered keys all night (#4532).
+
+It runs against a **frozen bank**, `fixtures/refresh-cost-bank.zip`: 900 facts
+generated from a seed as one fictional product's history, consolidated by a real
+model, with the six pages a coding agent seeds. Seeding that live would cost a
+consolidation pass per run and start each run from a different bank. Rebuild it
+only on purpose — every earlier baseline then measured a different bank:
+
+```bash
+uv run python -m hindsight_system_evals.refresh_cost build
+# measure a candidate archive before replacing the committed one
+HINDSIGHT_EVAL_REFRESH_COST_FIXTURE=/tmp/new.zip uv run pytest evals/test_05_refresh_cost.py
+```
+
+`--cost-output DIR` writes `refresh-cost.json` (every call, every prompt), a
+summary table, and each refresh's synthesis prompt on its own. The table ends in
+USD at the model's list price (`PRICES` in `refresh_cost.py`), including what
+explicit Gemini caching costs to create and store — those are not LLM calls and
+never reach the trace, so they are estimated from the cached tokens. Each refresh
+also records its page size, distinct specifics and citations, a floor under any
+cost cut. The model is not frozen, so compare medians over a few runs, not one.
+
+To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
+`HINDSIGHT_API_<X>=v` (the server's environment is otherwise wiped):
+
+```bash
+HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED=true uv run pytest evals/test_05_refresh_cost.py
+```
+
+**`test_06` — reflect reads the page it was given.** The only suite where the
+page layer is live: the others create their pages with `exclude_mental_models`, so
+`has_mental_models` is false and reflect is never offered the page tools at all.
+This one builds the page, then asks the page's own question and checks reflect
+went to the page layer (from the tool trace) and that the answer says what the
+page says (judged against the page, not the corpus gold — whether the page itself
+converged is `test_01`'s grade).
+
+It exists because that layer changed: `search_mental_models` used to return five
+pages whole, and now returns the best hit whole plus a snippet of the others, with
+`read_mental_models` for the rest. It is what showed that snippets *alone* let the
+model answer from a snippet without ever reading the page, which is why the best
+hit still arrives in full.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels
@@ -178,9 +228,11 @@ uv run run-amb --dataset beam --split 100k --api-url https://api.dev.example
 cd "$(uv run python -c 'import os;print(os.path.expanduser("~/.cache/hindsight/amb"))')" && uv run amb splits --dataset locomo
 ```
 
-AMB is cloned at the **exact ref in `AMB_REF`** (override with `--amb-ref`, or
-`AMB_REF=`), because unpinned, a movement in the numbers is unattributable:
-benchmark drift and engine drift look identical. Bumping the pin is a one-line PR.
+AMB tracks the ref in `AMB_REF` — `main`, so a fix merged in AMB reaches the next
+run without a PR here (override with `--amb-ref`, or `AMB_REF=`, to replay an old
+number). Every run prints the AMB commit it resolved to: benchmark drift and engine
+drift look identical in the numbers, so that commit is what makes a movement
+attributable.
 It needs `GEMINI_API_KEY` — AMB judges and answers with Gemini through the API
 key, not through our VertexAI service account. AMB pins its own interpreter
 (`.python-version`, 3.12) and uv honours it; `--python` / `AMB_PYTHON` override
@@ -229,8 +281,19 @@ If your shell exports `PYTEST_ADDOPTS` with `-n` (the repo `.env` does), unset
 it: xdist is not installed here, and parallel evals against one server would
 compete for it anyway.
 
-The server runs on its own pg0 instance (`hindsight-system-evals`), so a run does
-not compete for connections with a developer's server or with the system tests.
+The server runs on a **fresh** pg0 instance per run (`hindsight-system-evals-<id>`),
+dropped when the session ends. Its own, so a run does not compete for connections
+with a developer's server or with the system tests — and a new one, because a
+reused database still holds the previous run's banks *and their queued refresh
+and consolidation tasks*. The worker claims those within seconds of starting and
+bills them to your provider key: one run spent 5.9M tokens on four banks it never
+created, against 0.8M of its own.
+
+Set `HINDSIGHT_EVAL_PG0_INSTANCE` to pick the instance yourself (the coding-agents
+runner does, one per run); one you named is yours, and is left in place.
+
+A crash can leave an instance behind. `pg0 list` shows them, `pg0 drop <name>`
+removes one.
 
 ## Debugging a failure
 

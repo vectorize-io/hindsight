@@ -23,7 +23,7 @@ Your agent reads the prose and remembers the prose. The screenshot becomes a fil
 - A recalled fact comes back with the attachments it was extracted from, per fact rather than per chunk.
 - Attribution isn't inferred from position. The extractor is asked, and answers that don't resolve are dropped rather than rounded to the nearest image.
 - If the configured model can't read images, the retain fails before a byte is written.
-- Shipped in v0.10.0 for self-hosted, and coming soon to Hindsight Cloud.
+- Shipped in v0.10.0, available on Hindsight Cloud and for self-hosted deployments.
 
 ## This isn't file upload
 
@@ -137,7 +137,7 @@ On upgrading: the migration adds two empty tables plus an array column on the me
 | Media types | any well-formed type | no allowlist; the provider's error surfaces if it can't read it |
 | Per-fact provenance | `facts` extraction mode | `chunks` and `verbatim` take everything in the chunk |
 | MCP | not yet | attachments come back over HTTP, not the MCP tools |
-| Hindsight Cloud | coming soon | self-host v0.10.0 to use it today |
+| Hindsight Cloud | available | running 0.10.0, with a vision-capable model already configured |
 
 The extraction-mode caveat is the one most likely to surprise you. If you've configured chunk or verbatim mode, the fact is the chunk, so it carries everything the chunk holds and no model is consulted.
 

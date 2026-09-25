@@ -51,6 +51,15 @@ process_file() {
         print_info "Copying: $rel_path"
         cp "$src_file" "$dest_file"
     fi
+    render_figures "$src_file" "$dest_file"
+}
+
+# Figures become their step-by-step narration: an interactive one (<Flow {...x.props} />) from its
+# source file, an animated SVG from the spec the image itself carries.
+render_figures() {
+    if grep -qE '<Flow |\.svg\)' "$2"; then
+        python3 "$ROOT_DIR/scripts/docs_skill_figures.py" "$1" "$2"
+    fi
 }
 
 # Convert MDX to Markdown by:
@@ -107,22 +116,23 @@ def inline_code_snippet(match):
 
     example_content = example_path.read_text()
 
-    # Extract section if specified - examples use comment markers like # [docs:section] or // [docs:section]
+    # Extract section if specified, the same way CodeSnippet.tsx does: every line
+    # between (#|//) [docs:section] and (#|//) [/docs:section], across all parts
     if section:
-        # Try various comment formats: #, //, etc.
-        # Pattern: (comment) [docs:section] ... (comment) [/docs:section]
-        section_pattern = rf"(?:^|\n)(?:#|//)\s*\[docs:{re.escape(section)}\]\n(.*?)\n(?:#|//)\s*\[/docs:{re.escape(section)}\]"
-        section_match = re.search(section_pattern, example_content, re.DOTALL | re.MULTILINE)
-
-        if not section_match:
-            # Try alternative # section-start / # section-end format
-            section_pattern = rf"(?:^|\n)#\s*{re.escape(section)}-start\n(.*?)\n#\s*{re.escape(section)}-end"
-            section_match = re.search(section_pattern, example_content, re.DOTALL | re.MULTILINE)
-
-        if section_match:
-            example_content = section_match.group(1).strip()
-        else:
+        start = re.compile(rf"(?:#|//)\s*\[docs:{re.escape(section)}\]")
+        end = re.compile(rf"(?:#|//)\s*\[/docs:{re.escape(section)}\]")
+        lines, inside = [], False
+        for line in example_content.split("\n"):
+            if start.search(line):
+                inside = True
+            elif end.search(line):
+                inside = False
+            elif inside:
+                lines.append(line)
+        if not lines:
             return f"```{language}\n# Section '{section}' not found in {example_rel_path}\n```"
+        indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
+        example_content = "\n".join(l[indent:] for l in lines).strip("\n")
 
     return f"```{language}\n{example_content}\n```"
 
@@ -237,6 +247,7 @@ process_reference_tree() {
             cp "$file" "$dest"
             normalize_markdown_file "$dest"
         fi
+        render_figures "$file" "$dest"
         print_info "Included $label: $rel"
     done
 }

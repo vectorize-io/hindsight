@@ -356,7 +356,7 @@ def test_guard_survives_the_oracle_sql_rewrite():
     gone, and the ROWNUM row limit must land on the *outer* WHERE rather than the
     subquery's (the rewriter replaces only the first WHERE it sees).
     """
-    from hindsight_api.engine.db.ops import bank_serialization_sql
+    from hindsight_api.engine.db.ops import bank_serialization_sql, key_serialization_sql
     from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
     table = "async_operations"
@@ -367,6 +367,7 @@ def test_guard_survives_the_oracle_sql_rewrite():
           AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
           AND o.operation_id != ALL($1::uuid[])
           AND {bank_serialization_sql(table, "o")}
+          AND {key_serialization_sql(table, "o")}
         ORDER BY o.created_at
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -378,6 +379,7 @@ def test_guard_survives_the_oracle_sql_rewrite():
     assert "LIMIT" not in rewritten
     assert "FOR UPDATE SKIP LOCKED" in rewritten
     assert "WHERE ROWNUM <= :2 AND o.status = 'pending'" in rewritten
+    assert "WHERE doc_peer.bank_id = o.bank_id" in rewritten
     # The correlated subquery keeps its own unmodified WHERE.
     assert "WHERE bank_peer.bank_id = o.bank_id" in rewritten
 

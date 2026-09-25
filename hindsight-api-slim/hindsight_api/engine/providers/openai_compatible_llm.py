@@ -487,7 +487,13 @@ def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[di
 # for `tool_choice`. `"none"`, `"required"`, and named function choices are not
 # currently supported'. Reflect's agent loop forces a retrieval tool on its first
 # turn, so without this every reflect call against Meta fails outright.
-_NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS = frozenset({"meta"})
+# Z.AI answers the same way: 'Tool choice must be auto' (#4246).
+_NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS = frozenset({"meta", "zai"})
+
+# Vendor namespaces a gateway puts in front of the model id when it routes to one
+# of those endpoints. The gateway is the provider, so the set above cannot see
+# them: OpenRouter serves Z.AI as "z-ai/glm-5.3-flash".
+_NON_AUTO_TOOL_CHOICE_UNSUPPORTED_MODEL_VENDORS = frozenset({"z-ai", "zai"})
 
 
 def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
@@ -966,8 +972,15 @@ class OpenAICompatibleLLM(LLMInterface):
         endpoints fail the request outright with HTTP 400, so reflect gets no
         answer at all. Meta Model API is the first of them — it rejects "none",
         "required" and named choices alike.
+
+        A gateway reports itself as the provider, so the same endpoint reached
+        through one is identified by the vendor namespace of the model id. The
+        bare model name is not matched: it names the weights, not the endpoint.
         """
-        return self.provider in _NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS
+        if self.provider in _NON_AUTO_TOOL_CHOICE_UNSUPPORTED_PROVIDERS:
+            return True
+        namespaces = self.model.lower().split("/")[:-1]
+        return any(ns in _NON_AUTO_TOOL_CHOICE_UNSUPPORTED_MODEL_VENDORS for ns in namespaces)
 
     def _verification_max_completion_tokens(self) -> int:
         """Return the startup verification budget for OpenAI-compatible gateways."""
@@ -1581,8 +1594,8 @@ class OpenAICompatibleLLM(LLMInterface):
         if "deepseek" in self.model.lower() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
             request_tool_choice = None
 
-        # Meta rejects any tool_choice other than "auto" outright (HTTP 400), so the
-        # field has to come off the request entirely. A named choice has already been
+        # Meta and Z.AI (direct or via a gateway) reject any tool_choice other than
+        # "auto" outright (HTTP 400), so the field has to come off the request entirely. A named choice has already been
         # narrowed to a single tool above, so the call stays practically forced under
         # auto — the same reasoning as the DeepSeek branch. NOTE: "none" cannot be
         # expressed this way and would become "auto"; no caller on this path uses it

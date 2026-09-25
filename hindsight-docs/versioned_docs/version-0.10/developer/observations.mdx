@@ -5,20 +5,15 @@ sidebar_position: 5
 import CodeSnippet from '@site/src/components/CodeSnippet';
 import recallPy from '!!raw-loader!@site/examples/api/recall.py';
 import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
+import observationsPy from '!!raw-loader!@site/examples/api/observations.py';
+import {Flow} from '@vectorize-io/interfig';
+import observationsFigure from '@vectorize-io/interfig/figures/observations';
 
 # Observations: Knowledge Consolidation
 
 After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
-```mermaid
-graph LR
-    A[New Facts] --> B[Consolidation Engine]
-    B --> C{Existing Observation?}
-    C -->|Yes| D[Refine Observation]
-    C -->|No| E[Create Observation]
-    D --> F[Observations]
-    E --> F
-```
+<Flow {...observationsFigure.props} />
 
 ---
 
@@ -72,19 +67,7 @@ This is useful when you want full control over consolidation timing — for exam
 
 By default, consolidation processes **all** unconsolidated memories in a bank. You can scope it to specific tag sets using the `observation_scopes` parameter on the consolidate endpoint:
 
-```python
-# Consolidate only memories tagged with user:alice
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"]]
-)
-
-# Consolidate memories for alice OR the engineering team
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"], ["team:engineering"]]
-)
-```
+<CodeSnippet code={observationsPy} section="targeted-consolidation" language="python" />
 
 Each scope is a list of tags. A memory matches a scope if its tags **contain all** tags in that scope. For example, scope `["user:alice"]` matches memories tagged `["user:alice", "team:eng"]`.
 
@@ -233,10 +216,7 @@ Use the `DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations` e
 
 To wipe all consolidated knowledge and start over:
 
-```python
-# Clear all observations for a bank
-client.clear_observations(bank_id="my-bank")
-```
+<CodeSnippet code={observationsPy} section="clear-observations" language="python" />
 
 This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch.
 

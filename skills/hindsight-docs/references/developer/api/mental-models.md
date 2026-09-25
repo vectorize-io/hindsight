@@ -11,15 +11,26 @@ See [Mental Models](../mental-models) for the concepts behind this API.
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+**Figure: Mental Models (API).** An animated diagram on the docs site; its narration, step by step:
+
+- **create()**
+  1. You create a mental model: a name, the question it answers, and when it should refresh.
+  2. The API saves it right away. Its content does not exist yet.
+  3. The content is written in the background. The response is an operation id you can poll.
+  4. A refresh is a reflect run on the source query. It reads observations first…
+  5. …then raw facts, to check the details.
+  6. It writes the document and stores it with the memories it is based on.
+- **auto refresh**
+  1. Later, your agent retains a new fact. Consolidation picks it up.
+  2. It writes an observation about Carol.
+  3. Before queueing a refresh, consolidation checks that the model’s scope holds a memory newer than the last one it read. If not, no refresh runs and no LLM is spent.
+  4. In delta mode it reads only the new memories, and answers with small edits instead of a rewrite.
+  5. Lines no edit touches are copied byte for byte. Only Carol’s line is added.
+- **reflect()**
+  1. Now your agent asks a question.
+  2. Reflect searches mental models first, by meaning. Team overview matches, and it is up to date.
+  3. It covers the question, so the agent can answer from it. If it were stale or off topic, the agent would go on to observations and raw facts.
+  4. The answer comes back, citing the mental model it used.
 
 ### Why Use Mental Models?
 
@@ -88,7 +99,16 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model' not found in api/mental-models.go
+// Create a mental model (runs reflect in background)
+result, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Team Communication Preferences",
+		SourceQuery: "How does the team prefer to communicate?",
+		Tags:        []string{"team", "communication"},
+	}).Execute()
+
+// Returns an operation_id — check operations endpoint for completion
+fmt.Printf("Operation ID: %s\n", result.GetOperationId())
 ```
 
 ### Parameters
@@ -149,7 +169,16 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-with-id' not found in api/mental-models.go
+// Create a mental model with a specific custom ID
+mmID := "communication-policy"
+resultWithID, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Id:          *hindsight.NewNullableString(&mmID),
+		Name:        "Communication Policy",
+		SourceQuery: "What are the team's communication guidelines?",
+	}).Execute()
+
+fmt.Printf("Created with custom ID: %s\n", resultWithID.GetOperationId())
 ```
 
 > **💡 Tip**
@@ -185,6 +214,10 @@ Mental models can be configured to **automatically refresh** when observations a
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
+
+`last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
+
+**A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. Neither `refresh_after_consolidation` nor `refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
 
 ### Rate-limiting automatic refreshes
 
@@ -279,6 +312,23 @@ Two strategies are available for how a refresh produces the new content:
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
 
+**Figure: Refresh modes: full vs delta.** An animated diagram on the docs site; its narration, step by step:
+
+- **full**
+  1. Full is the default. Every refresh writes the whole document again.
+  2. It reads everything in the model’s scope, old and new.
+  3. The LLM writes a fresh document. Carol is in, but untouched sections come back reworded too, and small drifts add up over many refreshes.
+- **delta**
+  1. Delta edits the document instead of rewriting it.
+  2. It only reads memories newer than the last one the previous refresh saw.
+  3. A second LLM call compares the new findings with the current sections and answers with edit operations, not a document.
+  4. The operation is applied. Every section it does not touch is copied through byte for byte, and the watermark moves to Sep.
+- **delta falls back**
+  1. Delta needs something stable to edit. Here the source query was changed.
+  2. The topic moved, so the old structure may no longer fit. The refresh falls back to a full rewrite. The same happens when the model has no content yet.
+  3. It reads the whole scope, like full mode…
+  4. …and writes a new document for the new question. The next refresh can edit this one in delta mode again.
+
 #### How delta mode works
 
 Hindsight keeps an authoritative **structured** representation of the document — an ordered list of sections, each holding a list of blocks, where a block is one markdown fragment (a paragraph, a list, a table, a code fence) stored exactly as written. The markdown you read is a deterministic render of that structure. Because a block is never re-interpreted, formatting a refresh didn't touch cannot be rewritten by one — a table stays a table. A delta refresh never asks the LLM to rewrite the document; it asks for operations against that structure:
@@ -293,13 +343,13 @@ Hindsight keeps an authoritative **structured** representation of the document �
 
 Anything no operation mentions is copied through untouched, so unchanged prose is preserved rather than regenerated and checked. This matters because "preserve the unchanged content" is only a soft constraint on an LLM — generating the next token from a gestalt of the input is what it intrinsically does, so instructed-to-preserve prose drifts over many refreshes.
 
-Sections and blocks are addressed by id, never by position, so an operation cannot land on the wrong one by miscounting. Failure modes are conservative by design: an operation referencing a section or block that doesn't exist — or a block that lives in a different section than the one it names — is **dropped** rather than guessed at, and the rest of the operations still apply. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
+Sections and blocks are addressed by id, never by position, so an operation cannot land on the wrong one by miscounting. Failure modes are conservative by design: an operation referencing a section or block that doesn't exist — or a block that lives in a different section than the one it names — is **dropped** rather than guessed at, and the rest of the operations still apply. When *every* operation points at something missing, the model is asked once more, shown the ids it got wrong and the sections the document actually has. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
 
 Delta mode falls back to a full regeneration automatically in two cases:
 1. The mental model has no existing content yet (nothing to anchor edits on).
 2. The `source_query` has changed since the last refresh (the topic has shifted; the existing structure may no longer apply).
 
-**A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one.
+**A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one. A delta refresh is never turned into a full rewrite behind your back: if a model's delta refreshes keep failing, switch its `mode` to `full`.
 
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
@@ -350,7 +400,19 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-with-trigger' not found in api/mental-models.go
+// Create a mental model with automatic refresh enabled
+refreshTrue := true
+result2, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Project Status",
+		SourceQuery: "What is the current project status?",
+		Trigger: &hindsight.MentalModelTriggerInput{
+			RefreshAfterConsolidation: &refreshTrue,
+		},
+	}).Execute()
+
+// This mental model will automatically refresh when observations are updated
+fmt.Printf("Operation ID: %s\n", result2.GetOperationId())
 ```
 
 ### When to Use Automatic Refresh
@@ -402,7 +464,13 @@ hindsight mental-model list "$BANK_ID"
 ### Go
 
 ```go
-# Section 'list-mental-models' not found in api/mental-models.go
+// List all mental models in a bank. The list returns metadata by default;
+// Detail("content") adds source_query/content/trigger.
+mentalModels, _, _ := client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
+
+for _, mm := range mentalModels.GetItems() {
+	fmt.Printf("- %s: %s\n", mm.GetName(), mm.GetSourceQuery())
+}
 ```
 
 ---
@@ -412,7 +480,15 @@ hindsight mental-model list "$BANK_ID"
 ### Python
 
 ```python
-# Section 'get-mental-model' not found in api/mental-models.py
+# Get a specific mental model
+mental_model = client.get_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Name: {mental_model.name}")
+print(f"Content: {mental_model.content}")
+print(f"Last refreshed: {mental_model.last_refreshed_at}")
 ```
 
 ### Node.js
@@ -429,13 +505,19 @@ console.log(`Last refreshed: ${mentalModel.last_refreshed_at}`);
 ### CLI
 
 ```bash
-# Section 'get-mental-model' not found in api/mental-models.sh
+# Get a specific mental model
+hindsight mental-model get "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'get-mental-model' not found in api/mental-models.go
+// Get a specific mental model
+mentalModel, _, _ := client.MentalModelsAPI.GetMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Name: %s\n", mentalModel.GetName())
+fmt.Printf("Content: %s\n", mentalModel.GetContent())
+fmt.Printf("Last refreshed: %s\n", mentalModel.GetLastRefreshedAt())
 ```
 
 ### Detail Levels
@@ -453,15 +535,57 @@ The two endpoints default differently:
 - **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
 - **Get** defaults to `full`. You already named the one model you want.
 
-```bash
+### Python
+
+```python
 # List: metadata only, the default (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
+client.list_mental_models(bank_id=BANK_ID)
 
 # List with content but without provenance chains (opt-in)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+client.list_mental_models(bank_id=BANK_ID, detail="content")
 
 # Get one model — full detail is the default here
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
+client.get_mental_model(bank_id=BANK_ID, mental_model_id=mental_model_id)
+```
+
+### Node.js
+
+```javascript
+// List: metadata only, the default (smallest response)
+await client.listMentalModels(BANK_ID);
+
+// List with content but without provenance chains (opt-in)
+await client.listMentalModels(BANK_ID, { detail: 'content' });
+
+// Get one model — full detail is the default here
+await client.getMentalModel(BANK_ID, mentalModelId);
+```
+
+### CLI
+
+```bash
+# The CLI has no --detail flag; use the HTTP API
+# List: metadata only, the default (smallest response)
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models"
+
+# List with content but without provenance chains (opt-in)
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+
+# Get one model — full detail is the default here
+curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models/$MENTAL_MODEL_ID"
+```
+
+### Go
+
+```go
+// List: metadata only, the default (smallest response)
+client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Execute()
+
+// List with content but without provenance chains (opt-in)
+client.MentalModelsAPI.ListMentalModels(ctx, mmBankID).Detail("content").Execute()
+
+// Get one model — full detail is the default here
+client.MentalModelsAPI.GetMentalModel(ctx, mmBankID, mentalModelID).Execute()
 ```
 
 The `detail` parameter is available on the `get_mental_model` MCP tool. The
@@ -501,7 +625,13 @@ Re-run the source query to update the mental model with current knowledge:
 ### Python
 
 ```python
-# Section 'refresh-mental-model' not found in api/mental-models.py
+# Refresh a mental model to update with current knowledge
+result = client.refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Refresh operation ID: {result.operation_id}")
 ```
 
 ### Node.js
@@ -516,13 +646,17 @@ console.log(`Refresh operation ID: ${refreshResult.operation_id}`);
 ### CLI
 
 ```bash
-# Section 'refresh-mental-model' not found in api/mental-models.sh
+# Refresh a mental model to update with current knowledge
+hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'refresh-mental-model' not found in api/mental-models.go
+// Refresh a mental model to update with current knowledge
+refreshResult, _, _ := client.MentalModelsAPI.RefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Refresh operation ID: %s\n", refreshResult.GetOperationId())
 ```
 
 Refreshing is useful when:
@@ -536,6 +670,11 @@ queueing an identical second one — the queued refresh reads the model as it st
 it runs, so it already covers what you just asked for. Poll the returned `operation_id`
 as usual. A refresh that is already *running* is not reused: it may have read the model
 before your latest change, so a new operation is queued behind it.
+
+**And they run one at a time.** A model's refreshes never overlap: the operation queued
+behind a running one starts when that one finishes, so the model is written by one refresh
+at a time instead of by whichever happened to finish last. This is per model — a bank
+refreshes as many different models in parallel as it has workers for.
 
 ---
 
@@ -553,9 +692,47 @@ watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry ru
 reads exactly the window the next real refresh will, and repeating it reads that same
 window again.
 
+### Python
+
+```python
+# Preview what a refresh would do, without writing anything
+preview = client.dry_run_refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Mode: {preview.effective_mode}, would persist: {preview.would_persist}")
+print(preview.diff)
+```
+
+### Node.js
+
+```javascript
+// Preview what a refresh would do, without writing anything
+const preview = await client.dryRunRefreshMentalModel(BANK_ID, mentalModelId);
+
+console.log(`Mode: ${preview.effective_mode}, would persist: ${preview.would_persist}`);
+console.log(preview.diff);
+```
+
+### CLI
+
 ```bash
-curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
-  -H "Content-Type: application/json" -d '{}'
+# Preview what a refresh would do, without writing anything
+hindsight mental-model dry-run-refresh "$BANK_ID" "$MENTAL_MODEL_ID"
+```
+
+### Go
+
+```go
+// Preview what a refresh would do, without writing anything
+preview, _, err := client.MentalModelsAPI.DryRunRefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+if err != nil {
+	panic(err)
+}
+
+fmt.Printf("Mode: %s, would persist: %v\n", preview.GetEffectiveMode(), preview.GetWouldPersist())
+fmt.Println(preview.GetDiff())
 ```
 
 The response answers the questions the stored document can't:
@@ -592,10 +769,51 @@ the time you notice a bad document, the run that produced it is gone.
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that
 model — scheduled ones included — under `reflect_response.trace`:
 
+### Python
+
+```python
+# Record how every refresh (scheduled ones too) reached its result
+client.update_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id,
+    trigger={"mode": "delta", "keep_trace": True}
+)
+```
+
+### Node.js
+
+```javascript
+// Record how every refresh (scheduled ones too) reached its result
+await client.updateMentalModel(BANK_ID, mentalModelId, {
+    trigger: { mode: 'delta', keepTrace: true },
+});
+```
+
+### CLI
+
 ```bash
-curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
+# Record how every refresh (scheduled ones too) reached its result
+hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+  --trigger-mode delta \
+  --trigger-keep-trace true
+```
+
+### Go
+
+```go
+// Record how every refresh (scheduled ones too) reached its result
+mode := "delta"
+keepTrace := true
+_, _, err = client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+	UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+		Trigger: *hindsight.NewNullableMentalModelTriggerInput(&hindsight.MentalModelTriggerInput{
+			Mode:      &mode,
+			KeepTrace: &keepTrace,
+		}),
+	}).Execute()
+if err != nil {
+	panic(err)
+}
 ```
 
 Only the latest refresh's trace is kept, and it is recorded even when a refresh
@@ -648,7 +866,19 @@ This is useful for delta-mode models that have accumulated drift over many incre
 ### Python
 
 ```python
-# Section 'clear-mental-model' not found in api/mental-models.py
+# Clear a mental model's content, then refresh for a full re-synthesis
+client.clear_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+# Trigger a fresh full rebuild
+result = client.refresh_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+print(f"Full refresh operation ID: {result.operation_id}")
 ```
 
 ### Node.js
@@ -666,13 +896,23 @@ console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
 ### CLI
 
 ```bash
-# Section 'clear-mental-model' not found in api/mental-models.sh
+# Clear a mental model's content, then refresh for a full re-synthesis
+curl -s -X POST "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/mental-models/${MENTAL_MODEL_ID}/clear"
+
+# Trigger a fresh full rebuild
+hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'clear-mental-model' not found in api/mental-models.go
+// Clear a mental model's content, then refresh for a full re-synthesis
+client.MentalModelsAPI.ClearMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+// Trigger a fresh full rebuild
+fullRefreshResult, _, _ := client.MentalModelsAPI.RefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+fmt.Printf("Full refresh operation ID: %s\n", fullRefreshResult.GetOperationId())
 ```
 
 The clear operation is synchronous and resets the content to an empty string. The model's configuration (name, source query, trigger settings) is preserved. Since the content is now empty, the next `/refresh` call will always perform a full regeneration — even if the model's trigger mode is set to `delta`.
@@ -689,7 +929,15 @@ Update the mental model's name:
 ### Python
 
 ```python
-# Section 'update-mental-model' not found in api/mental-models.py
+# Update a mental model's metadata
+updated = client.update_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id,
+    name="Updated Team Communication Preferences",
+    trigger={"refresh_after_consolidation": True}  # Enable auto-refresh
+)
+
+print(f"Updated name: {updated.name}")
 ```
 
 ### Node.js
@@ -698,7 +946,7 @@ Update the mental model's name:
 // Update a mental model's metadata
 const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
     name: 'Updated Team Communication Preferences',
-    trigger: { refresh_after_consolidation: true },
+    trigger: { refreshAfterConsolidation: true },
 });
 
 console.log(`Updated name: ${updated.name}`);
@@ -707,13 +955,26 @@ console.log(`Updated name: ${updated.name}`);
 ### CLI
 
 ```bash
-# Section 'update-mental-model' not found in api/mental-models.sh
+# Update a mental model's metadata
+hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+  --name "Updated Team Communication Preferences"
 ```
 
 ### Go
 
 ```go
-# Section 'update-mental-model' not found in api/mental-models.go
+// Update a mental model's metadata
+newName := "Updated Team Communication Preferences"
+refreshAfter := true
+updated, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+	UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+		Name: *hindsight.NewNullableString(&newName),
+		Trigger: *hindsight.NewNullableMentalModelTriggerInput(&hindsight.MentalModelTriggerInput{
+			RefreshAfterConsolidation: &refreshAfter,
+		}),
+	}).Execute()
+
+fmt.Printf("Updated name: %s\n", updated.GetName())
 ```
 
 ---
@@ -723,7 +984,11 @@ console.log(`Updated name: ${updated.name}`);
 ### Python
 
 ```python
-# Section 'delete-mental-model' not found in api/mental-models.py
+# Delete a mental model
+client.delete_mental_model(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
 ```
 
 ### Node.js
@@ -736,13 +1001,15 @@ await client.deleteMentalModel(BANK_ID, mentalModelId);
 ### CLI
 
 ```bash
-# Section 'delete-mental-model' not found in api/mental-models.sh
+# Delete a mental model
+hindsight mental-model delete "$BANK_ID" "$MENTAL_MODEL_ID" -y
 ```
 
 ### Go
 
 ```go
-# Section 'delete-mental-model' not found in api/mental-models.go
+// Delete a mental model
+client.MentalModelsAPI.DeleteMentalModel(ctx, mmBankID, mentalModelID).Execute()
 ```
 
 ---
@@ -831,7 +1098,21 @@ hindsight mental-model create "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-mental-model-tags-match' not found in api/mental-models.go
+// Override how the model's tags filter source memories on refresh.
+// A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
+// use "any" when your memories are tagged narrowly (one topic each), so the
+// refresh reads any memory carrying at least one of the model's tags.
+result3, _, _ := client.MentalModelsAPI.CreateMentalModel(ctx, mmBankID).
+	CreateMentalModelRequest(hindsight.CreateMentalModelRequest{
+		Name:        "Current Projects",
+		SourceQuery: "Which projects is the user currently working on?",
+		Tags:        []string{"projects", "mental-model"},
+		Trigger: &hindsight.MentalModelTriggerInput{
+			TagsMatch: *hindsight.NewNullableString(hindsight.PtrString("any")),
+		},
+	}).Execute()
+
+fmt.Printf("Operation ID: %s\n", result3.GetOperationId())
 ```
 
 The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.
@@ -860,7 +1141,15 @@ Every time a mental model's content changes (via refresh or manual update), the 
 ### Python
 
 ```python
-# Section 'get-mental-model-history' not found in api/mental-models.py
+# Get the change history of a mental model
+history = client.get_mental_model_history(
+    bank_id=BANK_ID,
+    mental_model_id=mental_model_id
+)
+
+for entry in history:
+    print(f"Changed at: {entry['changed_at']}")
+    print(f"Previous content: {entry['previous_content']}")
 ```
 
 ### Node.js
@@ -878,13 +1167,24 @@ for (const entry of history) {
 ### CLI
 
 ```bash
-# Section 'get-mental-model-history' not found in api/mental-models.sh
+# Get the change history of a mental model
+hindsight mental-model history "$BANK_ID" "$MENTAL_MODEL_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'get-mental-model-history' not found in api/mental-models.go
+// Get the change history of a mental model
+history, _, _ := client.MentalModelsAPI.GetMentalModelHistory(ctx, mmBankID, mentalModelID).Execute()
+
+if entries, ok := history.([]interface{}); ok {
+	for _, entry := range entries {
+		if e, ok := entry.(map[string]interface{}); ok {
+			fmt.Printf("Changed at: %v\n", e["changed_at"])
+			fmt.Printf("Previous content: %v\n", e["previous_content"])
+		}
+	}
+}
 ```
 
 ### Response

@@ -12,6 +12,10 @@ the level each one lives at:
 The end-to-end race test is the regression test for the original bug: three
 concurrent appends to one document used to leave only one of them stored, with
 all three reporting success.
+
+The claim predicate is shared, not retain-only: a mental model's refreshes carry
+``serialization_key = mental_model:<id>`` for the same reason an append carries its
+document, so their claim cases live here too, beside the mechanism.
 """
 
 import asyncio
@@ -29,7 +33,7 @@ import pytest_asyncio
 
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend
 from hindsight_api.engine.embeddings import Embeddings
-from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine, refresh_serialization_key
 from hindsight_api.engine.retain.fold import (
     DEFAULT_MAX_FOLD_PEERS,
     FoldMember,
@@ -515,6 +519,76 @@ async def test_claim_waits_for_a_processing_peer(backend, bank):
     rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w2"))
 
     assert _own(rows, bank) == [], "a document with a retain in flight must yield nothing"
+
+
+async def _insert_refresh_op(pool, bank_id: str, mental_model_id: str) -> str:
+    """Queue a pending refresh, as submit_async_refresh_mental_model would.
+
+    Refreshes reach the same claim predicate through the same column: a refresh
+    writes the model whole, so two concurrent runs for one model buy nothing and
+    the one that finishes second overwrites the other.
+    """
+    operation_id = uuid.uuid4()
+    payload = {
+        "type": "refresh_mental_model",
+        "operation_id": str(operation_id),
+        "bank_id": bank_id,
+        "mental_model_id": mental_model_id,
+    }
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, result_metadata, status,
+                 task_payload, serialization_key, created_at)
+            VALUES ($1, $2, 'refresh_mental_model', '{}'::jsonb, 'pending', $3::jsonb, $4, now())
+            """,
+            operation_id,
+            bank_id,
+            json.dumps(payload),
+            refresh_serialization_key(mental_model_id),
+        )
+    # created_at ties would make claim order ambiguous; space the rows out.
+    await asyncio.sleep(0.01)
+    return str(operation_id)
+
+
+@pytest.mark.asyncio
+async def test_claim_waits_for_a_processing_refresh(backend, bank):
+    """A model with a refresh in flight yields nothing.
+
+    This is what the refresh queued behind a running one waits on. An explicit
+    refresh deliberately does not fold into a *running* one (#3487) — that run may
+    have read the model before the caller's edit — so the row is created at once;
+    the predicate is what stops the two from writing the model side by side.
+    """
+    first = await _insert_refresh_op(backend, bank, "mm-a")
+    await _insert_refresh_op(backend, bank, "mm-a")
+    async with backend.acquire() as conn:
+        await conn.execute(
+            "UPDATE async_operations SET status = 'processing' WHERE operation_id = $1",
+            uuid.UUID(first),
+        )
+
+    rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w2"))
+
+    assert _own(rows, bank) == [], "a model with a refresh in flight must yield nothing"
+
+
+@pytest.mark.asyncio
+async def test_a_retain_and_a_refresh_never_serialize_against_each_other(backend, bank):
+    """A document id cannot collide with a model's refreshes, even spelled like one.
+
+    Document ids are caller-supplied, so a key alone cannot keep them apart: the
+    document here carries exactly the key the refresh does, and only the peer's
+    ``operation_type`` tells them apart.
+    """
+    doc = await _insert_retain_op(backend, bank, "mental_model:mm-a", contents=[{"content": "one"}])
+    refresh = await _insert_refresh_op(backend, bank, "mm-a")
+
+    rows = await _claiming(backend, lambda conn: _claim_rows(backend, conn, "w1"))
+
+    assert set(_own(rows, bank)) == {doc, refresh}
 
 
 @pytest.mark.asyncio

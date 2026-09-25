@@ -912,6 +912,7 @@ export class HindsightClient {
       maxObservationsPerScope?: number;
       /** Per-scope observation caps, overriding maxObservationsPerScope. */
       observationScopeLimits?: Record<string, unknown>[];
+      consolidationStrategies?: Record<string, unknown>[];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
       /** Number of LLM calls to batch during consolidation. */
@@ -1011,6 +1012,8 @@ export class HindsightClient {
       updates.max_observations_per_scope = options.maxObservationsPerScope;
     if (options.observationScopeLimits !== undefined)
       updates.observation_scope_limits = options.observationScopeLimits;
+    if (options.consolidationStrategies !== undefined)
+      updates.consolidation_strategies = options.consolidationStrategies;
     if (options.enableAutoConsolidation !== undefined)
       updates.enable_auto_consolidation = options.enableAutoConsolidation;
     if (options.consolidationLlmBatchSize !== undefined)

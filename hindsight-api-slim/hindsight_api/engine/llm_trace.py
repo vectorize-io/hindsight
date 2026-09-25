@@ -526,7 +526,11 @@ class LLMTraceRecorder:
             trace_id=ctx.trace_id if ctx else None,
             span_id=str(uuid.uuid4()),
             parent_span_id=ctx.operation_span_id if ctx else None,
-            input=messages,
+            # A copy: the row is serialized later, in a background write, and the
+            # reflect loop keeps appending to this same list — its own tool call,
+            # the tool result — so a reference would record messages sent AFTER
+            # this call as if they had been part of its prompt.
+            input=list(messages) if isinstance(messages, list) else messages,
             output=None if error is not None else response_content,
             error=f"{type(error).__name__}: {error}" if error is not None else None,
             input_tokens=input_tokens or None,

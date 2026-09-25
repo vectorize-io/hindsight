@@ -17,33 +17,32 @@ Hindsight solves these problems with a memory system designed specifically for A
 
 ## What Hindsight Does
 
-```mermaid
-graph LR
-    subgraph app["<b>Your Application</b>"]
-        Agent[AI Agent]
-    end
+**Figure: What Hindsight Does.** An animated diagram on the docs site; its narration, step by step:
 
-    subgraph hindsight["<b>Hindsight</b>"]
-        API[API Server]
-
-        subgraph bank["<b>Memory Bank</b>"]
-            direction TB
-            MentalModels[Mental Models]
-            Observations[Observations]
-            MemEnt[Memories & Entities]
-            Chunks[Chunks]
-            Documents[Documents]
-
-            MentalModels --> Observations --> MemEnt --> Chunks --> Documents
-        end
-    end
-
-    Agent -->|retain| API
-    Agent -->|recall| API
-    Agent -->|reflect| API
-
-    API --> bank
-```
+- **retain()**
+  1. Your agent sends what happened: a conversation, a document, a transcript.
+  2. The original text is stored as a document.
+  3. It is split into chunks, so the exact passage can be handed back later.
+  4. An LLM pulls out facts: world facts about others, and experience facts about what the agent itself did. The bank already knew Alice worked at Microsoft.
+  5. Each fact is indexed four ways: by meaning, by its words, by the entities it links, and by when it happened.
+  6. retain() is done. The rest happens in the background.
+  7. Consolidation picks up the new facts and checks them against the observations the bank already holds. One disagrees: Microsoft or Google?
+  8. It updates that observation instead of adding a second one: Alice moved from Microsoft to Google in March. Both facts stay as its sources, so the history is kept.
+  9. When consolidation finishes, it queues a refresh for every mental model and page set to refresh after it that now has new memories…
+  10. …and each one re-runs its question through reflect and is rewritten.
+- **recall()**
+  1. recall() finds the memories that matter for a query.
+  2. Searches run at once, each through its own index: meaning, exact words and the entity graph. The time search only joins when the query names a date.
+  3. The same indexes cover facts and observations, so both come back. They are merged and reranked; the old Microsoft fact falls below the cut.
+  4. The agent gets ranked memories it can put straight into its prompt.
+- **reflect()**
+  1. reflect() answers a question by reasoning over everything in the bank.
+  2. An agent loop decides what to look up. It starts with the most refined knowledge: mental models and knowledge pages.
+  3. Then observations, searched through the same indexes as recall. If new facts are still waiting to be consolidated, they are marked stale.
+  4. Then raw facts through recall, for the details the summaries leave out.
+  5. When it needs the exact wording, it opens the chunk or document a fact came from.
+  6. It stops when it has enough evidence, and writes an answer shaped by the bank’s mission and disposition. It can only cite what it found.
+  7. The answer comes back with the memories it is based on.
 
 **Your AI agent** stores information via `retain()`, searches with `recall()`, and reasons with `reflect()` — all interactions with its dedicated **memory bank**
 
@@ -66,21 +65,17 @@ During reflect, the agent checks sources in priority order: **Mental Models → 
 
 Four search strategies run in parallel:
 
-```mermaid
-graph LR
-    Q[Query] --> S[Semantic]
-    Q --> K[Keyword]
-    Q --> G[Graph]
-    Q --> T[Temporal]
+**Figure: Multi-Strategy Retrieval (TEMPR).** An animated diagram on the docs site; its narration, step by step:
 
-    S --> RRF[RRF Fusion]
-    K --> RRF
-    G --> RRF
-    T --> RRF
-
-    RRF --> CE[Cross-Encoder]
-    CE --> R[Results]
-```
+- **recall()**
+  1. recall() gets a query. Nothing is decided yet about which kind of search fits it best, so every arm that applies runs.
+  2. Each arm searches its own index: meaning (vectors), exact words (BM25), the entity graph, and time. “March 2026” becomes a date range; a query with no date skips the time arm.
+  3. All four point into the same memories. Each arm returns its own ranked list, and facts and observations compete in every one. The mark shows how many arms found each.
+  4. RRF fusion merges the lists by rank, not raw score: a memory found near the top by several arms beats one found by a single arm.
+  5. The top candidates (up to 300) go to a cross-encoder, which reads the query and each memory together and scores how well they match.
+  6. Small multiplicative boosts nudge the score: recent memories, memories inside the asked time range, and observations backed by more evidence.
+  7. Results are packed best-first until max_tokens is used up. Only the memory text counts toward the budget.
+  8. The agent gets a short, ranked list it can put straight into its prompt.
 
 | Strategy | Best for |
 |----------|----------|

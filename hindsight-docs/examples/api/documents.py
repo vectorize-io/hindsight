@@ -120,7 +120,7 @@ asyncio.run(get_document_example())
 # [/docs:document-get]
 
 
-# [docs:document-update]
+# [docs:document-update-tags]
 from hindsight_client_api import ApiClient, Configuration
 from hindsight_client_api.api import DocumentsApi
 from hindsight_client_api.models import UpdateDocumentRequest
@@ -146,7 +146,7 @@ async def update_document_example():
     )
 
 asyncio.run(update_document_example())
-# [/docs:document-update]
+# [/docs:document-update-tags]
 
 
 # [docs:document-delete]

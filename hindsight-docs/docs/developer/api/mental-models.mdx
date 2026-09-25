@@ -17,20 +17,15 @@ import mentalModelsPy from '!!raw-loader!@site/examples/api/mental-models.py';
 import mentalModelsMjs from '!!raw-loader!@site/examples/api/mental-models.mjs';
 import mentalModelsSh from '!!raw-loader!@site/examples/api/mental-models.sh';
 import mentalModelsGo from '!!raw-loader!@site/examples/api/mental-models.go';
+import {Flow} from '@vectorize-io/interfig';
+import mentalModelsApi from '@vectorize-io/interfig/figures/mental-models-api';
+import refreshModes from '@vectorize-io/interfig/figures/refresh-modes';
 
 ## What Are Mental Models?
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+<Flow {...mentalModelsApi.props} />
 
 ### Why Use Mental Models?
 
@@ -139,6 +134,10 @@ When `refresh_after_consolidation` is enabled, the mental model will be re-gener
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
 
+`last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
+
+**A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. Neither `refresh_after_consolidation` nor `refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
+
 ### Rate-limiting automatic refreshes
 
 A refresh is a full reflect run: retrieval plus an agentic LLM loop. With
@@ -232,6 +231,8 @@ Two strategies are available for how a refresh produces the new content:
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
 
+<Flow {...refreshModes.props} />
+
 #### How delta mode works
 
 Hindsight keeps an authoritative **structured** representation of the document — an ordered list of sections, each holding a list of blocks, where a block is one markdown fragment (a paragraph, a list, a table, a code fence) stored exactly as written. The markdown you read is a deterministic render of that structure. Because a block is never re-interpreted, formatting a refresh didn't touch cannot be rewritten by one — a table stays a table. A delta refresh never asks the LLM to rewrite the document; it asks for operations against that structure:
@@ -246,13 +247,13 @@ Hindsight keeps an authoritative **structured** representation of the document �
 
 Anything no operation mentions is copied through untouched, so unchanged prose is preserved rather than regenerated and checked. This matters because "preserve the unchanged content" is only a soft constraint on an LLM — generating the next token from a gestalt of the input is what it intrinsically does, so instructed-to-preserve prose drifts over many refreshes.
 
-Sections and blocks are addressed by id, never by position, so an operation cannot land on the wrong one by miscounting. Failure modes are conservative by design: an operation referencing a section or block that doesn't exist — or a block that lives in a different section than the one it names — is **dropped** rather than guessed at, and the rest of the operations still apply. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
+Sections and blocks are addressed by id, never by position, so an operation cannot land on the wrong one by miscounting. Failure modes are conservative by design: an operation referencing a section or block that doesn't exist — or a block that lives in a different section than the one it names — is **dropped** rather than guessed at, and the rest of the operations still apply. When *every* operation points at something missing, the model is asked once more, shown the ids it got wrong and the sections the document actually has. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
 
 Delta mode falls back to a full regeneration automatically in two cases:
 1. The mental model has no existing content yet (nothing to anchor edits on).
 2. The `source_query` has changed since the last refresh (the topic has shifted; the existing structure may no longer apply).
 
-**A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one.
+**A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one. A delta refresh is never turned into a full rewrite behind your back: if a model's delta refreshes keep failing, switch its `mode` to `full`.
 
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
@@ -342,16 +343,20 @@ The two endpoints default differently:
 - **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
 - **Get** defaults to `full`. You already named the one model you want.
 
-```bash
-# List: metadata only, the default (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
-
-# List with content but without provenance chains (opt-in)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
-
-# Get one model — full detail is the default here
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="mental-model-detail" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="mental-model-detail" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="mental-model-detail" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="mental-model-detail" language="go" />
+</TabItem>
+</Tabs>
 
 The `detail` parameter is available on the `get_mental_model` MCP tool. The
 `list_mental_models` MCP tool does not take it: it always returns metadata
@@ -416,6 +421,11 @@ it runs, so it already covers what you just asked for. Poll the returned `operat
 as usual. A refresh that is already *running* is not reused: it may have read the model
 before your latest change, so a new operation is queued behind it.
 
+**And they run one at a time.** A model's refreshes never overlap: the operation queued
+behind a running one starts when that one finishes, so the model is written by one refresh
+at a time instead of by whichever happened to finish last. This is per model — a bank
+refreshes as many different models in parallel as it has workers for.
+
 ---
 
 ## Troubleshoot a Refresh
@@ -432,10 +442,20 @@ watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry ru
 reads exactly the window the next real refresh will, and repeating it reads that same
 window again.
 
-```bash
-curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
-  -H "Content-Type: application/json" -d '{}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="dry-run-refresh" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="dry-run-refresh" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="dry-run-refresh" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="dry-run-refresh" language="go" />
+</TabItem>
+</Tabs>
 
 The response answers the questions the stored document can't:
 
@@ -472,11 +492,20 @@ the time you notice a bad document, the run that produced it is gone.
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that
 model — scheduled ones included — under `reflect_response.trace`:
 
-```bash
-curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="keep-trace" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="keep-trace" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="keep-trace" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="keep-trace" language="go" />
+</TabItem>
+</Tabs>
 
 Only the latest refresh's trace is kept, and it is recorded even when a refresh
 fails — which is when it matters most, since a failed refresh leaves nothing else

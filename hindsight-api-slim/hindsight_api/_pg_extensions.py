@@ -71,12 +71,22 @@ def _validate(name: str) -> str:
 def create_extension(conn: _Executable, name: str, *, cascade: bool = False) -> None:
     """``CREATE EXTENSION IF NOT EXISTS`` with the install schema pinned to ``public``.
 
+    An extension that is already installed is skipped. ``IF NOT EXISTS`` makes
+    the statement a no-op on a writable session, but it still fails on a
+    read-only one (PgBouncer's transaction mode carries
+    ``default_transaction_read_only`` across clients), and that pointless
+    failure aborts the transaction — which used to strand the migration
+    advisory lock on the backend (#4611).
+
     The caller's ``search_path`` is restored afterwards. If the CREATE fails the
     restore is attempted but not allowed to mask the original error — callers
     that continue after a failure roll the transaction back, which restores the
     setting anyway.
     """
     _validate(name)
+    if _installed_extension(conn, name) is not None:
+        logger.debug("Extension %s is already installed; skipping CREATE EXTENSION", name)
+        return
     previous = conn.execute(text("SELECT current_setting('search_path')")).scalar()
     conn.execute(text("SELECT set_config('search_path', :schema, false)"), {"schema": PUBLIC_SCHEMA})
     try:

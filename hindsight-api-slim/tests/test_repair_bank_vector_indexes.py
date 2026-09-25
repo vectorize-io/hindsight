@@ -724,12 +724,13 @@ class TestRepairBankCommand:
         bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
         backend = await memory._get_backend()
         try:
-            results = await _run_repair_bank(
+            sweep = await _run_repair_bank(
                 pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=bank_id, dry_run=False
             )
 
-            assert len(results) == 1
-            result = results[0]
+            assert sweep.skipped_schemas == []
+            assert len(sweep.banks) == 1
+            result = sweep.banks[0]
             assert result.failed == 0, result.failed_indexes
             assert result.created == len(_BANK_INDEX_FACT_TYPES)
 

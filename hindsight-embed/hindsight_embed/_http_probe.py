@@ -58,16 +58,26 @@ async def aprobe_get(url: str, *, read_timeout: float, connect_timeout: float | 
 def probe_get(url: str, *, read_timeout: float, connect_timeout: float | None = None) -> ProbeResponse | None:
     """Sync entry point for :func:`aprobe_get`, for the CLI and threaded server.
 
-    From a thread whose event loop is already running (hindsight-all's sync
-    ``_ensure_started`` is reached from its async methods too), ``asyncio.run``
-    cannot nest, so the probe runs on its own loop in a helper thread. That blocks
-    the caller for the probe's bounded timeout, exactly as the sync client it
-    replaced did; async callers should await :func:`aprobe_get` instead.
+    The probe ALWAYS runs on its own loop in a helper thread, never on the
+    caller's. Two reasons, and the second is the load-bearing one:
+
+    1. From a thread whose event loop is already running (hindsight-all's sync
+       ``_ensure_started`` is reached from its async methods too), ``asyncio.run``
+       cannot nest.
+    2. ``asyncio.run`` does not just close the loop it created — it leaves the
+       calling thread with NO current event loop (``set_event_loop(None)``).
+       Event-loop state is per-thread, so doing that on the caller's thread
+       quietly sabotages any sync caller that reaches us between its own calls:
+       hindsight-client's ``_run_async`` then sees no current loop, builds a
+       fresh one, and runs against an ``aiohttp`` session still bound to the old
+       one — which fails with "Timeout context manager should be used inside a
+       task". That is exactly the shape of the Hermes memory plugin in
+       local_embedded mode, where a daemon health probe sits between two client
+       calls. A library helper must not mutate its caller's loop state.
+
+    This blocks the caller for the probe's bounded timeout, exactly as the sync
+    client it replaced did; async callers should await :func:`aprobe_get`.
     """
     probe = functools.partial(aprobe_get, url, read_timeout=read_timeout, connect_timeout=connect_timeout)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(probe())
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, probe()).result()

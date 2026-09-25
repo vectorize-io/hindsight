@@ -7,10 +7,12 @@
  * Hindsight API calls are intercepted via global fetch mocking.
  */
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk";
 import manifest from "../src/manifest.js";
 import plugin from "../src/worker.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS, HindsightClient } from "../src/client.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
@@ -473,7 +475,7 @@ describe("hindsight_recall tool", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns cached memories from run start without additional API call", async () => {
+  it("returns cached memories from run start without additional API call for the same query", async () => {
     const harness = buildHarness();
     await setupPlugin(harness);
     const issue = await seedIssue(harness, {
@@ -494,7 +496,7 @@ describe("hindsight_recall tool", () => {
     const callsBefore = (vi.mocked(fetch) as ReturnType<typeof vi.fn>).mock.calls.length;
     const result = await harness.executeTool(
       "hindsight_recall",
-      { query: "preferences" },
+      { query: "Update UI" },
       { agentId: "ag-1", runId: "run-1", companyId: "co-1", projectId: "proj-1" }
     );
 
@@ -502,6 +504,42 @@ describe("hindsight_recall tool", () => {
     const callsAfter = (vi.mocked(fetch) as ReturnType<typeof vi.fn>).mock.calls.length;
     // No new recall call — returned from cache
     expect(callsAfter).toBe(callsBefore);
+  });
+
+  it("performs a live recall when the query differs from the run-start query", async () => {
+    const harness = buildHarness();
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Update UI",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch([{ url: /recall/, body: { results: [{ text: "User prefers dark mode" }] } }])
+    );
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    const liveFetch = mockFetch([
+      { url: /recall/, body: { results: [{ text: "Hosting decision is still open" }] } },
+    ]);
+    vi.stubGlobal("fetch", liveFetch);
+
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "hosting decision" },
+      { agentId: "ag-1", runId: "run-1", companyId: "co-1", projectId: "proj-1" }
+    );
+
+    expect((result as { content: string }).content).toContain("Hosting decision");
+    expect((result as { content: string }).content).not.toContain("dark mode");
+    const recallCall = liveFetch.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    const body = JSON.parse(recallCall?.[1]?.body as string) as { query: string };
+    expect(body.query).toBe("hosting decision");
   });
 
   it("falls back to live recall when no cached state", async () => {
@@ -519,6 +557,58 @@ describe("hindsight_recall tool", () => {
     );
 
     expect((result as { content: string }).content).toContain("Python specialist");
+  });
+
+  it("aborts the request after requestTimeoutMs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError"))
+            );
+          })
+      )
+    );
+    const harness = buildHarness({ ...DEFAULT_CONFIG, requestTimeoutMs: 50 });
+    await setupPlugin(harness);
+
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "anything" },
+      { agentId: "ag-1", runId: "run-3", companyId: "co-1", projectId: "proj-1" }
+    );
+
+    expect((result as { content: string }).content).toContain("Memory recall failed");
+  });
+});
+
+describe("HindsightClient timeout", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function timeoutUsed(timeoutMs?: number): Promise<number | undefined> {
+    vi.stubGlobal("fetch", mockFetch([{ url: /recall/, body: { results: [] } }]));
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    await new HindsightClient("http://localhost:8888", undefined, timeoutMs).recall("b", "q");
+    return spy.mock.calls[0]?.[1];
+  }
+
+  it("defaults to 15s", async () => {
+    expect(await timeoutUsed()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it("uses a custom timeout", async () => {
+    expect(await timeoutUsed(45_000)).toBe(45_000);
+  });
+
+  it("ignores invalid timeouts", async () => {
+    expect(await timeoutUsed(0)).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(await timeoutUsed(Number.NaN)).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
   });
 });
 
@@ -743,5 +833,89 @@ describe("enabledAgentIds", () => {
 
     const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
     expect(retainCalls.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hindsight Cloud API key — secret reference
+// ---------------------------------------------------------------------------
+
+describe("manifest version", () => {
+  it("matches package.json, so the host shows the version that is installed", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(manifest.version).toBe(pkg.version);
+  });
+});
+
+describe("hindsightApiKeyRef", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("is declared as a secret-ref field that admits the picker's reference object", () => {
+    const field = (
+      manifest.instanceConfigSchema as {
+        properties: Record<string, { format?: string; oneOf?: Array<Record<string, unknown>> }>;
+      }
+    ).properties.hindsightApiKeyRef;
+
+    // Without `format` the host renders a plain text box, stores whatever is
+    // typed, and every resolve() fails closed on a bare string.
+    expect(field?.format).toBe("secret-ref");
+
+    // With `format` alone but `type: "string"`, the host's Ajv pass rejects what
+    // its own picker submits: "Configuration does not match the plugin's
+    // instanceConfigSchema". The schema must admit the reference object too.
+    const objectBranch = field?.oneOf?.find((branch) => branch.type === "object") as
+      | { required?: string[]; properties?: Record<string, unknown> }
+      | undefined;
+    expect(objectBranch).toBeDefined();
+    expect(objectBranch?.required).toEqual(["type", "secretId"]);
+    expect(field?.oneOf?.some((branch) => branch.type === "string")).toBe(true);
+  });
+
+  it("resolves the stored reference for the run's company and authenticates recall", async () => {
+    const fetchMock = mockFetch([{ url: /recall/, body: { results: [] } }]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const secretRef = { type: "secret_ref" as const, secretId: "sec-1" };
+    const harness = buildHarness({ ...DEFAULT_CONFIG, hindsightApiKeyRef: secretRef });
+    const resolve = vi.spyOn(harness.ctx.secrets, "resolve").mockResolvedValue("hs-cloud-key");
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Ship it" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(resolve).toHaveBeenCalledWith(secretRef, {
+      companyId: "co-1",
+      configPath: "hindsightApiKeyRef",
+    });
+
+    const recallCall = fetchMock.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    const headers = recallCall?.[1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer hs-cloud-key");
+  });
+
+  it("never touches the secrets client when no reference is configured", async () => {
+    const fetchMock = mockFetch([{ url: /recall/, body: { results: [] } }]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const harness = buildHarness();
+    const resolve = vi.spyOn(harness.ctx.secrets, "resolve");
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Self-hosted" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(resolve).not.toHaveBeenCalled();
   });
 });

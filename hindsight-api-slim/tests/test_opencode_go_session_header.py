@@ -455,3 +455,27 @@ async def test_anthropic_does_not_send_header_against_native_anthropic():
 
     headers = create.call_args.kwargs.get("extra_headers") or {}
     assert headers.get(OPENCODE_SESSION_HEADER) is None
+
+
+@pytest.mark.asyncio
+async def test_untraced_openai_responses_call_sends_session_header():
+    """The startup verification probe runs with no trace context.
+
+    The id then comes from the first message, which the Responses provider
+    sends under ``input`` rather than ``messages``. Reading only ``messages``
+    sent no header, and opencode-go rejected the probe with MissingSessionID.
+    """
+    llm = OpenAIResponsesLLM(
+        provider="openai-responses",
+        api_key="test-key",
+        base_url="https://opencode.ai/zen/go/v1",
+        model="muse-spark-1.3-contributor",
+    )
+    create = AsyncMock(return_value=_responses_response())
+    llm._client.responses.create = create
+
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        await llm.call(messages=[{"role": "user", "content": "Hi"}], max_retries=0)
+
+    headers = create.call_args.kwargs.get("extra_headers") or {}
+    assert headers.get(OPENCODE_SESSION_HEADER)

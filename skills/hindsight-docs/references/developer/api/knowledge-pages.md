@@ -55,7 +55,15 @@ hindsight knowledge-base tree "$BANK_ID"
 ### Go
 
 ```go
-# Section 'get-tree' not found in api/knowledge-pages.go
+// Fetch the whole knowledge base as a nested folder/page tree (no page bodies)
+tree, _, _ := client.KnowledgeBaseAPI.GetKnowledgeBaseTree(ctx, kpBankID).Execute()
+
+for _, root := range tree.Roots {
+	fmt.Printf("%s: %s\n", root.Kind, root.Name)
+	for _, child := range root.Children {
+		fmt.Printf("  %s: %s (stale: %v)\n", child.Kind, child.Name, child.GetIsStale())
+	}
+}
 ```
 
 ```json
@@ -99,6 +107,7 @@ hindsight knowledge-base tree "$BANK_ID"
 | `description` | The page's source query — the question that rebuilds it |
 | `timestamp` | Last refresh for a page, last update for a folder |
 | `is_stale` | Pages only: `true` when a memory in *this page's* scope has been written since the page last read the memories (see below) |
+| `last_refresh_failed_at` | Pages only: when this page's last refresh failed, or `null` when it succeeded. While it is set the page does not rebuild itself on its trigger — an explicit refresh still runs, and a successful one clears it |
 | `managed` | `true` when the node is flagged as system-owned rather than hand-authored |
 
 ### How `is_stale` is decided
@@ -160,7 +169,17 @@ hindsight knowledge-base create-page "$BANK_ID" \
 ### Go
 
 ```go
-# Section 'create-page' not found in api/knowledge-pages.go
+// Create a page — content is generated in the background
+page, _, _ := client.KnowledgeBaseAPI.CreateKnowledgePage(ctx, kpBankID).
+	CreatePageRequest(hindsight.CreatePageRequest{
+		Name:        "Deploying the API",
+		SourceQuery: "How is the API deployed?",
+		ParentId:    *hindsight.NewNullableString(&folder.Id),
+		Tags:        []string{"ops", "type:runbook"},
+	}).Execute()
+
+// Poll the operation to know when the first build has finished
+fmt.Printf("Page ID: %s, operation: %s\n", page.PageId, page.GetOperationId())
 ```
 
 ```json
@@ -281,7 +300,12 @@ hindsight knowledge-base create-folder "$BANK_ID" "Operations"
 ### Go
 
 ```go
-# Section 'create-folder' not found in api/knowledge-pages.go
+// Create a folder (leave ParentId unset to create it at the root)
+folder, _, _ := client.KnowledgeBaseAPI.CreateKnowledgeFolder(ctx, kpBankID).
+	CreateFolderRequest(hindsight.CreateFolderRequest{Name: "Operations"}).
+	Execute()
+
+fmt.Printf("Folder ID: %s\n", folder.Id)
 ```
 
 | Parameter | Type | Required | Description |
@@ -329,7 +353,12 @@ hindsight knowledge-base get-page "$BANK_ID" "$PAGE_ID"
 ### Go
 
 ```go
-# Section 'get-page' not found in api/knowledge-pages.go
+// Read a page as a markdown document
+document, _, _ := client.KnowledgeBaseAPI.GetKnowledgePage(ctx, kpBankID, page.PageId).Execute()
+
+fmt.Println(document.Type)      // "runbook" — from the type:runbook tag
+fmt.Println(document.GetBody()) // the synthesized markdown body
+fmt.Println(document.Markdown)  // YAML frontmatter + body
 ```
 
 ```json
@@ -386,7 +415,13 @@ hindsight knowledge-base search "$BANK_ID" "how do we deploy" --limit 5
 ### Go
 
 ```go
-# Section 'search-pages' not found in api/knowledge-pages.go
+// Hybrid search (full-text + vector) over whole pages
+results, _, _ := client.KnowledgeBaseAPI.SearchKnowledgeBase(ctx, kpBankID).
+	Q("how do we deploy").Limit(5).Execute()
+
+for _, hit := range results.Results {
+	fmt.Printf("%.3f  %s: %s\n", hit.Score, hit.Name, hit.Snippet)
+}
 ```
 
 ```json
@@ -455,7 +490,13 @@ hindsight knowledge-base update "$BANK_ID" "$PAGE_ID" \
 ### Go
 
 ```go
-# Section 'update-node' not found in api/knowledge-pages.go
+// Rename a node, move it, and/or update a page's options.
+// Changing SourceQuery rebuilds the page against the new question.
+client.KnowledgeBaseAPI.UpdateKnowledgeNode(ctx, kpBankID, page.PageId).
+	UpdateNodeRequest(hindsight.UpdateNodeRequest{
+		Name: *hindsight.NewNullableString(hindsight.PtrString("Deploying the API (v2)")),
+		Tags: []string{"ops", "type:runbook", "reviewed"},
+	}).Execute()
 ```
 
 | Parameter | Type | Applies to | Description |
@@ -499,7 +540,8 @@ hindsight knowledge-base delete "$BANK_ID" "$FOLDER_ID" -y
 ### Go
 
 ```go
-# Section 'delete-node' not found in api/knowledge-pages.go
+// Delete a folder or page — deleting a folder removes its whole subtree
+client.KnowledgeBaseAPI.DeleteKnowledgeNode(ctx, kpBankID, folder.Id).Execute()
 ```
 
 ```json
@@ -543,7 +585,12 @@ hindsight knowledge-base export "$BANK_ID"
 ### Go
 
 ```go
-# Section 'export' not found in api/knowledge-pages.go
+// Export the knowledge base as a portable markdown bundle
+bundle, _, _ := client.KnowledgeBaseAPI.ExportKnowledgeBase(ctx, kpBankID).Execute()
+
+for _, file := range bundle.Files {
+	fmt.Println(file.Path) // index.md, <page-id>.md, <page-id>.log.md
+}
 ```
 
 ```json

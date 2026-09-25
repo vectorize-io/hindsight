@@ -2756,6 +2756,7 @@ class Hindsight:
         observations_mission: str | None = None,
         max_observations_per_scope: int | None = None,
         observation_scope_limits: list[dict[str, Any]] | None = None,
+        consolidation_strategies: list[dict[str, Any]] | None = None,
         enable_auto_consolidation: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
@@ -2820,6 +2821,7 @@ class Hindsight:
                 observations_mission=observations_mission,
                 max_observations_per_scope=max_observations_per_scope,
                 observation_scope_limits=observation_scope_limits,
+                consolidation_strategies=consolidation_strategies,
                 enable_auto_consolidation=enable_auto_consolidation,
                 consolidation_llm_parallelism=consolidation_llm_parallelism,
                 consolidation_max_memories_per_round=consolidation_max_memories_per_round,
@@ -2881,6 +2883,7 @@ class Hindsight:
         observations_mission: str | None = None,
         max_observations_per_scope: int | None = None,
         observation_scope_limits: list[dict[str, Any]] | None = None,
+        consolidation_strategies: list[dict[str, Any]] | None = None,
         enable_auto_consolidation: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
@@ -2951,7 +2954,8 @@ class Hindsight:
                 filterable via ``tags``/``tags_match`` at recall.
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
             max_observations_per_scope: Cap on observations retained per scope (-1 for unlimited).
-            observation_scope_limits: Per-scope observation caps, overriding max_observations_per_scope.
+            observation_scope_limits: Deprecated; use consolidation_strategies. Per-scope observation caps.
+            consolidation_strategies: Per-scope consolidation settings (mission, observation cap).
             enable_auto_consolidation: Consolidate automatically after retain() rather than on demand.
             consolidation_llm_parallelism: Concurrent LLM calls during consolidation.
             consolidation_max_memories_per_round: Memories consolidated per round.
@@ -3019,6 +3023,7 @@ class Hindsight:
                 "observations_mission": observations_mission,
                 "max_observations_per_scope": max_observations_per_scope,
                 "observation_scope_limits": observation_scope_limits,
+                "consolidation_strategies": consolidation_strategies,
                 "enable_auto_consolidation": enable_auto_consolidation,
                 "consolidation_llm_parallelism": consolidation_llm_parallelism,
                 "consolidation_max_memories_per_round": consolidation_max_memories_per_round,

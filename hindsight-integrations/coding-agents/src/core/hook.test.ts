@@ -135,7 +135,7 @@ describe("buildHookOutput", () => {
     expect(second.context).toContain("REFLECT_ANSWER");
   });
 
-  it("reflect rejection: caches '' (no retry next turn), no throw, no context at all", async () => {
+  it("reflect rejection: retried once on a later turn, then cached '' — no throw, no context", async () => {
     const cfg = resolveConfig({});
     const client = makeClient({
       reflect: vi.fn(async () => {
@@ -154,17 +154,18 @@ describe("buildHookOutput", () => {
     // ...but the turn is NOT silent: one line pointing at the diag trail (#3443).
     expect(t1.notice).toContain("no memory this turn");
     expect(t1.notice).toContain(diagFilePath());
-    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    // A failure is not an answer: nothing is cached, so a later turn can still get memory (#4607).
+    const afterT1 = JSON.parse(readFileSync(cacheFile, "utf8"));
+    expect(afterT1.reflectAnswer).toBeUndefined();
+    expect(afterT1.reflectAttempts).toBe(1);
 
-    await buildHookOutput({
-      harness: "claude-code",
-      prompt: UNRELATED_PROMPT,
-      cfg,
-      client,
-      cacheFile,
-    });
-    // The failure is cached as "" — reflect is NOT retried on the next turn.
-    expect(client.reflect).toHaveBeenCalledTimes(1);
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(2);
+    // Second failure exhausts the budget — now it IS cached, so a dead server costs 2 turns, not every turn.
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(2);
   });
 
   it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
@@ -198,7 +199,7 @@ describe("buildHookOutput", () => {
     expect(failed.error).toContain("upstream LLM rejected the turn");
   });
 
-  it("the notice fires ONCE — the turn reflect failed, not on later turns", async () => {
+  it("the notice fires on the turns reflect ran, and stops once the retries are spent", async () => {
     const cfg = resolveConfig({});
     const client = makeClient({
       reflect: vi.fn(async () => {
@@ -207,7 +208,9 @@ describe("buildHookOutput", () => {
     });
     const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
     expect((await buildHookOutput(args)).notice).toContain("no memory this turn");
-    // Turn 2 does not re-run reflect, so re-announcing a failure it did not observe would nag.
+    // Turn 2 retries (and fails) — it observed the failure, so it says so.
+    expect((await buildHookOutput(args)).notice).toContain("no memory this turn");
+    // Turn 3 does not re-run reflect, so re-announcing a failure it did not observe would nag.
     expect((await buildHookOutput(args)).notice).toBeUndefined();
   });
 
@@ -367,7 +370,8 @@ describe("buildHookOutput", () => {
       expect(client.recallObservations).toHaveBeenCalledTimes(1);
       expect(out.context).not.toContain("<hindsight_memory>");
       expect(out.notice).toContain("no memory this turn");
-      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+      // Retryable: neither reflect nor the fallbacks produced memory, so a later turn may try again.
+      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
     });
 
     it("4xx or a transport error does NOT fall back: every endpoint would fail the same way", async () => {
@@ -449,6 +453,35 @@ describe("buildHookOutput", () => {
     expect(next.context ?? "").not.toContain("<hindsight_memory>");
   });
 
+  it("autoInject pages: a FAILED search is retried, an empty one is not", async () => {
+    // The retryability fix is not reflect-only. A page search that threw used to cache "" just
+    // like a search that matched nothing, so a transient blip cost the whole session (#4607).
+    const cfg = resolveConfig({ autoInject: "pages" });
+    const client = makeClient({
+      searchKnowledgePages: vi.fn(async () => {
+        throw new Error("search boom");
+      }),
+    });
+    const args = { harness: "claude-code", prompt: MATCHING_PROMPT, cfg, client, cacheFile };
+    await buildHookOutput(args);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
+    await buildHookOutput(args);
+    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+    // Budget spent — now it is cached, so a broken search costs 2 turns and then stops.
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(args);
+    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+
+    // A search that RAN and matched nothing is an answer, not a failure: cached on the first turn.
+    rmSync(cacheFile, { force: true });
+    const empty = makeClient({ searchKnowledgePages: vi.fn(async () => []) });
+    const emptyArgs = { ...args, client: empty };
+    await buildHookOutput(emptyArgs);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(emptyArgs);
+    expect(empty.searchKnowledgePages).toHaveBeenCalledTimes(1);
+  });
+
   it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {
     const client = makeClient({
       recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
@@ -466,7 +499,22 @@ describe("buildHookOutput", () => {
     expect(out.context).not.toContain("synthesis was unavailable");
   });
 
-  it("autoInject pages/recall: an empty or failed retrieval injects nothing and no notice", async () => {
+  it("autoInject recall: an EMPTY retrieval injects nothing and stays silent", async () => {
+    const client = makeClient({ recallObservations: vi.fn(async () => []) });
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg: resolveConfig({ autoInject: "recall" }),
+      client,
+      cacheFile,
+    });
+    expect(out.context ?? "").not.toContain("<hindsight_memory>");
+    // Nothing to say is not a failure — announcing one would report a break on the sessions
+    // where the plugin worked and the bank was simply sparse.
+    expect(out.notice).toBeUndefined();
+  });
+
+  it("autoInject recall: a FAILED retrieval says so, like a failed reflect", async () => {
     const client = makeClient({
       recallObservations: vi.fn(async () => {
         throw new Error("boom");
@@ -480,7 +528,8 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(out.context ?? "").not.toContain("<hindsight_memory>");
-    expect(out.notice).toBeUndefined();
+    // These modes used to stay silent, so a memory-less turn looked identical to a healthy one.
+    expect(out.notice).toContain("no memory this turn");
   });
 
   it("autoReflect false: never calls reflect, injects no memory block", async () => {

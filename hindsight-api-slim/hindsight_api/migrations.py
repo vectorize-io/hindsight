@@ -50,7 +50,7 @@ from ._vector_index import (
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
 )
-from .config import ENV_MIGRATION_ISOLATION, get_config
+from .config import ENV_MIGRATION_DATABASE_URL, ENV_MIGRATION_ISOLATION, get_config
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
@@ -208,6 +208,61 @@ def _get_schema_lock_id(schema: str) -> int:
     return int.from_bytes(hash_bytes, byteorder="big") % (2**31)
 
 
+#: How often to poll for the migration advisory lock.
+_LOCK_POLL_INTERVAL_SECS = 0.5
+
+#: How long a wait has to last before it is worth a log line, and how often to
+#: repeat it afterwards.  Queuing briefly behind another worker is routine; only
+#: a wait that outlasts this is a symptom.
+_LOCK_WAIT_REPORT_AFTER_SECS = 5.0
+_LOCK_WAIT_REPORT_INTERVAL_SECS = 30.0
+
+
+def _advisory_lock_holder(conn: Connection, lock_id: int) -> str | None:
+    """Describe who holds the migration advisory lock, or None if not found.
+
+    Best effort: this runs while a migrator is stuck waiting, so any error
+    here must not break the wait loop — an empty catalog row just means we
+    could not identify the holder.  A failure leaves the transaction aborted,
+    so the caller must end it before its next statement — the wait loop's
+    ``conn.commit()`` does, which is why this runs before it.  A diagnostic
+    must never turn a wait into a failed migration.
+
+    ``pg_advisory_lock(bigint)`` stores the key as classid = high 32 bits,
+    objid = low 32 bits, objsubid = 1; the two-argument form uses objsubid = 2.
+    Matching objsubid = 1 therefore excludes a two-argument lock with a
+    colliding objid, and classid = 0 (``lock_id`` is reduced mod 2**31, so its
+    high word is always zero) excludes a 64-bit key that shares the low word.
+    """
+    try:
+        row = conn.execute(
+            text(
+                "SELECT a.pid, coalesce(a.application_name, ''), coalesce(a.client_addr::text, ''), "
+                "coalesce(a.query, '') "
+                "FROM pg_locks l "
+                "LEFT JOIN pg_stat_activity a ON a.pid = l.pid "
+                "WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = :lock_id "
+                "AND l.objsubid = 1 AND l.granted "
+                "LIMIT 1"
+            ),
+            {"lock_id": lock_id},
+        ).fetchone()
+    except Exception as e:
+        logger.debug("Could not inspect pg_locks for the migration advisory lock holder: %s", e)
+        return None
+    if not row:
+        return None
+    pid, app_name, client_addr, query = row[0], row[1] or "", row[2] or "", (row[3] or "").strip()
+    parts = [f"pid={pid}"]
+    if app_name:
+        parts.append(f"app={app_name}")
+    if client_addr:
+        parts.append(f"client={client_addr}")
+    if query:
+        parts.append(f"query={query[:120]}")
+    return ", ".join(parts)
+
+
 def _run_migrations_internal(database_url: str, script_location: str, schema: str | None = None) -> None:
     """
     Internal function to run migrations without locking.
@@ -227,6 +282,34 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
 
     # Set the script location (where alembic versions are stored)
     _set_alembic_main_option(alembic_cfg, "script_location", script_location)
+
+    # Extension-owned revisions, applied on the same lifecycle as core's: same run,
+    # same advisory lock, same `alembic_version` table.
+    #
+    # `version_locations` must include core's own directory explicitly. Alembic does
+    # NOT fall back to `script_location/versions` once this is set, so omitting it
+    # would silently reduce the run to the extensions' revisions — a migration that
+    # appears to succeed while applying none of core's.
+    #
+    # Each extension tree is independent: its own base, its own head, its own row in
+    # `alembic_version`. That is why `command.upgrade(..., "heads")` below is plural
+    # and always was — it already applies every branch. Alembic gives no ordering
+    # BETWEEN independent branches, so a revision needing core first declares
+    # `depends_on`; see `Extension.alembic_version_locations`.
+    # Imported here, not at module import: the loader imports extension modules,
+    # and migrations.py is itself imported by paths that must not drag an
+    # extension's dependency tree in with them.
+    from .extensions.loader import collect_alembic_version_locations
+
+    extension_locations = collect_alembic_version_locations()
+    if extension_locations:
+        core_versions = str(Path(script_location) / "versions")
+        _set_alembic_main_option(
+            alembic_cfg,
+            "version_locations",
+            os.pathsep.join([core_versions, *extension_locations]),
+        )
+        logger.info("Including %d extension migration location(s) alongside core", len(extension_locations))
 
     # Set the database URL
     _set_alembic_main_option(alembic_cfg, "sqlalchemy.url", database_url)
@@ -445,23 +528,57 @@ def run_migrations(
         engine = create_engine(migration_url, poolclass=NullPool)
         with engine.connect() as conn:
             logger.debug(f"Acquiring migration advisory lock for schema '{schema_name}' (id={lock_id})...")
+            waited_since = time.monotonic()
+            next_report_at = _LOCK_WAIT_REPORT_AFTER_SECS
             while True:
                 acquired = conn.execute(text(f"SELECT pg_try_advisory_lock({lock_id})")).scalar()
                 if acquired:
                     break
+                # A worker stuck here used to look like a silent hang: no log
+                # line, no timeout, for as long as the lock stays taken.  Say
+                # who is holding it, so an operator can find the blocking
+                # backend (and see the pooler-recycled-leak shape of #4611).
+                #
+                # Report once the wait passes _LOCK_WAIT_REPORT_AFTER_SECS and
+                # then every _LOCK_WAIT_REPORT_INTERVAL_SECS: queuing briefly
+                # behind another worker is routine during a rolling deploy, and
+                # one line per poll buries the signal in exactly the incident
+                # this is meant to explain.
+                waited = time.monotonic() - waited_since
+                if waited >= next_report_at:
+                    next_report_at = waited + _LOCK_WAIT_REPORT_INTERVAL_SECS
+                    # Look the holder up BEFORE the commit below: this statement
+                    # autobegins a transaction, and running it after the commit
+                    # would hold its snapshot across the sleep — the very thing
+                    # the commit exists to prevent.
+                    holder = _advisory_lock_holder(conn, lock_id)
+                    logger.warning(
+                        "Waiting for migration advisory lock (id=%s, schema=%s) held by %s; "
+                        "waited %.0fs so far, polling every %ss. If the holder is a stale pooled "
+                        "backend, point %s at the direct PostgreSQL endpoint to bypass the pooler.",
+                        lock_id,
+                        schema_name,
+                        holder or "another session (holder not found in pg_locks)",
+                        waited,
+                        _LOCK_POLL_INTERVAL_SECS,
+                        ENV_MIGRATION_DATABASE_URL,
+                    )
                 # Commit the transaction so this connection holds no open snapshot
                 # while waiting.  This prevents blocking CREATE INDEX CONCURRENTLY
                 # that may be running in the migration worker.
                 conn.commit()
-                time.sleep(0.5)
+                time.sleep(_LOCK_POLL_INTERVAL_SECS)
 
-            # Commit AFTER acquiring the lock too.  pg_advisory_lock is session-level
-            # and survives the COMMIT, but the open transaction on this connection
-            # would otherwise block any CREATE INDEX CONCURRENTLY in the migration.
-            conn.commit()
-            logger.debug("Migration advisory lock acquired")
-
+            # Everything from here on is inside the try, so the lock is released
+            # however we leave — the commit below included.
             try:
+                # Commit AFTER acquiring the lock too.  pg_advisory_lock is
+                # session-level and survives the COMMIT, but the open transaction
+                # on this connection would otherwise block any CREATE INDEX
+                # CONCURRENTLY in the migration.
+                conn.commit()
+                logger.debug("Migration advisory lock acquired")
+
                 vector_extension = configured_vector_extension()
                 _bootstrap_vector_extension_for_migrations(conn, vector_extension)
 
@@ -475,9 +592,31 @@ def run_migrations(
                 # Run migrations while holding the lock
                 _run_migrations_internal(migration_url, script_location, schema=schema)
             finally:
-                # Explicitly release the lock (also released on connection close)
-                conn.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
-                logger.debug("Migration advisory lock released")
+                # Release the lock even when the migration failed.  If anything
+                # above failed, this connection's transaction is aborted and
+                # pg_advisory_unlock would raise InFailedSqlTransaction — the
+                # lock would stay on the backend (a pooled one never releases
+                # it, wedging every later migrator: #4611).  Roll the aborted
+                # transaction back first so the unlock can run, and never let a
+                # failing unlock mask the original error.
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.warning(
+                        "Could not roll back the migration connection before releasing the advisory lock: %s",
+                        rollback_error,
+                    )
+                try:
+                    conn.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
+                    logger.debug("Migration advisory lock released")
+                except Exception as unlock_error:
+                    logger.error(
+                        "Failed to release migration advisory lock (id=%s) — the lock may stay on the "
+                        "backend until the connection closes; close pooled connections or recycle the "
+                        "pooler backend manually: %s",
+                        lock_id,
+                        unlock_error,
+                    )
 
     except FileNotFoundError:
         logger.error(f"Alembic script location not found at {script_location}")

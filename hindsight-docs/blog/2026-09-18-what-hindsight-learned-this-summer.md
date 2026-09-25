@@ -91,7 +91,7 @@ None of these change what your agent remembers. They change what it costs to rem
 
 ## Where to go from here
 
-Everything above is in v0.10.0 for self-hosted deployments today. On Hindsight Cloud, the 0.10.0 features (attachments, the prompt preview and the faster request path) are coming soon. The individual release notes have the full detail, including a few breaking changes in 0.10.0 worth reading before you upgrade.
+Everything above is in v0.10.0, which runs on Hindsight Cloud and on self-hosted deployments alike. The individual release notes have the full detail, including a few breaking changes in 0.10.0 worth reading before you upgrade.
 
 - [0.10.0](https://hindsight.vectorize.io/blog/2026/09/14/version-0-10-0): attachments, prompt preview, faster request path
 - [0.9.2](https://hindsight.vectorize.io/blog/2026/08/24/version-0-9-2): knowledge base over MCP, time windows, retain memory budget
@@ -106,7 +106,7 @@ Everything above is in v0.10.0 for self-hosted deployments today. On Hindsight C
 No. The release notes flag the breaking changes, and 0.10.0 has several worth reading first, including removed bank profile endpoints and `curl` no longer being in the Docker images.
 
 **Are these features on Hindsight Cloud?**
-The knowledge base is, as covered in the [Cloud June to August roundup](https://hindsight.vectorize.io/blog/2026/09/01/hindsight-cloud-june-august-updates), and the 0.10.0 features are coming soon. Everything listed here is available today if you self-host v0.10.0.
+Yes. Cloud runs 0.10.0, so everything listed here is available there, and the knowledge base has been since the [Cloud June to August roundup](https://hindsight.vectorize.io/blog/2026/09/01/hindsight-cloud-june-august-updates). Everything listed here is available today if you self-host v0.10.0.
 
 **Is the coding-agents plugin part of the core release?**
 It ships separately as `@vectorize-io/hindsight-coding-agents`, and works with Hindsight Cloud, a server you run, or a local daemon.

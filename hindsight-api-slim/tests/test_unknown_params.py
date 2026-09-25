@@ -119,3 +119,80 @@ class TestUnknownBodyFields:
         ignored = resp.headers["X-Ignored-Params"]
         assert "foo" in ignored
         assert "bar" in ignored
+
+
+class TestBankAliasRewrite:
+    """The route class rewrites an aliased ``bank_id`` before the endpoint reads it.
+
+    This is the single seam the whole bank-alias feature rests on: ~337
+    ``WHERE bank_id = $1`` queries across 36 modules never see the resolver, so if
+    the path param were still the alias by the time the endpoint runs, every one of
+    them would query for a bank that does not exist. The cases below pin FastAPI's
+    ordering -- route handler wrapper first, endpoint path params after -- so a
+    FastAPI upgrade that extracted path params earlier fails here loudly rather
+    than quietly serving the alias straight through to SQL.
+    """
+
+    @staticmethod
+    def _app(resolver) -> FastAPI:
+        app = FastAPI()
+        app.router.route_class = UnknownParamsRoute
+        app.state.resolve_bank_alias = resolver
+
+        @app.get("/v1/default/banks/{bank_id}/thing")
+        async def read_thing(bank_id: str):
+            # What every real endpoint does with it: hand it straight to the engine.
+            return {"bank_id": bank_id}
+
+        @app.get("/unscoped")
+        async def unscoped():
+            return {"ok": True}
+
+        return app
+
+    def test_alias_is_canonical_by_the_time_the_endpoint_runs(self):
+        async def resolver(_request, bank_id: str) -> str:
+            return "real-bank" if bank_id == "old-name" else bank_id
+
+        client = TestClient(self._app(resolver))
+        assert client.get("/v1/default/banks/old-name/thing").json()["bank_id"] == "real-bank"
+
+    def test_a_real_bank_id_is_passed_through_untouched(self):
+        async def resolver(_request, bank_id: str) -> str:
+            return bank_id
+
+        client = TestClient(self._app(resolver))
+        assert client.get("/v1/default/banks/real-bank/thing").json()["bank_id"] == "real-bank"
+
+    def test_routes_without_a_bank_never_call_the_resolver(self):
+        calls: list[str] = []
+
+        async def resolver(_request, bank_id: str) -> str:
+            calls.append(bank_id)
+            return bank_id
+
+        client = TestClient(self._app(resolver))
+        assert client.get("/unscoped").status_code == 200
+        assert calls == []
+
+    def test_a_failing_resolver_leaves_the_id_alone_rather_than_500ing(self):
+        """A lookup that cannot run must not turn a request for a real bank into an
+        error: the id it was given is exactly what it meant before aliases existed."""
+
+        async def resolver(_request, _bank_id: str) -> str:
+            raise RuntimeError("database is down")
+
+        client = TestClient(self._app(resolver))
+        resp = client.get("/v1/default/banks/real-bank/thing")
+        assert resp.status_code == 200
+        assert resp.json()["bank_id"] == "real-bank"
+
+    def test_no_resolver_configured_is_not_an_error(self):
+        app = FastAPI()
+        app.router.route_class = UnknownParamsRoute
+
+        @app.get("/v1/default/banks/{bank_id}/thing")
+        async def read_thing(bank_id: str):
+            return {"bank_id": bank_id}
+
+        assert TestClient(app).get("/v1/default/banks/b/thing").json()["bank_id"] == "b"

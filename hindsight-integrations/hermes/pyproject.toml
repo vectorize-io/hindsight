@@ -1,6 +1,6 @@
 [project]
 name = "hermes-plugin-hindsight"
-version = "1.0.0"
+version = "1.1.0"
 description = "Hermes Agent memory provider plugin: hindsight"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -8,8 +8,15 @@ license = { text = "MIT" }
 # every `hermes update`. Keep upper bounds: Hermes pins its own deps exactly and refuses a
 # plugin whose requirements cannot resolve against them.
 dependencies = [
-    "hindsight-client>=0.6.1,<1",
-    "hindsight-embed>=0.6.1,<1",
+    # Floor is 0.10.1, not the 0.6.1 this plugin actually needs at the API level:
+    # hindsight-embed 0.10.0 shipped a probe that ran `asyncio.run` on the caller's
+    # thread, clearing its event loop, so the next hindsight-client call hit an aiohttp
+    # session bound to a dead loop ("Timeout context manager should be used inside a
+    # task"). That breaks local_embedded outright. Anyone who installed between
+    # 2026-09-14 and 2026-09-21 is pinned to the broken release until a floor moves them
+    # off it, so keep these at >=0.10.1 rather than widening them back.
+    "hindsight-client>=0.10.1,<1",
+    "hindsight-embed>=0.10.1,<1",
 ]
 
 # The plugin is loaded from a directory by Hermes, not installed as a distribution.

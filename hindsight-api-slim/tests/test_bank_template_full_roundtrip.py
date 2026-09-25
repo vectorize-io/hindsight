@@ -98,6 +98,13 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "consolidation_source_facts_max_tokens_per_observation": 256,
     "max_observations_per_scope": 13,
     "observation_scope_limits": [{"scope": ["run_*"], "limit": 2}],
+    "consolidation_strategies": [
+        {
+            "scopes": [{"tags": ["company:*"]}],
+            "observations_mission": "Record only generalized trends.",
+            "max_observations_per_scope": 20,
+        }
+    ],
     "reflect_source_facts_max_tokens": 4096,
     "mental_model_min_refresh_interval_seconds": 900,
     "knowledge_page_default_trigger": {"refresh_cron": "0 * * * *", "mode": "full"},

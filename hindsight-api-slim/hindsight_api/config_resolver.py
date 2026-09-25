@@ -605,6 +605,13 @@ class ConfigResolver:
                 except ValueError as e:
                     raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
 
+        # Validate consolidation_strategies: the config type is a plain list, so
+        # without this a typo ("scope" for "scopes", a string where the tag list
+        # belongs) is stored happily and then ignored for the life of the bank —
+        # the strategy simply never applies, with nothing to show why.
+        if normalized_updates.get("consolidation_strategies") is not None:
+            _validate_consolidation_strategies(normalized_updates["consolidation_strategies"])
+
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
 
@@ -827,6 +834,30 @@ def _validate_reflect_default_options(value: dict[str, Any]) -> None:
     from hindsight_api.api.http import ReflectDefaultOptions
 
     _validate_against_model("reflect_default_options", value, ReflectDefaultOptions, "options")
+
+
+def _validate_consolidation_strategies(value: Any) -> None:
+    """Reject a consolidation_strategies value whose shape cannot work.
+
+    Shape only: an incomplete draft (a rule with no tags yet, a strategy with no
+    setting) is accepted, because the control plane saves strategies as typed and
+    consolidation ignores the unusable ones. What is rejected is what could only
+    be a mistake — an entry that is not an object, an unknown key, a tag list that
+    is not a list of strings, an unknown tags_match.
+    """
+    from pydantic import ValidationError
+
+    from .engine.response_models import StrictConsolidationStrategySpec
+
+    if not isinstance(value, list):
+        raise ValueError(f"consolidation_strategies must be a list, got {type(value).__name__}")
+    for index, entry in enumerate(value):
+        try:
+            StrictConsolidationStrategySpec.model_validate(entry)
+        except ValidationError as e:
+            first = e.errors()[0]
+            location = ".".join(str(part) for part in first["loc"]) or "entry"
+            raise ValueError(f"Invalid consolidation strategy at index {index}: {location}: {first['msg']}") from e
 
 
 def _validate_config_value_types(updates: dict[str, Any]) -> None:

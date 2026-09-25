@@ -15,8 +15,9 @@ pinned ref.
     uv run run-amb --dataset locomo --split conv-26 --api-url https://api.dev.example
     uv run run-amb --dataset longmemeval --split single-session-user -- --query-limit 20
 
-The ref is pinned in `AMB_REF` next to this package. Unpinned, a dashboard
-movement is unattributable — benchmark drift and engine drift look identical.
+The ref lives in `AMB_REF` next to this package — `main`, so AMB fixes land without a
+bump here. Each run prints the commit it resolved to, because benchmark drift and
+engine drift look identical on a dashboard and that commit is what tells them apart.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hindsight_system_evals.target import ENV_API_KEY, ENV_API_URL, eval_target
+from hindsight_system_evals.target import ENV_API_URL, eval_target
 
 AMB_REPO = "https://github.com/vectorize-io/agent-memory-benchmark.git"
 AMB_REF_FILE = Path(__file__).resolve().parents[1] / "AMB_REF"
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=f"a server that is already up; ${ENV_API_URL} does the same. Omitted, one is started here.",
     )
-    parser.add_argument("--amb-ref", default=None, help=f"override the ref pinned in {AMB_REF_FILE.name}")
+    parser.add_argument("--amb-ref", default=None, help=f"override the ref in {AMB_REF_FILE.name}")
     parser.add_argument("--checkout", type=Path, default=DEFAULT_CHECKOUT, help="where AMB is cloned")
     parser.add_argument("--python", default=DEFAULT_PYTHON, help="override the interpreter AMB pins for itself")
     parser.add_argument("amb_args", nargs=argparse.REMAINDER, help="extra `amb run` arguments after `--`")
@@ -105,7 +106,10 @@ def main(argv: list[str] | None = None) -> int:
             # …and what the sde-bench coding provider reads. Same server either way.
             "SDE_HINDSIGHT_URL": target.url,
         }
-        print(f"AMB {args.dataset} @ {ref[:8]} → {target.describe()}", flush=True)
+        sha = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True
+        ).stdout.strip()
+        print(f"AMB {args.dataset} @ {ref} ({sha}) → {target.describe()}", flush=True)
         # cwd is the checkout so results land in its `outputs/`, where `amb view`
         # and `amb publish-results` expect them.
         completed = subprocess.run(cmd, cwd=checkout, env=env)

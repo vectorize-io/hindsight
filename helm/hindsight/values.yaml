@@ -375,7 +375,10 @@ ingress:
         - path: /
           pathType: Prefix
           service: controlPlane
-        - path: /api
+        # The data API serves /v1/*. Don't route /api here: /api/* is the control
+        # plane's own Next.js handlers (banks, recall, auth), and the longer /api
+        # prefix would steal them from the "/" rule above (#4741).
+        - path: /v1
           pathType: Prefix
           service: api
 

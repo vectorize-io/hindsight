@@ -12,6 +12,8 @@ function bank(bank_id: string): BankInfo {
     fact_count: 0,
     last_document_at: null,
     last_write_at: null,
+    matched_aliases: [],
+    display_alias: null,
   };
 }
 

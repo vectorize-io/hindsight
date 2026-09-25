@@ -1595,7 +1595,7 @@ export function DocumentsView() {
               type="datetime-local"
               value={customFrom}
               onChange={(e) => setCustomFrom(e.target.value)}
-              className="h-9 w-[200px]"
+              className="h-9 w-[240px]"
             />
             <label htmlFor="documents-range-to" className="text-xs text-muted-foreground">
               {t("dateRangeTo")}
@@ -1605,7 +1605,7 @@ export function DocumentsView() {
               type="datetime-local"
               value={customTo}
               onChange={(e) => setCustomTo(e.target.value)}
-              className="h-9 w-[200px]"
+              className="h-9 w-[240px]"
             />
             {/* A reversed range sends no bounds at all, so without this the list
                 would quietly show everything and look like the filter was ignored. */}

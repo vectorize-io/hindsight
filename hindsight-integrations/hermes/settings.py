@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__.rpartition(".")[0])
 
 _DEFAULT_API_URL = "https://api.hindsight.vectorize.io"
 _DEFAULT_LOCAL_URL = "http://localhost:8888"
-# Keep in sync with plugin.yaml and pyproject.toml.
-_MIN_CLIENT_VERSION = "0.6.1"
+# Keep in sync with plugin.yaml and pyproject.toml. Raised to 0.10.1 with the embed
+# floor (see pyproject.toml): _maybe_upgrade_client() then pulls the 0.10.0 cohort's
+# client forward on session start instead of waiting for a `hermes update`.
+_MIN_CLIENT_VERSION = "0.10.1"
 _DEFAULT_TIMEOUT = 120  # seconds — cloud API can take 30-40s per request
 _DEFAULT_IDLE_TIMEOUT = 300  # seconds — Hindsight embedded daemon default
 # ``metadata.source`` on retained memories is OPT-IN (AGENTS.md forbids

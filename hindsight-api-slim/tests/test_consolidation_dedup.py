@@ -723,6 +723,7 @@ async def _run_create_batch(create_action_result: str):
         ),
         patch.object(C, "_consolidate_batch_with_llm", new=AsyncMock(return_value=llm_result)),
         patch.object(C, "_effective_scope_limit", return_value=-1),
+        patch.object(C, "_config_for_scope", side_effect=lambda config, _tags: config),
         patch.object(C, "_dedup_active", return_value=True),
         patch.object(C, "_any_live_source_memory", new=AsyncMock(return_value=True)),
         patch.object(C, "_embed_observation_text", new=AsyncMock(return_value="[0.1, 0.2, 0.3]")),

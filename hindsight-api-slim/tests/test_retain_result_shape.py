@@ -66,11 +66,6 @@ NAMED_RESULT_FAMILIES = [
         {"FittedDeltaPrompt"},
     ),
     (
-        "engine/reflect/delta_ops.py",
-        ["_validate_operations_list"],
-        {"ValidatedOperations"},
-    ),
-    (
         "engine/retain/entity_processing.py",
         ["_prepare_facts_for_entity_processing"],
         {"PreparedFactEntities"},

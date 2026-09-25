@@ -65,9 +65,13 @@ const TOOL_GUIDE =
   "    • the user asks why something is the way it is, or what is left to do;\n" +
   "    • you are about to commit, and need to know what the change was supposed to honour.\n" +
   "  It ranks the pages by relevance and returns the matching passage, which a page title cannot tell " +
-  "you. Credit what you use visibly with a markdown blockquote so it renders as a callout, exactly: " +
-  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Credit the search that ' +
-  "changed what you did, not only the ones you quote.\n" +
+  "you.\n" +
+  "  CREDITING IS NOT OPTIONAL AND NOT A JUDGEMENT CALL. If you called this tool and anything it " +
+  "returned reached your reply — quoted, paraphrased, or merely confirming what you were about to " +
+  "say — open that part with a markdown blockquote, exactly: " +
+  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
+  "snippet in your own words does not make it yours. A search that turned up nothing useful needs " +
+  "no mention at all — just carry on.\n" +
   "- hindsight_list_knowledge_pages / hindsight_read_knowledge_page — BEFORE substantial work, list the pages and " +
   "read the relevant ones to ground yourself in this repo's architecture, conventions, and past decisions instead " +
   "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n" +

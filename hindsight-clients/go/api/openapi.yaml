@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.10.0
+  version: 0.10.1
 servers:
 - url: /
 paths:
@@ -3264,6 +3264,190 @@ paths:
       summary: Add/merge memory bank background (removed — use PATCH .../config)
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/aliases:
+    get:
+      description: "Extra bank ids that reach this bank. Every endpoint accepts an\
+        \ alias wherever it accepts a bank id, so callers can be moved onto a new\
+        \ id in phases while the old one keeps working."
+      operationId: list_bank_aliases
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankAliasesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List the bank's aliases
+      tags:
+      - Banks
+    post:
+      description: |-
+        Give the bank another id to answer to. Nothing is copied or moved: the bank keeps its own id and all of its data, and the alias is only a second way to reach it — which is what makes it a zero-downtime alternative to renaming.
+
+        Returns 409 if the name is already a bank or another alias.
+      operationId: create_bank_alias
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBankAliasRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankAliasesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Add an alias to the bank
+      tags:
+      - Banks
+  /v1/default/banks/{bank_id}/aliases/{alias}:
+    delete:
+      description: "Stop an id reaching this bank. The bank and its memories are untouched;\
+        \ only the extra name goes away, and callers still using it get the same 404\
+        \ (or new empty bank) they would have got before it existed."
+      operationId: delete_bank_alias
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: alias
+        required: true
+        schema:
+          title: Alias
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankAliasesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Remove an alias from the bank
+      tags:
+      - Banks
+    patch:
+      description: |-
+        Present the bank under one of its aliases. Purely cosmetic: the bank keeps its own `bank_id`, which every other part of the system — authorisation, metering, exports, audit logs — continues to use.
+
+        Promoting an alias demotes whichever one was shown before, so a bank is presented under at most one alias. Send `primary: false` to go back to showing its own id.
+      operationId: set_bank_alias_primary
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: alias
+        required: true
+        schema:
+          title: Alias
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetBankAliasPrimaryRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankAliasesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Show this alias in place of the bank id
+      tags:
+      - Banks
   /v1/default/banks/{bank_id}:
     delete:
       description: "Delete an entire memory bank including all memories, entities,\
@@ -4180,6 +4364,56 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: List observation scopes
+      tags:
+      - Memory
+  /v1/default/banks/{bank_id}/consolidation-strategies/preview:
+    post:
+      description: "Report which of the bank's existing observation scopes each consolidation\
+        \ strategy would apply to, for a draft `consolidation_strategies` value (nothing\
+        \ is saved). Uses the same matching and first-strategy-wins rule as consolidation.\
+        \ Scans up to 10,000 distinct scopes; `complete` is false beyond that and\
+        \ the counts are lower bounds. Scopes with no observations yet do not exist\
+        \ and are not counted."
+      operationId: preview_consolidation_strategies
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsolidationStrategiesPreviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsolidationStrategiesPreview'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Preview consolidation strategies
       tags:
       - Memory
   /v1/default/banks/{bank_id}/consolidation/recover:
@@ -5506,6 +5740,47 @@ components:
       required:
       - mission
       title: BackgroundResponse
+    BankAliasEntry:
+      description: One id a bank answers to.
+      properties:
+        alias:
+          title: Alias
+          type: string
+        primary:
+          default: false
+          description: "Whether this alias is shown in place of the bank's own id.\
+            \ Display only — the bank keeps its id, and everything that names a bank\
+            \ still uses it. At most one alias per bank can be primary, and none has\
+            \ to be."
+          title: Primary
+          type: boolean
+      required:
+      - alias
+      title: BankAliasEntry
+    BankAliasesResponse:
+      description: Response model for a bank's aliases.
+      example:
+        aliases:
+        - alias: user-123
+          primary: true
+        - alias: legacy-user123
+          primary: false
+        bank_id: user123
+      properties:
+        bank_id:
+          description: "The bank's own id, which an alias never replaces"
+          title: Bank Id
+          type: string
+        aliases:
+          description: "Extra ids that also reach this bank, the primary one first\
+            \ then oldest first"
+          items:
+            $ref: '#/components/schemas/BankAliasEntry'
+          type: array
+      required:
+      - aliases
+      - bank_id
+      title: BankAliasesResponse
     BankConfigResponse:
       description: Response model for bank configuration.
       example:
@@ -5580,6 +5855,17 @@ components:
         last_write_at:
           nullable: true
           type: string
+        display_alias:
+          nullable: true
+          type: string
+        matched_aliases:
+          description: "Aliases of this bank that matched the search `q`. Empty when\
+            \ no search was made, or when the bank matched on its own id or name —\
+            \ so a non-empty value explains a result whose `bank_id` does not contain\
+            \ the search text."
+          items:
+            type: string
+          type: array
       required:
       - bank_id
       - disposition
@@ -5900,6 +6186,11 @@ components:
         observation_scope_limits:
           items:
             additionalProperties: {}
+          nullable: true
+          type: array
+        consolidation_strategies:
+          items:
+            $ref: '#/components/schemas/ConsolidationStrategySpec'
           nullable: true
           type: array
         reflect_source_facts_max_tokens:
@@ -6460,6 +6751,246 @@ components:
       required:
       - operation_id
       title: ConsolidationResponse
+    ConsolidationScopePattern:
+      description: |-
+        One rule of a consolidation strategy: tags, and how they must match.
+
+        ``tags`` may be empty — that is a rule still being filled in, which the editor
+        saves as typed and consolidation ignores. The type pins the *shape*, not
+        completeness: a string where the tag list belongs is rejected at the door
+        instead of being stored and silently ignored for the life of the bank.
+
+        Unknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`
+        on the write path rather than by ``extra="forbid"`` here: that would put
+        ``additionalProperties: false`` in the schema, which openapi-generator cannot
+        process ("Codegen Property not yet supported in getPydanticType").
+      example:
+        tags_match: tags_match
+        tags:
+        - tags
+        - tags
+      properties:
+        tags:
+          description: "fnmatch tag patterns, e.g. company:*"
+          items:
+            type: string
+          type: array
+        tags_match:
+          nullable: true
+          type: string
+      title: ConsolidationScopePattern
+    ConsolidationStrategiesPreview:
+      description: Which existing observation scopes each consolidation strategy would
+        apply to.
+      example:
+        scopes_scanned: 3
+        default:
+          observation_count: 9
+          match_count: 7
+          samples:
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+        strategies:
+        - active: true
+          claimed_count: 0
+          rules:
+          - taken_count: 1
+            observation_count: 5
+            match_count: 6
+            samples:
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+          - taken_count: 1
+            observation_count: 5
+            match_count: 6
+            samples:
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+        - active: true
+          claimed_count: 0
+          rules:
+          - taken_count: 1
+            observation_count: 5
+            match_count: 6
+            samples:
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+          - taken_count: 1
+            observation_count: 5
+            match_count: 6
+            samples:
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+            - handled_by: 2
+              count: 5
+              tags:
+              - tags
+              - tags
+        complete: true
+      properties:
+        strategies:
+          items:
+            $ref: '#/components/schemas/StrategyPreview'
+          type: array
+        default:
+          $ref: '#/components/schemas/DefaultScopesPreview'
+        scopes_scanned:
+          description: Distinct scopes the preview was computed over
+          title: Scopes Scanned
+          type: integer
+        complete:
+          description: False when the bank has more distinct scopes than the preview
+            scans; counts are then lower bounds
+          title: Complete
+          type: boolean
+      required:
+      - complete
+      - default
+      - scopes_scanned
+      - strategies
+      title: ConsolidationStrategiesPreview
+    ConsolidationStrategiesPreviewRequest:
+      description: A draft consolidation_strategies value to preview against existing
+        scopes.
+      example:
+        strategies:
+        - observations_mission: observations_mission
+          scopes:
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          max_observations_per_scope: 0
+          consolidation_source_facts_max_tokens: 6
+          consolidation_source_facts_max_tokens_per_observation: 1
+        - observations_mission: observations_mission
+          scopes:
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          - tags_match: tags_match
+            tags:
+            - tags
+            - tags
+          max_observations_per_scope: 0
+          consolidation_source_facts_max_tokens: 6
+          consolidation_source_facts_max_tokens_per_observation: 1
+        sample_limit: 29
+      properties:
+        strategies:
+          description: Draft consolidation_strategies value
+          items:
+            $ref: '#/components/schemas/ConsolidationStrategySpec'
+          type: array
+        sample_limit:
+          default: 5
+          description: Example scopes returned per rule
+          maximum: 50.0
+          minimum: 0.0
+          title: Sample Limit
+          type: integer
+      required:
+      - strategies
+      title: ConsolidationStrategiesPreviewRequest
+    ConsolidationStrategySpec:
+      description: |-
+        One `consolidation_strategies` entry: the rules it claims scopes with, and
+        the observation settings those scopes use. Every setting is optional; unset
+        ones come from the bank-wide values.
+      example:
+        observations_mission: observations_mission
+        scopes:
+        - tags_match: tags_match
+          tags:
+          - tags
+          - tags
+        - tags_match: tags_match
+          tags:
+          - tags
+          - tags
+        max_observations_per_scope: 0
+        consolidation_source_facts_max_tokens: 6
+        consolidation_source_facts_max_tokens_per_observation: 1
+      properties:
+        scopes:
+          description: "Alternatives: the strategy claims a scope when any rule matches\
+            \ it"
+          items:
+            $ref: '#/components/schemas/ConsolidationScopePattern'
+          type: array
+        observations_mission:
+          nullable: true
+          type: string
+        max_observations_per_scope:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens_per_observation:
+          nullable: true
+          type: integer
+      title: ConsolidationStrategySpec
+    CreateBankAliasRequest:
+      description: Request model for adding an alias to a bank.
+      example:
+        alias: user-123
+      properties:
+        alias:
+          description: "The extra bank id. Same rules as a bank id (non-empty, at\
+            \ most 192 bytes of UTF-8, no control characters), and it must not already\
+            \ name a bank or another alias."
+          title: Alias
+          type: string
+        primary:
+          default: false
+          description: "Also show the bank under this alias, replacing whichever alias\
+            \ is shown today."
+          title: Primary
+          type: boolean
+      required:
+      - alias
+      title: CreateBankAliasRequest
     CreateBankRequest:
       description: Request model for creating/updating a bank.
       example:
@@ -6777,6 +7308,39 @@ components:
       required:
       - url
       title: CreateWebhookRequest
+    DefaultScopesPreview:
+      description: The scopes no strategy claims — they consolidate under the bank-wide
+        settings.
+      example:
+        observation_count: 9
+        match_count: 7
+        samples:
+        - handled_by: 2
+          count: 5
+          tags:
+          - tags
+          - tags
+        - handled_by: 2
+          count: 5
+          tags:
+          - tags
+          - tags
+      properties:
+        match_count:
+          title: Match Count
+          type: integer
+        observation_count:
+          title: Observation Count
+          type: integer
+        samples:
+          items:
+            $ref: '#/components/schemas/StrategyScopePreview'
+          type: array
+      required:
+      - match_count
+      - observation_count
+      - samples
+      title: DefaultScopesPreview
     DeleteDocumentResponse:
       description: Response model for delete document endpoint.
       example:
@@ -7876,15 +8440,9 @@ components:
         knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
         as system-owned vs. hand-authored.
       example:
-        children:
-        - null
-        - null
         kind: folder
-        parent_id: parent_id
-        managed: false
-        name: name
         description: description
-        id: id
+        last_refresh_failed_at: last_refresh_failed_at
         is_stale: true
         trigger:
           recall_chunks_max_tokens: 5
@@ -7918,10 +8476,17 @@ components:
           min_refresh_interval_seconds: 0
           keep_trace: false
           recall_max_tokens: 5
-        mental_model_id: mental_model_id
         tags:
         - tags
         - tags
+        children:
+        - null
+        - null
+        parent_id: parent_id
+        managed: false
+        name: name
+        id: id
+        mental_model_id: mental_model_id
         timestamp: timestamp
       properties:
         id:
@@ -7961,6 +8526,9 @@ components:
         is_stale:
           nullable: true
           type: boolean
+        last_refresh_failed_at:
+          nullable: true
+          type: string
         trigger:
           $ref: '#/components/schemas/MentalModelTrigger-Output'
         children:
@@ -8045,7 +8613,11 @@ components:
           nullable: true
           type: string
         markdown:
-          description: "The full markdown document: YAML frontmatter + markdown body."
+          description: "The full markdown document: YAML frontmatter + markdown body.\
+            \ A page with no body yet renders 'No content yet.' as its body rather\
+            \ than frontmatter alone, which reads as a page that failed to render.\
+            \ The notice is added here on the way out; the stored body in `body` stays\
+            \ empty, and the export bundle keeps the bare document."
           title: Markdown
           type: string
       required:
@@ -8104,6 +8676,11 @@ components:
           nullable: true
           type: string
         snippet:
+          description: "The page's opening text. A page whose body is still empty\
+            \ says so in words — 'No content yet.' — rather than coming back blank,\
+            \ so a caller can tell an unwritten page from a page whose snippet simply\
+            \ did not render. The marker is produced on the way out; the stored body\
+            \ stays empty and out of the search index."
           title: Snippet
           type: string
         score:
@@ -8126,15 +8703,9 @@ components:
       description: The knowledge base as a nested folder/page tree.
       example:
         roots:
-        - children:
-          - null
-          - null
-          kind: folder
-          parent_id: parent_id
-          managed: false
-          name: name
+        - kind: folder
           description: description
-          id: id
+          last_refresh_failed_at: last_refresh_failed_at
           is_stale: true
           trigger:
             recall_chunks_max_tokens: 5
@@ -8168,20 +8739,21 @@ components:
             min_refresh_interval_seconds: 0
             keep_trace: false
             recall_max_tokens: 5
-          mental_model_id: mental_model_id
           tags:
           - tags
           - tags
+          children:
+          - null
+          - null
+          parent_id: parent_id
+          managed: false
+          name: name
+          id: id
+          mental_model_id: mental_model_id
           timestamp: timestamp
-        - children:
-          - null
-          - null
-          kind: folder
-          parent_id: parent_id
-          managed: false
-          name: name
+        - kind: folder
           description: description
-          id: id
+          last_refresh_failed_at: last_refresh_failed_at
           is_stale: true
           trigger:
             recall_chunks_max_tokens: 5
@@ -8215,10 +8787,17 @@ components:
             min_refresh_interval_seconds: 0
             keep_trace: false
             recall_max_tokens: 5
-          mental_model_id: mental_model_id
           tags:
           - tags
           - tags
+          children:
+          - null
+          - null
+          parent_id: parent_id
+          managed: false
+          name: name
+          id: id
+          mental_model_id: mental_model_id
           timestamp: timestamp
       properties:
         roots:
@@ -9523,6 +10102,7 @@ components:
         items:
         - max_tokens: 0
           created_at: created_at
+          last_refresh_failed_at: last_refresh_failed_at
           trigger:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
@@ -9570,6 +10150,7 @@ components:
           id: id
         - max_tokens: 0
           created_at: created_at
+          last_refresh_failed_at: last_refresh_failed_at
           trigger:
             recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
@@ -9783,6 +10364,7 @@ components:
       example:
         max_tokens: 0
         created_at: created_at
+        last_refresh_failed_at: last_refresh_failed_at
         trigger:
           recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
@@ -9858,6 +10440,9 @@ components:
           nullable: true
           type: string
         last_memory_seen_at:
+          nullable: true
+          type: string
+        last_refresh_failed_at:
           nullable: true
           type: string
         created_at:
@@ -11112,6 +11697,29 @@ components:
         occurred_end:
           nullable: true
           type: string
+        mentioned_at:
+          nullable: true
+          type: string
+        document_id:
+          nullable: true
+          type: string
+        chunk_id:
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        metadata:
+          additionalProperties:
+            type: string
+          nullable: true
+        attachments:
+          items:
+            $ref: '#/components/schemas/ChunkAttachment'
+          nullable: true
+          type: array
       required:
       - text
       title: ReflectFact
@@ -11575,6 +12183,20 @@ components:
       - field
       - kind
       title: RunSettingModel
+    SetBankAliasPrimaryRequest:
+      description: Request model for showing (or no longer showing) an alias in place
+        of the bank id.
+      example:
+        primary: true
+      properties:
+        primary:
+          description: True to present the bank under this alias; False to go back
+            to its own id.
+          title: Primary
+          type: boolean
+      required:
+      - primary
+      title: SetBankAliasPrimaryRequest
     SourceFactsIncludeOptions:
       description: Options for including source facts for observation-type results.
       properties:
@@ -11590,6 +12212,129 @@ components:
           title: Max Tokens Per Observation
           type: integer
       title: SourceFactsIncludeOptions
+    StrategyPreview:
+      description: "Preview of one strategy, aligned by position with the request."
+      example:
+        active: true
+        claimed_count: 0
+        rules:
+        - taken_count: 1
+          observation_count: 5
+          match_count: 6
+          samples:
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+        - taken_count: 1
+          observation_count: 5
+          match_count: 6
+          samples:
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+          - handled_by: 2
+            count: 5
+            tags:
+            - tags
+            - tags
+      properties:
+        active:
+          description: "False when the server would ignore this strategy (no usable\
+            \ rule, or no setting)"
+          title: Active
+          type: boolean
+        claimed_count:
+          description: Existing scopes this strategy actually applies to
+          title: Claimed Count
+          type: integer
+        rules:
+          description: "One entry per rule, aligned with the request"
+          items:
+            $ref: '#/components/schemas/StrategyRulePreview'
+          type: array
+      required:
+      - active
+      - claimed_count
+      - rules
+      title: StrategyPreview
+    StrategyRulePreview:
+      description: What one rule (one entry of a strategy's `scopes`) matches among
+        existing scopes.
+      example:
+        taken_count: 1
+        observation_count: 5
+        match_count: 6
+        samples:
+        - handled_by: 2
+          count: 5
+          tags:
+          - tags
+          - tags
+        - handled_by: 2
+          count: 5
+          tags:
+          - tags
+          - tags
+      properties:
+        match_count:
+          description: Existing scopes this rule matches
+          title: Match Count
+          type: integer
+        taken_count:
+          description: "Of those, how many an earlier strategy wins, so this one has\
+            \ no effect"
+          title: Taken Count
+          type: integer
+        observation_count:
+          description: Observations across the matching scopes
+          title: Observation Count
+          type: integer
+        samples:
+          description: "The most populous matching scopes, up to sample_limit"
+          items:
+            $ref: '#/components/schemas/StrategyScopePreview'
+          type: array
+      required:
+      - match_count
+      - observation_count
+      - samples
+      - taken_count
+      title: StrategyRulePreview
+    StrategyScopePreview:
+      description: One existing observation scope in a consolidation-strategy preview.
+      example:
+        handled_by: 2
+        count: 5
+        tags:
+        - tags
+        - tags
+      properties:
+        tags:
+          description: The scope's tags (sorted)
+          items:
+            type: string
+          type: array
+        count:
+          description: Observations in this scope
+          title: Count
+          type: integer
+        handled_by:
+          nullable: true
+          type: integer
+      required:
+      - count
+      - handled_by
+      - tags
+      title: StrategyScopePreview
     TagGroupAnd-Input:
       description: "Compound AND group: all child filters must match."
       properties:

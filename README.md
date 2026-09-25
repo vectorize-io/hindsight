@@ -302,7 +302,7 @@ client.retain(
 
 Behind the scenes, retain uses an LLM to extract key facts, temporal data, entities, and relationships. It passes these through a normalization process to transform extracted data into canonical entities, time series, and search indexes along with metadata. These representations create the pathways for accurate memory retrieval in the recall and reflect operations.
 
-![Retain Operation](hindsight-docs/static/img/retain-operation.webp)
+<video src="https://github.com/user-attachments/assets/0555177d-6635-467d-97cb-9dcddb999b15" controls muted></video>
 
 [Retain docs →](https://hindsight.vectorize.io/developer/retain)
 
@@ -321,7 +321,7 @@ Recall performs 4 retrieval strategies in parallel:
 - Graph: Entity/temporal/causal links
 - Temporal: Time range filtering
 
-![Recall Operation](hindsight-docs/static/img/recall-operation.webp)
+<video src="https://github.com/user-attachments/assets/1c02eac8-1c5a-4e42-9a00-7201d44975a0" controls muted></video>
 
 The individual results are merged, ordered by relevance using reciprocal rank fusion and a cross-encoder reranking model, then trimmed as needed to fit within the token limit.
 
@@ -341,7 +341,7 @@ For example, reflect supports use cases such as:
 - A **Sales Agent** reflecting on why certain outreach messages have gotten responses while others haven't.
 - A **Support Agent** reflecting on opportunities where customers have questions not answered by current product documentation.
 
-![Reflect Operation](hindsight-docs/static/img/reflect-operation.webp)
+<video src="https://github.com/user-attachments/assets/1dd8aa20-5ad0-4536-823e-0fadf8051d57" controls muted></video>
 
 [Reflect docs →](https://hindsight.vectorize.io/developer/reflect)
 

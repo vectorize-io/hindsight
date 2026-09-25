@@ -13,6 +13,7 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 {/* Import raw source files */}
 import documentsPy from '!!raw-loader!@site/examples/api/documents.py';
 import documentsMjs from '!!raw-loader!@site/examples/api/documents.mjs';
+import documentsSh from '!!raw-loader!@site/examples/api/documents.sh';
 import documentsGo from '!!raw-loader!@site/examples/api/documents.go';
 
 :::tip Prerequisites
@@ -52,15 +53,7 @@ Associate retained content with a document:
 <CodeSnippet code={documentsMjs} section="document-retain" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Retain content with document ID
-hindsight memory retain my-bank "Meeting notes content..." --doc-id notes-2024-03-15
-
-# Batch retain from files
-hindsight memory retain-files my-bank docs/
-```
-
+<CodeSnippet code={documentsSh} section="document-retain" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-retain" language="go" />
@@ -79,15 +72,7 @@ Re-retaining with the same document_id **replaces** the old content:
 <CodeSnippet code={documentsMjs} section="document-update" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Original
-hindsight memory retain my-bank "Project deadline: March 31" --doc-id project-plan
-
-# Update
-hindsight memory retain my-bank "Project deadline: April 15 (extended)" --doc-id project-plan
-```
-
+<CodeSnippet code={documentsSh} section="document-update" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-update" language="go" />
@@ -106,11 +91,7 @@ Retrieve a document's original text and metadata. This is useful for expanding d
 <CodeSnippet code={documentsMjs} section="document-get" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-hindsight document get my-bank meeting-2024-03-15
-```
-
+<CodeSnippet code={documentsSh} section="document-get" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-get" language="go" />
@@ -125,24 +106,16 @@ The `tags` array **replaces** the document's tags — it is not merged into them
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={documentsPy} section="document-update" language="python" />
+<CodeSnippet code={documentsPy} section="document-update-tags" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={documentsMjs} section="document-update" language="javascript" />
+<CodeSnippet code={documentsMjs} section="document-update-tags" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Replace tags with new values
-hindsight document update-tags my-bank meeting-2024-03-15 --tags team-a --tags team-b
-
-# Remove all tags
-hindsight document update-tags my-bank meeting-2024-03-15
-```
-
+<CodeSnippet code={documentsSh} section="document-update-tags" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={documentsGo} section="document-update" language="go" />
+<CodeSnippet code={documentsGo} section="document-update-tags" language="go" />
 </TabItem>
 </Tabs>
 
@@ -166,11 +139,7 @@ Remove a document and all its associated memories:
 <CodeSnippet code={documentsMjs} section="document-delete" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-hindsight document delete my-bank meeting-2024-03-15
-```
-
+<CodeSnippet code={documentsSh} section="document-delete" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-delete" language="go" />
@@ -183,7 +152,11 @@ Deleting a document permanently removes all memories extracted from it. This act
 
 ## List Documents
 
-List documents in a bank with optional filtering by ID and tags.
+List documents in a bank with optional filtering by ID, tags, and time.
+
+`start_date=` and `end_date=` restrict the results to a half-open range `[start, end)` on the timestamp named by `time_field=` — either `created_at` (when the document first arrived) or `updated_at` (its last write, and the default ordering). `time_field` also becomes the sort order, newest first.
+
+Because filtering and ordering follow the same column, `total` counts only the documents inside the window rather than the whole bank. Omit all three parameters to keep the default listing.
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -193,18 +166,7 @@ List documents in a bank with optional filtering by ID and tags.
 <CodeSnippet code={documentsMjs} section="document-list" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-
-```bash
-# List all documents
-hindsight document list my-bank
-
-# Filter by ID substring
-hindsight document list my-bank --q report
-
-# Filter by tags
-hindsight document list my-bank --tags team-a --tags team-b
-```
-
+<CodeSnippet code={documentsSh} section="document-list" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-list" language="go" />

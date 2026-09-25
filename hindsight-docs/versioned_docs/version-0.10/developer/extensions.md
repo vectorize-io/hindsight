@@ -65,6 +65,8 @@ Hooks into retain/recall/reflect operations for validation and monitoring. Use c
 
 **No built-in implementation** - implement your own based on your requirements.
 
+`self.context` is the process-wide extension context — use it for process-global handles such as `get_memory_engine()`. It holds no per-request state: take the tenant and bank from each hook's own argument (`ctx.bank_id` and `ctx.request_context`, the latter holding the identity resolved by the tenant extension).
+
 ```bash
 HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION=mypackage.validators:MyValidator
 ```

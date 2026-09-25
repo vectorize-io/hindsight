@@ -27,6 +27,11 @@ describe("buildKnowledgePreamble", () => {
     expect(out).toContain("<hindsight_knowledge>");
     expect(out).toContain("1 knowledge page covers this repository");
     expect(out).toContain("deliberately NOT listed here");
+    // Crediting is stated as an obligation triggered by the CALL. Measured on a real session: the
+    // agent searched, built its answer from ten on-topic pages and credited nothing, because
+    // "credit what you use" reads as a rule about quoting and a paraphrase feels like neither.
+    expect(out).toContain("CREDITING IS NOT OPTIONAL");
+    expect(out).toContain("does not make it yours");
     // Titles and ids stay OUT: handed the index, the agent reads by id and never
     // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
     expect(out).not.toContain("Component map");

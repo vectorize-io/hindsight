@@ -288,7 +288,7 @@ wheels = [
 
 [[package]]
 name = "hermes-plugin-hindsight"
-version = "1.0.0"
+version = "1.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "hindsight-client" },
@@ -302,8 +302,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hindsight-client", specifier = ">=0.6.1,<1" },
-    { name = "hindsight-embed", specifier = ">=0.6.1,<1" },
+    { name = "hindsight-client", specifier = ">=0.10.1,<1" },
+    { name = "hindsight-embed", specifier = ">=0.10.1,<1" },
 ]
 
 [package.metadata.requires-dev]
@@ -311,7 +311,7 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "hindsight-client"
-version = "0.10.0"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -321,22 +321,22 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/45/3ad3f2207948ae07d386616c76f19bcdcc442a969dcdaea23bf05428d508/hindsight_client-0.10.0.tar.gz", hash = "sha256:adc99e7d5932acd7e2ac90eacd9a49ace7b0dec0b3422e3116e2fede07d0117c", size = 181089, upload-time = "2026-09-14T10:46:06.578Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/81/03d22890aa5fa8b09fa1c290814cf0ff716bd5c6b537305458467092e5a1/hindsight_client-0.10.1.tar.gz", hash = "sha256:764c4326c14123c5c9222f21ae5ebe62ef2323c60c8907b35667f5f82924c81d", size = 192363, upload-time = "2026-09-21T15:00:52.758Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/ad/d9656c81ddcb3fcf64bfa8c808f87bb152acca52e2baf2a608f94ef40614/hindsight_client-0.10.0-py3-none-any.whl", hash = "sha256:b16ac3f8b13fc2c35f92ed57129021e53c548a26ee0354015f9ef1394f678e06", size = 411602, upload-time = "2026-09-14T10:46:05.08Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/9b/aef41711ea4ea419386a10d7b5b52cebd9aac380127897629508ddff12b9/hindsight_client-0.10.1-py3-none-any.whl", hash = "sha256:04e03353a0f9dcfa7b1b1000cccc8f077a93a788b27af62cc5e014b2dd3b960c", size = 422723, upload-time = "2026-09-21T15:00:51.121Z" },
 ]
 
 [[package]]
 name = "hindsight-embed"
-version = "0.10.0"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/9a/832bcf1cd89875cc94f32863c110710120aed434604f928792c0c15bf724/hindsight_embed-0.10.0.tar.gz", hash = "sha256:0ad377204307ddc7835859668afa7a520d6efb84fc061d3095a2ed4948661df1", size = 710085, upload-time = "2026-09-14T10:46:45.171Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/e3/85af37fc3b35c24182fb24fa831fd36ad601331eb7e590a3d330cfb44767/hindsight_embed-0.10.1.tar.gz", hash = "sha256:1617b6f24dad1709abed0d5f46e44d99cfcf9602710be7f55ac81fea1a758338", size = 713871, upload-time = "2026-09-21T15:01:34.256Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/22/4a30c9844ebe0ebec197602a7c2ec47f97863d29c1c02efc1f34994dddb2/hindsight_embed-0.10.0-py3-none-any.whl", hash = "sha256:2831ce2d1d7c927c55646f748bb0113342fdf5a2bea9dcb15273d29f64326502", size = 832872, upload-time = "2026-09-14T10:46:43.87Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/ee/c83d04c9825f26f19bbe67702d68902576e62bb0e75cd4123846e4ad2106/hindsight_embed-0.10.1-py3-none-any.whl", hash = "sha256:6cf2294ea94113dcf13b2ca61010d571673d2bca6245cd2c3a714fd760cdb8c0", size = 835478, upload-time = "2026-09-21T15:01:32.814Z" },
 ]
 
 [[package]]

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hindsight-api"
-version = "0.10.0"
+version = "0.10.1"
 description = "Hindsight: Agent Memory That Learns"
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api-slim[all]==0.10.0",
+    "hindsight-api-slim[all]==0.10.1",
 ]
 
 [tool.uv.sources]

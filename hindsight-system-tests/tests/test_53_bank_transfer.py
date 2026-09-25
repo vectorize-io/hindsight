@@ -209,3 +209,21 @@ async def test_a_clone_can_leave_the_configuration_behind(client, llm, source_ba
 
     assert (await client.memory.list_memories(copy_bank, limit=100)).items
     assert (await client.directives.list_directives(copy_bank)).items == []
+
+
+async def test_a_deleted_clone_can_be_cloned_again_under_the_same_id(client, llm, source_bank, copy_bank, settled):
+    """Deleting a copy and making it again is the ordinary way to refresh one. The server
+    caches whether a bank exists, so a delete that left that entry behind made the second
+    clone fail with "already exists" until the cache expired."""
+    operation_id = await client.aclone_bank(source_bank, copy_bank)
+    await _await_operation(client, source_bank, operation_id)
+    await settled(copy_bank)
+    assert (await client.memory.list_memories(copy_bank, limit=100)).total == 2
+
+    await client.banks.delete_bank(copy_bank)
+
+    operation_id = await client.aclone_bank(source_bank, copy_bank)
+    await _await_operation(client, source_bank, operation_id)
+    await settled(copy_bank)
+    texts = sorted(m.text for m in (await client.memory.list_memories(copy_bank, limit=100)).items)
+    assert texts == sorted([CELLO, TOUR])

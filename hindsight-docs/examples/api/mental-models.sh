@@ -96,6 +96,30 @@ if [ -n "$MENTAL_MODEL_ID" ]; then
   hindsight mental-model history "$BANK_ID" "$MENTAL_MODEL_ID"
   # [/docs:get-mental-model-history]
 
+  # [docs:mental-model-detail]
+  # The CLI has no --detail flag; use the HTTP API
+  # List: metadata only, the default (smallest response)
+  curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models"
+
+  # List with content but without provenance chains (opt-in)
+  curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+
+  # Get one model — full detail is the default here
+  curl "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/mental-models/$MENTAL_MODEL_ID"
+  # [/docs:mental-model-detail]
+
+  # [docs:dry-run-refresh]
+  # Preview what a refresh would do, without writing anything
+  hindsight mental-model dry-run-refresh "$BANK_ID" "$MENTAL_MODEL_ID"
+  # [/docs:dry-run-refresh]
+
+  # [docs:keep-trace]
+  # Record how every refresh (scheduled ones too) reached its result
+  hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
+    --trigger-mode delta \
+    --trigger-keep-trace true
+  # [/docs:keep-trace]
+
   # [docs:delete-mental-model]
   # Delete a mental model
   hindsight mental-model delete "$BANK_ID" "$MENTAL_MODEL_ID" -y

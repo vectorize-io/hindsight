@@ -17,6 +17,7 @@ code-review skill). Two things every call site would otherwise re-derive:
 
 from __future__ import annotations
 
+import os
 import threading
 import weakref
 from asyncio import AbstractEventLoop, get_running_loop
@@ -26,6 +27,19 @@ from typing import Generic, TypeVar
 import aiohttp
 
 T = TypeVar("T")
+
+# Read from the environment rather than urllib's getproxies(), which on macOS and
+# Windows also returns the OS proxy settings: a laptop with a system proxy must not
+# silently route the API's upstream calls through it. aiohttp reads the same two
+# variables itself once trust_env is on; this only decides whether to turn it on.
+# ALL_PROXY is deliberately absent: aiohttp's proxies_from_env() drops it, so acting
+# on it would pay trust_env's per-request cost for a proxy it will never use.
+_PROXY_ENV_VARS = ("http_proxy", "https_proxy")
+
+
+def proxy_env_is_set() -> bool:
+    """Whether this process was started behind an egress proxy."""
+    return any(os.environ.get(name) or os.environ.get(name.upper()) for name in _PROXY_ENV_VARS)
 
 
 def per_phase_timeout(seconds: float | None, *, connect: float | None = None) -> aiohttp.ClientTimeout:
@@ -133,6 +147,16 @@ class LoopLocalSession:
     Construct it anywhere (no loop needed); call :meth:`get` from inside a coroutine.
     Every instance is registered so :func:`close_loop_sessions` can close them all at
     shutdown — providers and rerankers have no close hook of their own.
+
+    ``trust_env`` follows the proxy environment by default, as it did under httpx: a
+    deployment behind an egress proxy configures it the standard way
+    (``HTTPS_PROXY``/``HTTP_PROXY``/``NO_PROXY``) rather than through Hindsight
+    settings. It is only switched on when one of those variables is actually set,
+    because aiohttp pays for it *per request*: with ``trust_env`` it runs both the
+    netrc lookup and ``getproxies()`` in the default executor on every call
+    (``aiohttp/client.py``), two scheduling hops on the embedding/rerank/LLM hot
+    paths. Pass ``trust_env=False`` where the destination must be exactly the one
+    already validated (webhook delivery).
     """
 
     def __init__(
@@ -141,10 +165,12 @@ class LoopLocalSession:
         timeout: aiohttp.ClientTimeout,
         headers: Mapping[str, str] | None = None,
         connector_factory: Callable[[], aiohttp.BaseConnector] | None = None,
+        trust_env: bool | None = None,
     ) -> None:
         self._timeout = timeout
         self._headers = dict(headers) if headers else None
         self._connector_factory = connector_factory
+        self._trust_env = trust_env
         self._sessions: LoopLocal[aiohttp.ClientSession] = LoopLocal(
             self._new_session, discard=_discard_session_of_closed_loop
         )
@@ -153,7 +179,14 @@ class LoopLocalSession:
 
     def _new_session(self) -> aiohttp.ClientSession:
         connector = self._connector_factory() if self._connector_factory else None
-        return aiohttp.ClientSession(timeout=self._timeout, headers=self._headers, connector=connector)
+        return aiohttp.ClientSession(
+            timeout=self._timeout,
+            headers=self._headers,
+            connector=connector,
+            # Resolved per session rather than at import so the value tracks the
+            # environment the process actually runs with (and tests can set it).
+            trust_env=proxy_env_is_set() if self._trust_env is None else self._trust_env,
+        )
 
     def get(self) -> aiohttp.ClientSession:
         session = self._sessions.get()
