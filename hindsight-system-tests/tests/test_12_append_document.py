@@ -101,4 +101,4 @@ async def test_oversized_json_conversation_append_preserves_old_and_new_turns(cl
         expected.extend(tail)
         document = await client.documents.get_document(bank_id, DOCUMENT_ID)
         assert json.loads(document.original_text) == expected
-        assert set(await _fact_texts(client, bank_id)) == {BERLIN, CELLO}
+        assert await _fact_texts(client, bank_id) == sorted([BERLIN, CELLO])

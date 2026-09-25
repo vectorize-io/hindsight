@@ -172,11 +172,10 @@ def assert_append_extends_stored_body(
     # Compare canonical array prefixes, retaining every old object in order.
     # Default json.loads collapses duplicate keys, which could hide a removed
     # committed member. Check both bodies at every nesting level before comparing.
-    # Do not broaden the separate oversized-replacement metadata-only shortcut.
     try:
         stored = json.loads(stored_original_text, object_pairs_hook=_json_object_without_duplicate_keys)
         appended = json.loads(sanitized, object_pairs_hook=_json_object_without_duplicate_keys)
-    except (json.JSONDecodeError, ValueError, TypeError):
+    except ValueError:  # JSONDecodeError, and the duplicate-key rejection above
         stored = appended = None
     if (
         isinstance(stored, list)
