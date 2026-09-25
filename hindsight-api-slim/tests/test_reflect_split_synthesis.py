@@ -141,6 +141,19 @@ class TestSplitContextHistory:
             rendered = "".join(_render_history_block(e) for e in chunk)
             assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
 
+    def test_big_indivisible_sibling_is_cut_once(self):
+        """A big sibling with no entries to split on (plain text) is token-cut
+        into one block of its own, not copied into every piece of the list."""
+        entry = _entry("recall", "memories", 30, 300)
+        entry["output"]["summary"] = " ".join(f"summary word {j}" for j in range(3000))
+
+        chunks = split_context_history([entry], _MAX_CONTEXT)
+
+        blocks = [e["output"] for c in chunks for e in c]
+        assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
+        assert not any("summary" in b for b in blocks if "memories" in b)
+        assert sum(1 for b in blocks if b.get("truncated")) == 1
+
 
 class TestSplitSynthesisPrompts:
     def test_chunk_claims_prompt_carries_evidence_and_question(self):

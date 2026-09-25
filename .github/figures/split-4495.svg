@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="718" height="492" viewBox="0 0 718 492" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":56,"children":[{"id":"result","label":"Recall result","sub":"one tool call","shape":"store"},{"id":"split","label":"Split history","sub":"budget ≈ 9.8k tokens / piece"},{"id":"pieces","label":"Pieces sent to the model","direction":"column","gap":20,"children":[{"id":"p1","label":"Piece 1"},{"id":"p2","label":"Piece 2"},{"id":"pn","label":"Piece …N"}]}]},"edges":[{"id":"in","from":"result","to":"split","label":"too big"},{"id":"o1","from":"split","to":"p1","quiet":true},{"id":"o2","from":"split","to":"p2","quiet":true},{"id":"on","from":"split","to":"pn","quiet":true}],"steps":[{"label":"main (bug #4495)","flow":[{"edges":"in","show":{"result":[{"tag":"list","tone":"blue","text":"memories","meta":"30 × ~100 tok"},{"tag":"extra","tone":"orange","text":"chunks","meta":"~20k tok"}]},"say":"One recall: 30 memories, plus 20k tokens of source text."},{"edges":["o1","o2","on"],"ms":3000,"show":{"p1":[{"text":"memory 1","meta":"+ chunks (cut)","mark":"dup"}],"p2":[{"text":"memory 2","meta":"+ chunks (cut)","mark":"dup"}],"pn":[{"text":"memory 30","meta":"+ chunks (cut)","mark":"dup"}]},"say":"Every piece copies the chunks, so none fits: 30 pieces, 30 copies."}]},{"label":"This PR","flow":[{"edges":"in","show":{"result":[{"tag":"list","tone":"blue","text":"memories","meta":"30 × ~100 tok"},{"tag":"extra","tone":"orange","text":"chunks","meta":"~20k tok"}]},"say":"Same recall result."},{"edges":["o1","o2","on"],"ms":3000,"show":{"p1":[{"tag":"list","tone":"blue","text":"memories 1–30","mark":"✓"}],"p2":[{"tag":"extra","tone":"orange","text":"chunks, part 1","meta":"once","mark":"✓"}],"pn":[{"tag":"extra","tone":"orange","text":"chunks, last part","meta":"once","mark":"✓"}]},"say":"Memories pack as usual; the big field gets its own pieces, split by chunk, once. 4 pieces, nothing lost."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,12.5% { stroke: var(--accent) } 12.5%,50% { stroke: var(--accent) } 50%,62.5% { stroke: var(--accent) } 62.5%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 12.8s infinite step-end; }
+@keyframes a1 { 0%,12.5% { stroke: var(--accent); fill: var(--card-on) } 12.5%,50% { stroke: var(--accent); fill: var(--card-on) } 50%,62.5% { stroke: var(--accent); fill: var(--card-on) } 62.5%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 12.8s infinite step-end; }
+@keyframes a2 { 0%,12.5% { opacity: 1 } 12.5%,50% { opacity: 1 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 0 } }
+.a2 { animation: a2 12.8s infinite step-end; }
+@keyframes a3 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 1 } 62.5%,100% { opacity: 1 } }
+.a3 { animation: a3 12.8s infinite step-end; }
+@keyframes a4 { 0%,12.5% { stroke: var(--border) } 12.5%,50% { stroke: var(--accent) } 50%,62.5% { stroke: var(--border) } 62.5%,100% { stroke: var(--accent) } }
+.a4 { animation: a4 12.8s infinite step-end; }
+@keyframes a5 { 0%,12.5% { stroke: var(--border); fill: var(--surface) } 12.5%,50% { stroke: var(--accent); fill: var(--card-on) } 50%,62.5% { stroke: var(--border); fill: var(--surface) } 62.5%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a5 { animation: a5 12.8s infinite step-end; }
+@keyframes a6 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 1 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 0 } }
+.a6 { animation: a6 12.8s infinite step-end; }
+@keyframes a7 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 1 } }
+.a7 { animation: a7 12.8s infinite step-end; }
+@keyframes a8 { 0%,12.5% { opacity: 1 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 1 } 62.5%,100% { opacity: 0 } }
+.a8 { animation: a8 12.8s infinite step-end; }
+@keyframes a9 { 0%,12.5% { stroke: var(--accent); stroke-width: 2 } 12.5%,50% { stroke: var(--accent); stroke-width: 2 } 50%,62.5% { stroke: var(--accent); stroke-width: 2 } 62.5%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a9 { animation: a9 12.8s infinite step-end; }
+@keyframes a10 { 0%,12.5% { fill: var(--accent); stroke: var(--accent) } 12.5%,50% { fill: var(--accent); stroke: var(--accent) } 50%,62.5% { fill: var(--accent); stroke: var(--accent) } 62.5%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a10 { animation: a10 12.8s infinite step-end; }
+@keyframes a11 { 0%,12.5% { fill: #fff } 12.5%,50% { fill: #fff } 50%,62.5% { fill: #fff } 62.5%,100% { fill: #fff } }
+.a11 { animation: a11 12.8s infinite step-end; }
+@keyframes a12 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 1 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 1 } }
+.a12 { animation: a12 12.8s infinite step-end; }
+@keyframes a13 { 0%,12.5% { stroke: var(--muted); stroke-width: 1.25 } 12.5%,50% { stroke: var(--accent); stroke-width: 2 } 50%,62.5% { stroke: var(--muted); stroke-width: 1.25 } 62.5%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a13 { animation: a13 12.8s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,12.5% { opacity: 1 } 12.5%,100% { opacity: 0 } }
+.p0 { animation: p0 12.8s infinite step-end; }
+@keyframes p1 { 0%,12.5% { opacity: 0 } 12.5%,31.2% { opacity: 1 } 31.3%,100% { opacity: 0 } }
+.p1 { animation: p1 12.8s infinite step-end; }
+@keyframes p2 { 0%,12.5% { opacity: 0 } 12.5%,31.2% { opacity: 1 } 31.3%,100% { opacity: 0 } }
+.p2 { animation: p2 12.8s infinite step-end; }
+@keyframes p3 { 0%,12.5% { opacity: 0 } 12.5%,31.2% { opacity: 1 } 31.3%,100% { opacity: 0 } }
+.p3 { animation: p3 12.8s infinite step-end; }
+@keyframes p4 { 0%,50% { opacity: 0 } 50%,62.5% { opacity: 1 } 62.5%,100% { opacity: 0 } }
+.p4 { animation: p4 12.8s infinite step-end; }
+@keyframes p5 { 0%,62.5% { opacity: 0 } 62.5%,81.2% { opacity: 1 } 81.3%,100% { opacity: 0 } }
+.p5 { animation: p5 12.8s infinite step-end; }
+@keyframes p6 { 0%,62.5% { opacity: 0 } 62.5%,81.2% { opacity: 1 } 81.3%,100% { opacity: 0 } }
+.p6 { animation: p6 12.8s infinite step-end; }
+@keyframes p7 { 0%,62.5% { opacity: 0 } 62.5%,81.2% { opacity: 1 } 81.3%,100% { opacity: 0 } }
+.p7 { animation: p7 12.8s infinite step-end; }
+@keyframes a14 { 0%,12.5% { opacity: 1 } 12.5%,50% { opacity: 1 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 0 } }
+.a14 { animation: a14 12.8s infinite step-end; }
+@keyframes a15 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 1 } 62.5%,100% { opacity: 1 } }
+.a15 { animation: a15 12.8s infinite step-end; }
+@keyframes a16 { 0%,12.5% { opacity: 1 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 0 } }
+.a16 { animation: a16 12.8s infinite step-end; }
+@keyframes a17 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 1 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 0 } }
+.a17 { animation: a17 12.8s infinite step-end; }
+@keyframes a18 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 1 } 62.5%,100% { opacity: 0 } }
+.a18 { animation: a18 12.8s infinite step-end; }
+@keyframes a19 { 0%,12.5% { opacity: 0 } 12.5%,50% { opacity: 0 } 50%,62.5% { opacity: 0 } 62.5%,100% { opacity: 1 } }
+.a19 { animation: a19 12.8s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 140 a 83 12 0 0 1 166 0 v 142 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M24 140 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a0"/><text x="107" y="165" class="label">Recall result</text><text x="107" y="180" class="sub">one tool call</text><rect x="34" y="193" width="146" height="91" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="42" y="200" width="27.1" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="55.5" y="210.5" class="tag" fill="#3b82f6">LIST</text><text x="42" y="225" class="row">memories · 30 × ~100</text><text x="42" y="240" class="row">tok</text><rect x="42" y="249" width="31.9" height="14" rx="4" fill="#f59e0b" fill-opacity="0.15"/><text x="57.9" y="259.5" class="tag" fill="#f59e0b">EXTRA</text><text x="42" y="274" class="row">chunks · ~20k tok</text></g><g opacity="0" class="a3"><rect x="42" y="200" width="27.1" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="55.5" y="210.5" class="tag" fill="#3b82f6">LIST</text><text x="42" y="225" class="row">memories · 30 × ~100</text><text x="42" y="240" class="row">tok</text><rect x="42" y="249" width="31.9" height="14" rx="4" fill="#f59e0b" fill-opacity="0.15"/><text x="57.9" y="259.5" class="tag" fill="#f59e0b">EXTRA</text><text x="42" y="274" class="row">chunks · ~20k tok</text></g>
+<rect x="246" y="166" width="190" height="90" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="341" y="209" class="label">Split history</text><text x="341" y="224" class="sub">budget ≈ 9.8k tokens / piece</text>
+<rect x="492" y="24" width="202" height="374" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="510" y="44" class="frame">PIECES SENT TO THE MODEL</text>
+<rect x="510" y="61" width="166" height="88" rx="10" fill="var(--bg)" stroke="var(--border)" class="a4"/><text x="593" y="84" class="label">Piece 1</text><rect x="520" y="97" width="146" height="42" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a5"/><g opacity="0" class="a6"><text x="658" y="114" class="mark">dup</text><text x="528" y="114" class="row">memory 1 · +</text><text x="528" y="129" class="row">chunks (cut)</text></g><g opacity="0" class="a7"><rect x="528" y="104" width="27.1" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="541.5" y="114.5" class="tag" fill="#3b82f6">LIST</text><text x="658" y="114" class="mark">✓</text><text x="528" y="129" class="row">memories 1–30</text></g><text x="528" y="114" opacity="0" class="row muted a8">—</text>
+<rect x="510" y="169" width="166" height="88" rx="10" fill="var(--bg)" stroke="var(--border)" class="a4"/><text x="593" y="192" class="label">Piece 2</text><rect x="520" y="205" width="146" height="42" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a5"/><g opacity="0" class="a6"><text x="658" y="222" class="mark">dup</text><text x="528" y="222" class="row">memory 2 · +</text><text x="528" y="237" class="row">chunks (cut)</text></g><g opacity="0" class="a7"><rect x="528" y="212" width="31.9" height="14" rx="4" fill="#f59e0b" fill-opacity="0.15"/><text x="543.9" y="222.5" class="tag" fill="#f59e0b">EXTRA</text><text x="658" y="222" class="mark">✓</text><text x="528" y="237" class="row">chunks, part 1 · once</text></g><text x="528" y="222" opacity="0" class="row muted a8">—</text>
+<rect x="510" y="277" width="166" height="103" rx="10" fill="var(--bg)" stroke="var(--border)" class="a4"/><text x="593" y="300" class="label">Piece …N</text><rect x="520" y="313" width="146" height="57" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a5"/><g opacity="0" class="a6"><text x="658" y="330" class="mark">dup</text><text x="528" y="330" class="row">memory 30 · +</text><text x="528" y="345" class="row">chunks (cut)</text></g><g opacity="0" class="a7"><rect x="528" y="320" width="31.9" height="14" rx="4" fill="#f59e0b" fill-opacity="0.15"/><text x="543.9" y="330.5" class="tag" fill="#f59e0b">EXTRA</text><text x="658" y="330" class="mark">✓</text><text x="528" y="345" class="row">chunks, last part ·</text><text x="528" y="360" class="row">once</text></g><text x="528" y="330" opacity="0" class="row muted a8">—</text>
+<path id="p-in" d="M 190 211 C 218 211, 218 211, 246 211" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a9"/><rect x="190.6" y="202" width="54.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a10"/><text x="218" y="215" class="edgelabel a11">too big</text>
+<g opacity="0" class="a12"><path id="p-o1" d="M 436 188.5 C 473 188.5, 473 105, 510 105" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a13"/></g>
+<g opacity="0" class="a12"><path id="p-o2" d="M 436 211 C 473 211, 473 213, 510 213" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a13"/></g>
+<g opacity="0" class="a12"><path id="p-on" d="M 436 233.5 C 473 233.5, 473 328.5, 510 328.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a13"/></g>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0;0.1;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-in" xlink:href="#p-in"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.1;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o1" xlink:href="#p-o1"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.1;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o2" xlink:href="#p-o2"/></animateMotion></g>
+<g class="p3" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.1;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-on" xlink:href="#p-on"/></animateMotion></g>
+<g class="p4" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.5;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-in" xlink:href="#p-in"/></animateMotion></g>
+<g class="p5" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.6;0.8;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o1" xlink:href="#p-o1"/></animateMotion></g>
+<g class="p6" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.6;0.8;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o2" xlink:href="#p-o2"/></animateMotion></g>
+<g class="p7" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="12.8s" repeatCount="indefinite" keyTimes="0;0.6;0.8;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-on" xlink:href="#p-on"/></animateMotion></g>
+</g>
+<text x="359" y="438" opacity="0" class="steplabel a14">main (bug #4495)</text>
+<text x="359" y="438" opacity="0" class="steplabel a15">This PR</text>
+<g opacity="0" class="a16"><text x="359" y="464" class="caption">One recall: 30 memories, plus 20k tokens of source text.</text></g>
+<g opacity="0" class="a17"><text x="359" y="464" class="caption">Every piece copies the chunks, so none fits: 30 pieces, 30 copies.</text></g>
+<g opacity="0" class="a18"><text x="359" y="464" class="caption">Same recall result.</text></g>
+<g opacity="0" class="a19"><text x="359" y="464" class="caption">Memories pack as usual; the big field gets its own pieces, split by chunk, once. 4 pieces,</text><text x="359" y="484" class="caption">nothing lost.</text></g>
+</svg>
