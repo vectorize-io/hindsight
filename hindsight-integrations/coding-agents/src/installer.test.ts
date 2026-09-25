@@ -1331,6 +1331,7 @@ describe("cursor-cli installer", () => {
 
 describe("grok-build installer", () => {
   const configPath = (ctx: InstallCtx) => join(ctx.home, ".grok", "config.toml");
+  const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".grok", "hooks", "hindsight.json");
 
   it("re-install REPLACES the block so a moved package is repointed, not left stale", () => {
     const ctx = makeCtx();
@@ -1345,18 +1346,50 @@ describe("grok-build installer", () => {
     expect(toml).not.toContain(ctx.dist); // the old path is gone, not merely appended past
     // Exactly one block — a replace, not an accumulation.
     expect(toml.match(/HINDSIGHT_CODING_AGENTS_GROK_START/g)).toHaveLength(1);
+    const hooks = readFileSync(hooksPath(ctx), "utf8");
+    expect(hooks).toContain(join("/opt", MARKER, "moved-dist"));
+    expect(hooks).not.toContain(ctx.dist);
+    expect(readJson(hooksPath(ctx)).hooks.Stop).toHaveLength(1);
   });
 
-  it("installs native Grok lifecycle hooks and MCP without Claude configuration", () => {
+  // Grok loads `[[hooks.*]]` tables from config.toml, but its config validator flags the `hooks`
+  // key as unrecognized on every `grok inspect`. The hooks directory draws no warning.
+  it("installs lifecycle hooks in ~/.grok/hooks and MCP in config.toml", () => {
     const ctx = makeCtx();
     expect(run(["install", "grok-build"], ctx)).toBe(0);
+    expect(readJson(hooksPath(ctx)).hooks).toEqual({
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `node "${join(ctx.dist, "grok-sessionstart-hook.js")}"`,
+              timeout: 30,
+            },
+          ],
+        },
+      ],
+      UserPromptSubmit: [
+        {
+          hooks: [
+            { type: "command", command: `node "${join(ctx.dist, "grok-hook.js")}"`, timeout: 30 },
+          ],
+        },
+      ],
+      Stop: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `node "${join(ctx.dist, "grok-stop-hook.js")}"`,
+              timeout: 60,
+            },
+          ],
+        },
+      ],
+    });
     const config = readFileSync(configPath(ctx), "utf8");
-    expect(config).toContain("[[hooks.SessionStart]]");
-    expect(config).toContain("[[hooks.UserPromptSubmit]]");
-    expect(config).toContain("[[hooks.Stop]]");
-    expect(config).toContain(join(ctx.dist, "grok-sessionstart-hook.js"));
-    expect(config).toContain(join(ctx.dist, "grok-hook.js"));
-    expect(config).toContain(join(ctx.dist, "grok-stop-hook.js"));
+    expect(parseToml(config)).not.toHaveProperty("hooks");
     expect(config).toContain("[mcp_servers.hindsight]");
     expect(config).toContain(join(ctx.dist, "mcp-server.js"));
     expect(config).toContain('env = { HINDSIGHT_MCP_HARNESS = "grok-build" }');
@@ -1383,8 +1416,7 @@ describe("grok-build installer", () => {
     const parsed = parseToml(toml) as any;
     expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
     expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
-    expect(toml.match(/\[\[hooks\.SessionStart\]\]/g)).toHaveLength(1);
-    expect(toml.match(/\[\[hooks\.UserPromptSubmit\]\]/g)).toHaveLength(1);
+    expect(parsed).not.toHaveProperty("hooks");
     expect(toml).not.toContain(join("/opt", MARKER, "old-dist"));
     expect(toml).toContain(join(ctx.dist, "mcp-server.js"));
     expect(toml).toContain('[ui]\ntheme = "dark"'); // foreign config preserved
@@ -1444,6 +1476,58 @@ describe("grok-build installer", () => {
     expect(toml).not.toContain("[mcp_servers.hindsight]");
     expect(toml).not.toContain("grok-sessionstart-hook.js");
     expect(toml).toContain('[ui]\ntheme = "dark"');
+  });
+
+  it("moves the hooks a previous release kept in its marked block", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(configPath(ctx)), { recursive: true });
+    const old = join("/opt", MARKER, "old-dist");
+    writeFileSync(
+      configPath(ctx),
+      '[ui]\ntheme = "dark"\n\n# HINDSIGHT_CODING_AGENTS_GROK_START\n' +
+        `${legacyToml(old).slice('[ui]\ntheme = "dark"\n\n'.length)}` +
+        `env = { HINDSIGHT_MCP_HARNESS = "grok-build" }\n# HINDSIGHT_CODING_AGENTS_GROK_END\n`
+    );
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+
+    const parsed = parseToml(readFileSync(configPath(ctx), "utf8")) as any;
+    expect(parsed).not.toHaveProperty("hooks");
+    expect(parsed.ui).toEqual({ theme: "dark" });
+    expect(parsed.mcp_servers.hindsight.args).toEqual([join(ctx.dist, "mcp-server.js")]);
+    expect(Object.keys(readJson(hooksPath(ctx)).hooks)).toEqual([
+      "SessionStart",
+      "UserPromptSubmit",
+      "Stop",
+    ]);
+  });
+
+  it("uninstall keeps other hooks in the Grok hooks file", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(hooksPath(ctx)), { recursive: true });
+    const mine = { hooks: [{ type: "command", command: "my-own-script" }] };
+    writeFileSync(hooksPath(ctx), JSON.stringify({ hooks: { Stop: [mine] } }));
+    run(["install", "grok-build"], ctx);
+    expect(readJson(hooksPath(ctx)).hooks.Stop).toHaveLength(2);
+
+    run(["uninstall", "grok-build"], ctx);
+    expect(readJson(hooksPath(ctx))).toEqual({ hooks: { Stop: [mine] } });
+  });
+
+  it("replaces a Grok hooks file whose hooks are not an object", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(hooksPath(ctx)), { recursive: true });
+    writeFileSync(hooksPath(ctx), JSON.stringify({ hooks: [] }));
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    expect(Object.keys(readJson(hooksPath(ctx)).hooks)).toEqual(
+      expect.arrayContaining(["SessionStart", "UserPromptSubmit", "Stop"])
+    );
+  });
+
+  it("uninstall deletes a Grok hooks file left empty", () => {
+    const ctx = makeCtx();
+    run(["install", "grok-build"], ctx);
+    run(["uninstall", "grok-build"], ctx);
+    expect(existsSync(hooksPath(ctx))).toBe(false);
   });
 
   it("removes only its marked Grok TOML block", () => {

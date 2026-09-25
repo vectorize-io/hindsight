@@ -167,7 +167,9 @@ npx @vectorize-io/hindsight-coding-agents install copilot-cli
 npx @vectorize-io/hindsight-coding-agents install grok-build
 ```
 
-Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
+Native hooks in `~/.grok/hooks/hindsight.json`, MCP in `~/.grok/config.toml`, plus the companion
+skill. Grok also runs Claude Code's hooks from `~/.claude/settings.json`; those stay silent inside
+Grok, so a machine wired for both hosts records each Grok session once.
 
 ####  Qwen Code
 

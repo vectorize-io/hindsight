@@ -60,6 +60,8 @@ export interface HookSpec {
   harness: string;
   /** Read the fields out of the harness's stdin event (shapes differ per harness). */
   parse(event: Record<string, unknown>): HookEventFields;
+  /** Optional event gate, evaluated before config loading: false makes the hook a silent no-op. */
+  accept?(event: Record<string, unknown>): boolean;
   /** Some hosts execute hook commands from their global config directory. Those hosts must provide
    * a workspace path in the event; falling back to process.cwd() would create a bank for config. */
   requireCwd?: boolean;
@@ -392,6 +394,7 @@ export async function runHook(
   } catch {
     return; // no/invalid event: stay silent
   }
+  if (spec.accept && !spec.accept(ev)) return;
   const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
   if (spec.requireCwd && !rawCwd) return;
   const cwd = rawCwd || process.cwd();
