@@ -178,6 +178,13 @@ elif [ -f "$INTEGRATION_DIR/package.json" ]; then
         sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/plugin.json"
         rm "$INTEGRATION_DIR/plugin.json.bak"
     fi
+    # paperclip declares its version in the TypeScript manifest the host reads, so the plugin list
+    # showed 0.2.0 long after 0.3.0 shipped. Keep it in lockstep with package.json.
+    if [ "$INTEGRATION" = "paperclip" ]; then
+        print_info "Updating version in $INTEGRATION_DIR/src/manifest.ts"
+        sed -i.bak "s/^  version: \".*\",/  version: \"$VERSION\",/" "$INTEGRATION_DIR/src/manifest.ts"
+        rm "$INTEGRATION_DIR/src/manifest.ts.bak"
+    fi
 elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/.claude-plugin/plugin.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/.claude-plugin/plugin.json"

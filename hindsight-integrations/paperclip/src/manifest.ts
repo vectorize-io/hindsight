@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "paperclip-plugin-hindsight",
   apiVersion: 1,
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "Hindsight Memory",
   author: "Vectorize <support@vectorize.io>",
   description:

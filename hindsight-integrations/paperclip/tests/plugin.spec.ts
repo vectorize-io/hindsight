@@ -7,6 +7,7 @@
  * Hindsight API calls are intercepted via global fetch mocking.
  */
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk";
 import manifest from "../src/manifest.js";
@@ -839,6 +840,13 @@ describe("enabledAgentIds", () => {
 // Hindsight Cloud API key — secret reference
 // ---------------------------------------------------------------------------
 
+describe("manifest version", () => {
+  it("matches package.json, so the host shows the version that is installed", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(manifest.version).toBe(pkg.version);
+  });
+});
+
 describe("hindsightApiKeyRef", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -848,10 +856,7 @@ describe("hindsightApiKeyRef", () => {
   it("is declared as a secret-ref field that admits the picker's reference object", () => {
     const field = (
       manifest.instanceConfigSchema as {
-        properties: Record<
-          string,
-          { format?: string; oneOf?: Array<Record<string, unknown>> }
-        >;
+        properties: Record<string, { format?: string; oneOf?: Array<Record<string, unknown>> }>;
       }
     ).properties.hindsightApiKeyRef;
 
@@ -863,8 +868,7 @@ describe("hindsightApiKeyRef", () => {
     // its own picker submits: "Configuration does not match the plugin's
     // instanceConfigSchema". The schema must admit the reference object too.
     const objectBranch = field?.oneOf?.find((branch) => branch.type === "object") as
-      | { required?: string[]; properties?: Record<string, unknown> }
-      | undefined;
+      { required?: string[]; properties?: Record<string, unknown> } | undefined;
     expect(objectBranch).toBeDefined();
     expect(objectBranch?.required).toEqual(["type", "secretId"]);
     expect(field?.oneOf?.some((branch) => branch.type === "string")).toBe(true);
@@ -876,9 +880,7 @@ describe("hindsightApiKeyRef", () => {
 
     const secretRef = { type: "secret_ref" as const, secretId: "sec-1" };
     const harness = buildHarness({ ...DEFAULT_CONFIG, hindsightApiKeyRef: secretRef });
-    const resolve = vi
-      .spyOn(harness.ctx.secrets, "resolve")
-      .mockResolvedValue("hs-cloud-key");
+    const resolve = vi.spyOn(harness.ctx.secrets, "resolve").mockResolvedValue("hs-cloud-key");
     await setupPlugin(harness);
     const issue = await seedIssue(harness, { companyId: "co-1", title: "Ship it" });
 

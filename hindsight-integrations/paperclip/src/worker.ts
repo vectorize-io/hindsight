@@ -18,11 +18,7 @@
  */
 
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type {
-  EnvSecretRefBinding,
-  PluginContext,
-  ToolRunContext,
-} from "@paperclipai/plugin-sdk";
+import type { EnvSecretRefBinding, PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { HindsightClient, formatMemories } from "./client.js";
 import { deriveBankId, extractUserFromIssue } from "./bank.js";
 
