@@ -32,7 +32,13 @@ hermes plugins install hindsight
 hermes memory setup           # select "hindsight"
 ```
 
-Dependencies in `pyproject.toml` are installed into the Hermes venv automatically and survive `hermes update`.
+`plugins install` asks for confirmation before enabling the plugin. Pass `--enable` (or
+`--no-enable`) to skip the prompt, which is what you want in a script or an unattended run.
+
+Dependencies in `pyproject.toml` are installed into the Hermes venv and survive `hermes update`.
+Hermes asks before preparing them: an update that finds new plugin dependencies prints
+`<plugin> declares Python dependencies` and waits for a yes. An unattended `hermes update` will
+sit at that prompt rather than finish.
 
 `hermes plugins enable` is *not* what activates a memory provider — Hermes treats providers as
 `kind: exclusive` and its plugin-enable gate deliberately skips them. A provider is activated by
@@ -101,12 +107,19 @@ For a version you choose and freeze, install with an explicit commit:
 
 ```bash
 hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes \
-  --force --ref <40-character-commit-sha>
+  --force --ref 3dab15dec8df5823022499cafdaae2352b21de4b
 ```
 
-`--ref` takes a full commit SHA and **rejects tag names**, so take the SHA from the release notes
-of the [release](https://github.com/vectorize-io/hindsight/releases) you want rather than typing
-`v1.0.1`. A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately
+Substitute the SHA you want. Do not wrap it in angle brackets: `<` and `>` are redirection
+operators in most shells, and the command will fail to parse. If you copy the two lines above,
+keep the trailing `\` at the end of the first line or join them into one line, since a `\`
+followed by anything other than a newline is a shell parse error.
+
+`--ref` takes a full 40-character commit SHA and **rejects tag names**, so take the SHA from the
+release notes of the [release](https://github.com/vectorize-io/hindsight/releases) you want
+rather than typing `v1.1.0`. The copy button next to a commit on
+[the plugin's history](https://github.com/vectorize-io/hindsight/commits/main/hindsight-integrations/hermes)
+gives you the full SHA; the abbreviated one shown on screen is too short. A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately
 refuses to move it — install again with a new `--ref` when you want a different version.
 
 ### Track the latest development code
