@@ -668,7 +668,7 @@ from .response_models import (
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.attachment_content import (
-    Content,
+    ContentBlockItem,
     LoadedAttachment,
     occurrences_by_chunk,
     render_chunk_placeholders,
@@ -13087,7 +13087,7 @@ class MemoryEngine(MemoryEngineInterface):
     async def extract_dry_run(
         self,
         bank_id: str,
-        content: Content | str,
+        content: str | list[ContentBlockItem],
         *,
         context: str = "",
         event_date: "datetime | None" = None,

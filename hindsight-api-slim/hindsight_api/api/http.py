@@ -9821,7 +9821,7 @@ def _register_routes(app: FastAPI):
             revisited = {
                 item.document_id
                 for item in request.items
-                if item.document_id and isinstance(raw_c := item.content.root, str) and contains_placeholder_like(raw_c)
+                if item.document_id and isinstance(item.content, str) and contains_placeholder_like(item.content)
             }
             if revisited:
                 existing = await app.state.memory.attachments_for_documents(bank_id, sorted(revisited), request_context)
@@ -10034,13 +10034,12 @@ def _register_routes(app: FastAPI):
                 # Summarize the block form structurally: the raw content may be a
                 # list whose image blocks hold megabytes of base64, and this string
                 # goes into a log line and an error body.
-                raw_c = item.content.root
-                if isinstance(raw_c, str):
-                    raw_preview = raw_c
+                if isinstance(item.content, str):
+                    raw_preview = item.content
                 else:
                     raw_preview = " ".join(
                         block.text if isinstance(block, TextContentBlock) else f"<{block.source.media_type}>"
-                        for block in raw_c
+                        for block in item.content
                     )
                 content_preview = raw_preview[:100] + "..." if len(raw_preview) > 100 else raw_preview
                 input_summary.append(

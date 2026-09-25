@@ -34,7 +34,10 @@ from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, RootModel, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
+
+# typing.TypeAliasType is 3.12+; the backport ships with pydantic, which needs it.
+from typing_extensions import TypeAliasType
 
 # MIME syntax is the only local format restriction. Provider capabilities evolve
 # faster than an allowlist here could, so unsupported media is left for the
@@ -114,26 +117,42 @@ class FileContentBlock(BaseModel):
 ContentBlockItem = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock, Field(discriminator="type")]
 
 
-class Content(RootModel[str | list[ContentBlockItem]]):
-    """The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."""
-
-    @field_validator("root")
-    @classmethod
-    def validate_content(cls, v: str | list[ContentBlockItem]) -> str | list[ContentBlockItem]:
-        if isinstance(v, str):
-            if not v.strip():
-                raise ValueError("content cannot be empty")
-            return v
-
-        if not v:
-            raise ValueError("content cannot be empty")
-        # Match the string form: a block list with only blank text still carries
-        # no content, while an attachment-only list is a valid multimodal input.
-        if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
-            block.text.strip() for block in v if isinstance(block, TextContentBlock)
-        ):
+def _require_content(v: str | list[ContentBlockItem]) -> str | list[ContentBlockItem]:
+    if isinstance(v, str):
+        if not v.strip():
             raise ValueError("content cannot be empty")
         return v
+
+    if not v:
+        raise ValueError("content cannot be empty")
+    # Match the string form: a block list with only blank text still carries
+    # no content, while an attachment-only list is a valid multimodal input.
+    if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
+        block.text.strip() for block in v if isinstance(block, TextContentBlock)
+    ):
+        raise ValueError("content cannot be empty")
+    return v
+
+
+#: The raw content to retain or extract from: a plain string or an ordered list of
+#: content blocks. A named alias rather than an inline union so retain and dry-run
+#: share one ``Content`` schema (inline, the client generators minted ``Content1``
+#: for the second use). It was first a ``RootModel``, which gave the same schema but
+#: turned ``MemoryItem.content`` into a wrapper object — breaking every caller that
+#: reads it as the string or list it has always been. The alias keeps the value raw.
+Content = TypeAliasType(
+    "Content",
+    Annotated[
+        str | list[ContentBlockItem],
+        AfterValidator(_require_content),
+        Field(
+            title="Content",
+            description=(
+                "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
+            ),
+        ),
+    ],
+)
 
 
 class ContentValidationError(ValueError):
@@ -521,7 +540,7 @@ def select_occurrences(
 
 
 def validate_and_canonicalize_content(
-    content: Content | str | Sequence[ContentBlockItem],
+    content: str | Sequence[ContentBlockItem],
     max_attachment_count: int,
     max_attachment_size_bytes: int,
     max_attachment_size_mb: int,
@@ -533,11 +552,9 @@ def validate_and_canonicalize_content(
 
     Raises ContentValidationError if attachment limits or base64 decoding fail.
     """
-    raw_content = content.root if isinstance(content, Content) else content
-
-    if isinstance(raw_content, str):
+    if isinstance(content, str):
         return CanonicalContent(
-            text=neutralize_placeholders(raw_content, allowed_attachment_ids),
+            text=neutralize_placeholders(content, allowed_attachment_ids),
             attachments=(),
             occurrences=(),
         )
@@ -546,7 +563,7 @@ def validate_and_canonicalize_content(
     attachment_count = 0
     attachment_limit_path = attachment_limit_path or path_prefix
 
-    for block_index, block in enumerate(raw_content):
+    for block_index, block in enumerate(content):
         if isinstance(block, TextContentBlock):
             blocks.append(RetainText(block.text))
             continue
