@@ -460,10 +460,15 @@ class XaiOAuthLLM(LLMInterface):
         client = self._client
         self._inflight[client] = self._inflight.get(client, 0) + 1
         try:
-            async with client.get().post(f"{self.base_url}/chat/completions", json=body, headers=headers) as response:
-                status_code = response.status
-                response_headers = response.headers
-                body_text = await response.text(errors="replace")
+            # Wall-clock cap: the session's sock_read restarts on every byte, so an upstream
+            # trickling keep-alive whitespace never trips it and the call hangs (#4763).
+            async with asyncio.timeout(self.timeout):
+                async with client.get().post(
+                    f"{self.base_url}/chat/completions", json=body, headers=headers
+                ) as response:
+                    status_code = response.status
+                    response_headers = response.headers
+                    body_text = await response.text(errors="replace")
         finally:
             self._release_client(client)
 
@@ -817,7 +822,7 @@ class XaiOAuthLLM(LLMInterface):
             # retry while an identical failure one hop later got ten. The
             # states a retry cannot fix raise XaiOAuthLoginRequiredError, which
             # is deliberately absent here and stays fatal.
-            except (_UpstreamStatusError, aiohttp.ClientError, XaiOAuthRefreshError) as e:
+            except (_UpstreamStatusError, aiohttp.ClientError, XaiOAuthRefreshError, TimeoutError) as e:
                 last_exception = e
                 retryable = e.retryable if isinstance(e, _UpstreamStatusError) else True
                 if retryable and attempt < max_retries:
@@ -927,7 +932,7 @@ class XaiOAuthLLM(LLMInterface):
                     thoughts_tokens=counts.thoughts_tokens,
                 )
 
-            except (_UpstreamStatusError, aiohttp.ClientError, XaiOAuthRefreshError) as e:
+            except (_UpstreamStatusError, aiohttp.ClientError, XaiOAuthRefreshError, TimeoutError) as e:
                 last_exception = e
                 retryable = e.retryable if isinstance(e, _UpstreamStatusError) else True
                 if retryable and attempt < max_retries:

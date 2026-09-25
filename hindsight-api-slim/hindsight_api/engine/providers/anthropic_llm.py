@@ -24,7 +24,7 @@ from hindsight_api.engine.llm_interface import (
     LLMToolChoiceMode,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -359,7 +359,12 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
+                    # on every byte, so an upstream trickling keep-alive whitespace never trips it
+                    # and the call pins its worker slot forever (#4763).
+                    response = await asyncio.wait_for(
+                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                    )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_anthropic_response(response))
@@ -474,7 +479,7 @@ class AnthropicLLM(LLMInterface):
                     logger.error(f"Anthropic returned invalid JSON after {max_retries + 1} attempts")
                     raise
 
-            except (APIConnectionError, RateLimitError, APIStatusError) as e:
+            except (APIConnectionError, RateLimitError, APIStatusError, TimeoutError) as e:
                 # Fast fail on 401/403
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     logger.error(f"Anthropic auth error (HTTP {e.status_code}), not retrying: {str(e)}")
@@ -486,7 +491,7 @@ class AnthropicLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     # Check if it's a rate limit or server error
-                    should_retry = isinstance(e, (APIConnectionError, RateLimitError)) or (
+                    should_retry = isinstance(e, (APIConnectionError, RateLimitError, TimeoutError)) or (
                         isinstance(e, APIStatusError) and e.status_code >= 500
                     )
 
@@ -496,8 +501,7 @@ class AnthropicLLM(LLMInterface):
                         await asyncio.sleep(backoff + jitter)
                         continue
 
-                detail = f" [{describe_transport_error(e)}]" if isinstance(e, APIConnectionError) else ""
-                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {str(e)}{detail}")
+                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {describe_llm_error(e)}")
                 raise
 
             except Exception as e:
@@ -642,7 +646,12 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
+                    # on every byte, so an upstream trickling keep-alive whitespace never trips it
+                    # and the call pins its worker slot forever (#4763).
+                    response = await asyncio.wait_for(
+                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                    )
                 stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls
@@ -707,16 +716,16 @@ class AnthropicLLM(LLMInterface):
                     output_tokens=output_tokens,
                 )
 
-            except (APIConnectionError, APIStatusError) as e:
+            except (APIConnectionError, APIStatusError, TimeoutError) as e:
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     raise
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
-                if isinstance(e, APIConnectionError):
+                if isinstance(e, (APIConnectionError, TimeoutError)):
                     logger.warning(
-                        f"APIConnectionError in tool call ({self.provider}/{self.model}, scope={scope}, "
-                        f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
+                        f"Connection error in tool call ({self.provider}/{self.model}, scope={scope}, "
+                        f"attempt {attempt + 1}/{max_retries + 1}): {describe_llm_error(e)}"
                     )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))

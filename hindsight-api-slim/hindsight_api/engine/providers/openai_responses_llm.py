@@ -52,7 +52,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 
@@ -369,7 +369,10 @@ class OpenAIResponsesLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.responses.create(**params)
+                    # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
+                    # on every byte, so an upstream trickling keep-alive whitespace never trips it
+                    # and the call pins its worker slot forever (#4763).
+                    response = await asyncio.wait_for(self._client.responses.create(**params), timeout=self.timeout)
                 usage = self._extract_usage(response)
                 stash_response_usage(
                     LLMResponseUsage(
@@ -393,14 +396,14 @@ class OpenAIResponsesLLM(LLMInterface):
                     continue
                 raise
 
-            except APIConnectionError as e:
+            except (APIConnectionError, TimeoutError) as e:
                 last_exception = e
                 status_code = getattr(e, "status_code", None) or getattr(
                     getattr(e, "response", None), "status_code", None
                 )
                 logger.warning(
-                    f"APIConnectionError ({self.provider}/{self.model}, scope={scope}, HTTP {status_code}, "
-                    f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
+                    f"Connection error ({self.provider}/{self.model}, scope={scope}, HTTP {status_code}, "
+                    f"attempt {attempt + 1}/{max_retries + 1}): {describe_llm_error(e)}"
                 )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
