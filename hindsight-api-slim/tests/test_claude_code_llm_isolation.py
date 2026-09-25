@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -193,3 +192,7 @@ def test_setup_token_is_passed_to_cli_as_oauth_token():
 
     without = ClaudeCodeLLM(provider="claude-code", api_key="", base_url="", model="m")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in without._env
+    # A rejected token must not send the operator to `claude auth login`, which the token bypasses.
+    assert "claude setup-token" in with_token._auth_hint
+    assert "claude auth login" not in with_token._auth_hint
+    assert "claude auth login" in without._auth_hint
