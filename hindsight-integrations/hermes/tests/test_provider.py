@@ -4,7 +4,7 @@ sends to Hindsight (a recording fake client stands in for the real SDK)."""
 import json
 
 import hindsight_hermes as plugin
-from conftest import FakeClient
+from conftest import FakeClient, FakeResult
 
 
 def _retain_item(fake: FakeClient, index: int = 0) -> dict:
@@ -61,6 +61,51 @@ def test_recall_tool_queries_the_bank_and_formats_results(provider):
     assert fake.recalls[0]["budget"] == "high"
     assert fake.recalls[0]["types"] == ["observation"]  # observation-only default
     assert result["result"] == "1. fact one\n2. fact two"
+    instance.shutdown()
+
+
+def _dated_results() -> list[FakeResult]:
+    """What a live recall looks like: mentioned_at on every result, occurred_start on some,
+    and an undated item so the rendering of "no date" is exercised too (#4697)."""
+    return [
+        FakeResult("DeepSeek V4.1 Flash is on Nous Portal", mentioned_at="2026-06-03T14:22:10.512000Z"),
+        FakeResult("Ada moved to Berlin", mentioned_at="2026-09-22T09:00:00Z", occurred_start="2026-08-15T00:00:00Z"),
+        FakeResult("Ada likes tea", occurred_start="2026-01-02T00:00:00Z"),
+        FakeResult("Ada owns a cat"),
+    ]
+
+
+def test_recall_timestamp_prefix_dates_both_injection_sites(provider):
+    instance, _ = provider(
+        {"recall_sync": True, "recall_timestamp_prefix": True}, client=FakeClient(recall_texts=_dated_results())
+    )
+    # Auto-recall block.
+    block = instance.prefetch("what do you know?")
+    assert "- [2026-06-03] DeepSeek V4.1 Flash is on Nous Portal" in block
+    # mentioned_at wins over occurred_start when both are present: it is the anchor every
+    # result carries, and preferring the sparse field would drop the prefix on most memories.
+    assert "- [2026-09-22] Ada moved to Berlin" in block
+    assert "- [2026-01-02] Ada likes tea" in block
+    assert "- Ada owns a cat" in block
+    assert "[] " not in block
+    # hindsight_recall tool — the same rendering.
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "Ada?"}))
+    assert result["result"].splitlines() == [
+        "1. [2026-06-03] DeepSeek V4.1 Flash is on Nous Portal",
+        "2. [2026-09-22] Ada moved to Berlin",
+        "3. [2026-01-02] Ada likes tea",
+        "4. Ada owns a cat",
+    ]
+    instance.shutdown()
+
+
+def test_recall_timestamp_prefix_is_off_by_default(provider):
+    instance, _ = provider({"recall_sync": True}, client=FakeClient(recall_texts=_dated_results()))
+    block = instance.prefetch("what do you know?")
+    assert "- DeepSeek V4.1 Flash is on Nous Portal" in block
+    assert "[2026-06-03]" not in block
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "Ada?"}))
+    assert result["result"].startswith("1. DeepSeek V4.1 Flash is on Nous Portal\n")
     instance.shutdown()
 
 

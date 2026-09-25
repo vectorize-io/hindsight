@@ -57,6 +57,7 @@ from .settings import (
     _PROVIDER_DEFAULT_MODELS,
     _VALID_BUDGETS,
     _daemon_llm_provider,
+    _memory_date_prefix,
     _normalize_observation_scopes,
     _normalize_retain_tags,
     _parse_int_setting,
@@ -679,6 +680,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "default": 800,
             },
             {"key": "recall_prompt_preamble", "description": "Custom preamble for recalled memories in context"},
+            {
+                "key": "recall_timestamp_prefix",
+                "description": "Prefix each recalled memory with its date as '[YYYY-MM-DD] ' (mentioned_at, else occurred_start) in both auto-recall and the hindsight_recall tool, so the model can tell a months-old memory from a fresh one and re-verify what may have changed",
+                "default": False,
+            },
             {"key": "timeout", "description": "API request timeout in seconds", "default": _DEFAULT_TIMEOUT},
             {
                 "key": "idle_timeout",
@@ -1091,6 +1097,10 @@ class HindsightMemoryProvider(MemoryProvider):
         else:
             self._recall_types = list([] if configured_types is None else configured_types) or ["observation"]
         self._recall_prompt_preamble = cfg.get("recall_prompt_preamble", "")
+        # Off by default: on a bank whose results all come from the same day the date is
+        # noise; on one spanning months it is what lets the model tell "already checked,
+        # unchanged" from "months old, verify first" (#4697).
+        self._recall_timestamp_prefix = bool(cfg.get("recall_timestamp_prefix", False))
         self._recall_indicator = bool(cfg.get("recall_indicator", True))
 
     def _start_embedded_daemon(self) -> None:
@@ -1210,6 +1220,13 @@ class HindsightMemoryProvider(MemoryProvider):
         )
         return resp.text
 
+    def _format_memory(self, result: Any) -> str:
+        """One recalled memory as the model reads it — the same rendering at both injection
+        sites (auto-recall block and the ``hindsight_recall`` tool), so a setting that shapes
+        it cannot apply to one and not the other."""
+        prefix = _memory_date_prefix(result) if self._recall_timestamp_prefix else ""
+        return f"{prefix}{result.text}"
+
     def _do_recall(self, query: str) -> tuple[str, int]:
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
         -> (text, memory count); the count is 0 for reflect (synthesis) and on error."""
@@ -1224,7 +1241,7 @@ class HindsightMemoryProvider(MemoryProvider):
             )
             results = self._recall(query)
             logger.debug("Recall: returned %d results", len(results))
-            return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
+            return "\n".join(f"- {self._format_memory(r)}" for r in results if r.text), len(results)
         except Exception as e:
             logger.debug("Hindsight recall failed: %s", e, exc_info=True)
             return "", 0
@@ -1476,7 +1493,10 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Tool hindsight_recall: bank=%s, query_len=%d, budget=%s", self._bank_id, len(query), self._budget)
         results = self._recall(query)
         logger.debug("Tool hindsight_recall: %d results", len(results))
-        return "\n".join(f"{i}. {r.text}" for i, r in enumerate(results, 1)) or "No relevant memories found."
+        return (
+            "\n".join(f"{i}. {self._format_memory(r)}" for i, r in enumerate(results, 1))
+            or "No relevant memories found."
+        )
 
     def _tool_reflect(self, args: dict) -> str:
         query = args["query"]

@@ -210,6 +210,7 @@ Config file: `~/.hermes/hindsight/config.json`
 | `recall_max_tokens` | `4096` | Maximum tokens for recall results |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
+| `recall_timestamp_prefix` | `false` | Prefix each recalled memory with its date, `[YYYY-MM-DD] `, in both the auto-recall block and the `hindsight_recall` tool. The date is the memory's `mentioned_at` (when the source was said or retained — set on every result), falling back to `occurred_start` (the event time, when the fact names one); a memory with neither is rendered undated. Lets a long-lived agent tell a months-old memory ("verify externally first") from a fresh one ("already checked, unchanged") instead of reading every recalled fact as an equally current assertion. |
 | `recall_tags` | — | Tags to filter when searching memories |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
