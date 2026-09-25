@@ -656,7 +656,49 @@ async def compute_semantic_links_ann(
     # sequential-scan every HNSW probe result against the array, destroying
     # performance (67s for 8k seeds). Self-links are harmless (ON CONFLICT DO
     # NOTHING handles duplicates in memory_links).
-    #
+
+    candidates: list[tuple[str, str, float]] = []  # (from_id, to_id, similarity)
+    if getattr(conn, "backend_type", None) == "oracle":
+        # No temp tables, COPY or LATERAL-with-GUC tuning here: probe the vector
+        # index once per seed with an approximate top-k.
+        # ponytail: one round trip per seed; batch seeds through JSON_TABLE if retain batches get large.
+        for uid, emb, ft in zip(unit_ids, embeddings, fact_types):
+            ft_rows = await conn.fetch(
+                f"""
+                SELECT id, 1 - VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE) AS similarity
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1 AND fact_type = $2 AND embedding IS NOT NULL
+                ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE)
+                FETCH APPROX FIRST {int(top_k)} ROWS ONLY
+                """,
+                bank_id,
+                ft,
+                embedding_to_pgvector(emb),
+            )
+            candidates.extend((uid, str(r["id"]), r["similarity"]) for r in ft_rows)
+    else:
+        rows = await _ann_rows_pg(conn, bank_id, unit_ids, embeddings, fact_types, top_k)
+        candidates = [(r["from_id"], r["to_id"], r["similarity"]) for r in rows]
+
+    for from_id, to_id, similarity in candidates:
+        sim = float(min(1.0, max(0.0, similarity)))
+        if sim >= threshold:
+            links.append((from_id, to_id, "semantic", sim, None))
+
+    _log(
+        log_buffer,
+        f"      [8.1] ANN search (Phase 1): {len(unit_ids)} units → {len(links)} links in {time_mod.time() - ann_start:.3f}s",
+    )
+
+    return links
+
+
+async def _ann_rows_pg(
+    conn, bank_id: str, unit_ids: list[str], embeddings: Sequence[EmbeddingLike], fact_types: list[str], top_k: int
+) -> list:
+    """PostgreSQL ANN probe: one LATERAL HNSW query per fact_type over a temp seed table."""
+    import time as time_mod
+
     # The entire CREATE TEMP TABLE → COPY → SELECT sequence MUST run inside a
     # single transaction. Callers may connect through pgBouncer in `transaction`
     # pool mode, in which case the backend is only pinned to the client for the
@@ -736,18 +778,7 @@ async def compute_semantic_links_ann(
             rows.extend(ft_rows)
     # Transaction commits here. _ann_seeds is dropped (ON COMMIT DROP).
     # Transaction-local ANN tuning reverts (SET LOCAL).
-
-    for row in rows:
-        sim = float(min(1.0, max(0.0, row["similarity"])))
-        if sim >= threshold:
-            links.append((row["from_id"], row["to_id"], "semantic", sim, None))
-
-    _log(
-        log_buffer,
-        f"      [8.1] ANN search (Phase 1): {len(unit_ids)} units → {len(links)} links in {time_mod.time() - ann_start:.3f}s",
-    )
-
-    return links
+    return rows
 
 
 def compute_semantic_links_within_batch(

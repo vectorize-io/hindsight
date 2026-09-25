@@ -20,6 +20,7 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.retain.types import embedding_to_pgvector
 from tests import consolidation_actions
 from tests.test_bank_config_atomicity import (
     assert_one_sided_budget_update_sees_stored_state,
@@ -1543,5 +1544,102 @@ class TestEdgeCases:
             docs_after = await oracle_memory.list_documents(bank_id=bank_id, request_context=request_context)
             items_after = docs_after.get("items", docs_after.get("documents", []))
             assert len(items_after) >= 2
+        finally:
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+
+# ===================================================================
+# Retain SQL that used to be PostgreSQL-only
+# ===================================================================
+
+
+class TestOracleRetainSql:
+    """Seeds rows through the backend ops, so no LLM is involved (#4629, #4630, #4631)."""
+
+    @staticmethod
+    async def _seed(conn, backend, bank_id: str, dim: int) -> tuple[str, list[str]]:
+        doc_id, chunk_id = "doc-1", f"{bank_id}_doc-1_0"
+        await conn.execute(
+            "INSERT INTO documents (id, bank_id, original_text, content_hash) VALUES ($1, $2, 'x', 'h')",
+            doc_id,
+            bank_id,
+        )
+        await backend.ops.bulk_upsert_chunks(conn, "chunks", [chunk_id], [doc_id], [bank_id], ["x"], [0], ["h"])
+        near = [1.0] + [0.0] * (dim - 1)
+        also_near = [0.99, 0.01] + [0.0] * (dim - 2)
+        n = 2
+        unit_ids = await backend.ops.insert_facts_batch(
+            conn,
+            bank_id,
+            # The second text is past VARCHAR2's 4000 bytes, behind a short first row:
+            # executemany typed the column from row one and failed with ORA-01461 (#4630).
+            fact_texts=["short fact", "long fact " + "é" * 3000],
+            embeddings=[embedding_to_pgvector(near), embedding_to_pgvector(also_near)],
+            event_dates=[None] * n,
+            occurred_starts=[None] * n,
+            occurred_ends=[None] * n,
+            mentioned_ats=[None] * n,
+            contexts=[""] * n,
+            fact_types=["world"] * n,
+            metadata_jsons=["{}"] * n,
+            chunk_ids=[chunk_id] * n,
+            document_ids=[doc_id] * n,
+            tags_list=["[]"] * n,
+            observation_scopes_list=[None] * n,
+            text_signals_list=[None] * n,
+            attachment_ids_list=[None] * n,
+        )
+        return chunk_id, unit_ids
+
+    @pytest.mark.asyncio
+    async def test_semantic_ann_links_delete_chunks(self, oracle_memory: MemoryEngine, request_context: RequestContext):
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
+        from hindsight_api.engine.retain.link_utils import compute_semantic_links_ann
+
+        bank_id = _bank_id("retainsql")
+        dim = oracle_memory.embeddings.dimension
+        try:
+            await oracle_memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+            backend = await oracle_memory._get_backend()
+            async with backend.transaction() as conn:
+                chunk_id, unit_ids = await self._seed(conn, backend, bank_id, dim)
+
+            # Raw SQL throughout: this checks the Oracle SQL paths themselves -- the stored
+            # CLOB length, and that the chunks row and the link rows went with the delete,
+            # which no engine read method exposes.
+            async with backend.acquire() as conn:
+                long_len = await conn.fetchval(
+                    "SELECT DBMS_LOB.GETLENGTH(text) FROM memory_units WHERE id = $1", unit_ids[1]
+                )
+                assert long_len == len("long fact ") + 3000
+
+                # #4629: the ANN probe finds the stored neighbour instead of failing on PG-only SQL.
+                links = await compute_semantic_links_ann(
+                    conn,
+                    bank_id,
+                    ["seed"],
+                    [[1.0] + [0.0] * (dim - 1)],
+                    fact_types=["world"],
+                    top_k=5,
+                    threshold=0.9,
+                )
+                assert {lnk[1] for lnk in links} == {str(u) for u in unit_ids}
+                assert all(lnk[0] == "seed" and lnk[2] == "semantic" for lnk in links)
+
+            async with backend.transaction() as conn:
+                await conn.execute(
+                    "INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, bank_id) "
+                    "VALUES ($1, $2, 'semantic', 0.9, $3)",
+                    unit_ids[0],
+                    unit_ids[1],
+                    bank_id,
+                )
+                # #4631: re-retaining a document deletes its changed chunks.
+                await delete_chunks_by_ids(conn, [chunk_id], bank_id, ops=backend.ops)
+
+            async with backend.acquire() as conn:
+                for table in ("chunks", "memory_units", "memory_links"):
+                    count = await conn.fetchval(f"SELECT COUNT(*) FROM {table} WHERE bank_id = $1", bank_id)
+                    assert count == 0, f"{table} still has rows for the deleted chunk"
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
