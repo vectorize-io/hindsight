@@ -130,6 +130,17 @@ def _convert_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
     return tuple(_convert_arg(a) for a in args)
 
 
+def _needs_clob_bind(val: Any) -> bool:
+    """JSON text, or any string past VARCHAR2's 4000 bytes: bind as CLOB.
+
+    The thin driver otherwise binds a long string as LONG, which Oracle refuses for
+    anything but a LONG column (ORA-01461) -- notably a VECTOR embedding literal.
+    """
+    if not isinstance(val, str) or not val:
+        return False
+    return val[0] in ("{", "[") or (len(val) > 1000 and len(val.encode()) > 4000)
+
+
 def _convert_args_list(args_list: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     """Convert a list of tuples for executemany."""
     return [_convert_args(row) for row in args_list]
@@ -681,6 +692,20 @@ def _oracle_connect_params(dsn: str) -> dict[str, Any]:
     return params
 
 
+async def _disable_parallel_dml(conn: Any, _requested_tag: str | None) -> None:
+    """Run once per new pooled session.
+
+    Autonomous Database's medium/high services enable parallel DML by default, and a
+    transaction that reads a table after a parallel DML on it fails with ORA-12838 --
+    retain does exactly that. Plain Oracle has it off already, so this is a no-op there.
+    """
+    cursor = conn.cursor()
+    try:
+        await cursor.execute("ALTER SESSION DISABLE PARALLEL DML")
+    finally:
+        cursor.close()
+
+
 def _import_oracledb():
     """Lazy import oracledb to avoid hard dependency."""
     try:
@@ -791,7 +816,7 @@ class OracleConnection(DatabaseConnection):
         oracledb = _import_oracledb()
         sizes: dict[str, Any] = {}
         for key, val in params.items():
-            if isinstance(val, str) and val and val[0] in ("{", "[") and f":{key}" in query:
+            if _needs_clob_bind(val) and f":{key}" in query:
                 sizes[key] = oracledb.DB_TYPE_CLOB
             # None params in COALESCE/GREATEST/LEAST with timestamp columns need
             # explicit timestamp type to avoid ORA-00932 (VARCHAR2 NULL vs
@@ -1072,6 +1097,7 @@ class OracleConnection(DatabaseConnection):
                 # Row-by-row with individual dup suppression
                 for row in converted:
                     params = {str(i + 1): v for i, v in enumerate(row)}
+                    self._apply_clob_input_sizes(cursor, query, params)
                     try:
                         await cursor.execute(query, params)
                     except Exception as e:
@@ -1080,6 +1106,11 @@ class OracleConnection(DatabaseConnection):
             else:
                 # Convert tuples to dicts for named binding (:1, :2, ...)
                 converted_dicts = [{str(i + 1): v for i, v in enumerate(row)} for row in converted]
+                # The driver types each column from the first row, so a column holding
+                # any CLOB-sized value must be declared CLOB for the whole batch.
+                clob_keys = {k for row in converted_dicts for k, v in row.items() if _needs_clob_bind(v)}
+                if clob_keys:
+                    cursor.setinputsizes(**dict.fromkeys(clob_keys, _import_oracledb().DB_TYPE_CLOB))
                 try:
                     await cursor.executemany(query, converted_dicts)
                 except Exception as e:
@@ -1333,7 +1364,7 @@ class OracleBackend(DatabaseBackend):
         pool_kwargs: dict[str, Any] = {"min": min_size, "max": max_size, "stmtcachesize": statement_cache_size}
         pool_kwargs.update(_oracle_connect_params(dsn))
 
-        self._pool = oracledb.create_pool_async(**pool_kwargs)
+        self._pool = oracledb.create_pool_async(**pool_kwargs, session_callback=_disable_parallel_dml)
 
         logger.info(f"Oracle pool created (min={min_size}, max={max_size})")
 

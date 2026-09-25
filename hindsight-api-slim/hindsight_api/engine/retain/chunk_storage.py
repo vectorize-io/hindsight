@@ -173,6 +173,26 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str, ops=Non
         for _cid in chunk_ids:
             await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}))
 
+    if getattr(conn, "backend_type", None) == "oracle":
+        # Oracle has no ctid, DELETE ... USING or FOR UPDATE inside a CTE, so the
+        # ordered-lock form below cannot be ported as is: delete plainly, like
+        # OracleOps.delete_unit_links (see prune_stale_cooccurrences for that asymmetry).
+        units = f"SELECT id FROM {fq_table('memory_units')} WHERE chunk_id = ANY($1::text[]) AND bank_id = $2"
+        await conn.execute(
+            f"""
+            DELETE FROM {fq_table("memory_links")}
+            WHERE bank_id = $2 AND (from_unit_id IN ({units}) OR to_unit_id IN ({units}))
+            """,
+            chunk_ids,
+            bank_id,
+        )
+        await conn.execute(
+            f"DELETE FROM {fq_table('chunks')} WHERE chunk_id = ANY($1::text[]) AND bank_id = $2",
+            chunk_ids,
+            bank_id,
+        )
+        return invalidated
+
     # PostgreSQL's FK cascade deletes child memory_links in executor-chosen
     # order. Concurrent chunk deletes for the same bank can then lock overlapping
     # memory_links in opposite orders and deadlock. Delete links explicitly in a
