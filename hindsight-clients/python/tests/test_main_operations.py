@@ -707,9 +707,11 @@ class TestDeleteBank:
         assert response is not None
         assert response.success is True
 
-        # Verify bank data is deleted - memories should be gone
-        memories = client.list_memories(bank_id=bank_id)
-        assert memories.total == 0
+        # The bank is gone: reading it 404s, the same as a bank that never existed
+        from hindsight_client_api.exceptions import NotFoundException
+
+        with pytest.raises(NotFoundException):
+            client.list_memories(bank_id=bank_id)
 
 
 class TestMission:

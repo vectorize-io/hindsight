@@ -171,7 +171,7 @@ async def test_bank_creation_alone_creates_no_vector_indexes(memory, request_con
     """
     bank_id = f"test_hnsw_empty_{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         indexes = await _get_bank_vector_indexes(memory._pool, bank_id)
         assert indexes == [], f"bank creation must not create vector indexes, got: {indexes}"

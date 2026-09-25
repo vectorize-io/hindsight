@@ -1,6 +1,3 @@
----
-sidebar_position: 4
----
 
 # CLI Reference
 
@@ -17,16 +14,16 @@ curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 Configure the API URL:
 
 ```bash
-# Interactive configuration
-hindsight configure
-
-# Or set directly
+# Set directly
 hindsight configure --api-url http://localhost:8888
 
 # With API key for authentication
 hindsight configure --api-url http://localhost:8888 --api-key your-api-key
+```
 
-# Or use environment variables (highest priority)
+You can also run `hindsight configure` with no flags to be prompted interactively, or use environment variables (highest priority):
+
+```bash
 export HINDSIGHT_API_URL=http://localhost:8888
 export HINDSIGHT_API_KEY=your-api-key
 ```
@@ -81,19 +78,19 @@ environment.
 Store a single memory:
 
 ```bash
-hindsight memory retain <bank_id> "Alice works at Google as a software engineer"
+hindsight memory retain my-cli-bank "Alice works at Google as a software engineer"
 
 # With context
-hindsight memory retain <bank_id> "Bob loves hiking" --context "hobby discussion"
+hindsight memory retain my-cli-bank "Bob loves hiking" --context "hobby discussion"
 
 # Queue for background processing
-hindsight memory retain <bank_id> "Meeting notes" --async
+hindsight memory retain my-cli-bank "Meeting notes" --async
 
 # With an event date (ISO 8601 datetime or date)
-hindsight memory retain <bank_id> "Project launched" --timestamp 2024-01-15
+hindsight memory retain my-cli-bank "Project launched" --timestamp 2024-01-15
 
 # Store without a timestamp (overrides the default of "now")
-hindsight memory retain <bank_id> "Background fact" --timestamp unset
+hindsight memory retain my-cli-bank "Background fact" --timestamp unset
 ```
 
 ### Retain Files
@@ -102,19 +99,19 @@ Bulk import from files:
 
 ```bash
 # Single file
-hindsight memory retain-files <bank_id> notes.txt
+hindsight memory retain-files my-cli-bank notes.txt
 
 # Directory (recursive by default)
-hindsight memory retain-files <bank_id> ./documents/
+hindsight memory retain-files my-cli-bank ./documents/
 
 # With context
-hindsight memory retain-files <bank_id> meeting-notes.txt --context "team meeting"
+hindsight memory retain-files my-cli-bank meeting-notes.txt --context "team meeting"
 
 # With a named retain strategy (see retain_strategies in bank config)
-hindsight memory retain-files <bank_id> ./documents/ --strategy conversations
+hindsight memory retain-files my-cli-bank ./documents/ --strategy conversations
 
 # Background processing
-hindsight memory retain-files <bank_id> ./data/ --async
+hindsight memory retain-files my-cli-bank ./data/ --async
 ```
 
 ### Recall (Search)
@@ -122,25 +119,25 @@ hindsight memory retain-files <bank_id> ./data/ --async
 Search memories using semantic similarity:
 
 ```bash
-hindsight memory recall <bank_id> "What does Alice do?"
+hindsight memory recall my-cli-bank "What does Alice do?"
 
 # With options
-hindsight memory recall <bank_id> "hiking recommendations" \
+hindsight memory recall my-cli-bank "hiking recommendations" \
   --budget high \
   --max-tokens 8192
 
 # Filter by fact type
-hindsight memory recall <bank_id> "query" --fact-type world,observation
+hindsight memory recall my-cli-bank "query" --fact-type world,observation
 
 # Filter by tags
-hindsight memory recall <bank_id> "query" --tags work,project \
+hindsight memory recall my-cli-bank "query" --tags work,project \
   --tags-match all
 
 # Pin results to a specific time
-hindsight memory recall <bank_id> "query" --query-timestamp "2026-01-15T00:00:00Z"
+hindsight memory recall my-cli-bank "query" --query-timestamp "2026-01-15T00:00:00Z"
 
 # Show trace information
-hindsight memory recall <bank_id> "query" --trace
+hindsight memory recall my-cli-bank "query" --trace
 ```
 
 ### Reflect (Generate Response)
@@ -148,16 +145,16 @@ hindsight memory recall <bank_id> "query" --trace
 Generate a response using memories and bank disposition:
 
 ```bash
-hindsight memory reflect <bank_id> "What do you know about Alice?"
+hindsight memory reflect my-cli-bank "What do you know about Alice?"
 
 # With additional context
-hindsight memory reflect <bank_id> "Should I learn Python?" --context "career advice"
+hindsight memory reflect my-cli-bank "Should I learn Python?" --context "career advice"
 
 # Higher budget for complex questions
-hindsight memory reflect <bank_id> "Summarize my week" --budget high
+hindsight memory reflect my-cli-bank "Summarize my week" --budget high
 
 # Filter by fact type
-hindsight memory reflect <bank_id> "query" \
+hindsight memory reflect my-cli-bank "query" \
   --fact-types world,experience \
   --exclude-mental-models
 ```
@@ -167,7 +164,7 @@ hindsight memory reflect <bank_id> "query" \
 View the observation history for a specific memory unit:
 
 ```bash
-hindsight memory history <bank_id> <memory_id>
+hindsight memory history my-cli-bank "$MEMORY_ID"
 ```
 
 ### Clear Observations
@@ -175,10 +172,10 @@ hindsight memory history <bank_id> <memory_id>
 Remove all observations for a memory unit, keeping the core fact:
 
 ```bash
-hindsight memory clear-observations <bank_id> <memory_id>
+hindsight memory clear-observations my-cli-bank "$MEMORY_ID"
 
 # Skip confirmation prompt
-hindsight memory clear-observations <bank_id> <memory_id> -y
+hindsight memory clear-observations my-cli-bank "$MEMORY_ID" -y
 ```
 
 ## Bank Management
@@ -192,31 +189,31 @@ hindsight bank list
 ### View Disposition
 
 ```bash
-hindsight bank disposition <bank_id>
+hindsight bank disposition my-cli-bank
 ```
 
 ### Set Disposition
 
 ```bash
-hindsight bank set-disposition <bank_id> --skepticism 3 --literalism 4 --empathy 5
+hindsight bank set-disposition my-cli-bank --skepticism 3 --literalism 4 --empathy 5
 ```
 
 ### View Statistics
 
 ```bash
-hindsight bank stats <bank_id>
+hindsight bank stats my-cli-bank
 ```
 
 ### Set Bank Name
 
 ```bash
-hindsight bank name <bank_id> "My Assistant"
+hindsight bank name my-cli-bank "My Assistant"
 ```
 
 ### Set Mission
 
 ```bash
-hindsight bank mission <bank_id> "I am a helpful AI assistant interested in technology"
+hindsight bank mission my-cli-bank "I am a helpful AI assistant interested in technology"
 ```
 
 ### Clear Observations (Bank-wide)
@@ -224,10 +221,10 @@ hindsight bank mission <bank_id> "I am a helpful AI assistant interested in tech
 Remove all observations across the entire bank:
 
 ```bash
-hindsight bank clear-observations <bank_id>
+hindsight bank clear-observations my-cli-bank
 
 # Skip confirmation prompt
-hindsight bank clear-observations <bank_id> -y
+hindsight bank clear-observations my-cli-bank -y
 ```
 
 ### Recover Consolidation
@@ -235,33 +232,33 @@ hindsight bank clear-observations <bank_id> -y
 Recover from a failed or stuck consolidation:
 
 ```bash
-hindsight bank consolidation-recover <bank_id>
+hindsight bank consolidation-recover my-cli-bank
 ```
 
 ## Document Management
 
 ```bash
 # List documents
-hindsight document list <bank_id>
+hindsight document list my-cli-bank
 
 # Get document details
-hindsight document get <bank_id> <document_id>
+hindsight document get my-cli-bank "$DOCUMENT_ID"
 
-# Update document metadata
-hindsight document update <bank_id> <document_id> --context "updated context"
+# Replace a document's tags
+hindsight document update my-cli-bank "$DOCUMENT_ID" --tags project-x,meetings
 
 # Delete document and its memories
-hindsight document delete <bank_id> <document_id>
+hindsight document delete my-cli-bank "$DOCUMENT_ID"
 ```
 
 ## Entity Management
 
 ```bash
 # List entities
-hindsight entity list <bank_id>
+hindsight entity list my-cli-bank
 
 # Get entity details
-hindsight entity get <bank_id> <entity_id>
+hindsight entity get my-cli-bank "$ENTITY_ID"
 ```
 
 ## Operation Management
@@ -270,16 +267,16 @@ Track and manage async operations (retain-files, consolidation, etc.):
 
 ```bash
 # List operations
-hindsight operation list <bank_id>
+hindsight operation list my-cli-bank
 
 # Get operation status
-hindsight operation get <bank_id> <operation_id>
+hindsight operation get my-cli-bank "$OPERATION_ID"
 
 # Cancel a pending operation
-hindsight operation cancel <bank_id> <operation_id>
+hindsight operation cancel my-cli-bank "$OPERATION_ID"
 
 # Retry a failed operation
-hindsight operation retry <bank_id> <operation_id>
+hindsight operation retry my-cli-bank "$OPERATION_ID"
 ```
 
 ## Webhook Management
@@ -288,24 +285,24 @@ Configure event delivery hooks for bank activity:
 
 ```bash
 # List webhooks
-hindsight webhook list <bank_id>
+hindsight webhook list my-cli-bank
 
 # Create a webhook (defaults to consolidation.completed events)
-hindsight webhook create <bank_id> https://example.com/hook
+hindsight webhook create my-cli-bank https://example.com/hook
 
 # Create with specific events and signing secret
-hindsight webhook create <bank_id> https://example.com/hook \
+hindsight webhook create my-cli-bank https://example.com/hook \
   --event-types retain.completed,consolidation.completed \
   --secret my-hmac-secret
 
 # Update a webhook
-hindsight webhook update <bank_id> <webhook_id> --url https://new-url.com
-
-# Delete a webhook
-hindsight webhook delete <bank_id> <webhook_id>
+hindsight webhook update my-cli-bank "$WEBHOOK_ID" --url https://new-url.com
 
 # View delivery history
-hindsight webhook deliveries <bank_id> <webhook_id>
+hindsight webhook deliveries my-cli-bank "$WEBHOOK_ID"
+
+# Delete a webhook
+hindsight webhook delete my-cli-bank "$WEBHOOK_ID" -y
 ```
 
 ## Knowledge Base
@@ -314,78 +311,86 @@ Manage a bank's knowledge pages — living documents organized in a folder tree.
 
 ```bash
 # Show the folder/page tree (pages that have fallen behind are marked stale)
-hindsight knowledge-base tree <bank_id>
+hindsight knowledge-base tree my-cli-bank
+```
 
+```bash
 # Create a folder, optionally nested under another
-hindsight knowledge-base create-folder <bank_id> "Operations"
-hindsight knowledge-base create-folder <bank_id> "Runbooks" --parent-id <folder_id>
+hindsight knowledge-base create-folder my-cli-bank "Operations"
+```
 
+```bash
+hindsight knowledge-base create-folder my-cli-bank "Runbooks" --parent-id "$FOLDER_ID"
+```
+
+```bash
 # Create a page — content is generated in the background
-hindsight knowledge-base create-page <bank_id> \
+hindsight knowledge-base create-page my-cli-bank \
   "Deploying the API" \
   "How is the API deployed?" \
-  --parent-id <folder_id> \
+  --parent-id "$FOLDER_ID" \
   --tags ops,type:runbook
 
 # Build a page from raw facts instead of the observation-only default
-hindsight knowledge-base create-page <bank_id> "Recent Incidents" \
+hindsight knowledge-base create-page my-cli-bank "Recent Incidents" \
   "What incidents happened recently?" \
   --fact-types experience,world --mode full
-
-# Read a page as a markdown document
-hindsight knowledge-base get-page <bank_id> <page_id>
-
-# Hybrid search (full-text + vector) over whole pages
-hindsight knowledge-base search <bank_id> "how do we deploy" --limit 5
-
-# Rename, move, or reconfigure a node
-hindsight knowledge-base update <bank_id> <node_id> --name "New name"
-hindsight knowledge-base update <bank_id> <page_id> --source-query "New question?"
-
-# Export the whole knowledge base as a markdown bundle
-hindsight knowledge-base export <bank_id>
-
-# Delete a folder or page and everything under it
-hindsight knowledge-base delete <bank_id> <node_id> -y
 ```
 
-:::tip
+```bash
+# Read a page as a markdown document
+hindsight knowledge-base get-page my-cli-bank "$PAGE_ID"
+
+# Hybrid search (full-text + vector) over whole pages
+hindsight knowledge-base search my-cli-bank "how do we deploy" --limit 5
+
+# Rename, move, or reconfigure a node
+hindsight knowledge-base update my-cli-bank "$NODE_ID" --name "New name"
+hindsight knowledge-base update my-cli-bank "$PAGE_ID" --source-query "New question?"
+
+# Export the whole knowledge base as a markdown bundle
+hindsight knowledge-base export my-cli-bank
+
+# Delete a folder or page and everything under it
+hindsight knowledge-base delete my-cli-bank "$NODE_ID" -y
+```
+
+> **💡 Tip**
+>
 `hindsight fs mount --bank <bank_id>` mirrors the same knowledge base onto disk as
 real markdown files, kept current by a background refresh loop — handy when you'd
 rather use `grep`, `rg`, or your editor than the commands above.
-:::
-
 ## Audit Logs
 
 Inspect the audit trail for a bank:
 
 ```bash
 # List audit entries
-hindsight audit list <bank_id>
+hindsight audit list my-cli-bank
 
 # Filter by action and transport
-hindsight audit list <bank_id> --action recall --transport mcp
+hindsight audit list my-cli-bank --action recall --transport mcp
 
 # Filter by date range
-hindsight audit list <bank_id> \
+hindsight audit list my-cli-bank \
   --start-date "2026-04-01T00:00:00Z" \
   --end-date "2026-04-10T00:00:00Z"
 
 # Pagination
-hindsight audit list <bank_id> --limit 50 --offset 100
+hindsight audit list my-cli-bank --limit 50 --offset 100
 ```
 
 ## Output Formats
 
 ```bash
 # Pretty (default)
-hindsight memory recall <bank_id> "query"
+hindsight memory recall my-cli-bank "query"
 
 # JSON
-hindsight memory recall <bank_id> "query" -o json
+hindsight memory recall my-cli-bank "query" -o json
 
 # YAML
-hindsight memory recall <bank_id> "query" -o yaml
+hindsight memory recall my-cli-bank "query" -o yaml
 ```
 
 ## Global Options
@@ -394,6 +399,7 @@ hindsight memory recall <bank_id> "query" -o yaml
 |------|-------------|
 | `-v, --verbose` | Show detailed output including request/response |
 | `-o, --output <format>` | Output format: pretty, json, yaml |
+| `-p, --profile <name>` | Use a named profile (see [Named Profiles](#named-profiles)) |
 | `--help` | Show help |
 | `--version` | Show version |
 
@@ -412,10 +418,9 @@ This runs the Control Plane locally on port 9999 using the API URL from your con
 - **Query testing** — Interactive recall and reflect testing
 - **Operation history** — View ingestion and processing logs
 
-:::tip
+> **💡 Tip**
+>
 The UI command requires Node.js to be installed. It automatically downloads and runs the `@vectorize-io/hindsight-control-plane` package via npx.
-:::
-
 ## Interactive Explorer
 
 Launch the TUI explorer for visual navigation of your memory banks:
@@ -443,7 +448,7 @@ The explorer provides an interactive terminal interface to:
 | `/` | Search |
 | `q` | Quit |
 
-<!-- Screenshot placeholder: explore command TUI -->
+{/* Screenshot placeholder: explore command TUI */}
 
 ## Example Workflow
 
@@ -452,16 +457,16 @@ The explorer provides an interactive terminal interface to:
 hindsight configure --api-url http://localhost:8888
 
 # Store some memories
-hindsight memory retain demo "Alice works at Google"
-hindsight memory retain demo "Bob is a data scientist"
-hindsight memory retain demo "Alice and Bob are colleagues"
+hindsight memory retain cli-demo "Alice works at Google"
+hindsight memory retain cli-demo "Bob is a data scientist"
+hindsight memory retain cli-demo "Alice and Bob are colleagues"
 
 # Search memories
-hindsight memory recall demo "Who works with Alice?"
+hindsight memory recall cli-demo "Who works with Alice?"
 
 # Generate a response
-hindsight memory reflect demo "What do you know about the team?"
+hindsight memory reflect cli-demo "What do you know about the team?"
 
 # Check bank disposition
-hindsight bank disposition demo
+hindsight bank disposition cli-demo
 ```

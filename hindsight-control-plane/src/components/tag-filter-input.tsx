@@ -19,6 +19,10 @@ interface TagFilterInputProps {
   matchMode?: "any" | "all";
   onMatchModeChange?: (mode: "any" | "all") => void;
   showMatchToggleAt?: number;
+  /** Chips and "clear" on the same row as the input, wrapping as needed. For
+   *  editors where the tags are the content (not a toolbar filter whose layout
+   *  must stay fixed — see the two-row note below). */
+  inline?: boolean;
 }
 
 const DEFAULT_SHOW_MATCH_TOGGLE_AT = 2;
@@ -33,6 +37,7 @@ export function TagFilterInput({
   matchMode,
   onMatchModeChange,
   showMatchToggleAt = DEFAULT_SHOW_MATCH_TOGGLE_AT,
+  inline = false,
 }: TagFilterInputProps) {
   const t = useTranslations("common");
   const resolvedPlaceholder = placeholder ?? t("filterByTagPlaceholder");
@@ -122,8 +127,14 @@ export function TagFilterInput({
     }
     if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
-      if (open && activeIndex >= 0 && suggestions[activeIndex]) {
-        addTag(suggestions[activeIndex]);
+      // Suggestions refresh on a 150ms debounce, so right after typing or pasting
+      // the highlighted one can still belong to the *previous* input — Enter used
+      // to add that stale suggestion (type "team:*", get "company:acme"). Only
+      // take the highlighted suggestion when it still extends what is typed;
+      // otherwise add the typed text itself.
+      const highlighted = open && activeIndex >= 0 ? suggestions[activeIndex] : undefined;
+      if (highlighted && highlighted.startsWith(input.trim())) {
+        addTag(highlighted);
       } else if (input.trim()) {
         addTag(input);
       }
@@ -153,7 +164,11 @@ export function TagFilterInput({
   // demand hundreds of pixels and collapsed the sibling search input to nothing.
   // Callers can still override via className.
   return (
-    <div className={`flex min-w-0 flex-1 flex-col gap-2 ${className ?? ""}`}>
+    <div
+      className={`flex min-w-0 flex-1 gap-2 ${
+        inline ? "flex-row flex-wrap items-center" : "flex-col"
+      } ${className ?? ""}`}
+    >
       <div className="flex items-center gap-2">
         <div ref={containerRef} className="relative w-56">
           <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />

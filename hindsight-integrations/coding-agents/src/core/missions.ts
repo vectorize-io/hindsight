@@ -70,13 +70,21 @@ export const OBSERVATIONS_MISSION =
   "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
   "version is visible as history rather than as a competing claim.";
 
+/** Extraction modes the plugin can run its own strategies under (`custom` needs instructions the
+ *  plugin does not have, so it is not offered). */
+export const RETAIN_EXTRACTION_MODES = ["concise", "verbose", "verbatim", "chunks"] as const;
+export type RetainExtractionMode = (typeof RETAIN_EXTRACTION_MODES)[number];
+/** `concise`, not `verbose`: every Stop writes the session back, so the mode is paid per turn, and
+ *  verbose made one active Claude Code session cost ~$150/hr on Cloud (#4560). */
+export const DEFAULT_RETAIN_EXTRACTION_MODE: RetainExtractionMode = "concise";
+
 export const RETAIN_STRATEGIES = {
-  git: { retain_mission: GIT_MISSION, retain_extraction_mode: "verbose" },
+  git: { retain_mission: GIT_MISSION, retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE },
   // ONE big aggregated document (last N commit messages, no diffs) -> a larger chunk size so it stays
   // in as few chunks as possible and the extractor sees the whole history arc at once.
   gitlog: {
     retain_mission: GITLOG_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // ONE strategy for ALL developer conversations — backfilled decision chats and live working
@@ -87,15 +95,15 @@ export const RETAIN_STRATEGIES = {
   // the consolidation layer.
   conversation: {
     retain_mission: CONVERSATION_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // Structural documents (e.g. the codebase survey's ingested findings) aren't dialogue — the
-  // chat strategy's "final decision vs rejected proposal" extraction doesn't apply. Verbose mode
-  // with a bigger chunk size (documents can run long) captures the concrete facts/structure instead.
+  // chat strategy's "final decision vs rejected proposal" extraction doesn't apply. A bigger chunk
+  // size (documents can run long) keeps the concrete facts/structure together instead.
   document: {
     retain_mission: DOCUMENT_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_chunk_size: 12000,
   },
   // Codebase-SURVEY lifecycle documents, ONE strategy with conditional rules: the survey's
@@ -276,16 +284,69 @@ const PAGE_TAXONOMY: readonly KnowledgePage[] = [
   },
 ];
 
+/** The seeded pages' names, in taxonomy order — the keys `RawConfig.pages` accepts. */
+export const PAGE_NAMES: readonly string[] = PAGE_TAXONOMY.map((page) => page.name);
+
 /**
- * The seeded pages for one subject: the taxonomy above with `project` named in every query.
- *
- * A pure function of `project`, so the query text is STABLE for a given subject and `seedPages()`
- * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run — which
- * holds only while the caller's `project` is itself stable per bank (see `bankProjectName`).
+ * What a config says about ONE seeded page, keyed by its name in `RawConfig.pages`:
+ *   false                   — don't seed it at all
+ *   { source_query: "..." } — seed it, but ask this question instead of the taxonomy's
+ * An absent entry means the taxonomy's own query, which is what every page gets by default.
  */
-export function pagesFor(project: string): KnowledgePage[] {
+export type PageOverride = false | { source_query?: string };
+export type PagesConfig = Record<string, PageOverride>;
+
+/**
+ * A page the USER defines, keyed by its name in `RawConfig.customPages` — as opposed to `pages`,
+ * which only reworks the taxonomy above:
+ *   source_query — the question the page answers (required)
+ *   tags         — which facts feed it, e.g. ["knowledge:decision"]. OPTIONAL: the page trigger
+ *                  matches tags with `all` (see PAGE_TAGS_MATCH), so no tags is no tag constraint
+ *                  rather than an empty page — it synthesizes from everything the bank holds.
+ */
+export interface CustomPage {
+  source_query: string;
+  tags?: string[];
+}
+export type CustomPagesConfig = Record<string, CustomPage>;
+
+/**
+ * The seeded pages for one subject: the taxonomy above with `project` named in every query, minus
+ * the ones `pages` disables and with its custom queries substituted.
+ *
+ * A pure function of its arguments, so the query text is STABLE for a given subject and
+ * `seedPages()` PATCHes once (on the upgrade that introduces the clause) rather than on every
+ * deepen run — which holds only while the caller's `project` is itself stable per bank (see
+ * `bankProjectName`), and while `pages` itself is stable.
+ *
+ * `pageScopeRule` is appended to a CUSTOM query too — a page from `customPages` included. It is
+ * what stops the synthesizer presenting a dependency's decisions as this project's own (#3476), a
+ * failure mode someone rewording or adding a question is not thereby choosing to take on.
+ */
+export function pagesFor(
+  project: string,
+  pages: PagesConfig = {},
+  customPages: CustomPagesConfig = {}
+): KnowledgePage[] {
   const scope = pageScopeRule(project);
-  return PAGE_TAXONOMY.map((page) => ({ ...page, source_query: page.source_query + scope }));
+  // Matched case-insensitively on the same key `seedPages` matches live pages by, so a config
+  // entry and the page it names can't disagree about which page that is.
+  const byName = new Map(
+    Object.entries(pages).map(([name, override]) => [name.trim().toLowerCase(), override])
+  );
+  const out: KnowledgePage[] = [];
+  for (const page of PAGE_TAXONOMY) {
+    const override = byName.get(page.name.toLowerCase());
+    if (override === false) continue;
+    out.push({ ...page, source_query: (override?.source_query || page.source_query) + scope });
+  }
+  // The user's own pages, seeded at the same root and treated exactly like a taxonomy page from
+  // here on: same scoping clause, same drift re-sync, same trigger. Appended last so a taxonomy
+  // page keeps its position, which is the order the seed log and the page roster read in.
+  for (const [name, page] of Object.entries(customPages)) {
+    out.push({ name: name.trim(), source_query: page.source_query + scope, tags: page.tags ?? [] });
+  }
+  return out;
 }
 
 // Refresh policy shared by every page this plugin creates — the seeded taxonomy above and the
@@ -556,7 +617,7 @@ export const CODING_BANK_TEMPLATE = {
     enable_observations: true,
     observations_mission: OBSERVATIONS_MISSION,
     retain_mission: GIT_MISSION,
-    retain_extraction_mode: "verbose",
+    retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_default_strategy: "git",
     retain_strategies: RETAIN_STRATEGIES,
     entity_labels: [KNOWLEDGE_LABELS],
@@ -606,8 +667,17 @@ function isSet(v: unknown): boolean {
  * The consequence is deliberate: a release that REWORDS an existing strategy or label does not
  * reach a bank that already has it. Clearing that override on the bank takes the current default
  * back, since the next pass then finds the bank silent there.
+ *
+ * ONE exception, and it is a config key rather than a default: the extraction mode of the plugin's
+ * own strategies follows `mode` (RawConfig.retainExtractionMode) and is re-synced on drift, the way
+ * `seedPages()` re-syncs a page's query. It is what every session write-back costs, so it has to be
+ * changeable from the plugin's config and reach banks seeded before the change (#4560). The
+ * strategy's other fields, and any strategy the plugin did not define, are still left alone.
  */
-export function codingBankManifest(overrides: BankOverrides | undefined): BankManifest | undefined {
+export function codingBankManifest(
+  overrides: BankOverrides | undefined,
+  mode: RetainExtractionMode = DEFAULT_RETAIN_EXTRACTION_MODE
+): BankManifest | undefined {
   // Unreadable overrides — the bank does not exist yet, or the deployment has the bank-config API
   // switched off. Nothing can have been customised through an API that is not there, and this same
   // POST is what CREATES the bank, so `{}` seeds the lot (every branch below fires, and the result
@@ -623,7 +693,7 @@ export function codingBankManifest(overrides: BankOverrides | undefined): BankMa
     bank.enable_observations = template.enable_observations;
     bank.observations_mission = template.observations_mission;
     bank.retain_mission = template.retain_mission;
-    bank.retain_extraction_mode = template.retain_extraction_mode;
+    bank.retain_extraction_mode = mode;
   }
 
   if (!isSet(current.retain_default_strategy))
@@ -635,10 +705,17 @@ export function codingBankManifest(overrides: BankOverrides | undefined): BankMa
     current.retain_strategies && typeof current.retain_strategies === "object"
       ? (current.retain_strategies as Record<string, unknown>)
       : {};
-  const missing = Object.entries(template.retain_strategies).filter(([n]) => !(n in strategies));
-  // The whole map is one config value, so the UNION has to be sent — not just the additions.
-  if (missing.length > 0)
-    bank.retain_strategies = { ...strategies, ...Object.fromEntries(missing) };
+  const updates: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(template.retain_strategies)) {
+    // `custom` (the survey) carries its own instructions and is not the configured mode's to change.
+    const synced = def.retain_extraction_mode === "custom" ? {} : { retain_extraction_mode: mode };
+    const have = strategies[name] as Record<string, unknown> | null | undefined;
+    if (!have || typeof have !== "object") updates[name] = { ...def, ...synced };
+    else if ("retain_extraction_mode" in synced && have.retain_extraction_mode !== mode)
+      updates[name] = { ...have, ...synced };
+  }
+  // The whole map is one config value, so the UNION has to be sent — not just the changes.
+  if (Object.keys(updates).length > 0) bank.retain_strategies = { ...strategies, ...updates };
 
   const labels = Array.isArray(current.entity_labels) ? current.entity_labels : [];
   const [knowledgeGroup] = template.entity_labels;

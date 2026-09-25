@@ -5,7 +5,8 @@ Covers the contract and the storage seam, both deterministic:
 - a block-form item flattens to canonical placeholder text, and the raw bytes
   are committed content-addressed *before* anything is submitted, so no base64
   ever reaches the retain pipeline or an async operation's payload;
-- identical images dedupe to one blob and one row, across items and re-ingests;
+- identical images within one document dedupe to one blob and one row, across
+  items and re-ingests; a second document carrying the same image gets its own;
 - malformed, oversized and over-numerous images are the caller's error (400),
   named down to the offending item and block.
 
@@ -76,13 +77,14 @@ async def _bank_attachment_rows(memory, bank_id: str) -> list[dict]:
     """The bank's stored image rows.
 
     Direct SQL because the assertion is about storage-layer state the public API
-    cannot express — that an image retained N times occupies exactly one row and
-    one content-addressed key.
+    cannot express — that an image a document carries N times occupies exactly one
+    row and one key, and that a second document carrying it gets its own.
     """
     backend = await memory._get_backend()
     async with backend.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT attachment_hash, short_id, media_type, byte_size, storage_key FROM attachments WHERE bank_id = $1",
+            "SELECT document_id, attachment_hash, short_id, media_type, byte_size, storage_key "
+            "FROM attachments WHERE bank_id = $1",
             bank_id,
         )
     return [dict(row) for row in rows]
@@ -132,32 +134,42 @@ async def test_image_bytes_are_stored_content_addressed_and_retrievable(api_clie
     assert rows[0]["attachment_hash"] == expected_hash
     assert rows[0]["media_type"] == "image/png"
     assert rows[0]["byte_size"] == len(PNG_BYTES)
-    assert rows[0]["storage_key"] == attachment_storage_key(bank_id, expected_hash)
+    assert rows[0]["storage_key"] == attachment_storage_key(bank_id, "d1", expected_hash)
 
     assert await memory._file_storage.retrieve(rows[0]["storage_key"]) == PNG_BYTES
 
 
 @pytest.mark.asyncio
-async def test_the_same_image_across_documents_is_stored_once(api_client, memory):
-    """Content-addressing is what makes re-ingesting a KB article cheap."""
+async def test_the_same_image_is_stored_once_per_document(api_client, memory):
+    """Dedup within a document, a copy per document.
+
+    Cross-document dedup is given up deliberately: it is the only reason a delete
+    would have to ask whether another document still needs the bytes, and that is
+    what cannot be answered for a bank whose documents live in a memories store.
+    """
     bank_id = f"img-{uuid.uuid4().hex[:8]}"
 
     for document_id in ("article-1", "article-2"):
         response = await _retain(
             api_client,
             bank_id,
-            [_text_block(f"body of {document_id}"), _image_block()],
+            # Twice in the one document: that dedupes to a single row.
+            [_text_block(f"body of {document_id}"), _image_block(), _text_block("again:"), _image_block()],
             document_id=document_id,
         )
         assert response.status_code == 200, response.text
 
     rows = await _bank_attachment_rows(memory, bank_id)
-    assert len(rows) == 1
+    assert {row["document_id"] for row in rows} == {"article-1", "article-2"}
+    assert len(rows) == 2, "one row per document, and one per document only"
+    assert len({row["storage_key"] for row in rows}) == 2, "each document holds its own copy of the bytes"
 
-    # Both documents still name it.
+    # Both documents still name it -- twice each, since that is what they were sent.
     for document_id in ("article-1", "article-2"):
         text = await _document_text(api_client, bank_id, document_id)
-        assert list(iter_placeholder_ids(text)) == [short_attachment_id(compute_attachment_hash(PNG_BYTES))]
+        ids = list(iter_placeholder_ids(text))
+        assert set(ids) == {short_attachment_id(compute_attachment_hash(PNG_BYTES))}
+        assert len(ids) == 2, "the text keeps every placeholder; it is the storage that dedupes"
 
 
 @pytest.mark.asyncio

@@ -136,3 +136,100 @@ describe("deriveBankId", () => {
     expect(bankId2).toBe("a::b%3A%3Ac::user-1");
   });
 });
+
+// Mixed topology in one gateway: some agents share a named bank, the rest keep
+// their derived ones. Before this, isolation was binary — one static bank for
+// everyone, or a derived bank per agent with no way to group. (#3890)
+describe("deriveBankId with agentBankMap", () => {
+  const ctx: PluginHookAgentContext = {
+    agentId: "inbound",
+    channelId: "channel-456",
+    senderId: "user-789",
+    messageProvider: "slack",
+  };
+
+  it("routes a mapped agent to its bank, ahead of dynamic derivation", () => {
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      agentBankMap: { inbound: "ps-technology", limpieza: "ps-limpieza" },
+    };
+    expect(deriveBankId(ctx, config)).toBe("ps-technology");
+  });
+
+  it("leaves an unmapped agent on its derived bank", () => {
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      agentBankMap: { limpieza: "ps-limpieza" },
+    };
+    expect(deriveBankId(ctx, config)).toBe("inbound::channel-456::user-789");
+  });
+
+  it("wins over the static bank, so both topologies can coexist", () => {
+    const config: PluginConfig = {
+      dynamicBankId: false,
+      bankId: "shared-bank",
+      agentBankMap: { inbound: "ps-technology" },
+    };
+    expect(deriveBankId(ctx, config)).toBe("ps-technology");
+  });
+
+  it("leaves an unmapped agent on the static bank", () => {
+    const config: PluginConfig = {
+      dynamicBankId: false,
+      bankId: "shared-bank",
+      agentBankMap: { limpieza: "ps-limpieza" },
+    };
+    expect(deriveBankId(ctx, config)).toBe("shared-bank");
+  });
+
+  it("uses the mapped name exactly, without bankIdPrefix", () => {
+    // The operator named this bank; prefixing it would point at a different one.
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      bankIdPrefix: "prod",
+      agentBankMap: { inbound: "ps-technology" },
+    };
+    expect(deriveBankId(ctx, config)).toBe("ps-technology");
+  });
+
+  it("resolves the agent id from the session key when the context carries none", () => {
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      agentBankMap: { "my-agent": "ps-shared" },
+    };
+    const ctxWithSession: PluginHookAgentContext = {
+      sessionKey: "agent:my-agent:telegram:group:-100123456",
+    };
+    expect(deriveBankId(ctxWithSession, config)).toBe("ps-shared");
+  });
+
+  it("falls back to derivation when there is no context to map", () => {
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      agentBankMap: { inbound: "ps-technology" },
+    };
+    expect(deriveBankId(undefined, config)).toBe("openclaw");
+  });
+
+  it("does not inherit bank ids from the prototype chain", () => {
+    // An agent literally called "toString" must not pick up Object.prototype's
+    // method, which is truthy and is not a bank id.
+    const config: PluginConfig = { dynamicBankId: true, agentBankMap: {} };
+    const ctxNamedLikeAPrototypeKey: PluginHookAgentContext = {
+      agentId: "toString",
+      channelId: "channel-456",
+      senderId: "user-789",
+    };
+    expect(deriveBankId(ctxNamedLikeAPrototypeKey, config)).toBe("toString::channel-456::user-789");
+  });
+
+  it("ignores a mapped value that is not a usable string", () => {
+    // The backfill CLI builds its config straight from openclaw.json, without
+    // normalizeAgentBankMap, so the lookup itself has to reject this.
+    const config = {
+      dynamicBankId: true,
+      agentBankMap: { inbound: 42 },
+    } as unknown as PluginConfig;
+    expect(deriveBankId(ctx, config)).toBe("inbound::channel-456::user-789");
+  });
+});

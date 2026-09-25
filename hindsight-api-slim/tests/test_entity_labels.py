@@ -814,7 +814,9 @@ def test_extraction_schema_includes_labels_model():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    prompt, schema = _build_extraction_prompt_and_schema(config)
+    extraction_prompt = _build_extraction_prompt_and_schema(config)
+    prompt = extraction_prompt.system_prompt
+    schema = extraction_prompt.response_schema
 
     # Schema should be a dynamic response model
     json_schema = schema.model_json_schema()
@@ -862,7 +864,7 @@ def test_extraction_schema_labels_in_required():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    _, schema = _build_extraction_prompt_and_schema(config)
+    schema = _build_extraction_prompt_and_schema(config).response_schema
     fact_schema = schema.model_json_schema()["$defs"]["LabelsFact"]
     assert "labels" in fact_schema["required"]
 
@@ -883,7 +885,7 @@ def test_extraction_schema_no_labels_when_unconfigured():
     config.retain_mission = None
     config.retain_custom_instructions = None
 
-    _, schema = _build_extraction_prompt_and_schema(config)
+    schema = _build_extraction_prompt_and_schema(config).response_schema
     # No labels field in schema — it's a plain base response model
     json_schema = schema.model_json_schema()
     # Verify 'labels' is NOT a required or present field in any fact definition
@@ -907,7 +909,7 @@ async def test_retain_extracts_single_value_label(memory_real_llm, request_conte
 
     bank_id = f"test-labels-single-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Configure entity_labels on the bank
         await memory._config_resolver.update_bank_config(
@@ -974,7 +976,7 @@ async def test_retain_extracts_multi_value_label(memory_real_llm, request_contex
 
     bank_id = f"test-labels-multi-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         await memory._config_resolver.update_bank_config(
             bank_id=bank_id,
@@ -1041,7 +1043,7 @@ async def test_retain_extracts_free_values_label(memory_real_llm, request_contex
 
     bank_id = f"test-labels-free-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         await memory._config_resolver.update_bank_config(
             bank_id=bank_id,
@@ -1105,7 +1107,7 @@ async def test_retain_extracts_map_type_entities(memory_real_llm, request_contex
 
     bank_id = f"test-labels-map-{uuid.uuid4().hex[:8]}"
     try:
-        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Configure a map-type entity label
         await memory_real_llm._config_resolver.update_bank_config(
@@ -1919,7 +1921,7 @@ async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, reques
 
     bank_id = f"test-1558-multivalue-tag-{uuid.uuid4().hex[:8]}"
     try:
-        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Configure entity labels matching the bug report scenario:
         # - multi-values type
@@ -2009,7 +2011,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
 
     bank_id = f"test-1558-second-{uuid.uuid4().hex[:8]}"
     try:
-        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         await memory_real_llm._config_resolver.update_bank_config(
             bank_id=bank_id,
@@ -2096,7 +2098,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
 
     bank_id = f"test-1558-resolve-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # First, insert a "use:use-001" entity into the bank so that
         # entity resolution has an existing entity to match against
@@ -2323,7 +2325,7 @@ async def test_retain_application_tags_extract_complete_pairs(memory_real_llm, r
         for name in elements
     }
     try:
-        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         await memory_real_llm._config_resolver.update_bank_config(
             bank_id=bank_id,
             updates=_build_application_label_config(),
@@ -2543,7 +2545,7 @@ async def test_retain_extracts_multi_text_label(memory_real_llm, request_context
 
     bank_id = f"test-labels-multi-text-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         await memory._config_resolver.update_bank_config(
             bank_id=bank_id,

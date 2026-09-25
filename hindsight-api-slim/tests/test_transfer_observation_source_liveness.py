@@ -41,20 +41,19 @@ async def _import_one(memory, bank_id, ref_map, source_refs):
 
 # Retain auto-consolidates, so the bank already holds observations of its own by
 # the time these tests run. Match on the text this test imports to look at only
-# the observation under test. Direct SQL because source_memory_ids is internal
-# consolidation state that no public read method exposes.
+# the observation under test. Read through the memories store rather than SQL, so
+# the check holds for a bank whose memories do not live in `memory_units`.
 OBSERVATION_TEXT = "Alice and Bob are colleagues."
 
 
 async def _imported_observation_sources(backend, bank_id):
+    from hindsight_api.engine.memories import get_memories
+
     async with acquire_with_retry(backend) as conn:
-        rows = await conn.fetch(
-            f"SELECT source_memory_ids FROM {fq_table('memory_units')} "
-            f"WHERE bank_id = $1 AND fact_type = 'observation' AND text = $2",
-            bank_id,
-            OBSERVATION_TEXT,
+        page = await get_memories().scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["observation"], limit=1000
         )
-    return [{str(sid) for sid in (row["source_memory_ids"] or [])} for row in rows]
+    return [{str(sid) for sid in (m.source_memory_ids or [])} for m in page.memories if m.text == OBSERVATION_TEXT]
 
 
 async def test_observation_with_a_missing_source_is_skipped(memory, request_context):

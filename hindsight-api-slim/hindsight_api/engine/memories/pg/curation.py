@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from ...search.tags import build_tags_where_clause
+from ...time_filter import MEMORY_TIME_FIELDS, build_time_clause
 
 
 def _entity_rows_for_units_sql(*, ops, fq_table, unit_ids_placeholder: int) -> str:
@@ -93,6 +94,9 @@ async def list_memory_units(
     tags: list[str] | None = None,
     tags_match: str = "any",
     created_before: datetime | None = None,
+    time_field: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -123,6 +127,12 @@ async def list_memory_units(
             'pending' (not yet consolidated, no failure), or
             'done' (successfully consolidated). Only applies to source memory
             types (world/experience).
+        time_field: Time axis to filter and order by — one of
+            ``MEMORY_TIME_FIELDS``. Supplying it (or either bound) also replaces
+            the default ordering and DROPS units with no value on that axis; see
+            ``engine.time_filter``.
+        start_date: Inclusive lower bound on ``time_field``.
+        end_date: Exclusive upper bound on ``time_field``.
         limit: Maximum number of results to return
         offset: Offset for pagination
 
@@ -220,6 +230,21 @@ async def list_memory_units(
         query_conditions.append(f"created_at < ${param_count}")
         query_params.append(created_before)
 
+    # Validation rides along with the clause here, unlike `list_documents`, which has to
+    # validate before its store-owned branch returns. Memories have no such branch — every
+    # store reaches this builder — so a second guard upstream would only be a second copy.
+    window = build_time_clause(
+        time_field=time_field,
+        start_date=start_date,
+        end_date=end_date,
+        allowed=MEMORY_TIME_FIELDS,
+        default_field="created_at",
+        param_offset=param_count + 1,
+    )
+    query_conditions.extend(window.conditions)
+    query_params.extend(window.params)
+    param_count = window.next_param_offset - 1
+
     where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 
     # Get total count
@@ -254,7 +279,7 @@ async def list_memory_units(
                updated_at, source_memory_ids, {curation_cols}
         FROM {source_table}
         {where_clause}
-        ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
+        ORDER BY {window.order_by or "mentioned_at DESC NULLS LAST, created_at DESC"}
         LIMIT {limit_param} OFFSET {offset_param}
     """,
         *query_params,

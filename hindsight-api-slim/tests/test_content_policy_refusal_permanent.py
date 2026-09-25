@@ -214,7 +214,7 @@ async def test_call_with_tools_raises_permanent_error_without_retrying(monkeypat
 
 
 def _extraction_config() -> SimpleNamespace:
-    """Only the two fields extract_facts_from_text reads before chunk dispatch."""
+    """Only the chunking fields extract_facts_from_text reads before chunk dispatch."""
     return SimpleNamespace(
         retain_chunk_size=1000,
         retain_structured_chunk_size=1000,
@@ -240,6 +240,12 @@ async def _run_extraction(chunk_errors: dict[int, Exception]):
             event_date=None,
             llm_config=SimpleNamespace(),
             agent_name="agent",
+            # Handed in ready-made so the stub config only needs the chunking
+            # fields: what is under test is how the chunk error propagates, and
+            # building the real prompt would drag in every extraction setting.
+            extraction_prompt=fact_extraction.ExtractionPrompt(
+                system_prompt="", response_schema=fact_extraction.FactExtractionResponse
+            ),
             config=_extraction_config(),
         )
 

@@ -13,7 +13,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..prompt_utils import default_language_section, escape_for_prompt, output_language_directive
+from ..response_models import DispositionTraits
+from ..search.think_utils import build_disposition_description
 from .tokenization import count_prompt_tokens
+
+#: Trait value used for a trait the bank does not set, matching the neutral default
+#: the disposition model itself documents.
+_NEUTRAL_TRAIT = 3
+
+_TRAITS = ("skepticism", "literalism", "empathy")
 
 # Fraction of max_context_tokens reserved for tool results in the final synthesis prompt.
 # The remainder covers the system prompt, question, bank context, and output tokens.
@@ -155,10 +163,29 @@ def bank_disposition_line(bank_profile: dict[str, Any]) -> str:
     Shared with the prompt preview — see :func:`bank_name_line`.
     """
     disposition = bank_profile.get("disposition") or {}
-    traits = [
-        f"{trait}={disposition[trait]}" for trait in ("skepticism", "literalism", "empathy") if trait in disposition
-    ]
-    return f"Disposition: {', '.join(traits)}" if traits else ""
+    traits = [f"{trait}={disposition[trait]}" for trait in _TRAITS if trait in disposition]
+    if not traits:
+        return ""
+
+    # An all-neutral disposition is what a bank that never touched the traits reports, so
+    # it keeps the exact prompt it had before this block existed — nothing is added and no
+    # bank pays for a feature it did not configure.
+    if all(disposition.get(trait, _NEUTRAL_TRAIT) == _NEUTRAL_TRAIT for trait in _TRAITS):
+        return f"Disposition: {', '.join(traits)}"
+
+    # The numbers alone are not an instruction: a weaker model reads "skepticism=5" as
+    # metadata and answers exactly as it would at skepticism=1 — which is what
+    # test_high_skepticism_response_is_more_hedged_than_low keeps catching on
+    # gemini-2.5-flash-lite. Spelling out what each level means is what the non-tool
+    # think path has always done; this reuses its wording rather than inventing a second.
+    described = build_disposition_description(
+        DispositionTraits(
+            skepticism=disposition.get("skepticism", _NEUTRAL_TRAIT),
+            literalism=disposition.get("literalism", _NEUTRAL_TRAIT),
+            empathy=disposition.get("empathy", _NEUTRAL_TRAIT),
+        )
+    )
+    return f"Disposition: {', '.join(traits)}\n{described}"
 
 
 def build_system_prompt_for_tools(
@@ -297,6 +324,9 @@ def build_system_prompt_for_tools(
                 [
                     "- User-curated summaries about specific topics",
                     "- HIGHEST quality - manually created and maintained",
+                    "- Search returns the best match in full and a SNIPPET of the others; call "
+                    "read_mental_models on any id whose snippet looks like it answers the question, and read it "
+                    "before answering from it",
                     "- If a relevant mental model exists and is FRESH, it may fully answer the question",
                     "- Check `is_stale` field - if stale, also verify with lower levels",
                 ],
@@ -371,6 +401,27 @@ def build_system_prompt_for_tools(
         parts.append(f"### {idx}. {header}{suffix}")
         parts.extend(body)
         parts.append("")
+
+    # Stating the ladder here, rather than only forcing it turn by turn: the agent
+    # still pins the first turns with ``tool_choice`` (see ``forced_sequence`` in
+    # agent.py), but a model that has read the plan keeps following it once the
+    # forcing stops, instead of answering from whatever the last forced turn left.
+    if len(levels) > 1:
+        names = [header.split(" (")[0].split(" - ")[0].title() for header, _ in levels]
+        parts.extend(
+            [
+                "## Search Plan",
+                f"Work down the levels in order ({' → '.join(names)}) before you answer:",
+                "- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.",
+                # Named from the levels actually offered: on a bank with no mental
+                # models the top level is observations, and pointing at a layer the
+                # model has no tool for is how #1724 happened.
+                f"- Stop descending as soon as what you have answers the question — fresh {names[0]} often do.",
+                "- Go deeper when the level above is stale, thin, or silent on what was asked.",
+                "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.",
+                "",
+            ]
+        )
 
     parts.extend(
         [
@@ -589,8 +640,10 @@ def _render_history_block(entry: dict) -> str:
     """Render one context-history entry as a fenced JSON block."""
     tool = entry["tool"]
     output = entry["output"]
+    # Compact, like the tool messages the loop sends: indentation was 7% of the
+    # synthesis prompt and tells the model nothing.
     try:
-        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+        output_str = json.dumps(output, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
         output_str = str(output)
     return f"\n### From {tool}:\n```json\n{output_str}\n```"
@@ -802,6 +855,31 @@ def build_final_prompt(
     if length_directive is not None:
         parts.append(length_directive)
 
+    return "\n".join(parts) + output_language_directive(llm_output_language)
+
+
+def build_done_request_prompt(
+    query: str,
+    max_tokens: int | None = None,
+    llm_output_language: str | None = None,
+) -> str:
+    """The closing user turn that asks for the answer as a ``done`` call.
+
+    Sent inside the tool-loop conversation, so it carries only what the answer
+    needs beyond the evidence already there: stop retrieving, the question, the
+    instructions and the length target.
+    """
+    parts = [
+        "## Answer now",
+        "Stop retrieving. Call the `done` tool with your final answer, built from the tool results above.",
+        "This is the ANSWER, not a summary of it: carry over every relevant fact, date and number from the "
+        "tool results, at the same depth you would write for a reader who cannot see them.",
+        f"\n## Question\n{query}",
+        "\n## Instructions\n" + _FINAL_INSTRUCTIONS,
+    ]
+    length_directive = _length_directive(max_tokens)
+    if length_directive is not None:
+        parts.append(length_directive)
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 
@@ -1086,6 +1164,15 @@ ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "remove_section", "section_id": "..."}``
 - ``{"op": "replace_section_blocks", "section_id": "...", "blocks": ["...", "..."]}``
 - ``{"op": "rename_section", "section_id": "...", "new_heading": "..."}``
+- Each operation carries EXACTLY the keys shown on its line — no others. Do not
+  copy a key from another operation's shape, do not add a key of your own, and
+  do not emit a key with ``null`` to stand in for one the operation does not
+  take. ``append_block`` in particular has no ``block_id``: the id is minted
+  when the block lands, and it takes ``text``, never ``blocks``.
+  ❌ ``{"op": "append_block", "section_id": "members", "block_id": null, "text": "- Carol"}``
+  ✅ ``{"op": "append_block", "section_id": "members", "text": "- Carol"}``
+  ❌ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"], "blocks_note": "merged"}``
+  ✅ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"]}``
 
 BLOCK TEXT RULES
 - Every ``text`` (and every entry of ``blocks``) is ONE markdown fragment:
@@ -1391,6 +1478,12 @@ ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "remove_section", "section_id": "..."}``
 - ``{"op": "replace_block", "section_id": "...", "block_id": "...", "text": "..."}``
 - ``{"op": "replace_section_blocks", "section_id": "...", "blocks": ["...", "..."]}``
+
+Each operation carries EXACTLY the keys shown on its line — no others. Do not add
+a key of your own, and do not emit a key with ``null`` to stand in for one the
+operation does not take.
+❌ ``{"op": "remove_block", "section_id": "s", "block_id": "b1", "reason": "retracted"}``
+✅ ``{"op": "remove_block", "section_id": "s", "block_id": "b1"}``
 
 Blocks are addressed by ``block_id`` — the ``id`` printed beside each block in
 CURRENT DOCUMENT. Copy it exactly; never invent one, and never use a position.

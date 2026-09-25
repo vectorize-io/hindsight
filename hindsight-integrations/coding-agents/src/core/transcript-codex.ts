@@ -41,12 +41,26 @@ interface Payload {
   content?: ContentItem[];
   name?: string;
   arguments?: string;
+  input?: string;
   output?: string;
   item?: { type?: string; content?: ContentItem[] };
 }
 interface RolloutLine {
   type?: string;
+  // Unvalidated: the line is a cast from JSON.parse, so the guard in stampOf is what makes
+  // this a string by the time it reaches a turn.
+  timestamp?: unknown;
   payload?: Payload;
+}
+
+/** The rollout envelope's event time, kept so a historical backfill retains when the event
+ *  actually occurred rather than when it was ingested. Guarded like the Claude/qwen/droid
+ *  readers (and factored out like transcript-dsh's stampOf): a rollout line is unvalidated
+ *  JSON, so a non-string timestamp must never reach TransportTurn — it would be written
+ *  verbatim into the retained JSONL by chat.ts. Absent/invalid → omitted, which is the
+ *  pre-existing behaviour for older rollouts that carry no timestamp at all. */
+function stampOf(line: RolloutLine): { timestamp?: string } {
+  return typeof line.timestamp === "string" && line.timestamp ? { timestamp: line.timestamp } : {};
 }
 
 /** Fallback for rollouts without UserMessage events: Codex records its startup instructions
@@ -90,13 +104,13 @@ export function readCodexTranscript(path: string): TransportTurn[] {
   const userFromEvents = lines.some(isUserMessageEvent);
 
   const turns: TransportTurn[] = [];
-  const push = (role: string, raw: string) => {
+  const push = (role: string, raw: string, stamp: { timestamp?: string } = {}) => {
     const text = stripInjectedMemory(raw).trim();
-    if (text) turns.push({ role, content: text });
+    if (text) turns.push({ role, content: text, ...stamp });
   };
   for (const line of lines) {
     if (isUserMessageEvent(line)) {
-      push("user", contentText(line.payload?.item?.content));
+      push("user", contentText(line.payload?.item?.content), stampOf(line));
       continue;
     }
     if (line.type !== "response_item") continue;
@@ -105,19 +119,25 @@ export function readCodexTranscript(path: string): TransportTurn[] {
 
     if (p.type === "message") {
       // `developer` messages are Codex's system prompt + OUR injected hook context → drop entirely.
-      if (p.role === "assistant") push("assistant", contentText(p.content));
+      if (p.role === "assistant") push("assistant", contentText(p.content), stampOf(line));
       else if (p.role === "user" && !userFromEvents) {
         const text = contentText(p.content);
-        if (!isSyntheticUserText(stripInjectedMemory(text))) push("user", text);
+        if (!isSyntheticUserText(stripInjectedMemory(text))) push("user", text, stampOf(line));
       }
-    } else if (p.type === "function_call" && typeof p.name === "string") {
+    } else if (
+      (p.type === "function_call" || p.type === "custom_tool_call") &&
+      typeof p.name === "string"
+    ) {
+      // Codex CLI/Desktop emits both legacy function_call and current custom_tool_call records.
+      // Keep one compact action representation and never retain raw arguments.
+      const rawInput = p.type === "function_call" ? p.arguments : p.input;
       let input: unknown;
       try {
-        input = JSON.parse(p.arguments || "");
+        input = JSON.parse(rawInput || "");
       } catch {
         input = undefined;
       }
-      turns.push({ role: "action", content: actionLine(p.name, input) });
+      turns.push({ role: "action", content: actionLine(p.name, input), ...stampOf(line) });
     }
     // reasoning / other payloads: dropped.
   }

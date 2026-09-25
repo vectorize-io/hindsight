@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "module";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
+  knowledgeToolDetails,
+  normalizeAgentBankMap,
   stripMemoryTags,
   extractRecallQuery,
   formatCurrentTimeForRecall,
@@ -12,6 +17,7 @@ import {
   buildRetainRequest,
   getDocumentIdBootToken,
   meetsMinimumVersion,
+  sessionEndMessagesFromTranscript,
   parseHindsightApiCapabilities,
   supportsAppendFromCapabilities,
   supportsAsyncRetainOperationIdFromCapabilities,
@@ -1635,6 +1641,57 @@ describe("resolveAndCacheIdentity dispatch-surface gate (#1541)", () => {
 
     expect(skipReason).toBeUndefined();
   });
+
+  // A mapped agent is pinned like a static bank: the surface cannot route its
+  // turn into the wrong bank, so the mismatch must not skip it. The skip is
+  // cached as final, so getting this wrong loses the session for the whole
+  // process. (#3890)
+  it("does not skip a mapped agent whose dispatch surface differs", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:inbound:telegram:direct:user-3890",
+      ctx: {
+        sessionKey: "agent:inbound:telegram:direct:user-3890",
+        agentId: "inbound",
+        senderId: "user-3890",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+    });
+
+    expect(skipReason).toBeUndefined();
+  });
+
+  it("still skips an unmapped agent on the same mismatch", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:stranger:telegram:direct:user-3890b",
+      ctx: {
+        sessionKey: "agent:stranger:telegram:direct:user-3890b",
+        agentId: "stranger",
+        senderId: "user-3890b",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+    });
+
+    expect(skipReason).toEqual({
+      kind: "final",
+      detail: "dispatch surface webchat does not match session provider telegram",
+    });
+  });
+
+  it("still skips operational sessions for a mapped agent", () => {
+    // The map widens allowCliSessions; cron/heartbeat/subagent and temp:
+    // sessions return before that is consulted and must stay skipped.
+    for (const sessionKey of ["agent:inbound:cron:job-1", "temp:inbound:scratch"]) {
+      const { skipReason } = resolveAndCacheIdentity({
+        sessionKey,
+        ctx: { sessionKey, agentId: "inbound" },
+        pluginConfig: { agentBankMap: { inbound: "ps-technology" } },
+      });
+
+      expect(skipReason?.kind).toBe("final");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1921,6 +1978,9 @@ describe("recallMinScores (#4143)", () => {
       types: undefined,
       preferObservations: undefined,
       minScores: { reranker: 0.3 },
+      // A deadline controller is always created, so the client sees a real signal
+      // even when no service signal was passed in.
+      signal: expect.any(AbortSignal),
     });
   });
 });
@@ -2146,6 +2206,75 @@ describe("resolveBankIdForKnowledgeTools", () => {
     expect(resolution.identityError).toBeUndefined();
     expect(resolution.bankId).toBe("shared-team-memory");
   });
+
+  it("routes a mapped agent to its bank without requiring sender identity (#3890)", () => {
+    // The group session below has no resolvable sender, which is exactly the case
+    // the user-scoped guard rejects. A mapped agent's bank does not depend on the
+    // sender, so the guard must not fire for it.
+    const resolution = resolveBankIdForKnowledgeTools(
+      {
+        agentId: "inbound",
+        sessionKey: "agent:inbound:msteams:group:19:general@thread.tacv2",
+      },
+      { ...userScopedConfig, agentBankMap: { inbound: "ps-technology" } }
+    );
+
+    expect(resolution.identityError).toBeUndefined();
+    expect(resolution.bankId).toBe("ps-technology");
+  });
+
+  it("still guards an unmapped agent under the same config (#3890)", () => {
+    const resolution = resolveBankIdForKnowledgeTools(
+      {
+        agentId: "nemoclaw",
+        sessionKey: "agent:nemoclaw:msteams:group:19:general@thread.tacv2",
+      },
+      { ...userScopedConfig, agentBankMap: { inbound: "ps-technology" } }
+    );
+
+    expect(resolution.identityError).toMatch(/missing stable sender identity/);
+    expect(resolution.bankId).not.toBe("ps-technology");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeAgentBankMap — config comes from hand-edited JSON (#3890)
+// ---------------------------------------------------------------------------
+
+describe("normalizeAgentBankMap", () => {
+  it("keeps valid entries and trims the bank name", () => {
+    expect(normalizeAgentBankMap({ inbound: " ps-technology ", limpieza: "ps-limpieza" })).toEqual({
+      inbound: "ps-technology",
+      limpieza: "ps-limpieza",
+    });
+  });
+
+  it("drops entries whose bank is blank or not a string", () => {
+    // A blank value would otherwise route that agent to a bank named "".
+    expect(normalizeAgentBankMap({ a: "bank-a", b: "   ", c: 42, d: null })).toEqual({
+      a: "bank-a",
+    });
+  });
+
+  it("treats a map with no usable entry as unset", () => {
+    expect(normalizeAgentBankMap({ a: "", b: "  " })).toBeUndefined();
+    expect(normalizeAgentBankMap({})).toBeUndefined();
+  });
+
+  it("ignores shapes that are not a plain object", () => {
+    expect(normalizeAgentBankMap(undefined)).toBeUndefined();
+    expect(normalizeAgentBankMap(null)).toBeUndefined();
+    expect(normalizeAgentBankMap("inbound=ps-technology")).toBeUndefined();
+    expect(normalizeAgentBankMap([["inbound", "ps-technology"]])).toBeUndefined();
+  });
+
+  it("trims the agent id too, so a padded key is not silently inert", () => {
+    // Keying on the raw " inbound" would keep an entry that can never match a
+    // resolved agent id — and it would not show up in the dropped-entry warning.
+    expect(normalizeAgentBankMap({ " inbound ": "ps-technology" })).toEqual({
+      inbound: "ps-technology",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2348,5 +2477,110 @@ describe("inbound metadata blocks (marker and legacy forms)", () => {
   it("recovers the user query from a marker-wrapped prompt", () => {
     const text = `${markerBlock("Conversation info:", '{"sender_id":"ou_xyz"}')}\n\nwhat did I say about postgres?`;
     expect(extractRecallQuery(undefined, text)).toBe("what did I say about postgres?");
+  });
+});
+
+// ── #4341: session_end carries no transcript ────────────────────────────────
+// OpenClaw's buildSessionEndHookPayload() sends sessionId/messageCount/reason/
+// sessionFile and nothing else, so the forced flush added for #1726 ended at its own
+// "no messages" guard on every session close and the turns after the last cadence
+// boundary were never retained.
+describe("sessionEndMessagesFromTranscript", () => {
+  const madeDirs: string[] = [];
+  const writeTranscript = (lines: unknown[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-session-end-"));
+    madeDirs.push(dir);
+    const file = join(dir, "sess-1.jsonl");
+    writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    return file;
+  };
+  afterEach(() => {
+    for (const dir of madeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const sessionEndEvent = (sessionFile?: string) => ({
+    // The real payload shape: ids and counts, no messages array.
+    sessionId: "sess-1",
+    sessionKey: "agent:main:telegram:group:1",
+    messageCount: 4,
+    durationMs: 12_000,
+    reason: "reset",
+    ...(sessionFile === undefined ? {} : { sessionFile }),
+    context: { sessionId: "sess-1", sessionKey: "agent:main:telegram:group:1", agentId: "main" },
+  });
+
+  it("reads the transcript the event points at", () => {
+    const file = writeTranscript([
+      { type: "session", id: "sess-1", timestamp: "2026-09-12T20:00:00Z" },
+      { type: "message", message: { role: "user", content: "where were we" } },
+      { type: "message", message: { role: "assistant", content: "the tail of the session" } },
+    ]);
+
+    const messages = sessionEndMessagesFromTranscript(sessionEndEvent(file)) as Array<{
+      role: string;
+      content: unknown;
+    }>;
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].content).toBe("the tail of the session");
+  });
+
+  it("returns undefined when the event points at no transcript", () => {
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent())).toBeUndefined();
+  });
+
+  it("returns undefined for an unreadable transcript instead of throwing", () => {
+    const file = writeTranscript([{ type: "session", id: "sess-1" }]);
+    rmSync(file);
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent(file))).toBeUndefined();
+  });
+
+  it("returns undefined when the transcript holds no messages", () => {
+    // The caller's own guard then skips the flush, exactly as before.
+    const file = writeTranscript([
+      { type: "session", id: "sess-1" },
+      { type: "message", message: { role: "user", content: "   " } },
+    ]);
+    expect(sessionEndMessagesFromTranscript(sessionEndEvent(file))).toBeUndefined();
+  });
+
+  it("passes the agent id from the event context to the reader", () => {
+    const seen: string[] = [];
+    const read = ((filePath: string, agentId: string) => {
+      seen.push(agentId);
+      return { filePath, agentId, sessionId: "s", messages: [{ role: "user", content: "hi" }] };
+    }) as never;
+
+    sessionEndMessagesFromTranscript(sessionEndEvent("/tmp/whatever.jsonl"), read);
+
+    expect(seen).toEqual(["main"]);
+  });
+});
+
+describe("knowledgeToolDetails — Code Mode structured result (#4308)", () => {
+  it("parses the SDK's JSON text payload into details", () => {
+    const result = {
+      content: [
+        { type: "text", text: JSON.stringify({ results: [{ id: "m1", text: "fact" }] }, null, 2) },
+      ],
+    };
+    expect(knowledgeToolDetails(result)).toEqual({ results: [{ id: "m1", text: "fact" }] });
+  });
+
+  it("wraps a non-object payload so the guest still receives it", () => {
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: "[1,2]" }] })).toEqual({
+      result: [1, 2],
+    });
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: '"ok"' }] })).toEqual({
+      result: "ok",
+    });
+  });
+
+  it("falls back to an empty object for missing or unparseable text", () => {
+    expect(knowledgeToolDetails({ content: [{ type: "text", text: "not json" }] })).toEqual({});
+    expect(knowledgeToolDetails({ content: [] })).toEqual({});
+    expect(knowledgeToolDetails({})).toEqual({});
+    expect(knowledgeToolDetails(undefined)).toEqual({});
   });
 });

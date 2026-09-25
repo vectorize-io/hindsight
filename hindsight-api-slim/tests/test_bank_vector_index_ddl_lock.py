@@ -115,7 +115,7 @@ async def test_concurrent_bank_delete_storm_does_not_deadlock(memory, request_co
 
     bank_ids = [f"test-ddl-lock-{uuid.uuid4().hex[:8]}" for _ in range(8)]
     for bank_id in bank_ids:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     backend = await memory._get_backend()
     async with backend.acquire() as conn:

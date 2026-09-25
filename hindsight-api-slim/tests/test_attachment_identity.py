@@ -1,15 +1,15 @@
 """What identifies an attachment, and what merely describes a reference to it.
 
 An attachment is identified by its **content**: sha256 of the decoded bytes,
-prefixed to the short id that document text carries. Upload the same bytes twice
-and there is one blob, one row, one placeholder — which is the whole point of
-content-addressing, and what makes re-ingesting an unchanged document free.
+prefixed to the short id that document text carries. The same bytes in two
+documents therefore resolve to the same id and the same hash, and re-retaining an
+unchanged document is free.
 
-But the *filename* is not a property of the bytes. The same PDF can be attached
-to one document as "policy-v1.pdf" and to another as "escalation-runbook.pdf",
-and the blob row is written once, for whichever document arrived first. Keeping
-the name on the blob therefore made the first upload's name win everywhere —
-so it lives on the document edge instead, and these tests pin both halves.
+An attachment nonetheless *belongs* to one document — two documents carrying the
+same PDF hold a row and a copy each — and the *filename* is a property of that
+reference rather than of the bytes: the same PDF is "policy-v1.pdf" in one
+document and "escalation-runbook.pdf" in another. These tests pin both halves:
+one identity, one name per document.
 """
 
 import base64
@@ -57,8 +57,12 @@ async def _attachments_of(client, bank_id: str, document_id: str) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_identical_content_in_two_documents_is_one_attachment(api_client, memory):
-    """Identity is the content hash, so the second upload stores nothing new."""
+async def test_identical_content_in_two_documents_has_one_identity(api_client, memory):
+    """Identity is the content hash, so both documents name the same attachment.
+
+    Each holds its own copy of the bytes — see test_attachment_lifecycle.py — but
+    what the id and the hash *mean* must not depend on which document you ask.
+    """
     bank_id = f"ident-{uuid.uuid4().hex[:8]}"
     await _retain(api_client, bank_id, "doc-a", _file_block("policy-v1.pdf"))
     await _retain(api_client, bank_id, "doc-b", _file_block("escalation-runbook.pdf"))
@@ -76,9 +80,10 @@ async def test_identical_content_in_two_documents_is_one_attachment(api_client, 
 async def test_each_document_keeps_the_filename_it_supplied(api_client, memory):
     """The name describes the reference, so it must not be shared across documents.
 
-    Before the filename moved to the document edge, `doc-b` reported
-    "policy-v1.pdf" — the insert is ON CONFLICT DO NOTHING on the content hash,
-    so the second document's metadata was silently discarded.
+    Before the filename moved onto the document's own attachment row, `doc-b`
+    reported "policy-v1.pdf" — the insert is ON CONFLICT DO NOTHING, and the
+    conflict was on the content hash alone, so the second document's name was
+    silently discarded.
     """
     bank_id = f"ident-{uuid.uuid4().hex[:8]}"
     await _retain(api_client, bank_id, "doc-a", _file_block("policy-v1.pdf"))

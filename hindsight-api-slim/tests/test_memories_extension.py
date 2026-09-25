@@ -130,7 +130,17 @@ class InMemoryMemories(MemoriesExtension):
         return {"nodes": [], "edges": []}
 
     async def list_documents(
-        self, *, bank_id, search_query=None, tags=None, tags_match="any_strict", limit=100, offset=0
+        self,
+        *,
+        bank_id,
+        search_query=None,
+        tags=None,
+        tags_match="any_strict",
+        time_field=None,
+        start_date=None,
+        end_date=None,
+        limit=100,
+        offset=0,
     ):
         items = [{"id": doc_id, **doc} for doc_id, doc in self.documents.items()]
         return {"items": items[offset : offset + limit], "total": len(items), "limit": limit, "offset": offset}
@@ -932,7 +942,7 @@ async def test_engine_list_tags_routes_through_the_installed_store(memory, reque
     # The read 404s for a bank nobody created (#4175). A store owns the facts, never the bank row
     # itself, so a real deployment always has this row — a retain writes it before the store sees
     # anything. Only the stub reaches an engine read without one.
-    await memory.get_bank_profile("seam-bank", request_context=request_context)
+    await memory.ensure_bank_profile("seam-bank", request_context=request_context)
 
     result = await memory.list_tags("seam-bank", request_context=request_context)
 
@@ -1143,6 +1153,7 @@ async def _seed(store, bank_id, **fact_kwargs):
 async def test_engine_recall_routes_search_through_store(memory, request_context, restore_default_store):
     store = InMemoryMemories({})
     set_memories(store)
+    await memory.ensure_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     await memory.recall_async("seam-bank", "anything at all", request_context=request_context)
     assert "search" in store.calls  # the semantic/bm25 arm went through the interface, not SQL
 
@@ -1151,7 +1162,7 @@ async def test_engine_list_memory_units_routes_through_store(memory, request_con
     store = InMemoryMemories({})
     set_memories(store)
     await _seed(store, "seam-bank", text="only in the store", fact_type="world")
-    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
+    await memory.ensure_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     res = await memory.list_memory_units("seam-bank", request_context=request_context)
     assert "list_memory_units" in store.calls
     assert res["total"] == 1  # the row exists only in the stub, so it can only have come from it
@@ -1193,7 +1204,7 @@ async def test_apply_edit_is_told_the_pre_edit_fact_type(memory, request_context
 async def test_engine_list_entities_routes_through_store(memory, request_context, restore_default_store):
     store = InMemoryMemories({})
     set_memories(store)
-    await memory.get_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
+    await memory.ensure_bank_profile("seam-bank", request_context=request_context)  # see #4175 above
     await memory.list_entities("seam-bank", request_context=request_context)
     assert "list_entities" in store.calls
 
@@ -1346,6 +1357,7 @@ async def test_recall_include_chunks_hydrates_body_from_store(memory, request_co
     set_memories(store)
     suffix = uuid.uuid4().hex[:8]
     bank_id = f"seam-chunks-{suffix}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
     chunk_id = f"chunk-{suffix}"
     fact_id = str(uuid.uuid4())
@@ -1413,6 +1425,7 @@ async def test_recall_include_source_facts_hydrates_from_store(memory, request_c
     store = InMemoryMemories({})
     set_memories(store)
     bank_id = f"seam-srcfacts-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     obs_id = str(uuid.uuid4())
     src_id = str(uuid.uuid4())
     src_text = "Alice deployed the hotfix on Tuesday afternoon"
@@ -1457,6 +1470,7 @@ async def test_recall_include_entities_hydrates_names_from_registry(
     store.carries_entity_ids_on_result = carries_ids_on_result
     set_memories(store)
     bank_id = f"seam-entities-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     fact_id = str(uuid.uuid4())
 
     pool = await memory._get_pool()
@@ -1504,6 +1518,7 @@ async def test_recall_include_entities_omits_entityless_unit(
     store.carries_entity_ids_on_result = carries_ids_on_result
     set_memories(store)
     bank_id = f"seam-entities-omit-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     with_entity_id = str(uuid.uuid4())
     without_entity_id = str(uuid.uuid4())
 
@@ -1595,6 +1610,7 @@ async def test_recall_all_enrichments_together_through_store(
     set_memories(store)
     suffix = uuid.uuid4().hex[:8]
     bank_id = f"seam-all-{suffix}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
     chunk_id = f"chunk-{suffix}"
     src_id = str(uuid.uuid4())

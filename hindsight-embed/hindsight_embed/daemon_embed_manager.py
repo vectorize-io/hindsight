@@ -15,6 +15,7 @@ import sys
 import sysconfig
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 from typing import IO, Optional
@@ -175,6 +176,14 @@ def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class UvTrampoline:
+    """A uv venv's Scripts/pythonw.exe, resolved to what it actually launches."""
+
+    base_pythonw: str
+    venv_root: Path
+
+
 class DaemonEmbedManager(EmbedManager):
     """Production embed manager using daemon-based architecture with profile isolation."""
 
@@ -263,7 +272,43 @@ class DaemonEmbedManager(EmbedManager):
         return None
 
     @staticmethod
-    def _windows_gui_interpreter(preferred_dir: Path | None = None) -> str | None:
+    def _uv_trampoline_target(pythonw: Path) -> UvTrampoline | None:
+        """For a uv venv trampoline, resolve the base pythonw.exe it launches.
+
+        uv does not put a real interpreter in a venv's Scripts dir: the small
+        ``pythonw.exe`` there is a trampoline that CreateProcess's the base
+        interpreter recorded in ``pyvenv.cfg``. That relaunch lands on the CUI
+        ``python.exe`` and allocates the console our DETACHED_PROCESS flags were
+        meant to prevent — the flags applied to the trampoline, not to the
+        process the trampoline went on to spawn (issue #4466). Launching the
+        base pythonw.exe ourselves keeps the whole tree GUI-subsystem.
+
+        Returns None unless pyvenv.cfg carries uv's own ``uv =`` marker: a
+        stdlib venv's pythonw.exe is the GUI venvwlauncher, which already
+        redirects to the base *pythonw*, so bypassing it here would drop it out
+        of its venv for no gain.
+        """
+        for venv_root in (pythonw.parent.parent, pythonw.parent):
+            cfg = venv_root / "pyvenv.cfg"
+            try:
+                if not cfg.is_file():
+                    continue
+                text = cfg.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            entries = {
+                key.strip().lower(): value.strip()
+                for key, _, value in (line.partition("=") for line in text.splitlines())
+            }
+            if "uv" not in entries or "home" not in entries:
+                continue
+            base_pythonw = Path(entries["home"]) / "pythonw.exe"
+            if base_pythonw.is_file():
+                return UvTrampoline(base_pythonw=str(base_pythonw), venv_root=venv_root)
+        return None
+
+    @staticmethod
+    def _windows_gui_interpreter(preferred_dir: Path | None = None, env: dict[str, str] | None = None) -> str | None:
         """Path to the GUI-subsystem Python (pythonw.exe), or None.
 
         Returns None on non-Windows, or when pythonw.exe can't be located next
@@ -277,15 +322,33 @@ class DaemonEmbedManager(EmbedManager):
         never allocates a console, so no window appears. Prefer the scripts dir
         that contains hindsight-api.exe because wrapper entry points can make
         sys.executable point at a different launcher directory (issue #2389).
+
+        When the pythonw we find is a uv trampoline and ``env`` is a writable
+        dict, resolve the base interpreter instead and put the venv's
+        site-packages on PYTHONPATH so hindsight_api stays importable (#4466).
         """
         if platform.system() != "Windows":
             return None
+        candidates: list[Path] = []
         if preferred_dir is not None:
-            pythonw = preferred_dir / "pythonw.exe"
-            if pythonw.exists():
-                return str(pythonw)
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        return str(pythonw) if pythonw.exists() else None
+            candidates.append(preferred_dir / "pythonw.exe")
+        candidates.append(Path(sys.executable).with_name("pythonw.exe"))
+        for pythonw in candidates:
+            if not pythonw.exists():
+                continue
+            target = DaemonEmbedManager._uv_trampoline_target(pythonw)
+            # Only bypass the trampoline when we can hand the base interpreter
+            # the venv's packages: without them it can't import hindsight_api,
+            # and a daemon that won't start is worse than a console flash.
+            if target is not None and env is not None:
+                site_packages = target.venv_root / "Lib" / "site-packages"
+                if site_packages.is_dir():
+                    env["PYTHONPATH"] = os.pathsep.join(
+                        part for part in (str(site_packages), env.get("PYTHONPATH", "")) if part
+                    )
+                    return target.base_pythonw
+            return str(pythonw)
+        return None
 
     def _component_version(self, profile: str, env_key: str) -> str:
         """Resolve a component version: profile .env override > env var > embed version.
@@ -345,7 +408,7 @@ class DaemonEmbedManager(EmbedManager):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
             # Windows to avoid ConPTY popping a terminal tab (issue #1885).
-            gui_python = self._windows_gui_interpreter(scripts_dir)
+            gui_python = self._windows_gui_interpreter(scripts_dir, env if isinstance(env, dict) else None)
             if gui_python is not None:
                 return [gui_python, "-m", "hindsight_api.main"]
             return [str(candidate)]

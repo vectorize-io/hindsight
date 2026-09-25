@@ -214,6 +214,81 @@ describe("readCodexTranscript", () => {
     expect(readCodexTranscript(file)).toEqual([{ role: "action", content: "shell" }]);
   });
 
+  it("preserves event timestamps on user, assistant, and function-call turns", () => {
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-02T10:00:00Z",
+          payload: {
+            type: "item_completed",
+            item: { type: "UserMessage", content: [text("inspect the service")] },
+          },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-01-02T10:00:02Z",
+          payload: {
+            type: "function_call",
+            name: "exec",
+            arguments: JSON.stringify({ command: "status" }),
+          },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-01-02T10:00:04Z",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [text("The service is healthy.")],
+          },
+        }),
+      ].join("\n")
+    );
+    expect(readCodexTranscript(file)).toEqual([
+      { role: "user", content: "inspect the service", timestamp: "2026-01-02T10:00:00Z" },
+      { role: "action", content: "exec status", timestamp: "2026-01-02T10:00:02Z" },
+      { role: "assistant", content: "The service is healthy.", timestamp: "2026-01-02T10:00:04Z" },
+    ]);
+  });
+
+  it("omits a non-string timestamp rather than passing it through", () => {
+    // A rollout line is unvalidated JSON. An envelope time that is not a string must not
+    // reach the turn: chat.ts writes whatever is there verbatim into the retained JSONL.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "response_item",
+        timestamp: 1767348000000,
+        payload: { type: "message", role: "assistant", content: [text("done")] },
+      })
+    );
+    expect(readCodexTranscript(file)).toEqual([{ role: "assistant", content: "done" }]);
+  });
+
+  it("normalizes current custom_tool_call records as compact action turns", () => {
+    writeFileSync(
+      file,
+      [
+        item({
+          type: "custom_tool_call",
+          name: "exec",
+          input: JSON.stringify({ command: "systemctl status service" }),
+          call_id: "call_1",
+        }),
+        item({
+          type: "custom_tool_call_output",
+          call_id: "call_1",
+          output: [{ type: "text", text: "active" }],
+        }),
+      ].join("\n")
+    );
+    expect(readCodexTranscript(file)).toEqual([
+      { role: "action", content: "exec systemctl status service" },
+    ]);
+  });
+
   it("drops function_call_output entirely — even a huge one produces no turn", () => {
     writeFileSync(
       file,

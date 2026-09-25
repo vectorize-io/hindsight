@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { client, MentalModel, MentalModelDryRunRefreshResult } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { useRefreshAttempts } from "@/lib/use-refresh-attempts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -98,6 +99,9 @@ export type HistoryEntry = {
 
 const isFailureEntry = (e: HistoryEntry) => e.kind === "refresh_failed";
 
+/** How often the modal re-reads the bank's in-flight refreshes; a retry gap is 60s. */
+const MODAL_ATTEMPT_POLL_MS = 12000;
+
 /** Consecutive attempts that failed the same way, as one entry on the timeline. */
 export type FailureGroup = { entry: HistoryEntry; attempts: number; oldest: string };
 
@@ -141,7 +145,14 @@ export function groupFailures(history: HistoryEntry[]): FailureGroup[] {
  * Kept out of the History tab on purpose: that tab is a version browser, and a
  * refusal to write produces no version — interleaving the two made the failures
  * read as versions and buried the diffs under repetitions of one outage. */
-function RefreshErrorTimeline({ groups }: { groups: FailureGroup[] }) {
+function RefreshErrorTimeline({
+  groups,
+  paused,
+}: {
+  groups: FailureGroup[];
+  /** True while the model's last refresh is a failed one, so nothing re-runs it by itself. */
+  paused: boolean;
+}) {
   const t = useTranslations("mentalModelDetailModal");
   const reasonLabels: Record<RefreshFailureReason, string> = {
     retrieval_failed: t("failureReasonRetrievalFailed"),
@@ -162,6 +173,14 @@ function RefreshErrorTimeline({ groups }: { groups: FailureGroup[] }) {
   return (
     <div className="space-y-1">
       <p className="text-sm text-muted-foreground pb-2">{t("errorsIntro")}</p>
+      {/* The state, not just the log: after the retries a model stops being picked up
+          by its own trigger, and the tab that shows the failures is where someone
+          finds out why nothing has refreshed since (#4532). */}
+      {paused && (
+        <p className="text-sm font-medium text-red-700 dark:text-red-400 pb-2">
+          {t("errorsPausedNotice")}
+        </p>
+      )}
       <ol className="relative border-l border-border ml-2">
         {groups.map((g, i) => (
           <li key={`${g.entry.changed_at}-${i}`} className="relative pl-6 pb-5 last:pb-0">
@@ -787,6 +806,9 @@ export function MentalModelDetailModal({
 }: MentalModelDetailModalProps) {
   const t = useTranslations("mentalModelDetailModal");
   const { currentBank } = useBank();
+  // Same source the list uses: while the worker still has attempts left the model
+  // is not paused yet, and the two surfaces must not disagree about that (#4532).
+  const refreshAttempts = useRefreshAttempts(currentBank, MODAL_ATTEMPT_POLL_MS);
   const [mentalModel, setMentalModel] = useState<MentalModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -805,6 +827,11 @@ export function MentalModelDetailModal({
     [history]
   );
   const failureGroups = useMemo(() => groupFailures(history ?? []), [history]);
+  // Paused is the end state, not the first failed attempt: while an attempt is
+  // still queued or running the worker has not given up on this model yet.
+  const refreshPaused = Boolean(
+    mentalModel?.last_refresh_failed_at && !refreshAttempts.has(mentalModel.id)
+  );
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<MentalModelDryRunRefreshResult | null>(null);
@@ -954,11 +981,21 @@ export function MentalModelDetailModal({
                   <RefreshCw className={`h-3.5 w-3.5 ${reloading ? "animate-spin" : ""}`} />
                 </Button>
               )}
-              {mentalModel?.trigger?.refresh_after_consolidation && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-xs font-medium">
-                  <Zap className="w-3 h-3" />
-                  {t("autoRefresh")}
+              {/* The auto-refresh promise is only true while refreshes work: a model
+                  whose last one failed is skipped by its trigger until one succeeds,
+                  so it says so here instead of showing a green badge (#4532). */}
+              {refreshPaused ? (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium">
+                  <AlertTriangle className="w-3 h-3" />
+                  {t("refreshPaused")}
                 </span>
+              ) : (
+                mentalModel?.trigger?.refresh_after_consolidation && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-xs font-medium">
+                    <Zap className="w-3 h-3" />
+                    {t("autoRefresh")}
+                  </span>
+                )
               )}
             </DialogTitle>
           </DialogHeader>
@@ -1127,7 +1164,7 @@ export function MentalModelDetailModal({
                       <Spinner size="md" variant="jump" />
                     </div>
                   ) : (
-                    <RefreshErrorTimeline groups={failureGroups} />
+                    <RefreshErrorTimeline groups={failureGroups} paused={refreshPaused} />
                   )}
                 </TabsContent>
 
@@ -1148,7 +1185,11 @@ export function MentalModelDetailModal({
                       onViewDirective={(id) => setViewDirectiveId(id)}
                     />
                   ) : (
-                    <p className="text-sm text-muted-foreground italic">{t("noHistory")}</p>
+                    <p className="text-sm text-muted-foreground italic">
+                      {/* A model that has only ever failed has no versions, and "no history"
+                          read as "nothing ever happened" — point at the tab that has it. */}
+                      {failureGroups.length > 0 ? t("noHistoryOnlyFailures") : t("noHistory")}
+                    </p>
                   )}
                 </TabsContent>
               </div>

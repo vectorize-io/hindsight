@@ -21,10 +21,32 @@ List the memory units in a bank. The response includes each unit's `fact_type` (
 
 Narrow the results with query parameters: `type=` (fact type), `q=` (full-text search over text and context), `document_id=` (a single source document), and `entity_id=` (memory units linked to a given entity). The `entity_id` filter is an exact reverse lookup over stored entity links — not a text or semantic match — so you can list an entity's evidence (e.g. its observations, with `type=observation`) without scanning every memory. Because entity links exist only for live units, combining `entity_id` with `state=invalidated` returns nothing.
 
+### Time window
+
+`start_date=` and `end_date=` restrict the results to a half-open range `[start, end)`, and `time_field=` chooses which timestamp they apply to:
+
+| `time_field` | Means |
+|---|---|
+| `created_at` (default) | When the memory was ingested |
+| `updated_at` | When it was last written |
+| `mentioned_at` | When the fact was mentioned |
+| `occurred_start` / `occurred_end` | When the fact itself occurred |
+
+`time_field` also becomes the sort order (newest first), and **memories with no value on that column are excluded** — so `total` counts only the memories carrying that timestamp, and can be `0` on a bank that is not empty. Omit all three parameters to keep the default listing, which orders by `mentioned_at` then `created_at` and drops nothing.
+
+This filters, unlike recall's `temporal_window`, which only ranks — use it when you need an exhaustive, time-bounded read rather than the best matches.
+
 ### Python
 
 ```python
-# Section 'list-memories' not found in api/memories.py
+# List memory units in a bank. Invalidated rows are included by default.
+memories = await client.memory.list_memories(bank_id=BANK_ID)
+for unit in memories.items:
+    print(f"- [{unit.fact_type}] {unit.text}")
+
+# Filter to only the invalidated facts (e.g. to review duplicates).
+invalidated = await client.memory.list_memories(bank_id=BANK_ID, state="invalidated")
+print(f"{len(invalidated.items)} invalidated fact(s)")
 ```
 
 ### Node.js
@@ -54,7 +76,15 @@ curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/list?state=invalidate
 ### Go
 
 ```go
-# Section 'list-memories' not found in api/memories.go
+// List memory units in a bank. Invalidated rows are included by default.
+memories, _, _ := client.MemoryAPI.ListMemories(ctx, memBankID).Execute()
+for _, unit := range memories.GetItems() {
+	fmt.Printf("- [%v] %v\n", unit.GetFactType(), unit.GetText())
+}
+
+// Filter to only the invalidated facts (e.g. to review duplicates).
+invalidated, _, _ := client.MemoryAPI.ListMemories(ctx, memBankID).State("invalidated").Execute()
+fmt.Printf("%d invalidated fact(s)\n", len(invalidated.GetItems()))
 ```
 
 ## Fetch a single memory unit
@@ -64,7 +94,11 @@ Fetch a memory unit by ID, including its content, metadata, entities, timestamps
 ### Python
 
 ```python
-# Section 'get-memory' not found in api/memories.py
+# Fetch a single memory unit (includes metadata, entities, dates, and state).
+memory = await client.memory.get_memory(bank_id=BANK_ID, memory_id=memory_id)
+
+print(f"Text: {memory['text']}")
+print(f"Type: {memory['type']}  Entities: {memory['entities']}")
 ```
 
 ### Node.js
@@ -81,13 +115,16 @@ console.log(`Type: ${memory.type}  Entities: ${memory.entities}`);
 ### CLI
 
 ```bash
-# Section 'get-memory' not found in api/memories.sh
+# Fetch a single memory unit (metadata, entities, dates, state)
+curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$MEMORY_ID"
 ```
 
 ### Go
 
 ```go
-# Section 'get-memory' not found in api/memories.go
+// Fetch a single memory unit (metadata, entities, dates, state).
+memory, _, _ := client.MemoryAPI.GetMemory(ctx, memBankID, memoryID).Execute()
+fmt.Printf("Memory: %v\n", memory)
 ```
 
 For a **derived observation**, the history endpoint returns how it was refreshed over time as new source facts arrived:
@@ -95,25 +132,36 @@ For a **derived observation**, the history endpoint returns how it was refreshed
 ### Python
 
 ```python
-# Section 'observation-history' not found in api/memories.py
+# Get the refresh history of a derived observation.
+history = await client.memory.get_observation_history(
+    bank_id=BANK_ID, memory_id=observation.id
+)
+print(f"Observation history entries: {len(history)}")
 ```
 
 ### Node.js
 
 ```javascript
-# Section 'observation-history' not found in api/memories.mjs
+// Get the refresh history of a derived observation.
+const history = await (
+    await fetch(`${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/memories/${observation.id}/history`)
+).json();
+console.log(`Observation history entries: ${history.length}`);
 ```
 
 ### CLI
 
 ```bash
-# Section 'observation-history' not found in api/memories.sh
+# Get the refresh history of a derived observation
+curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$OBSERVATION_ID/history"
 ```
 
 ### Go
 
 ```go
-# Section 'observation-history' not found in api/memories.go
+// Get the refresh history of a derived observation.
+history, _, _ := client.MemoryAPI.GetObservationHistory(ctx, memBankID, observationID).Execute()
+fmt.Printf("Observation history: %v\n", history)
 ```
 
 ## Curation: editing, invalidating & pruning
@@ -147,7 +195,16 @@ You don't need to rebuild anything yourself: an edit **automatically recomputes 
 ### Python
 
 ```python
-# Section 'edit-memory' not found in api/memories.py
+# Correct the fact's text. Re-embeds, drops derived observations/links,
+# re-consolidates, and recomputes the graph automatically.
+await client.memory.update_memory(
+    bank_id=BANK_ID,
+    memory_id=memory_id,
+    update_memory_request=UpdateMemoryRequest(
+        text="The user visited Paris in 2023.",
+        reason="wrong subject",
+    ),
+)
 ```
 
 ### Node.js
@@ -161,13 +218,23 @@ await patchMemory(memoryId, { text: 'The user visited Paris in 2023.', reason: '
 ### CLI
 
 ```bash
-# Section 'edit-memory' not found in api/memories.sh
+# Correct the fact's text. Re-embeds, drops derived observations/links,
+# re-consolidates, and recomputes the graph automatically.
+curl -s -X PATCH "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$MEMORY_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The user visited Paris in 2023.", "reason": "wrong subject"}'
 ```
 
 ### Go
 
 ```go
-# Section 'edit-memory' not found in api/memories.go
+// Correct the fact's text. Re-embeds, drops derived observations/links,
+// re-consolidates, and recomputes the graph automatically.
+client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
+	UpdateMemoryRequest(hindsight.UpdateMemoryRequest{
+		Text:   *hindsight.NewNullableString(hindsight.PtrString("The user visited Paris in 2023.")),
+		Reason: *hindsight.NewNullableString(hindsight.PtrString("wrong subject")),
+	}).Execute()
 ```
 
 You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
@@ -188,7 +255,20 @@ The same flag exists on [retain](./retain#resolve_entities) for the entities you
 ### Python
 
 ```python
-# Section 'edit-memory-fields' not found in api/memories.py
+# Correct dates, fact type, and entities in one call. "" clears a field;
+# entities replaces the set ([] detaches all); omit to leave unchanged.
+# resolve_entities=False keeps the entity names you wrote from being matched
+# onto a similar entity that already exists.
+await client.memory.update_memory(
+    bank_id=BANK_ID,
+    memory_id=memory_id,
+    update_memory_request=UpdateMemoryRequest(
+        occurred_start="2023-06-01",
+        fact_type="experience",
+        entities=["Alice", "Paris"],
+        resolve_entities=False,
+    ),
+)
 ```
 
 ### Node.js
@@ -209,13 +289,29 @@ await patchMemory(memoryId, {
 ### CLI
 
 ```bash
-# Section 'edit-memory-fields' not found in api/memories.sh
+# Correct dates, fact type, and entities in one call. "" clears a field;
+# entities replaces the set ([] detaches all); omit to leave unchanged.
+# resolve_entities false keeps the entity names you wrote from being matched
+# onto a similar entity that already exists.
+curl -s -X PATCH "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$MEMORY_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"occurred_start": "2023-06-01", "fact_type": "experience", "entities": ["Alice", "Paris"], "resolve_entities": false}'
 ```
 
 ### Go
 
 ```go
-# Section 'edit-memory-fields' not found in api/memories.go
+// Correct dates, fact type, and entities in one call. "" clears a field;
+// entities replaces the set ([] detaches all); omit to leave unchanged.
+// ResolveEntities false keeps the entity names you wrote from being matched
+// onto a similar entity that already exists.
+client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
+	UpdateMemoryRequest(hindsight.UpdateMemoryRequest{
+		OccurredStart:   *hindsight.NewNullableString(hindsight.PtrString("2023-06-01")),
+		FactType:        *hindsight.NewNullableString(hindsight.PtrString("experience")),
+		Entities:        []string{"Alice", "Paris"},
+		ResolveEntities: hindsight.PtrBool(false),
+	}).Execute()
 ```
 
 ### Invalidate a memory (reversible)
@@ -230,7 +326,16 @@ Soft-retire a fact. An invalidated memory:
 ### Python
 
 ```python
-# Section 'invalidate-memory' not found in api/memories.py
+# Soft-retire a fact: removed from recall/consolidation/graph, links pruned,
+# derived observations recomputed without it — but kept for audit.
+await client.memory.update_memory(
+    bank_id=BANK_ID,
+    memory_id=memory_id,
+    update_memory_request=UpdateMemoryRequest(
+        state="invalidated",
+        reason="server decommissioned 2026-06-01",
+    ),
+)
 ```
 
 ### Node.js
@@ -244,13 +349,23 @@ await patchMemory(memoryId, { state: 'invalidated', reason: 'server decommission
 ### CLI
 
 ```bash
-# Section 'invalidate-memory' not found in api/memories.sh
+# Soft-retire a fact: removed from recall/consolidation/graph, links pruned,
+# derived observations recomputed without it — but kept for audit.
+curl -s -X PATCH "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$MEMORY_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "invalidated", "reason": "server decommissioned 2026-06-01"}'
 ```
 
 ### Go
 
 ```go
-# Section 'invalidate-memory' not found in api/memories.go
+// Soft-retire a fact: removed from recall/consolidation/graph, links pruned,
+// derived observations recomputed without it — but kept for audit.
+client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
+	UpdateMemoryRequest(hindsight.UpdateMemoryRequest{
+		State:  *hindsight.NewNullableString(hindsight.PtrString("invalidated")),
+		Reason: *hindsight.NewNullableString(hindsight.PtrString("server decommissioned 2026-06-01")),
+	}).Execute()
 ```
 
 Restoring moves the fact back into the active set, brings back the cause-and-effect relationships it took part in, and re-consolidates:
@@ -258,7 +373,12 @@ Restoring moves the fact back into the active set, brings back the cause-and-eff
 ### Python
 
 ```python
-# Section 'restore-memory' not found in api/memories.py
+# Restore a previously invalidated fact.
+await client.memory.update_memory(
+    bank_id=BANK_ID,
+    memory_id=memory_id,
+    update_memory_request=UpdateMemoryRequest(state="valid"),
+)
 ```
 
 ### Node.js
@@ -271,13 +391,20 @@ await patchMemory(memoryId, { state: 'valid' });
 ### CLI
 
 ```bash
-# Section 'restore-memory' not found in api/memories.sh
+# Restore a previously invalidated fact.
+curl -s -X PATCH "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/$MEMORY_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "valid"}'
 ```
 
 ### Go
 
 ```go
-# Section 'restore-memory' not found in api/memories.go
+// Restore a previously invalidated fact.
+client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
+	UpdateMemoryRequest(hindsight.UpdateMemoryRequest{
+		State: *hindsight.NewNullableString(hindsight.PtrString("valid")),
+	}).Execute()
 ```
 
 Behind the scenes, invalidating **moves** the row out of the active `memory_units` table into a separate archive, so recall and consolidation never need a "skip invalidated" filter — the rows simply aren't there.

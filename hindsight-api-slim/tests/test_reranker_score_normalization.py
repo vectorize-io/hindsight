@@ -45,6 +45,10 @@ def _make_cross_encoder(predict_return: list[float]):
     ce.predict = AsyncMock(return_value=predict_return)
     ce.provider_name = "local"
     ce.initialize = AsyncMock()
+    # Set explicitly: an AsyncMock answers every unset attribute with a truthy Mock,
+    # so leaving this out would make the fake claim it prunes and silently drop any
+    # candidate scoring 0.0.
+    ce.prunes_candidates = False
     return ce
 
 
@@ -148,3 +152,21 @@ async def test_boundary_scores_passthrough():
     assert by_score[1.0] == pytest.approx(1.0)
     assert by_score[0.5] == pytest.approx(0.5)
     assert by_score[0.0] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_zero_scores_survive_an_ordinary_reranker():
+    """A low score from a plain cross-encoder means "least bad", never "discard"."""
+    ce = _make_cross_encoder([0.5, 0.0, 0.2])
+    ce.prunes_candidates = False
+    results = await CrossEncoderReranker(cross_encoder=ce).rerank("q", _make_candidates(3))
+    assert len(results) == 3
+
+
+@pytest.mark.asyncio
+async def test_zero_scores_are_dropped_when_the_reranker_judges_relevance():
+    """A reranker that decides relevance marks a discard with exactly 0.0."""
+    ce = _make_cross_encoder([0.5, 0.0, 0.2])
+    ce.prunes_candidates = True
+    results = await CrossEncoderReranker(cross_encoder=ce).rerank("q", _make_candidates(3))
+    assert [r.weight for r in results] == [0.5, 0.2]

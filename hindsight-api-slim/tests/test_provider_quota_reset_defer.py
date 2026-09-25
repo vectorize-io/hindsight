@@ -103,6 +103,12 @@ async def test_extract_facts_from_text_preserves_provider_quota_reset(monkeypatc
             event_date=None,
             llm_config=object(),
             agent_name="TestAgent",
+            # Handed in ready-made so the stub config only needs the chunking
+            # fields: what is under test is how the chunk error propagates, and
+            # building the real prompt would drag in every extraction setting.
+            extraction_prompt=fact_extraction.ExtractionPrompt(
+                system_prompt="", response_schema=fact_extraction.FactExtractionResponse
+            ),
             config=SimpleNamespace(
                 retain_chunk_size=1000,
                 retain_structured_chunk_size=None,

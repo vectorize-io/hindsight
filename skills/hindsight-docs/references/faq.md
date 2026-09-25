@@ -90,6 +90,7 @@ Browse all supported integrations in the Integrations Hub.
 - Requesty
 - OpenAI Codex
 - Claude Code
+- Cursor
 - GitHub Copilot
 - AWS Bedrock
 - Fireworks AI

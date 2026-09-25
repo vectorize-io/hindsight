@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -115,6 +116,24 @@ class TestMentalModelFreshnessHelper:
 
     def test_blank_content_is_not_usable(self):
         output = {"mental_models": [{"id": "mm-1", "content": "   ", "is_stale": False}]}
+        assert _all_mental_models_are_usable_and_fresh(output) is False
+
+    def test_a_snippet_counts_as_usable_content(self):
+        """A search now returns the runner-up pages as a snippet, not as `content`.
+
+        Reading only `content` made every result but the top hit look empty, which
+        kept the forced ladder running past a set of fresh, relevant pages.
+        """
+        output = {
+            "mental_models": [
+                {"id": "mm-1", "content": "The best hit, whole.", "is_stale": False},
+                {"id": "mm-2", "snippet": "The runner-up, truncated", "content_chars": 900, "is_stale": False},
+            ]
+        }
+        assert _all_mental_models_are_usable_and_fresh(output) is True
+
+    def test_a_blank_snippet_is_not_usable(self):
+        output = {"mental_models": [{"id": "mm-1", "snippet": "  ", "is_stale": False}]}
         assert _all_mental_models_are_usable_and_fresh(output) is False
 
     def test_empty_list_is_vacuously_usable(self):
@@ -291,6 +310,7 @@ class TestReflectAgentMocked:
         """Create mock search/recall functions."""
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1556,6 +1576,7 @@ class TestContextOverflowBehavior:
         large_memories = [{"id": f"mem-{i}", "content": f"Memory fact number {i}: " + "A" * 200} for i in range(20)]
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": large_memories}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1645,6 +1666,7 @@ class TestNoAnswerFailsHard:
     def mock_functions(self):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -1760,7 +1782,7 @@ class TestDirectiveLeakageOnEmptyBank:
         bank_id = f"test-directive-leak-{uuid.uuid4().hex[:8]}"
         try:
             # Ensure bank exists (auto-creates it), but retain nothing.
-            await memory.get_bank_profile(bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
             await memory.create_directive(
                 bank_id=bank_id,
@@ -1873,6 +1895,7 @@ class TestMentalModelShortCircuitRealLLM:
 
         return {
             "search_mental_models_fn": AsyncMock(side_effect=search_mental_models_fn),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": observations or []}),
             "recall_fn": AsyncMock(return_value={"memories": recall_memories or []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -2059,6 +2082,7 @@ class TestReflectIncrementalCache:
             "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "x"}]}),
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }
 
@@ -2132,3 +2156,217 @@ class TestReflectIncrementalCache:
         assert len(provider.deleted_sessions) == 1
         assert provider.deleted_sessions[0].startswith("reflect:")
         assert provider.deleted_sessions[0] == provider.created[0][0]
+
+
+class TestReflectShortIdAliases:
+    """The model reads short aliases (presentation.py); what it cites must come back as real ids."""
+
+    @pytest.mark.asyncio
+    async def test_done_citations_written_as_aliases_resolve_to_real_ids(self):
+        functions = {
+            "search_observations_fn": AsyncMock(
+                return_value={"observations": [{"id": "obs-uuid-1", "text": "an observation"}]}
+            ),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-uuid-1", "text": "a fact"}]}),
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+        def _tc(cid, name):
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
+            )
+
+        provider = _StepCacheProvider(
+            scripted=[
+                _tc("0", "search_observations"),
+                _tc("1", "recall"),
+                LLMToolCallResult(
+                    tool_calls=[
+                        LLMToolCall(
+                            id="2",
+                            name="done",
+                            arguments={"answer": "A", "memory_ids": ["f1"], "observation_ids": ["o1"]},
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="alias-bank",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            include_observations=True,
+            include_recall=True,
+            budget="high",
+            max_iterations=8,
+            **functions,
+        )
+
+        assert result.used_memory_ids == ["mem-uuid-1"]
+        assert result.used_observation_ids == ["obs-uuid-1"]
+        # The raw record stays in the trace; only the prompt carried the alias.
+        assert result.tool_trace[1].output["memories"][0]["id"] == "mem-uuid-1"
+
+
+class TestReflectFinishesThroughDone:
+    """A model that stops with prose is asked for ``done`` in the same conversation.
+
+    Measured on the refresh-cost eval: only ~29% of refreshes ever called ``done``
+    on their own, so the answer was written twice — once as prose that reflect
+    drops, then again from a standalone synthesis prompt that re-renders every
+    tool result and re-pays for it. Asking here reuses the prefix the provider
+    already holds and returns the structured document a page wants.
+    """
+
+    @staticmethod
+    def _functions():
+        return {
+            "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1", "text": "o"}]}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "m"}]}),
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @staticmethod
+    def _searches():
+        return [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id=str(i), name=name, arguments={"query": "q"})], finish_reason="tool_calls"
+            )
+            for i, name in enumerate(("search_observations", "recall"))
+        ]
+
+    @pytest.mark.asyncio
+    async def test_prose_stop_is_asked_to_say_it_through_done(self):
+        provider = _StepCacheProvider(
+            scripted=[
+                *self._searches(),
+                # The model stops with prose instead of calling done.
+                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="9", name="done", arguments={"answer": "A", "memory_ids": ["f1"]})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            budget="high",
+            max_iterations=8,
+            **self._functions(),
+        )
+
+        assert result.text == "A"
+        assert result.used_memory_ids == ["mem-1"], "aliases in the closing done call must resolve"
+        # The closing call continues the same conversation (one message more than
+        # the turn before it) and pins ``done``, rather than rebuilding a synthesis
+        # prompt that would re-send every tool result as text.
+        closing, previous = provider.calls[-1], provider.calls[-2]
+        assert closing["tool_choice"].function_name == "done"
+        # Its own trace scope: the standalone synthesis records "final", and the two
+        # paths cost differently, so a reader must be able to tell them apart.
+        assert [c.scope for c in result.llm_trace][-1] == "closing_done"
+        assert not any(c.scope == "final" for c in result.llm_trace), "the standalone prompt must not have run"
+        assert closing["n_messages"] == previous["n_messages"] + 1
+
+    @pytest.mark.asyncio
+    async def test_a_provider_that_will_not_call_done_falls_back_to_the_standalone_prompt(self):
+        provider = _StepCacheProvider(
+            scripted=[
+                *self._searches(),
+                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
+                # Asked for done, the provider returns prose again.
+                LLMToolCallResult(content="still prose", finish_reason="stop"),
+            ]
+        )
+        provider.call = AsyncMock(
+            return_value=LLMCallResult(
+                content="synthesized", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+            )
+        )
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            budget="high",
+            max_iterations=8,
+            **self._functions(),
+        )
+
+        assert result.text == "synthesized"
+        provider.call.assert_awaited()
+
+
+class TestReflectKeepsItsPrefixStable:
+    """Everything reflect re-sends each turn must be byte-identical to the last turn.
+
+    A prompt that only GROWS is what a cached prefix needs — and on hybrid/local
+    models (Ollama, llama.cpp), a prompt that diverges early forces a full
+    re-prefill of the whole accumulated conversation instead of resuming, which
+    is #3865. reflect controls two of the three inputs: the system prompt and the
+    tools array. (``tool_choice`` still varies per turn while the retrieval
+    sequence is forced — that is the part #4469 tracks, and it is measured but
+    not changed here.)
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_system_prompt_and_tools_never_change_within_one_reflect(self):
+        def _tc(cid, name):
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
+            )
+
+        provider = _StepCacheProvider(
+            scripted=[
+                _tc("0", "search_mental_models"),
+                _tc("1", "search_observations"),
+                _tc("2", "recall"),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="3", name="done", arguments={"answer": "A"})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+        sent: list[tuple[str, str]] = []
+        original = provider.call_with_tools
+
+        async def _record(*, messages, tools, **kwargs):
+            system = next((m["content"] for m in messages if m.get("role") == "system"), "")
+            sent.append((system, json.dumps(tools, sort_keys=True)))
+            return await original(messages=messages, tools=tools, **kwargs)
+
+        provider.call_with_tools = _record
+
+        await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            search_mental_models_fn=AsyncMock(return_value={"mental_models": [{"id": "mm-1", "content": "c"}]}),
+            read_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
+            search_observations_fn=AsyncMock(return_value={"observations": [{"id": "obs-1", "text": "o"}]}),
+            recall_fn=AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "m"}]}),
+            expand_fn=AsyncMock(return_value={"memories": []}),
+            has_mental_models=True,
+            budget="high",
+            max_iterations=8,
+        )
+
+        assert len(sent) >= 3, f"expected several turns, got {len(sent)}"
+        assert len({s for s, _ in sent}) == 1, "the system prompt changed mid-reflect"
+        assert len({t for _, t in sent}) == 1, "the tools array changed mid-reflect"

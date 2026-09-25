@@ -47,7 +47,6 @@ NAMED_RESULTS = {
     "retrieve": "GraphRetrieval",
     "call": "LLMCallResult",
     "_fit_structured_delta_prompt_parts": "FittedDeltaPrompt",
-    "_validate_operations_list": "ValidatedOperations",
 }
 
 

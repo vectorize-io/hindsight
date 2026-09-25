@@ -38,7 +38,7 @@ async def test_intrabatch_variants_collapse_but_distinct_names_stay_separate(mem
     # Order matters: resolved_entity_ids is one id per input entity, in this order.
     names = ["Wren 🕯️", "Wren 🗯️", "Merrivale", "Merryvale", "Aster", "aster 0", "Astrid"]
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory._pool.acquire() as conn:
             resolution = await resolve_entities(
@@ -81,7 +81,7 @@ async def test_intrabatch_dedup_leaves_label_values_separate(memory, request_con
         }
     ]
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         async with memory._pool.acquire() as conn:
             resolution = await resolve_entities(
                 entity_resolver=memory.entity_resolver,

@@ -125,7 +125,7 @@ class TestStartJitter:
 
 async def _make_bank(memory: MemoryEngine, request_context, suffix: str, config_json: str | None = None) -> str:
     bank_id = f"recon-{suffix}-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     if config_json is not None:
         async with memory._pool.acquire() as conn:
             await conn.execute("UPDATE banks SET config = $2::jsonb WHERE bank_id = $1", bank_id, config_json)

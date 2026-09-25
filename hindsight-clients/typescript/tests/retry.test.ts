@@ -4,7 +4,7 @@
  * Mirrors tests/test_retry_on_capacity.py in the Python wrapper: the two
  * maintained wrappers are expected to expose the same behaviour.
  */
-import { retryAfterMs, retryOnCapacity } from "../src/index";
+import { HindsightClient, retryAfterMs, retryOnCapacity } from "../src/index";
 
 function res(status: number, retryAfter?: string): { response: Response } {
   const headers = new Headers();
@@ -116,4 +116,86 @@ describe("retryOnCapacity", () => {
     expect(waits.every((w) => w >= 0 && w <= 4000)).toBe(true);
     expect(new Set(waits).size).toBeGreaterThan(1);
   });
+});
+
+describe("retry cancellation", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("does not send an already-cancelled call", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const send = jest.fn(async () => res(200));
+    await expect(retryOnCapacity(send, 3, () => 1, controller.signal)).rejects.toBe(
+      controller.signal.reason
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 503])("interrupts %s backoff and clears its timer", async (status) => {
+    const controller = new AbortController();
+    const send = jest.fn(async () => res(status, "30"));
+    const pending = retryOnCapacity(send, 3, () => 1, controller.signal);
+    // Attach the handler before yielding: the rejection lands during abort(), and an
+    // unhandled one fails the run.
+    const settled = pending.catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(jest.getTimerCount()).toBe(1);
+    controller.abort();
+    expect(jest.getTimerCount()).toBe(0);
+    expect(await settled).toBe(controller.signal.reason);
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry when cancelled as the response arrives", async () => {
+    const controller = new AbortController();
+    const send = jest.fn(async () => {
+      controller.abort();
+      return res(503, "30");
+    });
+    await expect(retryOnCapacity(send, 3, () => 1, controller.signal)).rejects.toBe(
+      controller.signal.reason
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("removes the abort listener after a successful retry", async () => {
+    const controller = new AbortController();
+    const remove = jest.spyOn(controller.signal, "removeEventListener");
+    const send = jest.fn().mockResolvedValueOnce(res(503, "1")).mockResolvedValue(res(200));
+    const pending = retryOnCapacity(send, 3, () => 1, controller.signal);
+    await jest.advanceTimersByTimeAsync(1000);
+    expect((await pending).response?.status).toBe(200);
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each(["recall", "reflect"] as const)(
+    "threads the %s signal into backoff",
+    async (operation) => {
+      const controller = new AbortController();
+      jest.spyOn(Math, "random").mockReturnValue(1);
+      const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ detail: "busy" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json", "Retry-After": "30" },
+        })
+      );
+      const client = new HindsightClient({ baseUrl: "http://localhost:8888" });
+      const pending = client[operation]("test-bank", "question", { signal: controller.signal });
+      const settled = pending.catch((error: unknown) => error);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(jest.getTimerCount()).toBe(1);
+      controller.abort();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(jest.getTimerCount()).toBe(0);
+      expect(await settled).toBe(controller.signal.reason);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
 });

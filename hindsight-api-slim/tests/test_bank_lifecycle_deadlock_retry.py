@@ -55,7 +55,7 @@ async def test_bank_delete_retries_transient_deadlock(
 ):
     """A deadlock while dropping per-bank indexes on delete is retried."""
     bank_id = f"test-deadlock-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     backend = await memory._get_backend()
     real = backend.ops.drop_bank_vector_indexes

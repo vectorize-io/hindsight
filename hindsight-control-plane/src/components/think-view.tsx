@@ -29,6 +29,7 @@ import {
   Check,
   Play,
 } from "lucide-react";
+import { AttachmentStrip } from "@/components/ui/inline-attachment-text";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import JsonView from "react18-json-view";
@@ -903,6 +904,20 @@ export function ThinkView() {
                                         {item.context && (
                                           <div className="text-xs text-muted-foreground mt-2">
                                             {item.context}
+                                          </div>
+                                        )}
+                                        {item.attachments?.length > 0 && currentBank && (
+                                          // Each attachment links to its own bytes; stop the click
+                                          // so it does not also open the memory dialog.
+                                          <div
+                                            className="mt-2"
+                                            onClick={(e) => e.stopPropagation()}
+                                            role="presentation"
+                                          >
+                                            <AttachmentStrip
+                                              bankId={currentBank}
+                                              attachments={item.attachments}
+                                            />
                                           </div>
                                         )}
                                       </>

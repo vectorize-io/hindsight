@@ -31,7 +31,7 @@ pytestmark = pytest.mark.memory_backend_incompatible
 
 
 async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> None:
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
 
 async def _insert_entity(conn, bank_id: str, name: str, mention_count: int = 1) -> uuid.UUID:

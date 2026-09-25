@@ -225,6 +225,27 @@ When enabled, the response includes a `based_on` object listing the memories, me
 
 When enabled, the response includes a `trace` object with the full execution log of every tool call and LLM call made during the agentic loop, including inputs, outputs, and durations. Set `output: false` to include only tool inputs for a smaller payload. Useful for debugging why the agent reached a particular conclusion.
 
+### reflect_search_observations_max_tokens
+
+Token budget for the agent's `search_observations` tool when the model names no
+budget of its own. Observation evidence is often the largest single contributor
+to the reflect context on a big bank, so lowering this trades the lowest-ranked
+observations for a smaller (cheaper, faster) LLM context. Defaults to `5000`.
+
+### reflect_search_observations_include_entities
+
+Whether `search_observations` attaches resolved entity names to each
+observation. They are useful when the surface text uses an alias ("Bob" for
+canonical "Robert Smith"), but they can be more than half the serialized tool
+payload; setting `false` keeps the same observations and ranking with a much
+smaller context. Defaults to `true`.
+
+Both options can be defaulted for a whole bank with the
+`reflect_default_options` config key (see
+[Configuration](../configuration.mdx)), and set per mental model through the
+refresh trigger's fields of the same name. An explicit value on the request
+always wins.
+
 ---
 
 ## Response

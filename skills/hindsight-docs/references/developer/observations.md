@@ -4,15 +4,24 @@
 
 After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
-```mermaid
-graph LR
-    A[New Facts] --> B[Consolidation Engine]
-    B --> C{Existing Observation?}
-    C -->|Yes| D[Refine Observation]
-    C -->|No| E[Create Observation]
-    D --> F[Observations]
-    E --> F
-```
+**Figure: Observation Consolidation.** An animated diagram on the docs site; its narration, step by step:
+
+- **refine**
+  1. A new fact lands. Until it is consolidated, observation searches are flagged stale, so reflect checks them against the raw facts.
+  2. Consolidation runs in the background after retain. For each new fact it recalls related observations, only within the same tag scope.
+  3. One LLM call sees the new facts next to those observations and decides, facet by facet: create, update or delete.
+  4. Before anything is written, each new or rewritten observation is compared with its closest neighbours. Only a near-identical one gets a merge-or-keep check.
+  5. The observation is rewritten with the fact attached as evidence, so its proof count goes up. The previous wording is kept in history.
+  6. The same write marks the fact consolidated, so the observation is fresh again.
+- **contradict**
+  1. Now a fact that contradicts what the bank believes.
+  2. A change of state is not a reason to delete. The LLM updates the belief so it records what changed, with dates when it has them.
+  3. The observation now tells the whole journey, not just “prefers Vue”. It rests on all three facts, and both older versions stay in history.
+- **something new**
+  1. A fact about something the bank has no belief on yet.
+  2. Nothing covers this facet, so the LLM creates a new observation instead of bending an unrelated one.
+  3. The near-duplicate check keeps it: different facets stay separate observations.
+  4. The new observation starts with one source. It will gain evidence as more facts repeat it.
 
 ---
 
@@ -68,15 +77,17 @@ By default, consolidation processes **all** unconsolidated memories in a bank. Y
 
 ```python
 # Consolidate only memories tagged with user:alice
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"]]
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(observation_scopes=[["user:alice"]]),
 )
 
 # Consolidate memories for alice OR the engineering team
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"], ["team:engineering"]]
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(
+        observation_scopes=[["user:alice"], ["team:engineering"]]
+    ),
 )
 ```
 
@@ -214,6 +225,71 @@ Set `observations_mission` via the [bank config API](api/memory-banks.md#observa
 
 ---
 
+## Consolidation Strategies
+
+The mission, the observation cap and the source-facts token limits apply to every scope in the bank. **Consolidation strategies** (`consolidation_strategies`) let specific scopes use their own instead.
+
+This is what makes one bank work across several audiences. Say each memory is tagged with its author, their team and the company, and retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]`. Each scope builds its own observations. But with a single mission, the company-wide scope gets the same detail as Dana's own — names, deal sizes, anything said in confidence — just visible to more people. A strategy fixes that:
+
+```json
+[
+  {
+    "scopes": [{"tags": ["company:*"]}],
+    "observations_mission": "This scope is shared with the whole company. Record only general, industry-level trends. Never name a specific company, person, deal size or funding stage.",
+    "max_observations_per_scope": 20
+  },
+  {
+    "scopes": [{"tags": ["team:*"]}],
+    "observations_mission": "Record decisions the team must act on."
+  }
+]
+```
+
+With that in place, Dana's scope keeps "Acme Robotics signed a 3-year lease for a 4,000 GPU cluster", while the company scope gets "Companies are leasing GPU clusters to run open-weight models".
+
+How a strategy is matched:
+
+- **`scopes`** is a list of alternatives. Each is `{"tags": [...], "tags_match": "all" | "exact"}`, where `tags` are [fnmatch](https://docs.python.org/3/library/fnmatch.html) patterns (`*` matches any text). A strategy applies to a consolidation scope when **any** of its alternatives matches it (OR); the tags inside one alternative must all be present (AND).
+- **`tags_match`**, set per alternative, decides whether other tags are allowed:
+
+  | `tags_match` | `{"tags": ["company:*", "team:*"]}` matches… | …but not |
+  |---|---|---|
+  | `"all"` *(default)* | `{company:acme, team:exec}`, `{user:dana, team:exec, company:acme}` | `{company:acme}` (no team) |
+  | `"exact"` | `{company:acme, team:exec}` only | `{user:dana, team:exec, company:acme}` (extra `user:` tag) |
+
+  Because the mode is per alternative, one strategy can mix them — `[{"tags": ["company:*"], "tags_match": "exact"}, {"tags": ["team:*"]}]` claims scopes that are *only* a company, or that have a team among other tags. To match *any one* of several tags, give each its own alternative: `[{"tags": ["company:*"]}, {"tags": ["team:*"]}]`. Excluding a tag ("has a company but no user") is not expressible.
+
+  Remember that a strategy matches **observation scopes** — the tag sets consolidation groups observations under, set by [`observation_scopes`](./api/retain#observation_scopes) at retain time — not the tags of individual memories. A memory tagged with a user, a team and a company but retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]` produces three single-tag scopes, none of which has both a company and a team.
+- **What a strategy can set:** `observations_mission`, `max_observations_per_scope`, `consolidation_source_facts_max_tokens` and `consolidation_source_facts_max_tokens_per_observation`. Every one is optional.
+- **Anything a strategy leaves unset, and every scope no strategy matches,** uses the bank-wide value. The control plane shows these bank-wide values as the **Default** strategy.
+
+### When two strategies match the same scope
+
+**The first one in the list wins, whole.** Exactly one strategy applies to a scope. List order is priority order — left to right in the control plane's tabs.
+
+The strategies are never mixed. If the winning strategy leaves a setting empty, that setting comes from **Default**, not from a later strategy that also matches. For example, with:
+
+```json
+[
+  {"scopes": [{"tags": ["company:acme"]}], "max_observations_per_scope": 5},
+  {"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only general trends."}
+]
+```
+
+the scope `company:acme` gets a cap of 5 and the **bank-wide mission**, not "Record only general trends". The second strategy still applies to every other `company:*` scope. To give `company:acme` both, put both settings on the first strategy.
+
+To see which strategy a scope uses, open the strategy in the control plane: each rule shows how many existing scopes it matches and how many an earlier strategy takes, with examples. The same answer is available from `POST /v1/default/banks/{bank_id}/consolidation-strategies/preview`, which takes a draft `strategies` list (nothing is saved) and reports, per strategy and rule, the matching scopes and which strategy actually handles each — computed with consolidation's own matching. It scans up to 10,000 distinct scopes; beyond that `complete` is `false` and the counts are lower bounds. Only scopes that already have observations exist to be previewed.
+
+A strategy that sets nothing is ignored: it matches no scope and doesn't block later ones.
+
+A malformed strategy is rejected when you save it — an unknown key (`"scope"` for `"scopes"`), a tag list that is not a list of strings, an unknown `tags_match` — with a 400 naming the offending entry. An *incomplete* one is accepted, because the control plane saves strategies as you type them: a rule with no tags yet, or a strategy with no setting yet, is stored and simply ignored until you finish it. Strategies survive [bank template](api/memory-banks.md) export and import unchanged.
+
+Each scope is consolidated in its own LLM call, so one scope's mission never reaches another scope's call.
+
+Set `consolidation_strategies` in the control plane (bank **Configuration → Observations**), via the [bank config API](api/memory-banks.md#observations-configuration), or with the [`HINDSIGHT_API_CONSOLIDATION_STRATEGIES`](configuration.md#observations) environment variable. It replaces the older `observation_scope_limits`, which still works but is checked only after the strategies.
+
+---
+
 ## Observation Lifecycle & Invalidation
 
 ### When Memories Are Deleted
@@ -243,7 +319,7 @@ To wipe all consolidated knowledge and start over:
 
 ```python
 # Clear all observations for a bank
-client.clear_observations(bank_id="my-bank")
+await client.banks.clear_observations(bank_id=BANK_ID)
 ```
 
 This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch.

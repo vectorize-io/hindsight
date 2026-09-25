@@ -83,7 +83,7 @@ async def _updated_at(conn, memory_id: uuid.UUID, table: str = "memory_units") -
 async def _bank(memory: MemoryEngine, slug: str, request_context: RequestContext):
     """Provision a throwaway bank and drop it even when an assertion fails."""
     bank_id = f"test-mu-updated-{slug}-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         yield bank_id
     finally:

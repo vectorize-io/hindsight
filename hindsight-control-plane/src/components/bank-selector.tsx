@@ -746,10 +746,36 @@ function BankSelectorInner() {
                               "truncate flex-1",
                               isSelected ? "font-semibold" : "font-medium"
                             )}
-                            title={bank.name || bank.bank_id}
+                            title={bank.display_alias || bank.name || bank.bank_id}
                           >
-                            {bank.name || bank.bank_id}
+                            {/* display_alias outranks name: `name` is a deprecated
+                                free-text label, while a promoted alias is a real id
+                                the operator chose to present the bank under. */}
+                            {bank.display_alias || bank.name || bank.bank_id}
                           </span>
+                          {/* The real id stays visible whenever it is not what is
+                              shown — the display is a convenience, never a disguise. */}
+                          {bank.display_alias && (
+                            <span
+                              className="shrink-0 truncate max-w-[35%] font-mono text-[11px] text-muted-foreground/60"
+                              title={bank.bank_id}
+                            >
+                              {bank.bank_id}
+                            </span>
+                          )}
+                          {/* Only set when the search matched an alias rather than this
+                              bank's own id or name, which is exactly when the row would
+                              otherwise look like it does not match what was typed. */}
+                          {bank.matched_aliases.length > 0 && (
+                            <span
+                              className="shrink-0 truncate max-w-[40%] font-mono text-[11px] text-muted-foreground/70"
+                              title={tNavBank("viaAlias", {
+                                aliases: bank.matched_aliases.join(", "),
+                              })}
+                            >
+                              {tNavBank("viaAlias", { aliases: bank.matched_aliases.join(", ") })}
+                            </span>
+                          )}
                           <button
                             type="button"
                             aria-label={tNavBank("copyName")}

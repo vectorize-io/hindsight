@@ -124,6 +124,9 @@ const OPERATION_TYPE_VALUES = [
   "vector_index_maintenance",
   "export_documents",
   "import_documents",
+  "export_bank",
+  "import_bank",
+  "clone_bank",
 ] as const;
 
 const STATUS_FILTER_VALUES = [
@@ -179,6 +182,9 @@ export function BankOperationsView() {
     vector_index_maintenance: t("operationType.vectorIndexMaintenance"),
     export_documents: t("operationType.exportDocuments"),
     import_documents: t("operationType.importDocuments"),
+    export_bank: t("operationType.exportBank"),
+    import_bank: t("operationType.importBank"),
+    clone_bank: t("operationType.cloneBank"),
   };
 
   const formatStatus = (status: string | null | undefined) =>

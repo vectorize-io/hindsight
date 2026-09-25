@@ -17,7 +17,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _make_mental_models(memory: MemoryEngine, bank_id: str, count: int, request_context) -> None:
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     for i in range(count):
         await memory.create_mental_model(
             bank_id=bank_id,
@@ -30,7 +30,7 @@ async def _make_mental_models(memory: MemoryEngine, bank_id: str, count: int, re
 
 
 async def _make_directives(memory: MemoryEngine, bank_id: str, count: int, request_context) -> None:
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     for i in range(count):
         await memory.create_directive(
             bank_id=bank_id,
@@ -128,7 +128,7 @@ class TestDirectivePagination:
 
     async def test_total_respects_active_only(self, memory: MemoryEngine, request_context):
         bank_id = f"test-dir-page-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         await memory.create_directive(
             bank_id=bank_id, name="Active", content="on", is_active=True, request_context=request_context
         )

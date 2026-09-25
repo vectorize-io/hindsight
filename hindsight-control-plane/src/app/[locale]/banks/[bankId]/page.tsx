@@ -45,7 +45,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Download, Trash2, MoreVertical, Pencil, RotateCcw, Activity } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Brain,
+  Copy,
+  Download,
+  Trash2,
+  MoreVertical,
+  Pencil,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 
@@ -84,6 +104,10 @@ export default function BankPage() {
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
   const llmHealthEnabled = features?.bank_llm_health ?? false;
+  // A clone is an export and an import back to back, so it needs both halves
+  // enabled server-side — the endpoint answers 404 otherwise.
+  const cloneEnabled =
+    (features?.document_export_api ?? false) && (features?.document_import_api ?? false);
 
   // `audit_log_enabled` and `enable_observations` are hierarchical
   // (env -> tenant -> bank): a bank can opt in even when the deployment default
@@ -130,6 +154,15 @@ export default function BankPage() {
   const [isConsolidating, setIsConsolidating] = useState(false);
   const [isRecoveringConsolidation, setIsRecoveringConsolidation] = useState(false);
   const [showResetConfigDialog, setShowResetConfigDialog] = useState(false);
+  const [showCloneDialog, setShowCloneDialog] = useState(false);
+  const [cloneTargetId, setCloneTargetId] = useState("");
+  // One checkbox per include_* flag the clone endpoint takes, with the same
+  // defaults, so what the dialog offers and what the API does are the same three
+  // choices rather than a UI-only summary of them.
+  const [cloneIncludeData, setCloneIncludeData] = useState(true);
+  const [cloneIncludeBankConfig, setCloneIncludeBankConfig] = useState(true);
+  const [cloneIncludeHistory, setCloneIncludeHistory] = useState(false);
+  const [isCloning, setIsCloning] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
 
   const handleTabChange = (tab: NavItem) => {
@@ -183,6 +216,46 @@ export default function BankPage() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsClearingObservations(false);
+    }
+  };
+
+  const handleCloneBank = async () => {
+    const target = cloneTargetId.trim();
+    if (!bankId || !target) return;
+    setIsCloning(true);
+    try {
+      const { operation_id } = await client.cloneBank(bankId, target, {
+        includeData: cloneIncludeData,
+        includeBankConfig: cloneIncludeBankConfig,
+        includeHistory: cloneIncludeHistory,
+      });
+      toast.success(t("cloneStarted"));
+
+      // The clone runs in the background: re-embedding every fact takes as long
+      // as the bank is big, so the dialog waits on the operation rather than
+      // dropping the user on a bank that is still filling up.
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const op = await client.getOperationStatus(bankId, operation_id);
+        if (op.status === "completed") {
+          toast.success(t("cloneSucceeded", { bankName: target }));
+          setShowCloneDialog(false);
+          router.push(bankRoute(target, "?view=profile"));
+          return;
+        }
+        if (op.status === "failed") {
+          toast.error(op.error_message || t("cloneFailed"));
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      toast.error(t("cloneFailed"));
+    } catch {
+      // No toast here: the API client already showed one carrying the server's
+      // own message ("Target bank '…' already exists", …), which is more useful
+      // than a generic failure. A second one just stacks a red alert under it.
+    } finally {
+      setIsCloning(false);
     }
   };
 
@@ -280,6 +353,27 @@ export default function BankPage() {
                         >
                           <Download className="w-4 h-4 mr-2" />
                           {t("exportTemplate")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setCloneTargetId(bankId ? `${bankId}-copy` : "");
+                            setCloneIncludeData(true);
+                            setCloneIncludeBankConfig(true);
+                            setCloneIncludeHistory(false);
+                            setShowCloneDialog(true);
+                          }}
+                          disabled={!cloneEnabled}
+                          title={
+                            !cloneEnabled
+                              ? "Cloning needs the document export and import APIs enabled"
+                              : undefined
+                          }
+                        >
+                          <Copy className="w-4 h-4 mr-2" />
+                          {t("cloneBank")}
+                          {!cloneEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
                         </DropdownMenuItem>
                         {llmHealthEnabled && (
                           <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
@@ -740,6 +834,98 @@ export default function BankPage() {
       {/* Dry-run extraction */}
 
       {/* Delete Bank Confirmation Dialog */}
+      {/* Clone bank */}
+      <Dialog open={showCloneDialog} onOpenChange={setShowCloneDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("cloneBankTitle")}</DialogTitle>
+            <DialogDescription>{t("cloneBankDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="clone-target-id">{t("cloneTargetLabel")}</Label>
+              <Input
+                id="clone-target-id"
+                value={cloneTargetId}
+                onChange={(e) => setCloneTargetId(e.target.value)}
+                placeholder={t("cloneTargetPlaceholder")}
+                disabled={isCloning}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm font-medium">{t("cloneWhatToCopy")}</p>
+              {(
+                [
+                  {
+                    id: "clone-include-data",
+                    label: t("cloneIncludeData"),
+                    hint: t("cloneIncludeDataHint"),
+                    checked: cloneIncludeData,
+                    set: setCloneIncludeData,
+                  },
+                  {
+                    id: "clone-include-bank-config",
+                    label: t("cloneIncludeBankConfig"),
+                    hint: t("cloneIncludeBankConfigHint"),
+                    checked: cloneIncludeBankConfig,
+                    set: setCloneIncludeBankConfig,
+                  },
+                  {
+                    id: "clone-include-history",
+                    label: t("cloneIncludeHistory"),
+                    hint: t("cloneIncludeHistoryHint"),
+                    checked: cloneIncludeHistory,
+                    set: setCloneIncludeHistory,
+                  },
+                ] as const
+              ).map((flag) => (
+                <div key={flag.id} className="flex items-start gap-2">
+                  <Checkbox
+                    id={flag.id}
+                    checked={flag.checked}
+                    onCheckedChange={(checked) => flag.set(checked === true)}
+                    disabled={isCloning}
+                    // The checkbox is 16px and the label line is 20px, so without
+                    // this the box rides above the text it belongs to.
+                    className="mt-0.5"
+                  />
+                  <div className="grid gap-1 leading-none">
+                    <Label htmlFor={flag.id}>{flag.label}</Label>
+                    <p className="text-xs text-muted-foreground">{flag.hint}</p>
+                  </div>
+                </div>
+              ))}
+              {!cloneIncludeData && !cloneIncludeBankConfig && !cloneIncludeHistory && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {t("cloneNothingSelected")}
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowCloneDialog(false)}
+              disabled={isCloning}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              onClick={handleCloneBank}
+              disabled={
+                isCloning ||
+                !cloneTargetId.trim() ||
+                (!cloneIncludeData && !cloneIncludeBankConfig && !cloneIncludeHistory)
+              }
+            >
+              {isCloning && <Spinner size="sm" className="mr-2" />}
+              {isCloning ? t("cloning") : t("cloneBank")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

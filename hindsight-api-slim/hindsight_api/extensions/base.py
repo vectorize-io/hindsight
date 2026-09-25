@@ -64,6 +64,42 @@ class Extension(ABC):
             )
         return self._context
 
+    def alembic_version_locations(self) -> list[str]:
+        """Directories of Alembic revisions this extension owns.
+
+        An extension that keeps state of its own — tables, or data in a store it
+        fronts — needs that state migrated on the same lifecycle as core's, and
+        with the same guarantees: ordered, applied once, recorded. Returning a
+        path here puts the extension's revisions into the migration run, rather
+        than leaving it to a bespoke command somebody has to remember.
+
+        Each returned path is an Alembic **version directory** (the folder holding
+        revision files), not an Alembic environment: there is one ``env.py``, core's,
+        and it is what configures the schema and the connection. The extension
+        supplies revisions only.
+
+        The tree is **independent of core's**. It has its own base (``down_revision
+        = None``), its own head, and its own row in ``alembic_version``. Core's DAG
+        checks are unaffected, and an extension head can never block core's.
+
+        **Alembic does not order independent branches relative to each other.** The
+        migration runs ``upgrade heads``, which applies every branch, but the
+        interleaving between unrelated trees is not defined and must not be relied
+        on. A revision that needs a core table to exist first says so explicitly::
+
+            depends_on = ("a1b2c3d4e5f6",)   # a core revision
+
+        which orders it without making core its parent — so the extension keeps its
+        own independent history.
+
+        Give the tree's base revision a ``branch_labels`` naming the extension, so
+        an operator can address it (``alembic upgrade <label>@head``) and so a
+        stray head is attributable to whoever shipped it.
+
+        Empty by default: an extension with no state of its own migrates nothing.
+        """
+        return []
+
     async def on_startup(self) -> None:
         """
         Called when the application starts.

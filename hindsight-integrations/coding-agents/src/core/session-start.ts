@@ -306,7 +306,9 @@ export async function buildSessionStartContext(args: {
     }
     /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
   }
-  const additionalContext = buildKnowledgePreamble(pages, { reflectOnNewGoals: !cfg.autoReflect });
+  const additionalContext = buildKnowledgePreamble(pages, {
+    reflectOnNewGoals: cfg.autoInject !== "reflect",
+  });
   const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
 
   // The banner shows on EVERY session — Hindsight's presence is part of the product, not a

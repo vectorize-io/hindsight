@@ -444,14 +444,12 @@ class TestOracleEndToEnd:
                         f"Operation should be completed, got: {op.get('status')}"
                     )
 
-            # --- 6. Verify the mental model has real content (not placeholder) ---
+            # --- 6. Verify the mental model has real content (not the empty body it was created with) ---
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
             assert resp.status_code == 200, f"Get mental model failed: {resp.text}"
             mm = resp.json()
             content = mm.get("content", "")
-            assert content != "Generating content...", (
-                "Mental model still has placeholder content — refresh didn't execute"
-            )
+            assert content, "Mental model body is still empty — refresh didn't execute"
             assert len(content) > 20, f"Mental model content too short: {content[:100]}"
 
             # --- 7. List operations — verify tracking works ---

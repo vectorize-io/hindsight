@@ -104,7 +104,7 @@ class TestDeltaEditorialFusion:
     ):
         bank_id = f"test-editorial-{uuid.uuid4().hex[:8]}"
         memory = memory_real_llm
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         try:
             mm = await memory.create_mental_model(

@@ -6,23 +6,27 @@ from urllib.parse import quote
 from .base import FileStorage
 from .postgresql import PostgreSQLFileStorage
 
-__all__ = ["FileStorage", "PostgreSQLFileStorage", "bank_storage_prefix", "create_file_storage"]
+__all__ = ["FileStorage", "PostgreSQLFileStorage", "bank_storage_prefix", "create_file_storage", "key_segment"]
 
 
-def bank_storage_prefix(bank_id: str) -> str:
+def bank_storage_prefix(bank_id: str, schema: str | None = None) -> str:
     """The key prefix every file a bank stores lives under, in the current tenant.
 
     The tenant comes first because object-store backends share one bucket
     across every tenant schema: without it two tenants' banks with the same id
     wrote the same keys, and a content-addressed attachment one of them deleted
     was the other's too.
+
+    ``schema`` names the tenant explicitly, for callers outside a request that
+    have no current schema to read — the admin CLI's rename, which re-keys a
+    bank's files and so must spell both the old prefix and the new one.
     """
     from ..memory_engine import get_current_schema
 
-    return f"tenants/{_key_segment(get_current_schema())}/banks/{_key_segment(bank_id)}/"
+    return f"tenants/{key_segment(schema or get_current_schema())}/banks/{key_segment(bank_id)}/"
 
 
-def _key_segment(value: str) -> str:
+def key_segment(value: str) -> str:
     """Encode a name as exactly one key segment, injectively.
 
     Escaping rather than validating: bank ids are caller-chosen and already in use

@@ -183,7 +183,7 @@ async def test_recall_failure_cancels_sibling_tag_groups(memory: MemoryEngine, r
     they write, and the job propagates the original error without waiting for
     them."""
     bank_id = f"test-cancel-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice likes tea", ["boom"])

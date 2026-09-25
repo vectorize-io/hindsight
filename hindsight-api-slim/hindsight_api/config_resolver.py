@@ -31,6 +31,8 @@ from hindsight_api.extensions.tenant import TenantExtension
 from hindsight_api.models import RequestContext
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from hindsight_api.engine.db.base import DatabaseBackend
 
 logger = logging.getLogger(__name__)
@@ -578,10 +580,12 @@ class ConfigResolver:
             except Exception as e:
                 raise ValueError(f"Invalid entity_labels format: {e}")
 
-        # knowledge_page_default_trigger is merged into every new page's trigger, so
-        # hold it to the same contract as a trigger sent with the create request.
+        # Both of these are merged into a request the API also accepts directly, so
+        # hold them to the same contract as the request that carries those fields.
         if normalized_updates.get("knowledge_page_default_trigger") is not None:
             _validate_knowledge_page_default_trigger(normalized_updates["knowledge_page_default_trigger"])
+        if normalized_updates.get("reflect_default_options") is not None:
+            _validate_reflect_default_options(normalized_updates["reflect_default_options"])
 
         # Validate retain_strategies: reject empty string keys
         if "retain_strategies" in normalized_updates and normalized_updates["retain_strategies"]:
@@ -600,6 +604,13 @@ class ConfigResolver:
                     _validate_config_value_types(normalize_config_dict(strategy_overrides))
                 except ValueError as e:
                     raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
+
+        # Validate consolidation_strategies: the config type is a plain list, so
+        # without this a typo ("scope" for "scopes", a string where the tag list
+        # belongs) is stored happily and then ignored for the life of the bank —
+        # the strategy simply never applies, with nothing to show why.
+        if normalized_updates.get("consolidation_strategies") is not None:
+            _validate_consolidation_strategies(normalized_updates["consolidation_strategies"])
 
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
@@ -797,20 +808,56 @@ def _describe_types(allowed: tuple[type, ...]) -> str:
     return " or ".join(dict.fromkeys(_TYPE_DESCRIPTIONS.get(t, t.__name__) for t in allowed))
 
 
-def _validate_knowledge_page_default_trigger(value: dict[str, Any]) -> None:
-    """Reject unknown trigger fields and values ``MentalModelTrigger`` refuses."""
+def _validate_against_model(key: str, value: dict[str, Any], model: "type[BaseModel]", noun: str) -> None:
+    """Reject unknown fields and values the request model itself would refuse."""
     from pydantic import ValidationError
 
+    unknown = sorted(set(value) - set(model.model_fields))
+    if unknown:
+        raise ValueError(f"{key} has unknown fields: {', '.join(unknown)}")
+    try:
+        model.model_validate(value)
+    except ValidationError as e:
+        problems = "; ".join(f"{'.'.join(map(str, err['loc'])) or noun}: {err['msg']}" for err in e.errors())
+        raise ValueError(f"Invalid {key}: {problems}") from e
+
+
+def _validate_knowledge_page_default_trigger(value: dict[str, Any]) -> None:
+    """Reject unknown trigger fields and values ``MentalModelTrigger`` refuses."""
     from hindsight_api.api.http import MentalModelTrigger
 
-    unknown = sorted(set(value) - set(MentalModelTrigger.model_fields))
-    if unknown:
-        raise ValueError(f"knowledge_page_default_trigger has unknown fields: {', '.join(unknown)}")
-    try:
-        MentalModelTrigger.model_validate(value)
-    except ValidationError as e:
-        problems = "; ".join(f"{'.'.join(map(str, err['loc'])) or 'trigger'}: {err['msg']}" for err in e.errors())
-        raise ValueError(f"Invalid knowledge_page_default_trigger: {problems}") from e
+    _validate_against_model("knowledge_page_default_trigger", value, MentalModelTrigger, "trigger")
+
+
+def _validate_reflect_default_options(value: dict[str, Any]) -> None:
+    """Reject unknown option fields and values ``ReflectDefaultOptions`` refuses."""
+    from hindsight_api.api.http import ReflectDefaultOptions
+
+    _validate_against_model("reflect_default_options", value, ReflectDefaultOptions, "options")
+
+
+def _validate_consolidation_strategies(value: Any) -> None:
+    """Reject a consolidation_strategies value whose shape cannot work.
+
+    Shape only: an incomplete draft (a rule with no tags yet, a strategy with no
+    setting) is accepted, because the control plane saves strategies as typed and
+    consolidation ignores the unusable ones. What is rejected is what could only
+    be a mistake — an entry that is not an object, an unknown key, a tag list that
+    is not a list of strings, an unknown tags_match.
+    """
+    from pydantic import ValidationError
+
+    from .engine.response_models import StrictConsolidationStrategySpec
+
+    if not isinstance(value, list):
+        raise ValueError(f"consolidation_strategies must be a list, got {type(value).__name__}")
+    for index, entry in enumerate(value):
+        try:
+            StrictConsolidationStrategySpec.model_validate(entry)
+        except ValidationError as e:
+            first = e.errors()[0]
+            location = ".".join(str(part) for part in first["loc"]) or "entry"
+            raise ValueError(f"Invalid consolidation strategy at index {index}: {location}: {first['msg']}") from e
 
 
 def _validate_config_value_types(updates: dict[str, Any]) -> None:

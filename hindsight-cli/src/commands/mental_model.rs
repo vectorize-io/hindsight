@@ -78,6 +78,8 @@ fn default_trigger_input() -> types::MentalModelTriggerInput {
         include_chunks: None,
         recall_max_tokens: None,
         recall_chunks_max_tokens: None,
+        reflect_search_observations_max_tokens: None,
+        reflect_search_observations_include_entities: None,
         response_schema: None,
         keep_trace: false,
     }
@@ -103,6 +105,8 @@ fn stored_trigger_as_input(
         include_chunks: stored.include_chunks,
         recall_max_tokens: stored.recall_max_tokens,
         recall_chunks_max_tokens: stored.recall_chunks_max_tokens,
+        reflect_search_observations_max_tokens: stored.reflect_search_observations_max_tokens,
+        reflect_search_observations_include_entities: stored.reflect_search_observations_include_entities,
         response_schema: stored.response_schema.clone(),
         keep_trace: stored.keep_trace,
     }
@@ -768,6 +772,8 @@ mod tests {
             include_chunks: Some(true),
             recall_max_tokens: Some(4096),
             recall_chunks_max_tokens: Some(2048),
+            reflect_search_observations_max_tokens: Some(std::num::NonZeroU64::new(3000).unwrap()),
+            reflect_search_observations_include_entities: Some(false),
             response_schema: None,
             keep_trace: true,
         }
@@ -797,6 +803,8 @@ mod tests {
         assert_eq!(value["include_chunks"], true);
         assert_eq!(value["recall_max_tokens"], 4096);
         assert_eq!(value["recall_chunks_max_tokens"], 2048);
+        assert_eq!(value["reflect_search_observations_max_tokens"], 3000);
+        assert_eq!(value["reflect_search_observations_include_entities"], false);
         assert_eq!(value["keep_trace"], true);
     }
 

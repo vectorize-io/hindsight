@@ -159,6 +159,19 @@ def test_record_llm_call_success_with_context_and_tokens():
     assert r.llm_info["finish_reason"] == "stop"
 
 
+def test_record_llm_call_keeps_the_prompt_as_sent():
+    """The reflect loop appends its tool call and the tool result to the same list
+    after the call returns, and the row is serialized later. The recorded prompt
+    must be what was sent, not what the list holds by the time it is written."""
+    rec = _CapturingRecorder()
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "q"}]
+    rec.record_llm_call(provider="mock", model="mock", scope="reflect_tool_call", messages=messages)
+    messages.append({"role": "assistant", "tool_calls": [{"id": "1"}]})
+    messages.append({"role": "tool", "content": "{}"})
+
+    assert [m["role"] for m in rec.records[0].input] == ["system", "user"]
+
+
 def test_record_llm_call_error_record():
     rec = _CapturingRecorder()
     rec.record_llm_call(

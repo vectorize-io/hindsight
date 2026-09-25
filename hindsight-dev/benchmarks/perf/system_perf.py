@@ -1658,7 +1658,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
 
     engine = _build_engine(disable_observations=True)
     await engine.initialize()
-    await engine.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+    await engine.ensure_bank_profile(bank_id=bank_id, request_context=RequestContext())
 
     pair_list = await _seed_contention_fixture(engine, bank_id, n_entities, n_pairs)
     console.print(f"  Seeded {n_entities:,} entities + {len(pair_list):,} stale cooccurrence pairs")

@@ -2,19 +2,16 @@
 sidebar_position: 2
 ---
 
+import {Flow} from '@vectorize-io/interfig';
+import retainFigure from '@vectorize-io/interfig/figures/retain';
+
 # Retain: How Hindsight Stores Memories
 
 When you call `retain()`, Hindsight transforms conversations and documents into structured, searchable memories that preserve meaning and context.
 
 ## What Retain Does
 
-```mermaid
-graph LR
-    A[Your Content] --> B[Extract Facts]
-    B --> C[Identify Entities]
-    C --> D[Build Connections]
-    D --> E[Memory Bank]
-```
+<Flow {...retainFigure.props} />
 
 ---
 
@@ -247,11 +244,11 @@ not all of them.
 - If that model cannot read images — or if Hindsight cannot tell, which is the
   case for gateway backends serving mixed catalogues — the retain is refused
   with `422` rather than dropping the attachment silently. See
-  [`HINDSIGHT_API_LLM_VISION`](/developer/configuration#llm-configuration).
+  [`HINDSIGHT_API_LLM_VISION`](/developer/configuration#llm-provider).
 - Batch retain (`HINDSIGHT_API_RETAIN_BATCH_ENABLED`) cannot carry attachments,
   and also refuses with `422`.
 
-This is different from [`POST /files/retain`](/developer/configuration#file-conversion),
+This is different from [`POST /files/retain`](/developer/configuration#file-processing),
 which converts a whole file to markdown as its **own** document. That is still the
 right tool for a scanned report you want parsed — but it separates the file from
 the prose that referred to it, which is exactly what inline attachments avoid.

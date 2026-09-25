@@ -9,15 +9,14 @@ import io
 import json
 import uuid
 import zipfile
-from urllib.parse import quote
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.consolidation.consolidator import (
     _apply_create_observation,
@@ -25,6 +24,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
 from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive
 from hindsight_api.engine.transfer.schema import (
@@ -238,12 +238,18 @@ def test_export_bank_covers_schema():
     """Every bank-scoped table must be classified by export_bank — logical, carried,
     history, or explicitly skipped — so a future migration can't silently drop one."""
     from hindsight_api.admin.cli import BACKUP_TABLES
-    from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _REPLAYED_TABLES, _SKIP_TABLES
+    from hindsight_api.engine.transfer.export import (
+        _BANK_ROW_TABLES,
+        _DATA_ROW_TABLES,
+        _REPLAYED_TABLES,
+        _SKIP_TABLES,
+    )
     from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES, KNOWLEDGE_TABLES
 
     buckets = [
         set(_REPLAYED_TABLES),
         set(_BANK_ROW_TABLES),
+        set(_DATA_ROW_TABLES),
         set(CARRIED_HISTORY_TABLES),
         set(KNOWLEDGE_TABLES),
         set(HISTORY_TABLES),
@@ -404,8 +410,8 @@ async def test_restore_rows_normalizes_jsonb_strings(memory):
 @pytest.mark.asyncio
 async def test_export_bank_contents(memory, request_context):
     """export_bank produces a whole-bank archive: docs + bank config + webhooks,
-    no embeddings, with history gated behind include_history."""
-    from hindsight_api.engine.transfer import export_bank
+    no embeddings, with history gated behind scope.history."""
+    from hindsight_api.engine.transfer import TransferScope, export_bank
 
     bank = _unique_bank("export_bank")
     webhook_id = uuid.uuid4()
@@ -425,7 +431,7 @@ async def test_export_bank_contents(memory, request_context):
 
         # Without history.
         async with acquire_with_retry(backend) as conn:
-            archive = await export_bank(conn, bank, include_history=False)
+            archive = await export_bank(conn, bank, scope=TransferScope(history=False))
         with zipfile.ZipFile(io.BytesIO(archive)) as zf:
             names = set(zf.namelist())
             manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
@@ -449,7 +455,7 @@ async def test_export_bank_contents(memory, request_context):
 
         # With history.
         async with acquire_with_retry(backend) as conn:
-            archive_h = await export_bank(conn, bank, include_history=True)
+            archive_h = await export_bank(conn, bank, scope=TransferScope(history=True))
         with zipfile.ZipFile(io.BytesIO(archive_h)) as zf:
             names_h = set(zf.namelist())
             manifest_h = TransferManifest.model_validate_json(zf.read("manifest.json"))
@@ -904,7 +910,7 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
     (the surrogate id is dropped on export; the target reassigns it)."""
     bank = _unique_bank("bank_mm_hist")
     try:
-        await memory.get_bank_profile(bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank, request_context=request_context)
         await memory.create_mental_model(
             bank,
             name="Work model",
@@ -943,7 +949,7 @@ async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
     target, so pages stay searchable after import (#3308, #3323)."""
     bank = _unique_bank("bank_kb")
     try:
-        await memory.get_bank_profile(bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank, request_context=request_context)
         root = await memory.create_knowledge_folder(bank, "Runbooks", managed=True, request_context=request_context)
         sub = await memory.create_knowledge_folder(
             bank, "Billing", parent_id=root["id"], request_context=request_context
@@ -1763,7 +1769,7 @@ async def test_bank_import_classifies_label_entities(memory, request_context):
     label_entity = "brief_bio:enjoys long walks on the beach"
     regular_entity = "Alice"
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
         await memory._config_resolver.update_bank_config(
             bank,
             {"entity_labels": [{"key": "brief_bio", "type": "text", "description": "one-line bio"}]},
@@ -1996,7 +2002,7 @@ async def test_purge_expired_export_archives_honours_the_batch_bound(memory, req
 
     bank = _unique_bank("export_purge_bound")
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
         backend = await memory._get_backend()
         # Fabricated rows rather than real exports: the purge counts rows carrying a
         # storage_key and swallows the blob delete, so no archive needs to exist for
@@ -2031,7 +2037,7 @@ async def test_download_route_rejects_unauthorized_keys(api_client, memory, requ
     """The download route only serves bank-scoped keys for banks the caller can see."""
     bank = _unique_bank("download_guard")
     try:
-        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank, request_context=request_context)
 
         # Non-"banks/"-prefixed key: not a downloadable resource.
         r = await api_client.get("/v1/default/files/download/etc/passwd")
@@ -2328,3 +2334,602 @@ async def test_embed_in_batches_handles_empty_input():
 
     assert await _embed_in_batches(embedder, []) == []
     assert embedder.batch_sizes == []
+
+
+@pytest.mark.asyncio
+async def test_bank_copy_carries_directives_and_webhooks(memory, request_context):
+    """Copying a bank on the same instance must actually write its directives and webhooks.
+
+    Both tables have a globally-unique ``id`` primary key. The archive carried
+    those ids verbatim and ``_restore_rows`` inserts ON CONFLICT DO NOTHING, so
+    every row collided with the still-present source row, wrote nothing, and was
+    still counted as imported — a copy that reported success and silently had no
+    directives and no webhooks.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("copy_src")
+    target = _unique_bank("copy_dst")
+    try:
+        await _retain(memory, source, "Dana works at Vectorize.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('webhooks')} "
+                f"(id, bank_id, url, secret, event_types, enabled, created_at, updated_at) "
+                f"VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())",
+                uuid.uuid4(),
+                source,
+                "https://example.com/hook",
+                ["retain.completed"],
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.directives_imported == 1
+        assert result.webhooks_imported == 1
+
+        # The counts above are what lied before the fix; these are the rows, read
+        # back through the same API a user would.
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        webhooks = await memory.list_webhooks(target, request_context=request_context)
+        assert [d["name"] for d in directives.items] == ["tone"]
+        assert [w["url"] for w in webhooks["items"]] == ["https://example.com/hook"]
+
+        # Fresh ids: keeping the source's is what made the insert a no-op. Read
+        # directly because the id is the mechanism rather than the observable
+        # outcome — the assertions above are what a user sees, this is why they hold.
+        async with acquire_with_retry(backend) as conn:
+            copied_ids = {
+                r["id"] for r in await conn.fetch(f"SELECT id FROM {fq_table('directives')} WHERE bank_id = $1", target)
+            }
+            source_ids = {
+                r["id"] for r in await conn.fetch(f"SELECT id FROM {fq_table('directives')} WHERE bank_id = $1", source)
+            }
+        assert copied_ids and not (copied_ids & source_ids)
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_scope_exports_and_restores_only_what_was_asked_for(memory, request_context):
+    """The three booleans select what travels, on both halves of the transfer."""
+    from hindsight_api.engine.transfer import TransferScope, export_bank
+
+    source = _unique_bank("scope_src")
+    config_only = _unique_bank("scope_cfg")
+    data_only = _unique_bank("scope_data")
+    try:
+        await _retain(memory, source, "Eve lives in Berlin.", request_context, "doc-1")
+        await memory.create_mental_model(
+            source,
+            name="Places",
+            source_query="where do people live",
+            content="People and their cities.",
+            mental_model_id="mm-1",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+
+        async with acquire_with_retry(backend) as conn:
+            config_archive = await export_bank(
+                conn, source, scope=TransferScope(data=False, bank_config=True), file_storage=memory._file_storage
+            )
+            data_archive = await export_bank(
+                conn, source, scope=TransferScope(data=True, bank_config=False), file_storage=memory._file_storage
+            )
+
+        with zipfile.ZipFile(io.BytesIO(config_archive)) as zf:
+            config_names = set(zf.namelist())
+        with zipfile.ZipFile(io.BytesIO(data_archive)) as zf:
+            data_names = set(zf.namelist())
+        assert not any(n.startswith("documents/") for n in config_names)
+        assert any(n.startswith("documents/") for n in data_names)
+        # Mental models are a reading of the bank's facts, so they travel with the
+        # data rather than with the settings — a config-only archive carrying them
+        # would restore a synthesis whose evidence resolves to nothing.
+        assert "mental_models.json" in data_names
+        assert "mental_models.json" not in config_names
+        assert "directives.json" in config_names
+        assert "directives.json" not in data_names
+
+        config_result = await memory.import_bank_async(config_archive, request_context, target_bank_id=config_only)
+        assert config_result.documents_imported == 0
+        assert config_result.mental_models_imported == 0
+
+        data_result = await memory.import_bank_async(data_archive, request_context, target_bank_id=data_only)
+        assert data_result.documents_imported == 1
+        assert data_result.mental_models_imported == 1
+        # The bank row came from this instance's defaults rather than the archive,
+        # but it exists — the facts had to land somewhere.
+        assert await memory.get_bank_profile(data_only, request_context=request_context) is not None
+    finally:
+        for bank in (source, config_only, data_only):
+            await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory, request_context):
+    """An operation still in flight at export time restores as cancelled.
+
+    ``async_operations`` is the task queue as well as the log: a restored
+    ``pending`` row is work the target's worker would actually run, re-firing the
+    source bank's webhooks against a bank that never asked for it.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("ops_src")
+    target = _unique_bank("ops_dst")
+    try:
+        await _retain(memory, source, "Frank plays the cello.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('async_operations')} "
+                f"(operation_id, bank_id, operation_type, status, task_payload) "
+                f"VALUES ($1, $2, 'retain', 'pending', '{{}}'::jsonb), "
+                f"       ($3, $2, 'retain', 'completed', '{{}}'::jsonb)",
+                uuid.uuid4(),
+                source,
+                uuid.uuid4(),
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        await memory.import_bank_async(archive, request_context, target_bank_id=target)
+
+        async with acquire_with_retry(backend) as conn:
+            statuses = [
+                r["status"]
+                for r in await conn.fetch(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE bank_id = $1 AND operation_type = 'retain'",
+                    target,
+                )
+            ]
+        # The finished work is the copy's history; the in-flight row belonged to
+        # the source and is not carried at all. Restoring it as cancelled was the
+        # first attempt, and it put a cancelled clone_bank row — the clone's own
+        # operation — in every copy.
+        assert statuses == ["completed"]
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+# Seeds the attachment link with a raw INSERT that needs the document's SQL row.
+@pytest.mark.memory_backend_incompatible
+async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
+    """An attachment's bytes ride in the archive and land under the target's own key.
+
+    The storage key encodes tenant and bank, so carrying the source's key would
+    point the copy at the source's blob — which deleting the source bank then
+    sweeps out from under it.
+    """
+    from hindsight_api.engine.retain.attachment_content import RetainAttachment
+    from hindsight_api.engine.retain.attachment_store import store_images
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("att_src")
+    target = _unique_bank("att_dst")
+    payload = b"\x89PNG\r\n\x1a\n-not-really-a-png"
+    try:
+        await _retain(memory, source, "Grace shared a diagram.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            stored = await store_images(
+                memory._file_storage,
+                conn,
+                source,
+                "doc-1",
+                [
+                    RetainAttachment(
+                        attachment_hash="a" * 64,
+                        media_type="image/png",
+                        data=payload,
+                        block_index=0,
+                        filename="diagram.png",
+                    )
+                ],
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.attachments_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"SELECT storage_key, short_id, media_type, document_id, filename "
+                f"FROM {fq_table('attachments')} WHERE bank_id = $1",
+                target,
+            )
+        assert row is not None
+        assert row["storage_key"] != stored[0].storage_key
+        # The row carries its owning document and that document's name for it, so
+        # there is no separate edge table to carry across.
+        assert row["document_id"] == "doc-1"
+        assert row["filename"] == "diagram.png"
+        assert bytes(await memory._file_storage.retrieve(row["storage_key"])) == payload
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_invalidated_facts_survive_a_bank_copy(memory, request_context):
+    """The curation archive travels, so a copied bank can still revert what was retired."""
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("inv_src")
+    target = _unique_bank("inv_dst")
+    try:
+        unit_ids = await _retain(memory, source, "Helen owns a red bicycle.", request_context, "doc-1")
+        await memory.update_memory_unit(
+            source,
+            str(unit_ids[0]),
+            state="invalidated",
+            reason="wrong colour",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.invalidated_memories_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT id, text, document_id, invalidation_reason FROM {fq_table('invalidated_memory_units')} "
+                f"WHERE bank_id = $1",
+                target,
+            )
+            source_ids = {
+                r["id"]
+                for r in await conn.fetch(
+                    f"SELECT id FROM {fq_table('invalidated_memory_units')} WHERE bank_id = $1", source
+                )
+            }
+        assert len(rows) == 1
+        assert rows[0]["invalidation_reason"] == "wrong colour"
+        # Through the store: one that owns its documents has no SQL row for the column's
+        # foreign key to reference, so it keeps the document elsewhere and leaves the column NULL.
+        from hindsight_api.engine.memories import get_memories
+
+        async with acquire_with_retry(backend) as conn:
+            archived = await get_memories().get_archived_memory(
+                conn=conn, fq_table=fq_table, bank_id=target, unit_id=str(rows[0]["id"])
+            )
+        assert archived is not None and archived.document_id == "doc-1"
+        # Fresh unit id: the source row is still there on a same-instance copy.
+        assert rows[0]["id"] not in source_ids
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_endpoints_round_trip_a_bank(api_client, memory, request_context):
+    """The unified endpoints export a bank and restore it under a new id."""
+    source = _unique_bank("http_src")
+    target = _unique_bank("http_dst")
+    try:
+        await _retain(memory, source, "Ivan speaks Portuguese.", request_context, "doc-1")
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/transfer/export")
+        assert response.status_code == 202, response.text
+        operation_id = response.json()["operation_id"]
+
+        operation = await api_client.get(f"/v1/default/banks/{quote(source)}/operations/{operation_id}")
+        assert operation.status_code == 200, operation.text
+        storage_key = operation.json()["result_metadata"]["storage_key"]
+        archive = await memory._file_storage.retrieve(storage_key)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/transfer/import",
+            params={"target_bank_id": target},
+            files={"file": ("transfer.zip", bytes(archive), "application/zip")},
+        )
+        assert response.status_code == 202, response.text
+
+        # The copy holds exactly the source's facts. Comparing the two banks rather
+        # than naming the texts keeps the assertion total without pinning what the
+        # mock LLM happens to extract from the prompt it echoes back.
+        source_facts = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        target_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert sorted(u["text"] for u in target_facts["items"]) == sorted(u["text"] for u in source_facts["items"])
+        assert any(u["text"] == "Ivan speaks Portuguese." for u in target_facts["items"])
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_import_rejects_an_existing_target(api_client, memory, request_context):
+    """Restoring into a bank that exists is a caller error, not a background failure."""
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("exists_src")
+    try:
+        await _retain(memory, source, "Jo collects stamps.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/transfer/import",
+            params={"target_bank_id": source},
+            files={"file": ("transfer.zip", archive, "application/zip")},
+        )
+        assert response.status_code == 400
+        assert "already exists" in response.json()["detail"]
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_transfer_endpoints_refuse_a_request_that_would_do_nothing(api_client, memory, request_context):
+    """A scope that carries nothing, and a scope flag that a merge would ignore,
+    are both caller errors — accepting either produces an archive or an import
+    that silently is not what was asked for."""
+    bank = _unique_bank("guards")
+    try:
+        await _retain(memory, bank, "Kim studies geology.", request_context, "doc-1")
+
+        nothing = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/export",
+            params={"include_data": False, "include_bank_config": False, "include_history": False},
+        )
+        assert nothing.status_code == 400
+        assert "Nothing to export" in nothing.json()["detail"]
+
+        # A document subset is not a bank, so it cannot carry bank-level sections.
+        subset = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/export",
+            params={"document_id": "doc-1", "include_bank_config": True},
+        )
+        assert subset.status_code == 400
+
+        merge_with_scope = await api_client.post(
+            f"/v1/default/banks/{quote(bank)}/transfer/import",
+            params={"mode": "merge", "include_bank_config": True},
+            files={"file": ("transfer.zip", b"not-a-zip", "application/zip")},
+        )
+        assert merge_with_scope.status_code == 400
+        assert "mode=restore" in merge_with_scope.json()["detail"]
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_copies_the_bank_and_leaves_the_two_independent(api_client, memory, request_context):
+    """A clone holds the source's memories and configuration, and then goes its own way."""
+    source = _unique_bank("clone_src")
+    target = _unique_bank("clone_dst")
+    try:
+        await _retain(memory, source, "Lena restores violins.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+        operation_id = response.json()["operation_id"]
+
+        # The operation belongs to the source — the target did not exist when it was submitted.
+        status = await memory.get_operation_status(source, operation_id, request_context=request_context)
+        assert status["status"] == "completed", status
+        assert status["result_metadata"]["target_bank_id"] == target
+
+        source_facts = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert sorted(u["text"] for u in clone_facts["items"]) == sorted(u["text"] for u in source_facts["items"])
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        assert [d["name"] for d in directives.items] == ["tone"]
+
+        # Independent from here: a write to the clone must not reach the source.
+        await _retain(memory, target, "Lena bought a workshop.", request_context, "doc-2")
+        source_after = await memory.list_memory_units(source, limit=100, request_context=request_context)
+        clone_after = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert any("workshop" in u["text"] for u in clone_after["items"])
+        assert not any("workshop" in u["text"] for u in source_after["items"])
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_refuses_a_target_that_would_be_overwritten(api_client, memory, request_context):
+    """Cloning onto an existing bank, or onto itself, is refused up front — both
+    would mix two banks' configuration into one with nothing to undo it."""
+    source = _unique_bank("clone_guard_src")
+    existing = _unique_bank("clone_guard_dst")
+    try:
+        await _retain(memory, source, "Milo tunes pianos.", request_context, "doc-1")
+        # ensure_, not get_: since #4465 a profile read never creates the bank, and this
+        # test needs the target to actually exist for the clone guard to have something
+        # to refuse.
+        await memory.ensure_bank_profile(existing, request_context=request_context)
+
+        onto_existing = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": existing}
+        )
+        assert onto_existing.status_code == 400
+        assert "already exists" in onto_existing.json()["detail"]
+
+        onto_itself = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": source}
+        )
+        assert onto_itself.status_code == 400
+
+        missing_source = await api_client.post(
+            "/v1/default/banks/does-not-exist-bank/clone", params={"target_bank_id": _unique_bank("clone_never")}
+        )
+        assert missing_source.status_code == 404
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(existing, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_can_leave_the_configuration_behind(api_client, memory, request_context):
+    """Copying an agent's memory without copying what it is wired to do — including
+    its webhooks, which point at the source's own consumer."""
+    source = _unique_bank("clone_data_src")
+    target = _unique_bank("clone_data_dst")
+    try:
+        await _retain(memory, source, "Nina keeps bees.", request_context, "doc-1")
+        await memory.create_directive(source, name="tone", content="Answer briefly.", request_context=request_context)
+
+        response = await api_client.post(
+            f"/v1/default/banks/{quote(source)}/clone",
+            params={"target_bank_id": target, "include_bank_config": False},
+        )
+        assert response.status_code == 202, response.text
+
+        clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        directives = await memory.list_directives(target, active_only=False, request_context=request_context)
+        assert clone_facts["items"]
+        assert directives.items == []
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_does_not_keep_the_source_default_name(api_client, memory, request_context):
+    """A bank's default name is its id, so a copy that kept it would read as the
+    source in every list that shows names — two entries, same name, different ids."""
+    source = _unique_bank("name_src")
+    target = _unique_bank("name_dst")
+    try:
+        await _retain(memory, source, "Otto tunes harpsichords.", request_context, "doc-1")
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+
+        profile = await memory.get_bank_profile(target, request_context=request_context)
+        assert profile is not None
+        assert profile["name"] == target
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_keeps_a_name_someone_chose(api_client, memory, request_context):
+    """The rename only follows the default. A name a user set is theirs, and a
+    clone that renamed it to a bank id would be losing information."""
+    source = _unique_bank("named_src")
+    target = _unique_bank("named_dst")
+    try:
+        await _retain(memory, source, "Pia restores clocks.", request_context, "doc-1")
+        await memory.update_bank(source, name="Pia's workshop", request_context=request_context)
+
+        response = await api_client.post(f"/v1/default/banks/{quote(source)}/clone", params={"target_bank_id": target})
+        assert response.status_code == 202, response.text
+
+        profile = await memory.get_bank_profile(target, request_context=request_context)
+        assert profile is not None
+        assert profile["name"] == "Pia's workshop"
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+def test_archive_assembly_is_confined_to_threadable_builders():
+    """Every ZIP is written by a plain function whose name starts with `_build_`.
+
+    Those are the ones the async wrappers hand to a worker thread. Assembling an
+    archive inline in an async function instead — which `export_bank` did until
+    the transfer and clone endpoints started calling it inside the API process —
+    serialises the whole bank and DEFLATEs it on the event loop, stalling every
+    other request for as long as the bank is big (the shape of issue #3321).
+    """
+    import ast
+    from pathlib import Path
+
+    from hindsight_api.engine.transfer import export as export_module
+
+    source = Path(export_module.__file__).read_text()
+    tree = ast.parse(source)
+
+    offenders = []
+    builders = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name.startswith("_build_"):
+            builders.add(node.name)
+            # A builder has to be callable from a thread, so it must not be async.
+            assert isinstance(node, ast.FunctionDef), f"{node.name} must be a plain def to run in a thread"
+            continue
+        body = ast.get_source_segment(source, node) or ""
+        if "zipfile.ZipFile(" in body:
+            offenders.append(node.name)
+
+    assert offenders == [], f"archive written outside a threadable builder: {offenders}"
+    assert {"_build_archive_bytes", "_build_bank_archive_bytes"} <= builders
+
+
+def test_the_engine_never_compresses_inside_a_read_transaction():
+    """No archive is built while a transaction is open.
+
+    Splitting load from build only helps if the callers keep them apart: moving
+    the build back inside the `async with conn.transaction()` block would pin a
+    pooled connection for the whole compression again, and would look perfectly
+    reasonable in review — which is why this is asserted structurally rather than
+    left to the next reader to notice.
+    """
+    import ast
+    from pathlib import Path
+
+    from hindsight_api.engine import memory_engine
+
+    source = Path(memory_engine.__file__).read_text()
+    tree = ast.parse(source)
+
+    def builds_an_archive(node: ast.AST) -> bool:
+        return any(
+            isinstance(inner, ast.Call) and getattr(inner.func, "id", "") == "build_bank_archive"
+            for inner in ast.walk(node)
+        )
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        header = (ast.get_source_segment(source, node) or "").splitlines()[:1]
+        if header and ".transaction(" in header[0] and builds_an_archive(node):
+            offenders.append(f"line {node.lineno}: {header[0].strip()}")
+
+    assert offenders == [], f"archive built inside a transaction: {offenders}"
+
+
+@pytest.mark.asyncio
+async def test_bank_archive_builds_without_the_connection_that_read_it(memory, request_context):
+    """The compression runs after the read transaction is closed.
+
+    Loading and building are separate calls precisely so a pooled connection is
+    not held for the length of a whole-bank DEFLATE. Building from a payload with
+    no connection in scope is what proves the two halves are actually independent.
+    """
+    from hindsight_api.engine.transfer import build_bank_archive, load_bank_export
+
+    bank = _unique_bank("export_seam")
+    try:
+        await _retain(memory, bank, "Rosa sails dinghies.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                payload = await load_bank_export(bank_id=bank, conn=conn, file_storage=memory._file_storage)
+
+        # The connection is back in the pool here.
+        archive = await build_bank_archive(payload)
+
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            names = set(zf.namelist())
+            manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        assert any(n.startswith("documents/") for n in names)
+        assert manifest.source_bank_id == bank
+        assert manifest.document_count == 1
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

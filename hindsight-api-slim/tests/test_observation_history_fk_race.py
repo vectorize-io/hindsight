@@ -27,7 +27,7 @@ from hindsight_api.engine.db_utils import acquire_with_retry
 async def test_append_history_for_missing_observation_is_skipped(memory, request_context):
     """A history write targeting an absent observation is skipped, not fatal."""
     bank_id = f"test-obs-history-fk-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     snapshot = _ObservationHistorySnapshot(
         previous_text="old",

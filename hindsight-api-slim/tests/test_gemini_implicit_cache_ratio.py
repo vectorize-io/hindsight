@@ -215,7 +215,7 @@ class TestGeminiCacheRatioPerOperation:
         """Retain N distinct chunks → N fact-extraction calls sharing one prefix."""
         mem = await _gemini_engine(memory_no_llm_verify)
         bank_id = f"gemini-cache-retain-{uuid.uuid4().hex[:8]}"
-        await mem.get_bank_profile(bank_id, request_context=request_context)
+        await mem.ensure_bank_profile(bank_id, request_context=request_context)
 
         docs = [_DOCS[i % len(_DOCS)] for i in range(_CHUNKS)]
         for i, content in enumerate(docs):
@@ -239,7 +239,7 @@ class TestGeminiCacheRatioPerOperation:
         ``reflect_tool_call``). The per-reflect caches are deleted when it ends."""
         mem = await _gemini_engine(memory_no_llm_verify)
         bank_id = f"gemini-cache-reflect-{uuid.uuid4().hex[:8]}"
-        await mem.get_bank_profile(bank_id, request_context=request_context)
+        await mem.ensure_bank_profile(bank_id, request_context=request_context)
 
         await mem.retain_batch_async(
             bank_id=bank_id,
@@ -280,7 +280,7 @@ class TestGeminiCacheRatioPerOperation:
         reused across every consolidation batch (scope ``consolidation``)."""
         mem = await _gemini_engine(memory_no_llm_verify)
         bank_id = f"gemini-cache-consol-{uuid.uuid4().hex[:8]}"
-        await mem.get_bank_profile(bank_id, request_context=request_context)
+        await mem.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Seed enough unconsolidated memories that consolidation makes several
         # same-prefix LLM calls.

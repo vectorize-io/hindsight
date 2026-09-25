@@ -43,6 +43,16 @@ describe("syncCompanionSkill", () => {
     expect(existsSync(join(home, ".claude", "skills", "hindsight-coding-agent"))).toBe(false);
   });
 
+  it("installs where nothing is installed when the caller asks (plugin-manager route)", () => {
+    // `dsh plugin add @vectorize-io/…` / `cline plugin install` wire the plugin without ever
+    // running our installer, so the persistent-plugin hosts pass `install` at seed time (#4406).
+    const { home, src } = setup(undefined);
+    syncCompanionSkill("dsh", { home, srcDir: src, install: true });
+    expect(
+      readFileSync(join(home, ".agents", "skills", "hindsight-coding-agent", "SKILL.md"), "utf8")
+    ).toBe("NEW CONTENT v2");
+  });
+
   it("no-ops on identical content and on hosts without a skills mechanism", () => {
     const { home, src } = setup("NEW CONTENT v2");
     syncCompanionSkill("claude-code", { home, srcDir: src }); // same content — no throw, unchanged

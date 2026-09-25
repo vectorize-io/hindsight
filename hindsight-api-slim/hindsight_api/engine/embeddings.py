@@ -287,7 +287,6 @@ class LocalSTEmbeddings(Embeddings):
         model_name: str | None = None,
         force_cpu: bool = False,
         trust_remote_code: bool = False,
-        allow_mps: bool = False,
     ):
         """
         Initialize local SentenceTransformers embeddings.
@@ -300,14 +299,10 @@ class LocalSTEmbeddings(Embeddings):
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models with custom architectures.
                               Default: False (disabled for security)
-            allow_mps: Opt in to the Apple Silicon MPS GPU. Disabled by default
-                      because MPS leaks memory under variable-length workloads
-                      (see engine/local_device.py). Default: False
         """
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
         self.force_cpu = force_cpu
         self.trust_remote_code = trust_remote_code
-        self.allow_mps = allow_mps
         self._model = None
         self._dimension: int | None = None
         self._device_type: str = "cpu"
@@ -340,8 +335,8 @@ class LocalSTEmbeddings(Embeddings):
         # Determine device based on hardware availability. We always set
         # low_cpu_mem_usage=False to prevent lazy loading (meta tensors) which can
         # cause issues when accelerate is installed but no GPU is available.
-        # MPS is opt-in (allow_mps) — see engine/local_device.py for why.
-        device = select_local_device(self.force_cpu, self.allow_mps)
+        # MPS is never used — see engine/local_device.py for why.
+        device = select_local_device(self.force_cpu)
 
         # Suppress verbose transformers warnings during model loading
         # This suppresses the "UNEXPECTED" warnings from BertModel which are harmless
@@ -2137,7 +2132,6 @@ def create_embeddings_from_env() -> Embeddings:
             model_name=config.embeddings_local_model,
             force_cpu=config.embeddings_local_force_cpu,
             trust_remote_code=config.embeddings_local_trust_remote_code,
-            allow_mps=config.embeddings_local_allow_mps,
         )
     elif provider == "onnx":
         return OnnxEmbeddings(

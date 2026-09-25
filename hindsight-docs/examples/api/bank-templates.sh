@@ -6,6 +6,9 @@ set -e
 
 HINDSIGHT_URL="${HINDSIGHT_API_URL:-http://localhost:8888}"
 
+# The export example writes template.json; keep it out of the directory the run started from
+cd "$(mktemp -d)"
+
 # =============================================================================
 # Doc Examples
 # =============================================================================

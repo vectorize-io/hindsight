@@ -2,10 +2,12 @@
 Regression tests for vectorize-io/hindsight#980.
 
 Deterministic Postgres integrity-constraint violations (UniqueViolationError,
-ForeignKeyViolationError, CheckViolationError, NotNullViolationError,
-ExclusionViolationError) must NOT be retried by the worker — they will never
-succeed on retry, and retrying just burns worker capacity for ~3 minutes
-(3 retries × 60s) before finally giving up.
+CheckViolationError, NotNullViolationError, ExclusionViolationError) must NOT be
+retried by the worker — they will never succeed on retry, and retrying just
+burns worker capacity for ~3 minutes (3 retries × 60s) before finally giving up.
+
+ForeignKeyViolationError is the exception, and is tested here as one: it is a
+concurrency race rather than a property of the data, so it IS retried (#4453).
 
 These tests verify that ``MemoryEngine.execute_task`` classifies
 ``asyncpg.exceptions.IntegrityConstraintViolationError`` as non-retryable
@@ -108,11 +110,19 @@ async def test_unique_violation_marks_failed_without_retry(memory):
 
 
 @pytest.mark.asyncio
-async def test_foreign_key_violation_also_not_retried(memory):
-    """
-    All subclasses of IntegrityConstraintViolationError are non-retryable —
-    verify ForeignKeyViolationError is classified the same way as
-    UniqueViolationError.
+async def test_foreign_key_violation_is_retried(memory):
+    """The FK class is carved OUT of #980's blanket — see #4453.
+
+    #980 swept ForeignKeyViolationError in with the rest for symmetry, without a
+    motivating FK failure; this test asserted that sweep. #4453 supplied the
+    missing case and it points the other way: a retain writing ``unit_entities``
+    races a delete removing the units underneath it, and the retry — running
+    against a settled database — succeeds. Marking it failed on first contact
+    dropped the retain at ``retry_count = 0``, silently, because an
+    ``async: true`` retain has already reported success to the caller.
+
+    ``tests/test_fk_violation_is_retryable.py`` reproduces the underlying race
+    against a real database; this one covers what ``execute_task`` does with it.
     """
     bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
     operation_id = uuid.uuid4()
@@ -122,7 +132,8 @@ async def test_foreign_key_violation_also_not_retried(memory):
     await _create_pending_operation(pool, bank_id, operation_id)
 
     fk_violation = asyncpg.exceptions.ForeignKeyViolationError(
-        'insert or update on table "memory_units" violates foreign key constraint "fk_bank"'
+        'insert or update on table "unit_entities" violates foreign key constraint '
+        '"fk_unit_entities_unit_id_memory_units"'
     )
 
     task_dict = {
@@ -133,16 +144,17 @@ async def test_foreign_key_violation_also_not_retried(memory):
     }
 
     with patch.object(memory, "_handle_batch_retain", side_effect=fk_violation):
-        try:
+        with pytest.raises(RetryTaskAt):
             await memory.execute_task(task_dict)
-        except RetryTaskAt as exc:
-            pytest.fail(f"ForeignKeyViolationError must not be retried, but execute_task raised {exc!r}")
 
     row = await pool.fetchrow(
         "SELECT status FROM async_operations WHERE operation_id = $1",
         operation_id,
     )
-    assert row["status"] == "failed"
+    assert row["status"] != "failed", (
+        "A concurrency-race FK violation must leave the operation retryable, not "
+        "terminal — marking it failed here is the silent memory loss in #4453."
+    )
 
     await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", operation_id)
     await pool.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)

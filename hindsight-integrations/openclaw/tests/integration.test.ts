@@ -109,11 +109,17 @@ describe("openclaw integration — HTTP mode", () => {
     expect(response).toBeDefined();
   });
 
-  it("should recall from an empty bank without error", async () => {
+  it("should reject recall from a bank that was never created", async () => {
     const bankId = randomBankId();
-    const response = await client.recall(bankId, "What do I like?", { maxTokens: 512 });
-    expect(response).toBeDefined();
-    expect(Array.isArray(response.results)).toBe(true);
+    // A bank nobody created is a 404, not an empty answer (#4442). This used to return an
+    // empty result, which is indistinguishable from a healthy empty bank — so a typo'd or
+    // deleted bank id looked fine, and recall paid the whole retrieval fan-out to say nothing.
+    // Recall a bank only after something has created it (a retain does, lazily).
+    await expect(
+      client.recall(bankId, "What do I like?", { maxTokens: 512 })
+    ).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 
   it("should set bank mission via createBank after retain creates the bank", async () => {
@@ -144,6 +150,8 @@ describe("openclaw integration — HTTP mode", () => {
 
   it("should use custom maxTokens in recall request", async () => {
     const bankId = randomBankId();
+    // The bank has to exist first: recall 404s for a bank nobody created (#4442).
+    await client.createBank(bankId, {});
     const response = await client.recall(bankId, "anything", { maxTokens: 256 });
     expect(response).toBeDefined();
     expect(Array.isArray(response.results)).toBe(true);
@@ -223,12 +231,15 @@ describe("openclaw integration — embed mode", () => {
     expect(response).toBeDefined();
   }, 60_000);
 
-  it("should recall from an empty bank against the local daemon", async () => {
+  it("should reject recall from a never-created bank against the local daemon", async () => {
     if (!hasEmbedCredentials) return;
     const bankId = randomBankId();
-    const response = await client.recall(bankId, "What do I like?", { maxTokens: 512 });
-    expect(response).toBeDefined();
-    expect(Array.isArray(response.results)).toBe(true);
+    // Same contract as the HTTP-mode test above: a bank nobody created is a 404 (#4442).
+    await expect(
+      client.recall(bankId, "What do I like?", { maxTokens: 512 })
+    ).rejects.toMatchObject({
+      statusCode: 404,
+    });
   }, 60_000);
 
   it("should set bank mission against the local daemon", async () => {

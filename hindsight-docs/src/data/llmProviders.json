@@ -20,6 +20,7 @@
   {"id": "requesty",       "label": "Requesty",          "iconKey": "openai-compatible",                                                 "defaultModel": "openai/gpt-4o-mini"},
   {"id": "openai-codex",   "label": "OpenAI Codex",      "iconKey": "openai",              "color": "#000000",  "colorDark": "#FFFFFF",  "defaultModel": "gpt-5.4-mini"},
   {"id": "claude-code",    "label": "Claude Code",       "iconKey": "anthropic",           "color": "#191919",  "colorDark": "#FFFFFF",  "defaultModel": "claude-sonnet-4-5-20250929"},
+  {"id": "cursor",         "label": "Cursor",            "iconKey": "terminal",            "color": "#000000",  "colorDark": "#FFFFFF",  "defaultModel": "auto"},
   {"id": "github-copilot", "label": "GitHub Copilot",    "iconKey": "terminal",            "color": "#000000",  "colorDark": "#FFFFFF",  "defaultModel": "gpt-5.6-terra"},
   {"id": "bedrock",        "label": "AWS Bedrock",       "iconKey": "cloud",               "color": "#FF9900",                           "defaultModel": "us.amazon.nova-2-lite-v1:0"},
   {"id": "fireworks",      "label": "Fireworks AI",      "iconKey": "zap",                                                               "defaultModel": "accounts/fireworks/models/llama-v3p1-8b-instruct", "batchApi": true},

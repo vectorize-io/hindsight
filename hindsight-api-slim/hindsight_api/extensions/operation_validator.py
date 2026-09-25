@@ -379,6 +379,7 @@ class BankReadOperation(StrEnum):
     GET_MENTAL_MODEL_HISTORY = "get_mental_model_history"
     GET_OBSERVATION_HISTORY = "get_observation_history"
     GET_OPERATION_STATUS = "get_operation_status"
+    LIST_BANK_ALIASES = "list_bank_aliases"
     LIST_DIRECTIVES = "list_directives"
     LIST_DOCUMENT_CHUNKS = "list_document_chunks"
     LIST_DOCUMENTS = "list_documents"
@@ -401,12 +402,14 @@ class BankWriteOperation(StrEnum):
     CLEAR_MENTAL_MODEL = "clear_mental_model"
     CLEAR_OBSERVATIONS = "clear_observations"
     CLEAR_OBSERVATIONS_FOR_MEMORY = "clear_observations_for_memory"
+    CREATE_BANK_ALIAS = "create_bank_alias"
     CREATE_DIRECTIVE = "create_directive"
     CREATE_KNOWLEDGE_FOLDER = "create_knowledge_folder"
     CREATE_KNOWLEDGE_PAGE = "create_knowledge_page"
     CREATE_MENTAL_MODEL = "create_mental_model"
     CREATE_WEBHOOK = "create_webhook"
     DELETE_BANK = "delete_bank"
+    DELETE_BANK_ALIAS = "delete_bank_alias"
     DELETE_DIRECTIVE = "delete_directive"
     DELETE_DOCUMENT = "delete_document"
     DELETE_KNOWLEDGE_NODE = "delete_knowledge_node"
@@ -589,9 +592,11 @@ class OperationValidatorExtension(Extension, ABC):
         - retain, recall, reflect (core memory operations)
         - consolidate (mental models consolidation)
 
-    Validators are not given an ExtensionContext: ``self.context`` raises. Everything a
-    hook needs is on its argument (``ctx.bank_id``, ``ctx.request_context``). Take the
-    tenant from those, never from shared engine state, which is not per-request.
+    ``self.context`` is the process-wide ExtensionContext, set by the engine at
+    construction: use it for process-global handles, e.g. ``get_memory_engine()`` for the
+    data-plane pool. It carries NO per-request state -- take the tenant and bank from the
+    hook's own argument (``ctx.bank_id``, ``ctx.request_context``), never from the context
+    or other shared engine state.
     """
 
     # =========================================================================

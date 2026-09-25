@@ -11,7 +11,8 @@ replacing it with a misleading "install mlx" message.
 
 These tests verify:
 1. A transitive ImportError raised from inside mlx_lm surfaces verbatim.
-2. A genuine "package not installed" ImportError still produces the install hint.
+2. A genuine "package not installed" ImportError still produces the install hint,
+   which also explains that mlx only ships on Apple Silicon (issue #4499).
 """
 
 import sys
@@ -79,5 +80,5 @@ async def test_initialize_reports_install_hint_when_mlx_missing():
     sys.modules.pop("mlx.core", None)
 
     with patch("builtins.__import__", side_effect=fake_import):
-        with pytest.raises(ImportError, match="mlx and mlx-lm are required"):
+        with pytest.raises(ImportError, match="only.*installed on Apple Silicon"):
             await encoder.initialize()

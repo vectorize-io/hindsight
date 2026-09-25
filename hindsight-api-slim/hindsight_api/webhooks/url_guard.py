@@ -291,6 +291,7 @@ class GuardedWebhookClient:
         self._sessions = LoopLocalSession(
             timeout=per_phase_timeout(_DEFAULT_TIMEOUT_SECONDS),
             connector_factory=self._build_connector,
+            trust_env=False,
         )
 
     def _build_connector(self) -> aiohttp.BaseConnector:

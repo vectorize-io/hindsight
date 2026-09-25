@@ -447,6 +447,7 @@ class MetricsCollector(MetricsCollectorBase):
         from .config import get_config
 
         self._include_bank_id = get_config().metrics_include_bank_id
+        self._include_tenant = get_config().metrics_include_tenant
         self._record_diagnostic_phases = get_config().recall_diagnostic_phases
         self._recall_phase_sample_every = get_config().recall_phase_sample_every
 
@@ -648,6 +649,16 @@ class MetricsCollector(MetricsCollectorBase):
         self._consolidation_failed: dict[_BacklogKey, int] = {}
         self._backlog_task: "asyncio.Task | None" = None
 
+    def _tenant_attrs(self) -> dict[str, str]:
+        """The ``tenant`` (schema) label, gated behind ``metrics_include_tenant`` (off by default).
+
+        Per-tenant labels are high-cardinality: a deployment accrues one series set per schema,
+        which multiplies through every histogram bucket and can overwhelm the metrics backend on
+        a deployment with many tenants. Off by default, opt-in for small deployments — mirroring
+        ``metrics_include_bank_id``.
+        """
+        return {"tenant": _get_tenant()} if self._include_tenant else {}
+
     @contextmanager
     def record_operation(
         self,
@@ -721,7 +732,7 @@ class MetricsCollector(MetricsCollectorBase):
         attributes = {
             "operation": operation,
             "source": source,
-            "tenant": _get_tenant(),
+            **self._tenant_attrs(),
         }
         if self._include_bank_id:
             attributes["bank_id"] = bank_id
@@ -745,7 +756,7 @@ class MetricsCollector(MetricsCollectorBase):
         until it is reprocessed.
         """
         attributes = {
-            "tenant": _get_tenant(),
+            **self._tenant_attrs(),
             "outcome": "facts" if memory_unit_count > 0 else "no_facts",
         }
         if self._include_bank_id:
@@ -789,7 +800,7 @@ class MetricsCollector(MetricsCollectorBase):
             "model": model,
             "scope": scope,
             "success": str(success).lower(),
-            "tenant": _get_tenant(),
+            **self._tenant_attrs(),
         }
 
         # Record duration
@@ -854,14 +865,11 @@ class MetricsCollector(MetricsCollectorBase):
             status_code = status_code_getter()
             status_class = f"{status_code // 100}xx"
 
-            # Get tenant from context (may be set during request processing)
-            tenant = _get_tenant()
-
             attributes = {
                 **base_attributes,
                 "status_code": str(status_code),
                 "status_class": status_class,
-                "tenant": tenant,
+                **self._tenant_attrs(),
             }
 
             # Record duration and count
@@ -878,7 +886,7 @@ class MetricsCollector(MetricsCollectorBase):
     def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
         """Record one phase of a retain. `store` labels which memories backend served it, so a
         store-owned bank's profile is separable from a Postgres one on the same deployment."""
-        attrs = {"phase": phase, "tenant": _get_tenant()}
+        attrs = {"phase": phase, **self._tenant_attrs()}
         if store:
             attrs["store"] = store
         self.retain_phase_duration.record(seconds, attrs)
@@ -886,7 +894,7 @@ class MetricsCollector(MetricsCollectorBase):
 
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         """Record one operation-validator hook. `hook` is "pre" or "post"."""
-        attrs = {"operation": operation, "hook": hook, "tenant": _get_tenant()}
+        attrs = {"operation": operation, "hook": hook, **self._tenant_attrs()}
         self.validator_phase_duration.record(seconds, attrs)
 
     def record_recall_phase(self, phase: str, seconds: float, *, diagnostic: bool = False):
@@ -904,7 +912,7 @@ class MetricsCollector(MetricsCollectorBase):
         # absolute counts scale by 1/N. Default 1 records every call, exactly as before.
         if self._recall_phase_sample_every > 1 and random.random() * self._recall_phase_sample_every >= 1.0:
             return
-        attrs = {"phase": phase, "tenant": _get_tenant(), "diagnostic": str(bool(diagnostic)).lower()}
+        attrs = {"phase": phase, **self._tenant_attrs(), "diagnostic": str(bool(diagnostic)).lower()}
         # One instrument, not two: the histogram already carries `_count` for this attribute set,
         # so the parallel counter was recording the same measurement a second time — and OTel's
         # consume_measurement path, not the record call, is what costs.
@@ -927,7 +935,7 @@ class MetricsCollector(MetricsCollectorBase):
         signature — and is bounded by the exception types the LLM layer can raise.
         """
         self.consolidation_batch_failures.add(
-            1, {"failure_class": failure_class, "error_type": error_type, "tenant": _get_tenant()}
+            1, {"failure_class": failure_class, "error_type": error_type, **self._tenant_attrs()}
         )
 
     def _setup_process_metrics(self):

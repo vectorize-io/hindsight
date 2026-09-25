@@ -43,6 +43,11 @@ OPENCODE_SESSION_HEADER = "x-opencode-session"
 
 # Hosts (exact or parent domain) whose backends implement the xAI header.
 _XAI_DOMAINS = ("x.ai", "grok.com")
+# Hosts (exact or parent domain) whose backends require the x-opencode-session
+# header. opencode-go serves /v1/responses, /v1/chat/completions, and
+# /v1/messages from the same host, so the requirement is host-level rather than
+# provider-name-level — see ``apply_opencode_session``.
+_OPENCODE_DOMAINS = ("opencode.ai",)
 # Hosts (exact or parent domain) that accept OpenAI's prompt_cache_key field.
 # Deliberately excludes openai.azure.com: Azure OpenAI itself accepts the field
 # on GPT deployments, but the same *.openai.azure.com endpoint also fronts
@@ -159,16 +164,30 @@ def cache_affinity_id(messages: Any) -> str | None:
     return _first_message_fingerprint(messages)
 
 
-def apply_opencode_session(request: dict[str, Any], provider: str) -> None:
+def apply_opencode_session(request: dict[str, Any], *, base_url: str | None) -> None:
     """Add OpenCode Go's conversation-grouping header to ``request`` in place.
 
     OpenCode Go asks third-party clients to send ``x-opencode-session`` so
     requests of one conversation are grouped, and has warned that requests
     omitting it will be rejected (#4071). That makes it a protocol requirement
-    rather than a cache optimization, so it is applied whenever the provider is
-    ``opencode-go`` regardless of the configured ``cache_affinity`` mode — an
-    operator setting ``none`` to opt out of cache pinning must not lose a header
-    the backend requires.
+    rather than a cache optimization, so it is applied whenever the request
+    targets an ``opencode.ai`` host — regardless of the configured
+    ``cache_affinity`` mode and regardless of the configured ``provider`` name.
+    An operator setting ``cache_affinity=none`` to opt out of cache pinning must
+    not lose a header the backend requires, and an operator using the
+    ``openai-responses`` provider with a custom ``base_url`` pointing at
+    ``opencode.ai`` (the documented setup for ``muse-spark-1.3-contributor`` and
+    friends) must get the header too.
+
+    Detection is host-based, mirroring how ``resolve_cache_affinity`` handles
+    the xAI / native-OpenAI hosts (the same pattern already documented in this
+    file). It previously keyed on ``provider == "opencode-go"``, which missed
+    every deployment that reaches the same backend under another provider name:
+    ``openai-responses`` for /v1/responses and ``anthropic`` for /v1/messages.
+    Keying on the name is also wrong in the other direction — it cannot tell
+    opencode-go apart from a same-named proxy that does not want the header.
+    The ``opencode-go`` provider sets this base URL itself (see
+    ``OpenAICompatibleLLM.__init__``), so it stays covered.
 
     The value is the operation-scoped id from :func:`cache_affinity_id`, so every
     LLM call of one retain/reflect/consolidation run shares it — including the
@@ -179,7 +198,8 @@ def apply_opencode_session(request: dict[str, Any], provider: str) -> None:
     placed in ``extra_headers`` is kept. Never raises; when no id can be derived
     the request goes out unchanged.
     """
-    if provider.lower() != "opencode-go":
+    hostname = (urlparse(base_url).hostname or "") if base_url else ""
+    if not any(_host_matches(hostname, domain) for domain in _OPENCODE_DOMAINS):
         return
     session_id = cache_affinity_id(request.get("messages"))
     if session_id is None:

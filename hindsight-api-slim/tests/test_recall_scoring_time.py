@@ -75,6 +75,8 @@ async def test_recall_async_passes_question_date_to_combined_scoring(monkeypatch
     engine.query_analyzer = object()
     engine._cross_encoder_reranker = _Reranker()
     engine._authenticate_tenant = AsyncMock()
+    # This engine has no pool; recall's bank-existence check (#4442) is not what's under test.
+    engine._require_bank_exists = AsyncMock()
 
     async def generate_embeddings_batch(*_args: object, **_kwargs: object) -> list[list[float]]:
         return [[0.1, 0.2, 0.3]]

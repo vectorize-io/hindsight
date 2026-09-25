@@ -164,7 +164,7 @@ async def _seed_bank(memory: MemoryEngine, request_context: RequestContext, rows
     state those tests are about.
     """
     bank_id = f"test-repair-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     backend = await memory._get_backend()
     async with acquire_with_retry(backend) as conn:
@@ -530,7 +530,7 @@ class TestDefaultThresholdIsBackwardsCompatible:
     async def test_bank_creation_builds_all_three_indexes(self, memory: MemoryEngine, request_context: RequestContext):
         """The bank is entitled from the moment it exists, before any row lands."""
         bank_id = f"test-repair-{uuid.uuid4().hex[:8]}"
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         backend = await memory._get_backend()
         try:
             async with acquire_with_retry(backend) as conn:
@@ -724,12 +724,13 @@ class TestRepairBankCommand:
         bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
         backend = await memory._get_backend()
         try:
-            results = await _run_repair_bank(
+            sweep = await _run_repair_bank(
                 pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=bank_id, dry_run=False
             )
 
-            assert len(results) == 1
-            result = results[0]
+            assert sweep.skipped_schemas == []
+            assert len(sweep.banks) == 1
+            result = sweep.banks[0]
             assert result.failed == 0, result.failed_indexes
             assert result.created == len(_BANK_INDEX_FACT_TYPES)
 
@@ -805,7 +806,7 @@ class TestRestoredBankCoverage:
         bank_id = f"test-import-{uuid.uuid4().hex[:8]}"
         backend = await memory._get_backend()
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             async with acquire_with_retry(backend) as conn:
                 archive = await export_bank(conn, bank_id)
 
@@ -832,7 +833,7 @@ class TestRestoredBankCoverage:
         bank_id = f"test-import-{uuid.uuid4().hex[:8]}"
         backend = await memory._get_backend()
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             async with acquire_with_retry(backend) as conn:
                 archive = await export_bank(conn, bank_id)
 
@@ -861,7 +862,7 @@ class TestRestoredBankCoverage:
         backend = await memory._get_backend()
         try:
             # Bank row first — this is the SELECT branch that #2645 fell through.
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             async with acquire_with_retry(backend) as conn:
                 for name in await _expected_index_names(conn, bank_id):
                     assert not await _index_exists(conn, name)

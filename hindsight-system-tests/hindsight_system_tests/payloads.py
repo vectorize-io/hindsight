@@ -42,6 +42,9 @@ class Fact(BaseModel):
     entities: list[str] = Field(default_factory=list)
     occurred_start: str | None = None
     occurred_end: str | None = None
+    from_attachments: list[int] | None = None
+    """1-based numbers of the chunk's attachments this fact was read off — the edge
+    that makes a fact (and what it is consolidated into) carry its attachments."""
 
 
 class ExtractedFacts(BaseModel):

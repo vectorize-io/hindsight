@@ -5,7 +5,18 @@ import {
   mergeResolvedObservations,
   observationsSlice,
   reconcileObservationsEdits,
+  compactStrategy,
+  scopesLabel,
+  strategyOverridesSomething,
+  suggestedTags,
 } from "../../src/lib/observations-config";
+
+const STRATEGIES = [
+  {
+    scopes: [{ tags: ["company:*"] }, { tags: ["org:*", "shared"] }],
+    observations_mission: "Trends only.",
+  },
+];
 
 describe("observations config state", () => {
   it.each([true, false])(
@@ -46,6 +57,7 @@ describe("observations config state", () => {
         consolidation_source_facts_max_tokens_per_observation: 2_000,
         observations_mission: "Returned resolved state",
         max_observations_per_scope: 8,
+        consolidation_strategies: STRATEGIES,
       },
       { enable_observations: true, consolidation_llm_batch_size: 6 }
     );
@@ -57,6 +69,7 @@ describe("observations config state", () => {
       consolidation_source_facts_max_tokens_per_observation: 2_000,
       observations_mission: "Returned resolved state",
       max_observations_per_scope: 8,
+      consolidation_strategies: STRATEGIES,
     });
   });
 
@@ -171,5 +184,57 @@ describe("observations config state", () => {
       ...editedDuringSave,
       consolidation_llm_batch_size: 10,
     });
+  });
+
+  it("keeps saved strategies as the new baseline after a PATCH", () => {
+    const submitted = observationsSlice({ consolidation_strategies: STRATEGIES }, {});
+    const nextConfig = mergeResolvedObservations({ consolidation_strategies: null }, submitted, {
+      consolidation_strategies: STRATEGIES,
+    });
+
+    expect(nextConfig.consolidation_strategies).toEqual(STRATEGIES);
+  });
+});
+
+describe("strategy shape", () => {
+  it("stores only the settings that were filled in", () => {
+    expect(
+      compactStrategy({
+        scopes: [{ tags: ["company:*"] }],
+        observations_mission: "  ",
+        max_observations_per_scope: null,
+        consolidation_source_facts_max_tokens: 0,
+      })
+    ).toEqual({ scopes: [{ tags: ["company:*"] }], consolidation_source_facts_max_tokens: 0 });
+  });
+
+  it("knows when a strategy changes nothing", () => {
+    expect(
+      strategyOverridesSomething({ scopes: [{ tags: ["company:*"] }], observations_mission: "" })
+    ).toBe(false);
+    expect(
+      strategyOverridesSomething({
+        scopes: [{ tags: ["company:*"] }],
+        max_observations_per_scope: 20,
+      })
+    ).toBe(true);
+  });
+
+  it("labels a strategy by its scopes, spelling out and/or", () => {
+    expect(scopesLabel([{ tags: ["team:*"] }, { tags: ["org:*", "shared"] }])).toBe(
+      "team:* or org:* and shared"
+    );
+    expect(scopesLabel([{ tags: ["team:*"] }, { tags: [] }], "und", "oder")).toBe("team:*");
+    expect(scopesLabel([])).toBe("");
+  });
+
+  it("suggests existing tags and a wildcard per tag key", () => {
+    expect(suggestedTags([["company:acme"], ["org:eng", "shared"], []])).toEqual([
+      "company:*",
+      "company:acme",
+      "org:*",
+      "org:eng",
+      "shared",
+    ]);
   });
 });

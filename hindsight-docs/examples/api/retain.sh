@@ -11,7 +11,9 @@ SAMPLE_FILE="$SCRIPT_DIR/sample.pdf"
 # =============================================================================
 # Setup (not shown in docs)
 # =============================================================================
-# Create placeholder files for file upload examples
+# Create placeholder files for file upload examples, in a scratch dir so the run
+# leaves nothing behind in the directory it was started from
+cd "$(mktemp -d)"
 echo "%PDF-1.4 sample document" > report.pdf
 mkdir -p documents
 cp report.pdf documents/report.pdf

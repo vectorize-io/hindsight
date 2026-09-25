@@ -36,12 +36,12 @@ PAGE_TRIGGER = {
 
 async def _page(memory: MemoryEngine, request_context: RequestContext) -> tuple[str, str]:
     bank_id = f"mmpatch-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     node = await memory.create_knowledge_page(
         bank_id=bank_id,
         name="Homelab Infrastructure",
         source_query="NAS, ThinkPad, docker containers, jellyfin",
-        content="Generating content...",
+        content="",
         tags=["type:runbook", "homelab"],
         request_context=request_context,
     )

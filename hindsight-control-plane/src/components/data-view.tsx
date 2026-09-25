@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import {
@@ -1122,6 +1122,7 @@ export function TimelineView({
   onMemoryClick: (id: string) => void;
 }) {
   const t = useTranslations("dataView");
+  const locale = useLocale();
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -1172,13 +1173,13 @@ export function TimelineView({
         case "year":
           return key;
         case "month":
-          return date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+          return date.toLocaleDateString(locale, { year: "numeric", month: "short" });
         case "week":
           const endOfWeek = new Date(date);
           endOfWeek.setDate(date.getDate() + 6);
-          return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${endOfWeek.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+          return `${date.toLocaleDateString(locale, { month: "short", day: "numeric" })} - ${endOfWeek.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}`;
         case "day":
-          return date.toLocaleDateString("en-US", {
+          return date.toLocaleDateString(locale, {
             weekday: "short",
             month: "short",
             day: "numeric",
@@ -1264,8 +1265,8 @@ export function TimelineView({
 
   const formatDateTime = (dateStr: string) => {
     const date = new Date(dateStr);
-    const dateFormatted = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const timeFormatted = date.toLocaleTimeString("en-US", {
+    const dateFormatted = date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    const timeFormatted = date.toLocaleTimeString(locale, {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
@@ -1287,15 +1288,15 @@ export function TimelineView({
         {/* Controls */}
         <div className="flex items-center justify-between mb-3 gap-4">
           <div className="text-xs text-muted-foreground">
-            {t("timelineMemoriesCount", { count: sortedItems.length })}
-            {itemsWithoutDates.length > 0 &&
-              ` ${t("timelineWithoutDates", { count: itemsWithoutDates.length })}`}
+            <span>{t("timelineMemoriesCount", { count: sortedItems.length })}</span>
             {dateRange && (
-              <span className="ml-2 text-foreground">
-                ({dateRange.first.toLocaleDateString("en-US", { month: "short", year: "numeric" })}{" "}
-                → {dateRange.last.toLocaleDateString("en-US", { month: "short", year: "numeric" })})
+              <span className="ml-1.5 text-foreground">
+                ({dateRange.first.toLocaleDateString(locale, { month: "short", year: "numeric" })} →{" "}
+                {dateRange.last.toLocaleDateString(locale, { month: "short", year: "numeric" })})
               </span>
             )}
+            {itemsWithoutDates.length > 0 &&
+              ` ${t("timelineWithoutDates", { count: itemsWithoutDates.length })}`}
           </div>
 
           <div className="flex items-center gap-1">

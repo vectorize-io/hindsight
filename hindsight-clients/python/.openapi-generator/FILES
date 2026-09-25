@@ -3,6 +3,7 @@ hindsight_client_api/__init__.py
 hindsight_client_api/api/__init__.py
 hindsight_client_api/api/audit_api.py
 hindsight_client_api/api/bank_templates_api.py
+hindsight_client_api/api/bank_transfer_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
 hindsight_client_api/api/document_transfer_api.py
@@ -28,6 +29,8 @@ hindsight_client_api/models/audit_log_list_response.py
 hindsight_client_api/models/audit_log_stats_bucket.py
 hindsight_client_api/models/audit_log_stats_response.py
 hindsight_client_api/models/background_response.py
+hindsight_client_api/models/bank_alias_entry.py
+hindsight_client_api/models/bank_aliases_response.py
 hindsight_client_api/models/bank_config_response.py
 hindsight_client_api/models/bank_config_update.py
 hindsight_client_api/models/bank_list_item.py
@@ -40,6 +43,7 @@ hindsight_client_api/models/bank_template_directive.py
 hindsight_client_api/models/bank_template_import_response.py
 hindsight_client_api/models/bank_template_manifest.py
 hindsight_client_api/models/bank_template_mental_model.py
+hindsight_client_api/models/bank_transfer_submit_response.py
 hindsight_client_api/models/base64_attachment_source.py
 hindsight_client_api/models/budget.py
 hindsight_client_api/models/cancel_operation_response.py
@@ -51,8 +55,13 @@ hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
 hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
+hindsight_client_api/models/consolidation_scope_pattern.py
+hindsight_client_api/models/consolidation_strategies_preview.py
+hindsight_client_api/models/consolidation_strategies_preview_request.py
+hindsight_client_api/models/consolidation_strategy_spec.py
 hindsight_client_api/models/content.py
 hindsight_client_api/models/content_any_of_inner.py
+hindsight_client_api/models/create_bank_alias_request.py
 hindsight_client_api/models/create_bank_request.py
 hindsight_client_api/models/create_directive_request.py
 hindsight_client_api/models/create_folder_request.py
@@ -61,6 +70,7 @@ hindsight_client_api/models/create_mental_model_request.py
 hindsight_client_api/models/create_mental_model_response.py
 hindsight_client_api/models/create_page_request.py
 hindsight_client_api/models/create_webhook_request.py
+hindsight_client_api/models/default_scopes_preview.py
 hindsight_client_api/models/delete_document_response.py
 hindsight_client_api/models/delete_operation_response.py
 hindsight_client_api/models/delete_response.py
@@ -176,7 +186,11 @@ hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
 hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/run_setting_model.py
+hindsight_client_api/models/set_bank_alias_primary_request.py
 hindsight_client_api/models/source_facts_include_options.py
+hindsight_client_api/models/strategy_preview.py
+hindsight_client_api/models/strategy_rule_preview.py
+hindsight_client_api/models/strategy_scope_preview.py
 hindsight_client_api/models/tag_group_and_input.py
 hindsight_client_api/models/tag_group_and_output.py
 hindsight_client_api/models/tag_group_leaf.py

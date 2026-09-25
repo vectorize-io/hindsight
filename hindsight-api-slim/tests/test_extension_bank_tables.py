@@ -121,8 +121,8 @@ async def test_delete_bank_sweeps_extension_tables(memory: MemoryEngine, request
 
     bank_a = f"test-ext-a-{uuid.uuid4().hex[:8]}"
     bank_b = f"test-ext-b-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_a, request_context=request_context)
-    await memory.get_bank_profile(bank_id=bank_b, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_a, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_b, request_context=request_context)
 
     async with pool.acquire() as conn:
         for tbl in (swept, kept):

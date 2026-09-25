@@ -85,6 +85,62 @@ describe("ControlPlaneClient error handling", () => {
   });
 });
 
+describe("ControlPlaneClient.cloneBank", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ operation_id: "op-1", status: "pending" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("posts the target bank id to the clone route", async () => {
+    const result = await client.cloneBank("source-bank", "source-bank-copy");
+
+    expect(result.operation_id).toBe("op-1");
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/banks/source-bank/clone");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ target_bank_id: "source-bank-copy" });
+  });
+
+  it("forwards all three scope flags, matching the endpoint's own three", async () => {
+    await client.cloneBank("source-bank", "copy", {
+      includeData: true,
+      includeBankConfig: false,
+      includeHistory: true,
+    });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      target_bank_id: "copy",
+      include_data: true,
+      include_bank_config: false,
+      include_history: true,
+    });
+  });
+
+  it("omits scope flags that were not set, so the server's defaults decide", async () => {
+    await client.cloneBank("source-bank", "copy", { includeBankConfig: false });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.include_bank_config).toBe(false);
+    expect(body).not.toHaveProperty("include_data");
+    expect(body).not.toHaveProperty("include_history");
+  });
+});
+
 describe("ControlPlaneClient.deleteOperation", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   let client: ControlPlaneClient;

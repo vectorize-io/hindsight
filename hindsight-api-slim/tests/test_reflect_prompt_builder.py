@@ -23,6 +23,8 @@ import pytest
 
 from hindsight_api.engine.reflect import prompts
 from hindsight_api.engine.reflect.prompts import build_final_system_prompt, build_system_prompt_for_tools
+from hindsight_api.engine.response_models import DispositionTraits
+from hindsight_api.engine.search.think_utils import build_disposition_description
 
 BANK = {"name": "TestBank", "mission": ""}
 
@@ -137,6 +139,7 @@ You have access to THREE levels of knowledge. Use them in this order:
 ### 1. MENTAL MODELS (search_mental_models) - Try First
 - User-curated summaries about specific topics
 - HIGHEST quality - manually created and maintained
+- Search returns the best match in full and a SNIPPET of the others; call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
 - If a relevant mental model exists and is FRESH, it may fully answer the question
 - Check `is_stale` field - if stale, also verify with lower levels
 
@@ -153,6 +156,13 @@ You have access to THREE levels of knowledge. Use them in this order:
 
 **Tool result ordering:** `recall()` and `search_observations()` return their `memories` / `observations` arrays sorted by SEMANTIC RELEVANCE to the query, NOT by time. The POSITION of an entry tells you nothing about when it was retained. For any temporal reasoning — recency, supersession, applying events on top of a state — IGNORE the position and read the per-entry `mentioned_at` field (and `occurred_start` / `occurred_end` for events).
 
+
+## Search Plan
+Work down the levels in order (Mental Models → Observations → Raw Facts) before you answer:
+- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
+- Stop descending as soon as what you have answers the question — fresh Mental Models often do.
+- Go deeper when the level above is stale, thin, or silent on what was asked.
+- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """
 
 _RETRIEVAL_MM_ONLY = """\
@@ -161,6 +171,7 @@ You have access to TWO levels of knowledge. Use them in this order:
 ### 1. MENTAL MODELS (search_mental_models) - Try First
 - User-curated summaries about specific topics
 - HIGHEST quality - manually created and maintained
+- Search returns the best match in full and a SNIPPET of the others; call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
 - If a relevant mental model exists and is FRESH, it may fully answer the question
 - Check `is_stale` field - if stale, also verify with lower levels
 
@@ -169,6 +180,13 @@ You have access to TWO levels of knowledge. Use them in this order:
 - Use when: no mental model exists, it's stale, or you need specific details
 - MANDATORY: If search_mental_models returns 0 results, you MUST call recall() before giving up
 - This is the source of truth that mental models are built from
+
+## Search Plan
+Work down the levels in order (Mental Models → Raw Facts) before you answer:
+- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
+- Stop descending as soon as what you have answers the question — fresh Mental Models often do.
+- Go deeper when the level above is stale, thin, or silent on what was asked.
+- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """
 
 _RETRIEVAL_OBS_ONLY = """\
@@ -187,6 +205,13 @@ You have access to TWO levels of knowledge. Use them in this order:
 
 **Tool result ordering:** `recall()` and `search_observations()` return their `memories` / `observations` arrays sorted by SEMANTIC RELEVANCE to the query, NOT by time. The POSITION of an entry tells you nothing about when it was retained. For any temporal reasoning — recency, supersession, applying events on top of a state — IGNORE the position and read the per-entry `mentioned_at` field (and `occurred_start` / `occurred_end` for events).
 
+
+## Search Plan
+Work down the levels in order (Observations → Raw Facts) before you answer:
+- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.
+- Stop descending as soon as what you have answers the question — fresh Observations often do.
+- Go deeper when the level above is stale, thin, or silent on what was asked.
+- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.
 """
 
 _RETRIEVAL_RECALL_ONLY = """\
@@ -478,8 +503,38 @@ class TestBankProfileBranches:
         assert actual == _assemble(
             _RETRIEVAL_RECALL_ONLY,
             _WORKFLOW_RECALL_ONLY,
-            trailer="\nDisposition: skepticism=3, literalism=2, empathy=4",
+            trailer="\nDisposition: skepticism=3, literalism=2, empathy=4\n"
+            + build_disposition_description(DispositionTraits(skepticism=3, literalism=2, empathy=4)),
         )
+
+    def test_all_neutral_disposition_adds_nothing_beyond_the_trait_line(self):
+        """A bank that never configured the traits keeps the prompt it had before."""
+        actual = build_system_prompt_for_tools(
+            bank_profile={
+                "name": "TestBank",
+                "mission": "",
+                "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
+            },
+            has_mental_models=False,
+            include_observations=False,
+        )
+        assert actual == _assemble(
+            _RETRIEVAL_RECALL_ONLY,
+            _WORKFLOW_RECALL_ONLY,
+            trailer="\nDisposition: skepticism=3, literalism=3, empathy=3",
+        )
+
+    def test_disposition_spells_out_what_each_level_means(self):
+        """The numbers alone are metadata; a weaker model needs the behaviour named."""
+        actual = build_system_prompt_for_tools(
+            bank_profile={"name": "TestBank", "mission": "", "disposition": {"skepticism": 5}},
+            has_mental_models=False,
+            include_observations=False,
+        )
+        assert "Disposition: skepticism=5" in actual
+        assert "critically examine all information" in actual
+        # Traits the bank left unset fall back to neutral rather than dropping out.
+        assert "Literalism (moderate)" in actual
 
     def test_no_disposition_omits_trait_line(self):
         actual = build_system_prompt_for_tools(

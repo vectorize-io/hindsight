@@ -1,17 +1,27 @@
 
+
 # Mental Models
 
 A **mental model** is a standing answer to a question about a bank. You define the question once; Hindsight writes the answer, keeps it stored, and rewrites it in the background as the bank learns more.
 
 Where [observations](./observations) are produced automatically and are atomic — one belief at a time — a mental model is deliberately curated: you decide which questions deserve a permanent, always-current answer.
 
-```mermaid
-graph LR
-    A[Raw facts] --> B[Observations]
-    B --> C[Mental model]
-    A --> C
-    C --> D[Your application]
-```
+**Figure: Mental Models.** An animated diagram on the docs site; its narration, step by step:
+
+- **create**
+  1. You define the question once, plus how it should stay current.
+  2. Hindsight writes the answer with reflect, in the background. Tags limit which memories it may read.
+  3. It reads consolidated observations first, and raw facts to check details.
+  4. The answer is stored as a document, together with the evidence it was built from.
+- **stay current**
+  1. The bank keeps learning. Consolidation writes a new observation inside this model’s scope.
+  2. The trigger checks first: is there a memory in this model’s scope newer than the newest one its last refresh read? Activity elsewhere in the bank does not count.
+  3. In delta mode the refresh reads only the memories that arrived since the last one.
+  4. Instead of rewriting, it applies edits: one bullet added to Research. Everything else is copied through untouched, and the old version goes to history.
+- **read**
+  1. When your app needs the answer, it asks for the model by id.
+  2. That is a database read: no retrieval, no LLM call, no waiting.
+  3. Everyone asking gets the same document. Reflect reads mental models first too, and trusts one only while it is fresh.
 
 ---
 

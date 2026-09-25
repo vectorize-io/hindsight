@@ -63,7 +63,7 @@ describe("buildSessionStartContext", () => {
     expect(out.systemMessage).toContain("bank-1");
     // The knowledge preamble is model context, lists live pages, and drops the old static mission.
     expect(out.additionalContext).toContain("<hindsight_knowledge>");
-    expect(out.additionalContext).toContain("- Component map (p1)");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
     expect(out.additionalContext).not.toContain("agent_knowledge_list_pages");
     // The banner must NOT be duplicated into model context. (The tool guide legitimately
     // contains a "🧠 From Hindsight memory" attribution example, so match on banner text.)
@@ -129,7 +129,7 @@ describe("buildSessionStartContext", () => {
     });
     expect(startSeed).not.toHaveBeenCalled();
     expect(called).toBe(false);
-    expect(out.additionalContext).toContain("- Component map (p1)");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
     expect(out.deferInitialReflect).toBe(false);
@@ -195,7 +195,7 @@ describe("buildSessionStartContext", () => {
     expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // The cold-only extras stay off: no survey, no user-facing learning note.
     expect(startSurvey).not.toHaveBeenCalled();
-    expect(out.additionalContext).toContain("- Component map (p1)");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
   });
@@ -246,7 +246,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
     });
     expect(startSeed).not.toHaveBeenCalled();
-    expect(out.additionalContext).toContain("- Component map (p1)");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
   });
@@ -297,7 +297,7 @@ describe("buildSessionStartContext", () => {
     });
     expect(startSeed).not.toHaveBeenCalled();
     expect(called).toBe(false);
-    expect(out.additionalContext).toContain("- Component map (p1)");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
   });

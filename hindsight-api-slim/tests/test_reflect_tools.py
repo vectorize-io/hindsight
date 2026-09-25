@@ -266,6 +266,7 @@ _LIMITS = ReflectToolTokenLimits(
     recall_max_tokens=2048,
     recall_chunk_max_tokens=1000,
     observations_max_tokens=5000,
+    mental_models_read_max_tokens=6000,
 )
 
 #: The ceiling a call gets with the context budget wide open — the fixed cap.
@@ -286,6 +287,7 @@ async def test_execute_tool_treats_string_none_max_tokens_as_default() -> None:
         "search_observations",
         {"query": "deployment failures", "max_tokens": "None"},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         _unexpected_tool_call,
         _unexpected_tool_call,
@@ -305,6 +307,7 @@ async def test_execute_tool_returns_error_for_invalid_integer_limit(bad_limit) -
         "search_observations",
         {"query": "deployment failures", "max_tokens": bad_limit},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         _unexpected_tool_call,
         _unexpected_tool_call,
         _unexpected_tool_call,
@@ -329,6 +332,7 @@ async def test_execute_tool_preserves_search_mental_models_max_results_values() 
         "search_mental_models",
         {"query": "deployment failures", "max_results": -1},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         _unexpected_tool_call,
         _unexpected_tool_call,
         _unexpected_tool_call,
@@ -362,6 +366,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "search_mental_models",
         {"query": "deployment failures", "max_results": 0},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -372,6 +377,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "search_observations",
         {"query": "deployment failures", "max_tokens": 0},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -382,6 +388,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "recall",
         {"query": "deployment failures", "max_tokens": 0, "max_chunk_tokens": 0},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -392,6 +399,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "search_observations",
         {"query": "deployment failures", "max_tokens": False},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -402,6 +410,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "search_observations",
         {"query": "deployment failures", "max_tokens": []},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -412,6 +421,7 @@ async def test_execute_tool_preserves_falsey_values_as_default_sentinel() -> Non
         "search_observations",
         {"query": "deployment failures", "max_tokens": {}},
         search_mental_models,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -442,6 +452,7 @@ async def test_execute_tool_treats_null_like_recall_limits_as_defaults() -> None
         "recall",
         {"query": "incident notes", "max_tokens": "null", "max_chunk_tokens": ""},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         _unexpected_tool_call,
         recall,
         _unexpected_tool_call,
@@ -515,6 +526,7 @@ async def test_execute_tool_defaults_come_from_configured_limits() -> None:
         recall_max_tokens=6000,
         recall_chunk_max_tokens=2500,
         observations_max_tokens=7000,
+        mental_models_read_max_tokens=6000,
     )
     captured: dict[str, object] = {}
 
@@ -531,6 +543,7 @@ async def test_execute_tool_defaults_come_from_configured_limits() -> None:
         "recall",
         {"query": "incident notes"},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -541,6 +554,7 @@ async def test_execute_tool_defaults_come_from_configured_limits() -> None:
         "search_observations",
         {"query": "incident notes"},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         recall,
         _unexpected_tool_call,
@@ -567,6 +581,7 @@ async def test_execute_tool_caps_model_requested_token_arguments() -> None:
         recall_max_tokens=2048,
         recall_chunk_max_tokens=1000,
         observations_max_tokens=5000,
+        mental_models_read_max_tokens=6000,
     )
     captured: dict[str, object] = {}
 
@@ -579,6 +594,7 @@ async def test_execute_tool_caps_model_requested_token_arguments() -> None:
         "recall",
         {"query": "everything", "max_tokens": 200000, "max_chunk_tokens": 50000},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         _unexpected_tool_call,
         recall,
         _unexpected_tool_call,
@@ -596,6 +612,7 @@ async def test_execute_tool_ceiling_never_overrides_the_floor() -> None:
         recall_max_tokens=2048,
         recall_chunk_max_tokens=1000,
         observations_max_tokens=5000,
+        mental_models_read_max_tokens=6000,
     )
     captured: dict[str, object] = {}
 
@@ -607,6 +624,7 @@ async def test_execute_tool_ceiling_never_overrides_the_floor() -> None:
         "search_observations",
         {"query": "everything", "max_tokens": 50000},
         _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
         search_observations,
         _unexpected_tool_call,
         _unexpected_tool_call,
@@ -628,6 +646,7 @@ def test_configured_default_above_the_ceiling_is_honoured() -> None:
         recall_max_tokens=40000,
         recall_chunk_max_tokens=1000,
         observations_max_tokens=5000,
+        mental_models_read_max_tokens=6000,
     )
     assert (
         _summarize_input("recall", {"query": "q"}, limits, _CEILING)

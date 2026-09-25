@@ -76,19 +76,25 @@ await client.retainBatch('my-bank', [
 
 ```bash
 # Store a single fact
-hindsight memory retain my-bank "Alice joined Google in March 2024 as a Senior ML Engineer"
+hindsight memory retain "$BANK_ID" "Alice joined Google in March 2024 as a Senior ML Engineer"
 
 # Store from a file
-hindsight memory retain-files my-bank conversation.txt --context "Daily standup"
+hindsight memory retain-files "$BANK_ID" conversation.txt --context "Daily standup"
 
 # Store multiple files
-hindsight memory retain-files my-bank docs/
+hindsight memory retain-files "$BANK_ID" docs/
 ```
 
 ### Go
 
 ```go
-# Section 'main-retain' not found in api/main-methods.go
+// Store a fact or conversation into a memory bank
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{Content: hindsight.TextContent("Alice joined Google in March 2024 as a Senior ML Engineer")},
+		},
+	}).Execute()
 ```
 
 **What happens:** Content is processed by an LLM to extract rich facts, identify entities, and build connections in a knowledge graph.
@@ -172,22 +178,30 @@ for (const [entityId, entity] of Object.entries(entityResults.entities || {})) {
 
 ```bash
 # Basic search
-hindsight memory recall my-bank "What does Alice do at Google?"
+hindsight memory recall "$BANK_ID" "What does Alice do at Google?"
 
 # Search with options
-hindsight memory recall my-bank "What happened last spring?" \
+hindsight memory recall "$BANK_ID" "What happened last spring?" \
     --budget high \
     --max-tokens 8192 \
     --fact-type world,experience
 
 # Verbose output
-hindsight memory recall my-bank "Tell me about Alice" -v
+hindsight memory recall "$BANK_ID" "Tell me about Alice" -v
 ```
 
 ### Go
 
 ```go
-# Section 'main-recall' not found in api/main-methods.go
+// Search for memories using a natural language query
+resp, _, _ := client.MemoryAPI.RecallMemories(ctx, "my-bank").
+	RecallRequest(hindsight.RecallRequest{
+		Query: "What does Alice do at Google?",
+	}).Execute()
+
+for _, r := range resp.Results {
+	fmt.Println(r.Text)
+}
 ```
 
 **What happens:** Four search strategies (semantic, keyword, graph, temporal) run in parallel, results are fused and reranked.
@@ -250,16 +264,22 @@ for (const fact of detailedResponse.based_on || []) {
 
 ```bash
 # Basic reflect
-hindsight memory reflect my-bank "Should we adopt TypeScript for our backend?"
+hindsight memory reflect "$BANK_ID" "Should we adopt TypeScript for our backend?"
 
 # With higher reasoning budget
-hindsight memory reflect my-bank "Analyze our tech stack" --budget high
+hindsight memory reflect "$BANK_ID" "Analyze our tech stack" --budget high
 ```
 
 ### Go
 
 ```go
-# Section 'main-reflect' not found in api/main-methods.go
+// Generate a reasoned response using memories and bank disposition
+answer, _, _ := client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query: "Should we adopt TypeScript for our backend?",
+	}).Execute()
+
+fmt.Println(answer.GetText())
 ```
 
 **What happens:** Memories and observations are recalled, bank disposition is applied, and the LLM reasons through the evidence to generate a response.

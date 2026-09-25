@@ -441,7 +441,7 @@ class BenchmarkRunner:
         manifest = BankTemplateManifest.model_validate(raw)
 
         request_context = RequestContext()
-        await self.memory.get_bank_profile(bank_id, request_context=request_context)
+        await self.memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Apply bank config overrides
         if manifest.bank:
@@ -467,7 +467,7 @@ class BenchmarkRunner:
                 bank_id=bank_id,
                 name=mm.name,
                 source_query=mm.source_query,
-                content="Generating content...",
+                content="",
                 mental_model_id=mm.id,
                 tags=mm.tags if mm.tags else None,
                 max_tokens=mm.max_tokens,

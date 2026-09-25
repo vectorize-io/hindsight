@@ -16,6 +16,16 @@ from hindsight_api.extensions.operation_validator import OperationValidatorExten
 from hindsight_api.models import RequestContext
 
 
+def _alias_passthrough() -> AsyncMock:
+    """Stand in for ``MemoryEngine.resolve_bank_alias``, which every MCP tool call
+    now goes through to turn an aliased bank id into the bank's own one.
+
+    An identity here on purpose: these tests are about which tools a bank exposes,
+    and a bank reached by its real id resolves to itself.
+    """
+    return AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+
+
 class MinimalValidator(OperationValidatorExtension):
     """Minimal concrete subclass — only implements abstract methods."""
 
@@ -102,6 +112,7 @@ async def test_filter_mcp_tools_returns_empty_set():
 async def test_validator_filters_tools_list():
     """Validator filter is applied during tools/list via _get_enabled_tools."""
     mock_memory = MagicMock()
+    mock_memory.resolve_bank_alias = _alias_passthrough()
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -147,6 +158,7 @@ async def test_validator_filters_tools_list():
 async def test_bank_config_and_validator_compose():
     """Bank config sets ceiling, validator narrows further."""
     mock_memory = MagicMock()
+    mock_memory.resolve_bank_alias = _alias_passthrough()
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -203,6 +215,7 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
             return tools | {"retain", "delete_bank"}
 
     mock_memory = MagicMock()
+    mock_memory.resolve_bank_alias = _alias_passthrough()
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -264,6 +277,7 @@ async def test_validator_exception_fails_open(caplog):
             raise RuntimeError("Policy backend unreachable")
 
     mock_memory = MagicMock()
+    mock_memory.resolve_bank_alias = _alias_passthrough()
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -309,6 +323,7 @@ async def test_validator_exception_fails_open(caplog):
 async def test_no_validator_returns_unfiltered():
     """Without an operation validator, tools/list returns all tools."""
     mock_memory = MagicMock()
+    mock_memory.resolve_bank_alias = _alias_passthrough()
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()

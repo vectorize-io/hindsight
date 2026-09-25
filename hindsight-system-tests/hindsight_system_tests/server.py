@@ -163,7 +163,9 @@ def stub_environment(stub_url: str) -> dict[str, str]:
     }
 
 
-def start_hindsight_server(*, stub_url: str, log_path: Path) -> HindsightServer:
+def start_hindsight_server(
+    *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
+) -> HindsightServer:
     port = free_port()
 
     env = os.environ.copy()
@@ -174,6 +176,12 @@ def start_hindsight_server(*, stub_url: str, log_path: Path) -> HindsightServer:
             del env[key]
 
     env.update(stub_environment(stub_url))
+
+    # A second server for a story that needs different server-level config — the
+    # reranker provider, say, which is not per-bank. It shares the stub and the
+    # database; banks are isolated by id, so two servers on one database do not
+    # collide.
+    env.update(extra_env or {})
 
     env.update(
         {

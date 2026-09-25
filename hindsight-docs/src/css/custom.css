@@ -1741,3 +1741,15 @@ html.docs-wrapper article strong {
     font-size: 1.05rem;
   }
 }
+
+/* interfig figures (hindsight-interfig): follow the site colors */
+.interfig {
+  --fig-accent: var(--ifm-color-primary);
+}
+[data-theme='dark'] .interfig {
+  --fig-fg: #e3e3e3;
+  --fig-muted: #9aa0a6;
+  --fig-bg: #1b1b1d;
+  --fig-surface: #242526;
+  --fig-border: #3a3b3c;
+}

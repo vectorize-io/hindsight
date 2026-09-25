@@ -766,6 +766,112 @@ def test_posix_daemon_uses_console_entrypoint(temp_home, tmp_path, monkeypatch):
     assert cmd == [str(console_bin)]
 
 
+def _base_pythonw(tmp_path: Path) -> Path:
+    """The base interpreter a fake venv's pyvenv.cfg points ``home`` at."""
+    return tmp_path / "base" / "pythonw.exe"
+
+
+def _windows_launcher_venv(tmp_path: Path, *, uv: bool, with_site_packages: bool = True) -> Path:
+    """Fake a Windows venv whose Scripts/pythonw.exe is a launcher, not an interpreter.
+
+    Returns the Scripts dir; the base interpreter is at `_base_pythonw(tmp_path)`.
+    ``uv=True`` writes the ``uv =`` marker that identifies a uv trampoline venv;
+    without it the venv looks like a stdlib one, whose own GUI venvwlauncher must
+    be left alone. ``with_site_packages=False`` omits the venv's import root, so
+    the base interpreter could not import hindsight_api.
+    """
+    scripts_dir = _windows_scripts_dir(tmp_path, with_pythonw=True)
+    if with_site_packages:
+        (tmp_path / "Lib" / "site-packages").mkdir(parents=True)
+    base_pythonw = _base_pythonw(tmp_path)
+    base_pythonw.parent.mkdir()
+    base_pythonw.write_bytes(b"MZ")
+    cfg = f"home = {base_pythonw.parent}\n"
+    if uv:
+        cfg += "uv = 0.12.3\n"
+    (tmp_path / "pyvenv.cfg").write_text(cfg)
+    return scripts_dir
+
+
+def _windows_manager(monkeypatch, scripts_dir: Path):
+    """A DaemonEmbedManager that believes it runs on Windows inside scripts_dir."""
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(manager, "_dev_api_command", lambda: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sysconfig.get_path",
+        lambda name: str(scripts_dir),
+    )
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sys.executable",
+        str(scripts_dir / "python.exe"),
+    )
+    return manager
+
+
+# Non-local providers keep _find_api_command past the local-ML check (#2676).
+_EXTERNAL_PROVIDERS = {
+    "HINDSIGHT_API_EMBEDDINGS_PROVIDER": "openai",
+    "HINDSIGHT_API_RERANKER_PROVIDER": "openai",
+}
+
+
+def test_windows_uv_trampoline_resolves_to_base_pythonw(temp_home, tmp_path, monkeypatch):
+    """Regression test for issue #4466.
+
+    A uv venv's Scripts/pythonw.exe is a trampoline that relaunches the base
+    interpreter as the CUI python.exe, popping the console window our detach
+    flags were supposed to prevent — they only ever applied to the trampoline.
+    Launch the base pythonw.exe directly, with the venv's site-packages on
+    PYTHONPATH so hindsight_api is still importable from outside the venv.
+    """
+    scripts_dir = _windows_launcher_venv(tmp_path, uv=True)
+    manager = _windows_manager(monkeypatch, scripts_dir)
+
+    env = dict(_EXTERNAL_PROVIDERS)
+    cmd = manager._find_api_command("0.0.0", env=env)
+
+    assert cmd == [str(_base_pythonw(tmp_path)), "-m", "hindsight_api.main"]
+    assert str(tmp_path / "Lib" / "site-packages") in env["PYTHONPATH"]
+
+
+def test_windows_stdlib_venv_keeps_its_own_pythonw(temp_home, tmp_path, monkeypatch):
+    """A stdlib venv's pythonw.exe already redirects to the base pythonw.
+
+    It is the GUI venvwlauncher, so it never allocates a console. Bypassing it
+    would drop the daemon out of its venv for no gain, so only uv-marked
+    pyvenv.cfg files trigger the #4466 resolution.
+    """
+    scripts_dir = _windows_launcher_venv(tmp_path, uv=False)
+    manager = _windows_manager(monkeypatch, scripts_dir)
+
+    env = dict(_EXTERNAL_PROVIDERS)
+    cmd = manager._find_api_command("0.0.0", env=env)
+
+    assert cmd == [str(scripts_dir / "pythonw.exe"), "-m", "hindsight_api.main"]
+    assert "PYTHONPATH" not in env
+
+
+def test_windows_uv_trampoline_kept_when_site_packages_missing(temp_home, tmp_path, monkeypatch):
+    """Bypassing the trampoline is only safe if we can replace the venv's imports.
+
+    The base interpreter lives outside the venv, so without site-packages on
+    PYTHONPATH it cannot import hindsight_api and the daemon never starts — a
+    worse outcome than the console flash we are trying to remove. Fall back to
+    launching the trampoline unchanged.
+    """
+    scripts_dir = _windows_launcher_venv(tmp_path, uv=True, with_site_packages=False)
+    manager = _windows_manager(monkeypatch, scripts_dir)
+
+    env = dict(_EXTERNAL_PROVIDERS)
+    cmd = manager._find_api_command("0.0.0", env=env)
+
+    assert cmd == [str(scripts_dir / "pythonw.exe"), "-m", "hindsight_api.main"]
+    assert "PYTHONPATH" not in env
+
+
 def _capture_daemon_env(manager, profile: str, config: dict) -> dict[str, str]:
     """Run `_start_daemon` with Popen stubbed and return the child's environment."""
     from unittest.mock import MagicMock, patch

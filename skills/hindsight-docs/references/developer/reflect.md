@@ -4,23 +4,20 @@
 
 When you call `reflect()`, Hindsight runs an **agentic loop** that autonomously gathers evidence and reasons through the lens of the bank's disposition to generate contextual responses.
 
-```mermaid
-graph TB
-    subgraph agent["Reflect Agent Loop"]
-        A[Query] --> B{Need more info?}
-        B -->|Yes| C[Call Tools]
-        C --> D[search_mental_models]
-        C --> E[search_observations]
-        C --> F[recall]
-        C --> G[expand]
-        D --> B
-        E --> B
-        F --> B
-        G --> B
-        B -->|No| H[Generate Response]
-    end
-    H --> I[Response + Citations]
-```
+**Figure: Reflect Agent Loop.** An animated diagram on the docs site; its narration, step by step:
+
+- **reflect()**
+  1. reflect() gets a question that needs reasoning, not just lookup.
+  2. The bank’s mission, disposition and directives go into the agent’s instructions before it looks anything up.
+  3. Each turn is one tool call. Retrieval starts at the top, with mental models: curated summaries kept up to date.
+  4. A fresh mental model can be enough to answer. This one covers the team, not the ML project, so the agent keeps looking.
+  5. Then observations: beliefs consolidated from many facts.
+  6. The result is flagged stale: the bank has facts not yet consolidated into observations. So the agent must check the raw facts.
+  7. recall() runs the full four-way search over raw facts: the ground truth.
+  8. The newer fact is what the stale observation was missing: Alice asked to move to ML herself.
+  9. recall already returns the chunk each fact came from. expand goes further: the whole source document, for the full context.
+  10. The agent calls done. Every cited ID is checked against what it actually retrieved; anything else is dropped. It must gather evidence first, and stops after 10 iterations at most.
+  11. The answer follows the directives and the bank’s disposition, and comes back with the memories it is based on.
 
 ---
 
@@ -40,7 +37,8 @@ The reflect agent runs in a loop with access to these tools:
 
 | Tool | Purpose | Priority |
 |------|---------|----------|
-| `search_mental_models` | User-curated summaries | Highest (check first) |
+| `search_mental_models` | User-curated summaries — best match in full, a snippet of the others | Highest (check first) |
+| `read_mental_models` | Full text of the pages returned as snippets | When a snippet looks relevant |
 | `search_observations` | Consolidated knowledge | High |
 | `recall` | Raw facts (ground truth) | Fallback |
 | `expand` | Get more context for a memory | As needed |

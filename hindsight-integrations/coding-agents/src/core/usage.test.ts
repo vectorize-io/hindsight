@@ -93,6 +93,44 @@ describe("recordUsage", () => {
     ]);
   });
 
+  it("re-reads the previous turn on the next Stop, so a late credit line is not lost", () => {
+    const cursors = memoryUsageCursorStore();
+    const search = t("action", "hindsight_search_knowledge_pages q");
+    // Stop fires before the host flushed the reply — and that reply is where the
+    // credit blockquote lives, so turn 1 is written uncredited.
+    recordUsage({
+      ...base,
+      turns: [t("user", "a"), search],
+      cursors,
+      lastTurnComplete: true,
+      reviseLastTurn: true,
+    });
+    expect(lines().at(-1)).toMatchObject({ turn: 1, credited: false });
+
+    // The next Stop reads a complete transcript and corrects it.
+    recordUsage({
+      ...base,
+      turns: [
+        t("user", "a"),
+        search,
+        t(
+          "assistant",
+          "> 🧠 **From Hindsight memory (Pricing decisions)** — the threshold is post-discount"
+        ),
+        t("user", "b"),
+        t("assistant", "ok"),
+      ],
+      cursors,
+      lastTurnComplete: true,
+      reviseLastTurn: true,
+    });
+
+    const written = lines();
+    // readUsage keeps the LAST line per turn, so the corrected one wins.
+    expect(written.filter((l) => l.turn === 1).at(-1)).toMatchObject({ turn: 1, credited: true });
+    expect(written.at(-1)).toMatchObject({ turn: 2 });
+  });
+
   it("holds back an unanswered last turn instead of recording it empty", () => {
     const cursors = memoryUsageCursorStore();
     recordUsage({ ...base, turns: [t("user", "a")], cursors, lastTurnComplete: false });

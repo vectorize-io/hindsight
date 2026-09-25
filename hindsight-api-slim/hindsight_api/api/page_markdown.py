@@ -19,6 +19,18 @@ from typing import Any
 # when a page does not declare one via a ``type:<x>`` tag.
 DEFAULT_PAGE_TYPE = "knowledge-page"
 
+#: What a reader is told when a page has no body yet. A page with nothing under its
+#: title is a state to act on, and blankness does not say so — an agent reads it as a
+#: page that failed to render rather than one nobody has written, and writes a second
+#: page for the same topic.
+#:
+#: Presentation only. It is produced when a page is READ and never stored, because the
+#: stored body is embedded and BM25-indexed: a marker in the row would make every
+#: unwritten page searchable as its own marker, which is the defect this replaced.
+#: Plain words, not markdown emphasis — a snippet is printed rather than parsed, so
+#: underscores would reach the reader as underscores.
+EMPTY_PAGE_NOTICE = "No content yet."
+
 # A page declares its ``type`` through a tag of the form ``type:runbook``.
 # This keeps rendering schema-free (no new mental_models column): the type is
 # lifted from the existing tags array.
@@ -102,9 +114,18 @@ def render_frontmatter(fm: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_document(mm: dict[str, Any]) -> str:
-    """Render a full markdown document: frontmatter block + markdown body."""
+def render_document(mm: dict[str, Any], *, notice_when_empty: bool = False) -> str:
+    """Render a full markdown document: frontmatter block + markdown body.
+
+    ``notice_when_empty`` puts :data:`EMPTY_PAGE_NOTICE` in place of a missing body,
+    for the surfaces a person or an agent READS — where frontmatter and nothing else
+    looks like a rendering failure rather than an unwritten page. It is off by default
+    because the same renderer writes the export bundle, and a notice there would be
+    indistinguishable from real content the next time the bundle is read back in.
+    """
     body = (mm.get("content") or "").strip()
+    if not body and notice_when_empty:
+        body = EMPTY_PAGE_NOTICE
     return f"{render_frontmatter(frontmatter(mm))}\n\n{body}\n" if body else f"{render_frontmatter(frontmatter(mm))}\n"
 
 

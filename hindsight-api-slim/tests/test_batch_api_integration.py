@@ -148,7 +148,7 @@ async def test_real_openai_batch_api(real_llm_config, test_contents_real, integr
 
     try:
         # Ensure bank exists
-        await memory.get_bank_profile(bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
         # Get database pool and schema for crash recovery testing
         pool = memory._pool

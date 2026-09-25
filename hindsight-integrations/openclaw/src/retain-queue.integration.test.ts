@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import registerPlugin, { type AsyncRetainOperationIdCapability } from "./index.js";
@@ -17,14 +17,19 @@ afterEach(() => {
 
 function makeApi(
   queuePath: string,
-  flushIntervalMs: number
+  flushIntervalMs: number,
+  extraConfig: Record<string, unknown> = {}
 ): {
   api: MoltbotPluginAPI;
   service: () => ServiceConfig;
   agentEnd: () => (event: unknown, ctx?: PluginHookAgentContext) => Promise<void>;
+  sessionEnd: () => (event: unknown, ctx?: PluginHookAgentContext) => Promise<void>;
 } {
   let registeredService: ServiceConfig | undefined;
   let agentEndHandler:
+    | ((event: unknown, ctx?: PluginHookAgentContext) => void | Promise<void>)
+    | undefined;
+  let sessionEndHandler:
     | ((event: unknown, ctx?: PluginHookAgentContext) => void | Promise<void>)
     | undefined;
   const api: MoltbotPluginAPI = {
@@ -41,6 +46,7 @@ function makeApi(
               autoRecall: false,
               autoRetain: true,
               logLevel: "off",
+              ...extraConfig,
             },
           },
         },
@@ -51,6 +57,7 @@ function makeApi(
     },
     on(event, handler) {
       if (event === "agent_end") agentEndHandler = handler;
+      if (event === "session_end") sessionEndHandler = handler;
     },
     logger: {
       info: () => undefined,
@@ -71,6 +78,12 @@ function makeApi(
         await agentEndHandler?.(event, ctx);
       };
     },
+    sessionEnd: () => {
+      if (!sessionEndHandler) throw new Error("session_end not registered");
+      return async (event, ctx) => {
+        await sessionEndHandler?.(event, ctx);
+      };
+    },
   };
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -78,6 +91,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 interface FakeServer {
   /** Bodies of every retain POST that reached the server. */
   retainBodies: Array<Record<string, unknown>>;
+  /** URLs of those same POSTs — the bank id is in the path, so this is the routing. */
+  retainUrls: string[];
   /** How many `/version` probes have been answered (or refused). */
   versionRequests: () => number;
   /** "unknown" makes the probe throw, mimicking an unreachable /version. */
@@ -97,6 +112,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
   let resolveDeferred: ((response: Response) => void) | undefined;
   let notifyDeferredStarted: (() => void) | undefined;
   const retainBodies: Array<Record<string, unknown>> = [];
+  const retainUrls: string[] = [];
 
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -127,6 +143,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
     if (request.method === "POST" && request.url.includes("/memories")) {
       const body = JSON.parse(await request.clone().text()) as Record<string, unknown>;
       retainBodies.push(body);
+      retainUrls.push(request.url);
       // Record the body first: a lost acknowledgement is a request the server
       // *did* process, which is the case operation_id has to cover.
       if (retainFailures > 0) {
@@ -150,6 +167,7 @@ function installFakeServer(initial: AsyncRetainOperationIdCapability): FakeServe
 
   return {
     retainBodies,
+    retainUrls,
     versionRequests: () => versionRequests,
     setCapability: (next) => {
       capability = next;
@@ -330,5 +348,205 @@ describe("retain queue idempotent replay", () => {
     // The stopped generation must not resume against a restarted client.
     expect(server.retainBodies).toHaveLength(1);
     expect(readQueue(queuePath)).toHaveLength(1);
+  });
+});
+
+describe("session_end flushes the un-retained tail (#4341)", () => {
+  // The helper that reads the transcript has its own unit tests; this one pins the
+  // wiring, which is where #1726's flush died: the hook fired, the guard above it
+  // saw a payload with no `messages`, and the tail was dropped in silence. Only an
+  // end-to-end retain proves the forced flush now reaches the server.
+  function writeTranscript(sessionId: string, turns: Array<[string, string]>): string {
+    const dir = mkdtempSync(join(tmpdir(), "hindsight-session-end-"));
+    tempDirs.push(dir);
+    const file = join(dir, `${sessionId}.jsonl`);
+    const lines: unknown[] = [
+      { type: "session", id: sessionId, timestamp: "2026-09-12T20:00:00Z" },
+      ...turns.flatMap(([user, assistant]) => [
+        { type: "message", message: { role: "user", content: user } },
+        { type: "message", message: { role: "assistant", content: assistant } },
+      ]),
+    ];
+    writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n", "utf8");
+    return file;
+  }
+
+  it("retains the turns after the last cadence boundary when the session closes", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+
+    // retainEveryNTurns: 3 — two turns sit below the cadence boundary, so nothing
+    // has been retained when the session ends.
+    const api = makeApi(queuePath, 1_000, { retainEveryNTurns: 3, retainOverlapTurns: 1 });
+    const service = api.service();
+    await service.start();
+
+    const sessionKey = "agent:main:discord:direct:session-end";
+    const ctx = {
+      agentId: "main",
+      sessionKey,
+      messageProvider: "discord",
+      channelId: "direct:session-end",
+      senderId: "user:integration",
+    } as PluginHookAgentContext;
+
+    await api.agentEnd()(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "First turn." },
+          { role: "assistant", content: "Noted." },
+        ],
+      },
+      ctx
+    );
+    await api.agentEnd()(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "The tail nobody retained." },
+          { role: "assistant", content: "Understood." },
+        ],
+      },
+      ctx
+    );
+    expect(server.retainBodies).toHaveLength(0);
+
+    // The real payload: ids, counts and a sessionFile — no messages array, and a
+    // context holding only ids (OpenClaw's buildSessionEndHookPayload()).
+    const sessionFile = writeTranscript("sess-1", [
+      ["First turn.", "Noted."],
+      ["The tail nobody retained.", "Understood."],
+    ]);
+    await api.sessionEnd()(
+      {
+        sessionId: "sess-1",
+        sessionKey,
+        messageCount: 4,
+        durationMs: 12_000,
+        reason: "reset",
+        sessionFile,
+        context: { sessionId: "sess-1", sessionKey, agentId: "main" },
+      },
+      ctx
+    );
+
+    expect(server.retainBodies).toHaveLength(1);
+    expect(JSON.stringify(server.retainBodies[0])).toContain("The tail nobody retained.");
+    await service.stop();
+  });
+
+  it("skips the flush when the event points at no readable transcript", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+
+    const api = makeApi(queuePath, 1_000, { retainEveryNTurns: 3, retainOverlapTurns: 1 });
+    const service = api.service();
+    await service.start();
+
+    const sessionKey = "agent:main:discord:direct:no-transcript";
+    const ctx = {
+      agentId: "main",
+      sessionKey,
+      messageProvider: "discord",
+      channelId: "direct:no-transcript",
+      senderId: "user:integration",
+    } as PluginHookAgentContext;
+
+    await api.agentEnd()(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "Only turn." },
+          { role: "assistant", content: "Noted." },
+        ],
+      },
+      ctx
+    );
+
+    await api.sessionEnd()(
+      {
+        sessionId: "sess-2",
+        sessionKey,
+        messageCount: 2,
+        reason: "shutdown",
+        sessionFile: join(tmpdir(), "hindsight-missing", "sess-2.jsonl"),
+        context: { sessionId: "sess-2", sessionKey, agentId: "main" },
+      },
+      ctx
+    );
+
+    expect(server.retainBodies).toHaveLength(0);
+    await service.stop();
+  });
+});
+
+// The bank id lives in the retain URL, so these pin the routing itself rather than
+// deriveBankId's return value — what would break is a call site reaching the client
+// without consulting the map. (#3890)
+describe("agentBankMap routes retains to the mapped bank", () => {
+  const ctxFor = (agentId: string, session: string) =>
+    ({
+      agentId,
+      sessionKey: `agent:${agentId}:discord:direct:${session}`,
+      messageProvider: "discord",
+      channelId: `direct:${session}`,
+      senderId: `user-${session}`,
+    }) as PluginHookAgentContext;
+
+  const oneTurn = (text: string) => ({
+    success: true,
+    messages: [
+      { role: "user", content: text },
+      { role: "assistant", content: "Noted." },
+    ],
+  });
+
+  it("sends mapped agents to one shared bank and leaves an unmapped one derived", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+    const api = makeApi(queuePath, 1_000, {
+      dynamicBankId: true,
+      bankId: undefined,
+      dynamicBankGranularity: ["agent", "channel", "user"],
+      agentBankMap: { inbound: "ps-technology", outbound: "ps-technology" },
+    });
+    const service = api.service();
+    await service.start();
+
+    await api.agentEnd()(oneTurn("Postgres 16 in production."), ctxFor("inbound", "s1"));
+    await api.agentEnd()(oneTurn("Campaigns ship on Tuesday."), ctxFor("outbound", "s2"));
+    await api.agentEnd()(oneTurn("This agent is not in the map."), ctxFor("stranger", "s3"));
+
+    expect(server.retainUrls).toHaveLength(3);
+    // Two different agents, one named bank.
+    expect(server.retainUrls[0]).toContain("/banks/ps-technology/");
+    expect(server.retainUrls[1]).toContain("/banks/ps-technology/");
+    // The unmapped agent keeps the bank it would have derived anyway.
+    expect(server.retainUrls[2]).toContain("stranger");
+    expect(server.retainUrls[2]).not.toContain("ps-technology");
+
+    await service.stop();
+  });
+
+  it("overrides a static bank for mapped agents only", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+    // The harness config is dynamicBankId:false — without the map every agent
+    // would share `integration-bank`.
+    const api = makeApi(queuePath, 1_000, {
+      agentBankMap: { limpieza: "ps-limpieza" },
+    });
+    const service = api.service();
+    await service.start();
+
+    await api.agentEnd()(oneTurn("The crew starts at 06:00."), ctxFor("limpieza", "s1"));
+    await api.agentEnd()(oneTurn("Anything else."), ctxFor("other", "s2"));
+
+    expect(server.retainUrls).toHaveLength(2);
+    expect(server.retainUrls[0]).toContain("/banks/ps-limpieza/");
+    expect(server.retainUrls[1]).toContain("/banks/integration-bank/");
+
+    await service.stop();
   });
 });

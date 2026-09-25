@@ -133,6 +133,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `dynamicBankId` - Enable per-context memory banks (default: `true`)
 - `bankId` - Static bank ID used when `dynamicBankId` is `false`.
 - `bankIdPrefix` - Optional prefix for bank IDs (e.g. `"prod"` → `"prod-slack-C123"` or `"prod-shared-bank"`)
+- `agentBankMap` - Explicit `agentId` → `bankId` routing, checked before static/dynamic derivation. Lets a group of agents share one named bank while other agents keep their derived banks. Mapped names are used exactly as given (`bankIdPrefix` is not applied).
 - `dynamicBankGranularity` - Fields used to derive bank ID: `agent`, `channel`, `user`, `provider` (default: `["agent", "channel", "user"]`)
 - `excludeProviders` - Message providers to skip for recall/retain (e.g. `["slack"]`, `["telegram"]`, `["discord"]`)
 - `autoRecall` - Auto-inject memories before each turn (default: `true`). Set to `false` when the agent has its own recall tool.
@@ -190,6 +191,35 @@ Available isolation fields:
 - `provider` - The message provider (e.g. Slack, Discord)
 
 Use `bankIdPrefix` to namespace bank IDs across environments (e.g. `"prod"`, `"staging"`). Set `dynamicBankId` to `false` to use a single shared bank for all conversations. In static mode, the plugin uses `bankId` if set, otherwise the default `openclaw` bank name.
+
+#### Mixing shared and isolated banks
+
+Those two modes are all-or-nothing. When you run several agents in one gateway and want some of them to share knowledge while others stay isolated, use `agentBankMap`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "hindsight-openclaw": {
+        "enabled": true,
+        "config": {
+          "dynamicBankId": true,
+          "dynamicBankGranularity": ["agent", "channel", "user"],
+          "agentBankMap": {
+            "inbound": "ps-technology",
+            "outbound": "ps-technology",
+            "limpieza": "ps-limpieza"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The `inbound` and `outbound` agents share the `ps-technology` bank, `limpieza` writes to `ps-limpieza`, and any agent not listed keeps the bank it would otherwise derive. The map is checked before both static and dynamic derivation, so it also takes precedence over a configured `bankId`.
+
+Agent ids are matched exactly (case-sensitive), and mapped bank names are used exactly as written — `bankIdPrefix` is not applied to them. Mapped banks still receive your configured bank defaults on first use, and auto-recall, auto-retain and the knowledge tools all resolve the same mapped bank.
 
 ### Per-user bank defaults
 
@@ -426,8 +456,8 @@ three problems on affected setups:
 - Automatic recall sometimes searched using that metadata instead of what you
   actually said, returning irrelevant memories.
 
-0.12.0 reads both the old and new labels, so it is safe on any supported OpenClaw
-version — you do not need to match plugin and OpenClaw versions.
+  0.12.0 reads both the old and new labels, so it is safe on any supported OpenClaw
+  version — you do not need to match plugin and OpenClaw versions.
 
 Two things to expect after installing on OpenClaw 2026.8.1 or later:
 

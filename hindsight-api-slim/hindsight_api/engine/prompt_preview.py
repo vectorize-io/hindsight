@@ -337,6 +337,7 @@ def _render_retain(config: "HindsightConfig") -> PromptPreview:
     from .retain.fact_extraction import (
         _DEFAULT_LANGUAGE_RULE,
         CAUSAL_RELATIONSHIPS_SECTION,
+        OPTIONAL_DIMENSIONS_SECTION,
         _build_labels_prompt_section,
         _retain_mission_preamble,
         build_chunk_prompt_parts,
@@ -399,6 +400,15 @@ def _render_retain(config: "HindsightConfig") -> PromptPreview:
             "retain_extract_causal_links",
             CAUSAL_RELATIONSHIPS_SECTION.strip() if config.retain_extract_causal_links else "",
             value=str(config.retain_extract_causal_links).lower(),
+            kind="boolean",
+        ),
+        # Reported like the causal flag, and for the same reason: it appends a
+        # section of its own. It also rewrites "N/A" wherever the rest of the
+        # prompt names it, which the rendered text above shows directly.
+        _setting(
+            "retain_optional_fact_dimensions",
+            OPTIONAL_DIMENSIONS_SECTION.strip() if config.retain_optional_fact_dimensions else "",
+            value=str(config.retain_optional_fact_dimensions).lower(),
             kind="boolean",
         ),
         # The labels section is decided by two settings, so it is reported as two:

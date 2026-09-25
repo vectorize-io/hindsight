@@ -209,7 +209,7 @@ async def test_supersession_delete_lands_under_either_field_name(memory: MemoryE
     as the canonical one does — and the run reports it."""
     bank_id = f"test-del-{id_field}-{uuid.uuid4().hex[:8]}"
     tags = [f"user:{uuid.uuid4().hex[:6]}"]
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     original_llm = memory._consolidation_llm_config
     try:
         stale_id = await _seed_one_observation(memory, bank_id, request_context, "Bob is on the beta waitlist.", tags)
@@ -257,7 +257,7 @@ async def test_delete_with_no_identifier_fails_the_batch_and_is_reported(memory:
     now says the responses were discarded instead of reading as healthy (#4151)."""
     bank_id = f"test-del-none-{uuid.uuid4().hex[:8]}"
     tags = ["user:carol"]
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     original_llm = memory._consolidation_llm_config
     try:
         stale_id = await _seed_one_observation(memory, bank_id, request_context, "Carol owns a 2019 Honda Civic.", tags)

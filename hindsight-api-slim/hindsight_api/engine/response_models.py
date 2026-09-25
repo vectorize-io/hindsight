@@ -653,3 +653,124 @@ class MentalModel(BaseModel):
     summary: str | None = Field(None, description="Generated summary based on relevant facts")
     summary_updated_at: str | None = Field(None, description="ISO format date when summary was last updated")
     created_at: str = Field(description="ISO format date when the mental model was created")
+
+
+STRATEGY_TAGS_MATCH_VALUES = ("all", "exact")
+
+
+class ConsolidationScopePattern(BaseModel):
+    """One rule of a consolidation strategy: tags, and how they must match.
+
+    ``tags`` may be empty — that is a rule still being filled in, which the editor
+    saves as typed and consolidation ignores. The type pins the *shape*, not
+    completeness: a string where the tag list belongs is rejected at the door
+    instead of being stored and silently ignored for the life of the bank.
+
+    Unknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`
+    on the write path rather than by ``extra="forbid"`` here: that would put
+    ``additionalProperties: false`` in the schema, which openapi-generator cannot
+    process ("Codegen Property not yet supported in getPydanticType").
+    """
+
+    tags: list[str] = Field(default_factory=list, description="fnmatch tag patterns, e.g. company:*")
+    # A plain nullable string, checked by the validator below, rather than an
+    # enum: both client generators choke on a nullable enum here — progenitor
+    # (Rust) fails on an inline one with TypeError(InvalidValue), and
+    # openapi-generator (Python) fails on `anyOf[$ref, null]` with "Codegen
+    # Property not yet supported in getPydanticType". A nullable string is the
+    # shape the rest of this spec uses, and both handle it.
+    #
+    # Optional rather than defaulting to "all" so a value written by the control
+    # plane survives export and import unchanged: a non-optional default would be
+    # filled in on the way out, and the stored config would grow a
+    # `"tags_match": "all"` the editor never wrote.
+    tags_match: str | None = Field(
+        default=None,
+        description='"all" (the default when omitted): the scope has every tag in the rule, other tags '
+        'allowed. "exact": exactly these tags and no others.',
+    )
+
+    @field_validator("tags_match")
+    @classmethod
+    def _known_mode(cls, value: str | None) -> str | None:
+        if value is not None and value not in STRATEGY_TAGS_MATCH_VALUES:
+            raise ValueError(f"must be one of {', '.join(STRATEGY_TAGS_MATCH_VALUES)}")
+        return value
+
+
+class ConsolidationStrategySpec(BaseModel):
+    """One `consolidation_strategies` entry: the rules it claims scopes with, and
+    the observation settings those scopes use. Every setting is optional; unset
+    ones come from the bank-wide values."""
+
+    scopes: list[ConsolidationScopePattern] = Field(
+        default_factory=list, description="Alternatives: the strategy claims a scope when any rule matches it"
+    )
+    observations_mission: str | None = None
+    max_observations_per_scope: int | None = None
+    consolidation_source_facts_max_tokens: int | None = None
+    consolidation_source_facts_max_tokens_per_observation: int | None = None
+
+
+class StrictConsolidationScopePattern(ConsolidationScopePattern):
+    """Validation-only: rejects unknown keys. Not used by any route, so it never
+    reaches the OpenAPI schema (see :class:`ConsolidationScopePattern`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class StrictConsolidationStrategySpec(ConsolidationStrategySpec):
+    """Validation-only twin of :class:`ConsolidationStrategySpec` that rejects
+    unknown keys — the "scope" for "scopes" typo that would otherwise be stored
+    and silently ignored for the life of the bank."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scopes: list[StrictConsolidationScopePattern] = Field(default_factory=list)
+
+
+class StrategyScopePreview(BaseModel):
+    """One existing observation scope in a consolidation-strategy preview."""
+
+    tags: list[str] = Field(description="The scope's tags (sorted)")
+    count: int = Field(description="Observations in this scope")
+    handled_by: int | None = Field(
+        description="Index of the strategy that actually applies to this scope (the first that claims it), "
+        "or null when no strategy does and Default applies"
+    )
+
+
+class StrategyRulePreview(BaseModel):
+    """What one rule (one entry of a strategy's `scopes`) matches among existing scopes."""
+
+    match_count: int = Field(description="Existing scopes this rule matches")
+    taken_count: int = Field(description="Of those, how many an earlier strategy wins, so this one has no effect")
+    observation_count: int = Field(description="Observations across the matching scopes")
+    samples: list[StrategyScopePreview] = Field(description="The most populous matching scopes, up to sample_limit")
+
+
+class StrategyPreview(BaseModel):
+    """Preview of one strategy, aligned by position with the request."""
+
+    active: bool = Field(description="False when the server would ignore this strategy (no usable rule, or no setting)")
+    claimed_count: int = Field(description="Existing scopes this strategy actually applies to")
+    rules: list[StrategyRulePreview] = Field(description="One entry per rule, aligned with the request")
+
+
+class DefaultScopesPreview(BaseModel):
+    """The scopes no strategy claims — they consolidate under the bank-wide settings."""
+
+    match_count: int
+    observation_count: int
+    samples: list[StrategyScopePreview]
+
+
+class ConsolidationStrategiesPreview(BaseModel):
+    """Which existing observation scopes each consolidation strategy would apply to."""
+
+    strategies: list[StrategyPreview]
+    default: DefaultScopesPreview
+    scopes_scanned: int = Field(description="Distinct scopes the preview was computed over")
+    complete: bool = Field(
+        description="False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
+    )

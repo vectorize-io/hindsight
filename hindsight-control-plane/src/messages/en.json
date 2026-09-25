@@ -57,7 +57,8 @@
       "switchTitle": "Switch memory bank",
       "returnTo": "Return to {bank}",
       "copyName": "Copy name",
-      "copied": "Copied to clipboard"
+      "copied": "Copied to clipboard",
+      "viaAlias": "via {aliases}"
     },
     "viewOnGitHub": "View on GitHub"
   },
@@ -121,7 +122,7 @@
     "clearObservationsWarning": "This will delete all consolidated knowledge. Observations will be regenerated the next time consolidation runs.",
     "clearing": "Clearing...",
     "bankDeleted": "Memory bank deleted",
-    "bankDeletedDescription": "Bank '{bankName}' has been permanently deleted.",
+    "bankDeletedDescription": "Bank {bankName} has been permanently deleted.",
     "failedToDeleteBank": "Failed to delete bank",
     "observationsCleared": "Observations cleared",
     "observationsClearedDefault": "Observations cleared successfully",
@@ -166,7 +167,24 @@
     "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}.",
     "knowledge": "Knowledge",
     "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
-    "pages": "Pages"
+    "pages": "Pages",
+    "cloneBank": "Clone Bank",
+    "cloneBankTitle": "Clone memory bank",
+    "cloneBankDescription": "Copies this bank into a new one. The copy starts with the same memories and evolves independently from then on.",
+    "cloneTargetLabel": "New bank id",
+    "cloneTargetPlaceholder": "my-bank-copy",
+    "cloning": "Cloning…",
+    "cloneStarted": "Clone started",
+    "cloneSucceeded": "Bank cloned into {bankName}",
+    "cloneFailed": "Failed to clone bank",
+    "cloneWhatToCopy": "What to copy",
+    "cloneIncludeData": "Memories",
+    "cloneIncludeDataHint": "Documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them.",
+    "cloneIncludeBankConfig": "Bank configuration",
+    "cloneIncludeBankConfigHint": "Config overrides, directives and webhooks — the copy will call the same webhook endpoints.",
+    "cloneIncludeHistory": "History",
+    "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
+    "cloneNothingSelected": "Choose at least one thing to copy."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -233,6 +251,24 @@
     "edit": "Edit",
     "create": "Create",
     "save": "Save"
+  },
+  "bankAliases": {
+    "title": "Aliases",
+    "description": "Extra ids that also reach <name>{bankId}</name>, so callers can move to a new id without downtime.",
+    "placeholder": "New id",
+    "add": "Add",
+    "shownAsLabel": "Shown as",
+    "shownAsDescription": "Which id the control plane displays for this bank. Cosmetic only — {bankId} stays its identity everywhere else.",
+    "primaryTitle": "Shown in place of the bank id",
+    "removeAria": "Remove alias {alias}",
+    "removeTitle": "Remove alias {alias}?",
+    "removeConfirm": "Every application still connected through {alias} will stop working immediately. Only this id goes away — {bankId} and its memories are untouched, and you can add the alias back.",
+    "remove": "Remove alias",
+    "cancel": "Cancel",
+    "loadFailed": "Failed to load aliases",
+    "addFailed": "Failed to add alias",
+    "primaryFailed": "Failed to change which id is shown",
+    "removeFailed": "Failed to remove alias"
   },
   "bankStats": {
     "memoryStore": "Memory store",
@@ -386,6 +422,18 @@
     "reflectFailedToSave": "Failed to save reflect settings",
     "reflectMissionDescription": "Agent identity and purpose. Used as framing context in reflect.",
     "reflectMissionPlaceholder": "e.g. You are a senior engineering assistant. Always ground answers in documented decisions and rationale. Ignore speculation. Be direct and precise.",
+    "reflectObservationsMaxTokensLabel": "Observations max tokens",
+    "reflectObservationsMaxTokensDescription": "Token budget for the observations search during reflect, when the model asks for no budget of its own. A mental model's trigger can override it.",
+    "reflectObservationsEntitiesLabel": "Observation entities",
+    "reflectObservationsEntitiesDescription": "Resolved entity names attached to each observation. Useful when the text uses an alias, but they can be over half the payload.",
+    "reflectObservationsEntitiesOn": "Include entity names",
+    "reflectObservationsEntitiesOff": "Skip entities (smaller context)",
+    "reflectDefaultOptionsLabel": "Reflect Default Options",
+    "reflectDefaultOptionsDescription": "What every reflect in this bank uses when the request — or a mental model's trigger — leaves the option unset. An explicit value on the request still wins.",
+    "reflectDefaultOptionsDialogTitle": "Default options for reflect",
+    "reflectDefaultOptionsDialogHint": "Applies to every reflect in this bank: API, MCP and mental-model refresh.",
+    "reflectObservationsMaxTokensChip": "{tokens} observation tokens",
+    "reflectObservationsMaxTokensChipDefault": "Default observation tokens",
     "skepticismLabel": "Skepticism",
     "skepticismDescription": "How skeptical vs trusting when evaluating claims",
     "skepticismLowLabel": "Trusting",
@@ -398,8 +446,8 @@
     "empathyDescription": "How much to weight emotional context",
     "empathyLowLabel": "Detached",
     "empathyHighLabel": "Empathetic",
-    "mcpToolsTitle": "MCP Tools",
-    "mcpToolsDescription": "Restrict which MCP tools this bank exposes to agents",
+    "clientsTitle": "Clients",
+    "clientsDescription": "What apps and agents can reach on this bank.",
     "mcpFailedToSave": "Failed to save MCP settings",
     "auditEnabledLabel": "Enable Audit Logging",
     "auditEnabledDescription": "Record retain, recall and reflect operations for this bank. Overrides the server default for this bank only.",
@@ -451,6 +499,55 @@
     "sourceFactsMaxTokensPerObservationDescription": "Maximum tokens of source facts considered when generating a single observation. Leave blank to use the server default.",
     "maxObservationsPerScopeLabel": "Max Observations Per Scope",
     "maxObservationsPerScopeDescription": "Cap on the number of observations stored per scope after consolidation. Leave blank to use the server default.",
+    "consolidationStrategiesAddRule": "Add rule",
+    "consolidationStrategiesAddTagPlaceholder": "Add tag, e.g. company:*",
+    "consolidationStrategiesAnd": "and",
+    "consolidationStrategiesChecking": "Checking existing scopes…",
+    "consolidationStrategiesDefaultCoversNone": "Every existing scope is matched by a strategy.",
+    "consolidationStrategiesDefaultLead": "Used by every scope no strategy matches, and for any setting a strategy leaves empty.",
+    "consolidationStrategiesDefaultTitle": "Default",
+    "consolidationStrategiesGlobalScope": "global (untagged)",
+    "consolidationStrategiesHandledBy": "handled by {name}",
+    "consolidationStrategiesHide": "Hide",
+    "consolidationStrategiesHowDefault": "Anything a strategy leaves empty — and every scope no strategy matches — uses Default.",
+    "consolidationStrategiesHowPriority": "If several strategies match the same scope, the first tab wins. Strategies are never combined.",
+    "consolidationStrategiesHowRules": "Every tag in a rule must be on the scope. Rules are alternatives: a strategy applies if any one of them matches.",
+    "consolidationStrategiesHowScopes": "A strategy applies to the observation scopes its rules match. A scope is the set of tags observations are grouped under when memories are retained.",
+    "consolidationStrategiesHowTitle": "How strategies work",
+    "consolidationStrategiesInheritedServerDefault": "Inherited from Default (server default)",
+    "consolidationStrategiesInheritedValue": "Inherited from Default: {value}",
+    "consolidationStrategiesLead": "Give specific groups of observations their own mission and limits — for example, keep company-wide observations general while per-user ones stay detailed.",
+    "consolidationStrategiesMatchesCount": "Matches {count, plural, one {# existing scope} other {# existing scopes}}",
+    "consolidationStrategiesMatchesCountAtLeast": "Matches at least {count, plural, one {# existing scope} other {# existing scopes}}",
+    "consolidationStrategiesMatchesNone": "No existing scope matches this rule yet.",
+    "consolidationStrategiesMatchesTaken": "{count, plural, one {# handled by an earlier strategy} other {# handled by earlier strategies}}",
+    "consolidationStrategiesModeAll": "all of these tags",
+    "consolidationStrategiesModeAllNote": "other tags allowed",
+    "consolidationStrategiesModeExact": "exactly these tags",
+    "consolidationStrategiesModeExactNote": "and no others",
+    "consolidationStrategiesMoreScopes": "and {count, plural, one {# more} other {# more}}",
+    "consolidationStrategiesMoveEarlier": "Move earlier (higher priority)",
+    "consolidationStrategiesMoveLater": "Move later (lower priority)",
+    "consolidationStrategiesNoScopeTab": "no scope",
+    "consolidationStrategiesNoScopes": "Add at least one scope. Until then this strategy applies to nothing.",
+    "consolidationStrategiesObservationCount": "{count, plural, one {# observation} other {# observations}}",
+    "consolidationStrategiesOr": "or",
+    "consolidationStrategiesOverridesNothing": "This strategy doesn't change anything yet. Fill in at least one setting below.",
+    "consolidationStrategiesPriority": "Priority {position} of {total}",
+    "consolidationStrategiesRemove": "Remove strategy {name}",
+    "consolidationStrategiesRemoveRule": "Remove rule",
+    "consolidationStrategiesRuleSentence": "Scopes that have",
+    "consolidationStrategiesSettingsLead": "Leave a field empty to use the Default value shown in it.",
+    "consolidationStrategiesSettingsTitle": "Settings for these scopes",
+    "consolidationStrategiesShow": "Show",
+    "consolidationStrategiesTitle": "Consolidation strategies",
+    "consolidationStrategiesUnlimited": "unlimited",
+    "consolidationStrategiesWhichScopes": "Which scopes",
+    "consolidationStrategiesWhichScopesLead": "This strategy applies to scopes matching any of these rules.",
+    "consolidationStrategyMaxObservationsDescription": "Cap on the number of observations each of these scopes may hold.",
+    "consolidationStrategyMissionDescription": "What observations in these scopes should capture.",
+    "consolidationStrategySourceFactsDescription": "Maximum tokens of source facts passed to each consolidation call for these scopes.",
+    "consolidationStrategySourceFactsPerObservationDescription": "Maximum tokens of source facts considered per observation in these scopes.",
     "mentalModelMinRefreshIntervalLabel": "Mental Model Min Refresh Interval",
     "mentalModelMinRefreshIntervalDescription": "Minimum seconds between two automatic refreshes of the same mental model in this bank. A refresh triggered sooner is queued and waits out the window, and further triggers fold into it — so a burst of retains costs one refresh instead of one per retain. Manual refreshes always run immediately. Leave blank to use the server default; 0 means no limit. A single model can override this in its own refresh settings.",
     "knowledgePageDefaultTriggerLabel": "Knowledge Page Default Trigger",
@@ -500,7 +597,7 @@
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Size anomaly: reject suspiciously large payloads",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Protected tag namespaces: enforce immutable identity tags",
     "memoryDefenseEnterpriseCta": "Request a Demo",
-    "recallTitle": "Recall Pipeline",
+    "recallTitle": "Recall",
     "recallDescription": "Which retrieval stages run during recall for this bank",
     "recallServerDefault": "Server Default",
     "recallFailedToSave": "Failed to save recall pipeline settings",
@@ -587,7 +684,10 @@
       "graphMaintenance": "Graph Maintenance",
       "vectorIndexMaintenance": "Vector index maintenance",
       "exportDocuments": "Export Documents",
-      "importDocuments": "Import Documents"
+      "importDocuments": "Import Documents",
+      "exportBank": "Export Bank",
+      "importBank": "Import Bank",
+      "cloneBank": "Clone Bank"
     },
     "table": {
       "id": "Operation ID",
@@ -811,7 +911,20 @@
     "invalidatedFactsTitle": "Invalidated facts",
     "documentUpdating": "Updating",
     "lastRefreshed": "Refreshed {time}",
-    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document."
+    "attachmentEditHint": "This document has {count} attachment(s). They appear above as ⟦hs-att:…⟧ tokens — keep a token to keep its attachment; deleting one removes it from the document.",
+    "dateRangeAll": "All time",
+    "dateRangeLastHour": "Last hour",
+    "dateRangeLast24Hours": "Last 24 hours",
+    "dateRangeLast7Days": "Last 7 days",
+    "dateRangeLast30Days": "Last 30 days",
+    "dateRangeAriaLabel": "Filter by time",
+    "timeFieldAriaLabel": "Time axis",
+    "timeFieldUpdated": "Last updated",
+    "timeFieldCreated": "First added",
+    "dateRangeCustom": "Custom range",
+    "dateRangeFrom": "From",
+    "dateRangeTo": "To",
+    "dateRangeReversed": "End must be after start"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -937,6 +1050,12 @@
     "optionsRecallChunksMaxTokensLabel": "Recall chunks max tokens",
     "optionsRecallChunksMaxTokensPlaceholder": "Default (inherit)",
     "optionsRecallChunksMaxTokensDescription": "Token budget for raw chunk text returned by recall.",
+    "optionsObservationsMaxTokensLabel": "Observations max tokens",
+    "optionsObservationsMaxTokensDescription": "Token budget for the observations search during refresh. Lower it to shrink the reflect context.",
+    "optionsObservationsEntitiesLabel": "Observation entities",
+    "optionsObservationsEntitiesDescription": "Resolved entity names attached to each observation. They can be over half the payload.",
+    "optionsObservationsEntitiesYes": "Yes — include entity names",
+    "optionsObservationsEntitiesNo": "No — skip entities (smaller prompt)",
     "optionsExcludeAllLabel": "Exclude all mental models",
     "optionsExcludeIdsLabel": "Exclude Mental Model IDs",
     "optionsExcludeIdsPlaceholder": "e.g., model-a, model-b (comma-separated)",
@@ -975,7 +1094,10 @@
     "triggerSeconds": "seconds",
     "triggerMinIntervalLabel": "Minimum refresh interval",
     "toastContentCleared": "Mental model content cleared",
-    "actionOpenDetail": "Open"
+    "actionOpenDetail": "Open",
+    "nextRefreshPaused": "paused after a failed refresh",
+    "nextRefreshRetrying": "retrying, next attempt {time}",
+    "nextRefreshRunning": "refreshing now"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",
@@ -1135,7 +1257,7 @@
     "errorRunningSearch": "Error running search",
     "tooltipCrossEncoder": "Cross-encoder score (primary relevance signal)",
     "tooltipTemporal": "Temporal proximity boost (±10% — only active for temporal queries)",
-    "tooltipRecency": "Recency boost (±10% — based on memory age)",
+    "tooltipRecency": "Recency boost (±10% — based on time decay)",
     "temporalWindowLabel": "Time window",
     "helpTypes": "Which memory layers to search: world facts, the bank's own experiences, and consolidated observations.",
     "helpBudget": "How hard recall searches. A higher budget explores more candidates and graph links: better recall, more latency.",
@@ -1546,7 +1668,7 @@
     "errorPrefix": "Error: {error}"
   },
   "mentalModelDetailModal": {
-    "noBasedOnData": "No based_on data.",
+    "noBasedOnData": "No basis data available.",
     "viewArrow": "View →",
     "unchanged": "unchanged",
     "diffBefore": "Before",
@@ -1637,9 +1759,12 @@
     "failureAttempts": "· {count} attempts",
     "tabErrors": "Errors",
     "noErrors": "No failed refreshes.",
-    "errorsIntro": "Refreshes that refused to write, newest first. The stored content was left untouched by each of these. A failed refresh is retried a few times automatically; after that the model keeps its last good version until something triggers it again.",
+    "errorsIntro": "Refreshes that refused to write, newest first. The stored content was left untouched by each of these. A failed refresh is retried a few times automatically; after that the model keeps its last good version.",
     "errorsPresent": "This mental model has failed refreshes",
-    "failureReasonUnexpected": "Unexpected error"
+    "failureReasonUnexpected": "Unexpected error",
+    "refreshPaused": "Refresh paused",
+    "errorsPausedNotice": "This model is not refreshing itself any more: after these failures its automatic refreshes are paused. Refresh it to try again — a refresh that succeeds resumes them.",
+    "noHistoryOnlyFailures": "No versions yet — every refresh so far failed. See the Errors tab."
   },
   "constellation": {
     "instructions": "Scroll to zoom · Drag to pan · Hover to explore · Click to select",
@@ -1808,7 +1933,8 @@
         "operationIdRequired": "operation_id is required",
         "missingRequestData": "Missing request data",
         "missingBankId": "Missing bank_id",
-        "fileRequired": "file is required"
+        "fileRequired": "file is required",
+        "targetBankIdRequired": "target_bank_id is required"
       },
       "generic": {
         "failed": "Failed",
@@ -1821,12 +1947,19 @@
         "update": "Failed to update bank",
         "delete": "Failed to delete bank",
         "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "importTemplate": "Failed to import bank template",
+        "clone": "Failed to clone bank"
       },
       "bankConfig": {
         "fetch": "Failed to fetch bank config",
         "update": "Failed to update bank config",
         "reset": "Failed to reset bank config"
+      },
+      "bankAliases": {
+        "list": "Failed to list bank aliases",
+        "create": "Failed to create bank alias",
+        "delete": "Failed to delete bank alias",
+        "update": "Failed to update bank alias"
       },
       "memories": {
         "list": "Failed to list memory units",
@@ -1906,7 +2039,8 @@
       },
       "consolidation": {
         "trigger": "Failed to trigger consolidation",
-        "recover": "Failed to recover consolidation"
+        "recover": "Failed to recover consolidation",
+        "previewStrategies": "Failed to preview consolidation strategies"
       },
       "recall": {
         "failed": "Failed to recall"
@@ -1981,7 +2115,16 @@
     "editPageTitle": "Edit page",
     "editPageDescription": "Update the page's name, the question that rebuilds it, and its tags.",
     "editSourceQueryHint": "Changing this rebuilds the page's content from your memories.",
-    "saveChanges": "Save changes"
+    "saveChanges": "Save changes",
+    "advancedSearchTitle": "Advanced search",
+    "advancedSearchDescription": "Run the hybrid search (BM25 + vector) on the server and inspect the ranked pages and the raw response.",
+    "advancedQuery": "Query",
+    "advancedLimit": "Limit",
+    "advancedRun": "Search",
+    "advancedResults": "Results",
+    "advancedJson": "Raw JSON",
+    "advancedMeta": "{total} results · {ms} ms",
+    "advancedIdle": "Run a search to see ranked pages and the raw response."
   },
   "home": {
     "title": "Home",
@@ -2052,6 +2195,10 @@
     "inSync": "In sync",
     "staleAutoTitle": "New memories in this model's scope since it last read them — it refreshes itself, so this clears on its own",
     "staleManualTitle": "New memories in this model's scope since it last read them — refresh it to catch up",
-    "inSyncTitle": "No new memories in this model's scope since it last read them"
+    "inSyncTitle": "No new memories in this model's scope since it last read them",
+    "paused": "Paused",
+    "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume",
+    "retrying": "Retrying",
+    "retryingTitle": "The last attempt failed and another is queued — automatic refreshes stop only if this one fails too"
   }
 }

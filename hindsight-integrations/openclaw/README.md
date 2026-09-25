@@ -99,6 +99,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankId`            | `true`                         | Enable per-context memory banks                                                                                                                                                                                                                                                                                  |
 | `bankId`                   | —                              | Static bank ID used when `dynamicBankId` is `false`.                                                                                                                                                                                                                                                             |
 | `bankIdPrefix`             | —                              | Prefix for bank IDs (e.g. `"prod"`)                                                                                                                                                                                                                                                                              |
+| `agentBankMap`             | —                              | Explicit `agentId` → `bankId` routing, checked before static/dynamic derivation. Lets a group of agents share one named bank while others keep derived banks (e.g. `{"inbound": "ps-technology", "limpieza": "ps-limpieza"}`). Mapped names are used exactly as given — `bankIdPrefix` is not applied.           |
 | `retainTags`               | `[]`                           | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`). Auto-retain also merges inline per-message tags from `<retain_tags>...</retain_tags>` or `<hindsight_retain_tags>...</hindsight_retain_tags>` blocks in user messages.       |
 | `retainSource`             | `"openclaw"`                   | `source` value written into retained document metadata                                                                                                                                                                                                                                                           |
 | `retainContext`            | built-in OpenClaw guidance     | Interpretation guidance sent through the Hindsight retain API `context` field. The default tells the extraction LLM that sender/channel/provider metadata, bank IDs, session keys, source systems, and tags are operational routing metadata, not human names, project names, or organizations.                  |
@@ -114,6 +115,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `retainOverlapTurns`       | `0`                            | Extra prior turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns`. Only applies when `retainEveryNTurns > 1`.                                                                                                                                                           |
 | `recallBudget`             | `"mid"`                        | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies.                                                                                                                                                                                                                            |
 | `recallMaxTokens`          | `1024`                         | Max tokens for recall response. Controls how much memory context is injected per turn.                                                                                                                                                                                                                           |
+| `recallTimeoutMs`          | `10000`                        | Deadline for the auto-recall request, in ms. Values below `1000` are ignored. At the deadline the HTTP request itself is aborted, not just abandoned, so a slow recall stops consuming a connection.                                                                                                             |
 | `recallTypes`              | `["observation"]`              | Memory types to recall. Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing.                                                                             |
 | `preferObservations`       | `false`                        | When `true`, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with a `recallTypes` that includes raw types (e.g. `["observation", "world", "experience"]`) to surface just-retained facts before consolidation, without duplicating consolidated content. |
 | `recallMinScores`          | `{}`                           | Optional score floors for auto-recall, keyed by stage (for example `{"reranker": 0.3}`). Missing fields impose no floor; memories with missing or `null` scores pass. Reranker scores are query-local, so use this as a garbage gate rather than a calibrated relevance dial.                                    |
@@ -130,6 +132,33 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                                |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.                   |
 | `enableKnowledgeTools`     | `false`                        | Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.                                                                                                                                        |
+
+### Per-agent bank mapping
+
+`dynamicBankId` is all-or-nothing: either every agent shares one bank, or every agent gets its own derived one. `agentBankMap` adds the middle ground — name the bank for specific agents and leave the rest alone:
+
+```json
+{
+  "dynamicBankId": true,
+  "dynamicBankGranularity": ["agent", "channel", "user"],
+  "agentBankMap": {
+    "inbound": "ps-technology",
+    "outbound": "ps-technology",
+    "limpieza": "ps-limpieza"
+  }
+}
+```
+
+`inbound` and `outbound` share `ps-technology`, `limpieza` gets `ps-limpieza`, and every other agent keeps the per-agent/channel/user bank it had before. The map is consulted first, so it also overrides a static `bankId` — one gateway can pin most traffic to a shared bank while carving out named banks for a few agents.
+
+Details worth knowing:
+
+- **Mapped names are used verbatim.** `bankIdPrefix` is not applied, because you named the bank yourself.
+- **Retain, recall and the knowledge tools all follow the map** — they resolve the bank through the same path.
+- **Bank defaults still apply.** A mapped bank is stamped with the configured missions, extraction mode, entity labels and so on when it is first used, exactly like a derived bank.
+- **Agent ids match exactly** — the lookup is case-sensitive and not fuzzy, so `Inbound` is not `inbound`. Keys are trimmed, values too.
+- **Mapped agents are exempt from the sender/surface skips.** A session whose sender cannot be resolved, or whose dispatch surface differs from the session's provider, is normally skipped rather than routed into a bank keyed by the wrong thing. A mapped agent's bank depends on neither, so those sessions are retained as intended. Operational sessions (`cron`, `heartbeat`, `subagent`, `temp:`) are still skipped for mapped agents, exactly as before.
+- **Entries with a blank or non-string bank are ignored** (and logged), rather than routing an agent to a bank named `""`.
 
 ### Per-user dynamic bank defaults
 

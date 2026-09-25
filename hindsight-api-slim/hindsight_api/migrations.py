@@ -50,7 +50,7 @@ from ._vector_index import (
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
 )
-from .config import ENV_MIGRATION_ISOLATION, get_config
+from .config import ENV_MIGRATION_DATABASE_URL, ENV_MIGRATION_ISOLATION, get_config
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
@@ -128,24 +128,72 @@ def _bootstrap_vector_extension_for_migrations(conn: Connection, vector_extensio
     conn.commit()
 
 
-def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
-    """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
+def _vector_index_names(
+    conn: Connection,
+    schema_name: str,
+    table_name: str,
+    name_like: str | None = None,
+    *,
+    vector_access_methods_only: bool = True,
+) -> list[str]:
+    """Names of the vector indexes on ``table_name.embedding``, from the catalog.
+
+    Deliberately NOT ``pg_indexes``: that view renders every row through
+    ``pg_get_indexdef()``, which is evaluated for indexes outside the schema we
+    asked about. When a concurrent session drops a schema mid-scan — pytest-xdist
+    workers do exactly this — the render fails with "cache lookup failed for
+    attribute N of relation OID" (an internal_error) and takes the whole
+    statement with it. Resolving the relation first and reading ``pg_am`` keeps
+    the scan inside one table's own indexes, so an unrelated schema going away
+    cannot break it.
+    """
     rows = conn.execute(
         text("""
-            SELECT indexname
-            FROM pg_indexes
-            WHERE schemaname = :schema_name
-              AND tablename = 'memory_units'
-              AND indexname LIKE 'idx_mu_emb_%'
-              AND indexdef LIKE '%embedding%'
+            SELECT i.relname
+            FROM pg_class t
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_index x ON x.indrelid = t.oid
+            JOIN pg_class i ON i.oid = x.indexrelid
+            JOIN pg_am am ON am.oid = i.relam
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(x.indkey)
+            WHERE n.nspname = :schema
+              AND t.relname = :table
+              AND a.attname = 'embedding'
+              AND (NOT :vector_ams_only OR am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann'))
+              AND (:name_like IS NULL OR i.relname LIKE :name_like)
         """),
-        {"schema_name": schema_name},
+        {
+            "schema": schema_name,
+            "table": table_name,
+            "name_like": name_like,
+            "vector_ams_only": vector_access_methods_only,
+        },
     ).fetchall()
-    # DDL identifiers cannot be passed as bound parameters, so escape inline.
+    return [row[0] for row in rows]
+
+
+def _drop_index(conn: Connection, schema_name: str, index_name: str) -> None:
+    """Drop one index. DDL identifiers cannot be bound parameters, so escape inline."""
     safe_schema = schema_name.replace('"', '""')
-    for row in rows:
-        safe_index = row[0].replace('"', '""')
-        conn.execute(text(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"'))
+    safe_index = index_name.replace('"', '""')
+    conn.execute(text(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"'))
+
+
+def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
+    """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
+    # Matched by name and column, NOT by access method: this sweep exists to clear
+    # per-bank leftovers, and one whose access method drifted after a backend switch
+    # (or an INVALID build from an interrupted CREATE INDEX CONCURRENTLY) is exactly
+    # the kind that must go. The pg_indexes version this replaced did not filter on
+    # the method either.
+    for index_name in _vector_index_names(
+        conn,
+        schema_name,
+        "memory_units",
+        name_like="idx\\_mu\\_emb\\_%",
+        vector_access_methods_only=False,
+    ):
+        _drop_index(conn, schema_name, index_name)
 
 
 def _get_schema_lock_id(schema: str) -> int:
@@ -158,6 +206,61 @@ def _get_schema_lock_id(schema: str) -> int:
     # Keep within PostgreSQL's bigint range
     hash_bytes = hashlib.sha256(schema.encode()).digest()[:8]
     return int.from_bytes(hash_bytes, byteorder="big") % (2**31)
+
+
+#: How often to poll for the migration advisory lock.
+_LOCK_POLL_INTERVAL_SECS = 0.5
+
+#: How long a wait has to last before it is worth a log line, and how often to
+#: repeat it afterwards.  Queuing briefly behind another worker is routine; only
+#: a wait that outlasts this is a symptom.
+_LOCK_WAIT_REPORT_AFTER_SECS = 5.0
+_LOCK_WAIT_REPORT_INTERVAL_SECS = 30.0
+
+
+def _advisory_lock_holder(conn: Connection, lock_id: int) -> str | None:
+    """Describe who holds the migration advisory lock, or None if not found.
+
+    Best effort: this runs while a migrator is stuck waiting, so any error
+    here must not break the wait loop — an empty catalog row just means we
+    could not identify the holder.  A failure leaves the transaction aborted,
+    so the caller must end it before its next statement — the wait loop's
+    ``conn.commit()`` does, which is why this runs before it.  A diagnostic
+    must never turn a wait into a failed migration.
+
+    ``pg_advisory_lock(bigint)`` stores the key as classid = high 32 bits,
+    objid = low 32 bits, objsubid = 1; the two-argument form uses objsubid = 2.
+    Matching objsubid = 1 therefore excludes a two-argument lock with a
+    colliding objid, and classid = 0 (``lock_id`` is reduced mod 2**31, so its
+    high word is always zero) excludes a 64-bit key that shares the low word.
+    """
+    try:
+        row = conn.execute(
+            text(
+                "SELECT a.pid, coalesce(a.application_name, ''), coalesce(a.client_addr::text, ''), "
+                "coalesce(a.query, '') "
+                "FROM pg_locks l "
+                "LEFT JOIN pg_stat_activity a ON a.pid = l.pid "
+                "WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = :lock_id "
+                "AND l.objsubid = 1 AND l.granted "
+                "LIMIT 1"
+            ),
+            {"lock_id": lock_id},
+        ).fetchone()
+    except Exception as e:
+        logger.debug("Could not inspect pg_locks for the migration advisory lock holder: %s", e)
+        return None
+    if not row:
+        return None
+    pid, app_name, client_addr, query = row[0], row[1] or "", row[2] or "", (row[3] or "").strip()
+    parts = [f"pid={pid}"]
+    if app_name:
+        parts.append(f"app={app_name}")
+    if client_addr:
+        parts.append(f"client={client_addr}")
+    if query:
+        parts.append(f"query={query[:120]}")
+    return ", ".join(parts)
 
 
 def _run_migrations_internal(database_url: str, script_location: str, schema: str | None = None) -> None:
@@ -179,6 +282,34 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
 
     # Set the script location (where alembic versions are stored)
     _set_alembic_main_option(alembic_cfg, "script_location", script_location)
+
+    # Extension-owned revisions, applied on the same lifecycle as core's: same run,
+    # same advisory lock, same `alembic_version` table.
+    #
+    # `version_locations` must include core's own directory explicitly. Alembic does
+    # NOT fall back to `script_location/versions` once this is set, so omitting it
+    # would silently reduce the run to the extensions' revisions — a migration that
+    # appears to succeed while applying none of core's.
+    #
+    # Each extension tree is independent: its own base, its own head, its own row in
+    # `alembic_version`. That is why `command.upgrade(..., "heads")` below is plural
+    # and always was — it already applies every branch. Alembic gives no ordering
+    # BETWEEN independent branches, so a revision needing core first declares
+    # `depends_on`; see `Extension.alembic_version_locations`.
+    # Imported here, not at module import: the loader imports extension modules,
+    # and migrations.py is itself imported by paths that must not drag an
+    # extension's dependency tree in with them.
+    from .extensions.loader import collect_alembic_version_locations
+
+    extension_locations = collect_alembic_version_locations()
+    if extension_locations:
+        core_versions = str(Path(script_location) / "versions")
+        _set_alembic_main_option(
+            alembic_cfg,
+            "version_locations",
+            os.pathsep.join([core_versions, *extension_locations]),
+        )
+        logger.info("Including %d extension migration location(s) alongside core", len(extension_locations))
 
     # Set the database URL
     _set_alembic_main_option(alembic_cfg, "sqlalchemy.url", database_url)
@@ -397,23 +528,57 @@ def run_migrations(
         engine = create_engine(migration_url, poolclass=NullPool)
         with engine.connect() as conn:
             logger.debug(f"Acquiring migration advisory lock for schema '{schema_name}' (id={lock_id})...")
+            waited_since = time.monotonic()
+            next_report_at = _LOCK_WAIT_REPORT_AFTER_SECS
             while True:
                 acquired = conn.execute(text(f"SELECT pg_try_advisory_lock({lock_id})")).scalar()
                 if acquired:
                     break
+                # A worker stuck here used to look like a silent hang: no log
+                # line, no timeout, for as long as the lock stays taken.  Say
+                # who is holding it, so an operator can find the blocking
+                # backend (and see the pooler-recycled-leak shape of #4611).
+                #
+                # Report once the wait passes _LOCK_WAIT_REPORT_AFTER_SECS and
+                # then every _LOCK_WAIT_REPORT_INTERVAL_SECS: queuing briefly
+                # behind another worker is routine during a rolling deploy, and
+                # one line per poll buries the signal in exactly the incident
+                # this is meant to explain.
+                waited = time.monotonic() - waited_since
+                if waited >= next_report_at:
+                    next_report_at = waited + _LOCK_WAIT_REPORT_INTERVAL_SECS
+                    # Look the holder up BEFORE the commit below: this statement
+                    # autobegins a transaction, and running it after the commit
+                    # would hold its snapshot across the sleep — the very thing
+                    # the commit exists to prevent.
+                    holder = _advisory_lock_holder(conn, lock_id)
+                    logger.warning(
+                        "Waiting for migration advisory lock (id=%s, schema=%s) held by %s; "
+                        "waited %.0fs so far, polling every %ss. If the holder is a stale pooled "
+                        "backend, point %s at the direct PostgreSQL endpoint to bypass the pooler.",
+                        lock_id,
+                        schema_name,
+                        holder or "another session (holder not found in pg_locks)",
+                        waited,
+                        _LOCK_POLL_INTERVAL_SECS,
+                        ENV_MIGRATION_DATABASE_URL,
+                    )
                 # Commit the transaction so this connection holds no open snapshot
                 # while waiting.  This prevents blocking CREATE INDEX CONCURRENTLY
                 # that may be running in the migration worker.
                 conn.commit()
-                time.sleep(0.5)
+                time.sleep(_LOCK_POLL_INTERVAL_SECS)
 
-            # Commit AFTER acquiring the lock too.  pg_advisory_lock is session-level
-            # and survives the COMMIT, but the open transaction on this connection
-            # would otherwise block any CREATE INDEX CONCURRENTLY in the migration.
-            conn.commit()
-            logger.debug("Migration advisory lock acquired")
-
+            # Everything from here on is inside the try, so the lock is released
+            # however we leave — the commit below included.
             try:
+                # Commit AFTER acquiring the lock too.  pg_advisory_lock is
+                # session-level and survives the COMMIT, but the open transaction
+                # on this connection would otherwise block any CREATE INDEX
+                # CONCURRENTLY in the migration.
+                conn.commit()
+                logger.debug("Migration advisory lock acquired")
+
                 vector_extension = configured_vector_extension()
                 _bootstrap_vector_extension_for_migrations(conn, vector_extension)
 
@@ -427,9 +592,31 @@ def run_migrations(
                 # Run migrations while holding the lock
                 _run_migrations_internal(migration_url, script_location, schema=schema)
             finally:
-                # Explicitly release the lock (also released on connection close)
-                conn.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
-                logger.debug("Migration advisory lock released")
+                # Release the lock even when the migration failed.  If anything
+                # above failed, this connection's transaction is aborted and
+                # pg_advisory_unlock would raise InFailedSqlTransaction — the
+                # lock would stay on the backend (a pooled one never releases
+                # it, wedging every later migrator: #4611).  Roll the aborted
+                # transaction back first so the unlock can run, and never let a
+                # failing unlock mask the original error.
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.warning(
+                        "Could not roll back the migration connection before releasing the advisory lock: %s",
+                        rollback_error,
+                    )
+                try:
+                    conn.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
+                    logger.debug("Migration advisory lock released")
+                except Exception as unlock_error:
+                    logger.error(
+                        "Failed to release migration advisory lock (id=%s) — the lock may stay on the "
+                        "backend until the connection closes; close pooled connections or recycle the "
+                        "pooler backend manually: %s",
+                        lock_id,
+                        unlock_error,
+                    )
 
     except FileNotFoundError:
         logger.error(f"Alembic script location not found at {script_location}")
@@ -445,29 +632,8 @@ def run_migrations(
 
 def _drop_embedding_vector_indexes(conn: Connection, schema_name: str, table_name: str) -> None:
     """Drop every vector index on ``table_name.embedding`` (HNSW, DiskANN, vchordrq, ScaNN)."""
-    # The EXCEPTION block handles 'could not open relation with OID' errors that
-    # occur when concurrent sessions drop schemas (e.g. pytest-xdist workers),
-    # invalidating pg_indexes OID references mid-cursor-iteration.
-    conn.execute(
-        text(f"""
-            DO $$
-            DECLARE idx_name TEXT;
-            BEGIN
-                FOR idx_name IN
-                    SELECT indexname FROM pg_indexes
-                    WHERE schemaname = '{schema_name}'
-                      AND tablename = '{table_name}'
-                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%' OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
-                      AND indexdef LIKE '%embedding%'
-                LOOP
-                    EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
-                END LOOP;
-            EXCEPTION WHEN internal_error THEN
-                -- Stale OID from concurrent schema drop; nothing to drop anyway
-                NULL;
-            END $$;
-        """)
-    )
+    for index_name in _vector_index_names(conn, schema_name, table_name):
+        _drop_index(conn, schema_name, index_name)
 
 
 def _migrate_table_embedding_dimension(
@@ -550,20 +716,7 @@ def _migrate_table_embedding_dimension(
 
 
 def _has_embedding_vector_index(conn: Connection, schema_name: str, table_name: str) -> bool:
-    return bool(
-        conn.execute(
-            text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM pg_indexes
-                    WHERE schemaname = :schema AND tablename = :table
-                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%'
-                           OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
-                      AND indexdef LIKE '%embedding%'
-                )
-            """),
-            {"schema": schema_name, "table": table_name},
-        ).scalar()
-    )
+    return bool(_vector_index_names(conn, schema_name, table_name))
 
 
 def _create_embedding_vector_index(

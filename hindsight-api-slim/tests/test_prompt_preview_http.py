@@ -43,7 +43,7 @@ async def api_client(memory):
 @pytest_asyncio.fixture
 async def bank_id(memory):
     bank = f"preview-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id=bank, request_context=RequestContext())
     return bank
 
 

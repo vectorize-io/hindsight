@@ -1,0 +1,35 @@
+{
+  "name": "@vectorize-io/interfig",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interactive, animated flow figures for the Hindsight docs. Used from source, never published.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.tsx",
+    "./figures/*": "./figures/*.ts"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite --open",
+    "export": "node scripts/export.mjs",
+    "format:check": "prettier --check .",
+    "svg": "node scripts/figure-svg.mjs",
+    "test": "node --test src/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright": "^1.50.0",
+    "prettier": "^3.7.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}

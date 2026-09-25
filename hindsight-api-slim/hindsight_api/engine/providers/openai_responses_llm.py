@@ -43,6 +43,7 @@ from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -490,6 +491,9 @@ class OpenAIResponsesLLM(LLMInterface):
                 params["text"] = {"format": {"type": "json_object"}}
 
         apply_bank_attribution(params)
+        # opencode-go's /v1/responses requires x-opencode-session the same way
+        # /v1/chat/completions does (#4071); the host check inside decides.
+        apply_opencode_session(params, base_url=self.base_url)
 
         def parse(response: Any) -> Any:
             self._raise_if_truncated(response)
@@ -589,6 +593,7 @@ class OpenAIResponsesLLM(LLMInterface):
             params["extra_body"] = {**self._config_extra_body}
 
         apply_bank_attribution(params)
+        apply_opencode_session(params, base_url=self.base_url)
 
         def parse(response: Any) -> LLMToolCallResult:
             self._raise_if_truncated(response)

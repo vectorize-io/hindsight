@@ -497,6 +497,9 @@ class PostgresMemories(MemoriesExtension):
         tags: list[str] | None = None,
         tags_match: str = "any",
         created_before: datetime | None = None,
+        time_field: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -514,6 +517,9 @@ class PostgresMemories(MemoriesExtension):
             tags=tags,
             tags_match=tags_match,
             created_before=created_before,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
         )

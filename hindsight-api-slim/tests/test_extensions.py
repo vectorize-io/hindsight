@@ -280,6 +280,8 @@ class TestMemoryEngineValidation:
         memory = memory_with_validator
         bank_id = "test-recall-validation"
         ctx = RequestContext()
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         # First recall should pass validation
         await memory.recall_async(bank_id, "test query", fact_type=["world"], request_context=ctx)
@@ -340,7 +342,7 @@ class TestMemoryEngineValidation:
         assert "bank creation not allowed" in str(exc_info.value)
         assert len(validator.create_bank_calls) == 1
         assert validator.create_bank_calls[0].bank_id == bank_id
-        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+        assert await memory.get_bank_profile(bank_id, request_context=ctx) is None
 
     @pytest.mark.asyncio
     async def test_async_retain_validates_create_bank_for_missing_bank(self, memory):
@@ -360,14 +362,14 @@ class TestMemoryEngineValidation:
         assert "bank creation not allowed" in str(exc_info.value)
         assert len(validator.create_bank_calls) == 1
         assert validator.create_bank_calls[0].bank_id == bank_id
-        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+        assert await memory.get_bank_profile(bank_id, request_context=ctx) is None
 
     @pytest.mark.asyncio
     async def test_create_bank_validation_skips_existing_bank(self, memory):
         """Existing banks do not require create_bank validation."""
         bank_id = "test-create-bank-existing"
         ctx = RequestContext()
-        await memory.get_bank_profile(bank_id, request_context=ctx)
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         validator = CreateBankRejectingValidator()
         memory._operation_validator = validator
@@ -386,12 +388,12 @@ class TestMemoryEngineValidation:
         memory._operation_validator = validator
 
         with pytest.raises(OperationValidationError) as exc_info:
-            await memory.get_bank_profile(bank_id, request_context=ctx)
+            await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         assert "bank creation not allowed" in str(exc_info.value)
         assert len(validator.create_bank_calls) == 1
         assert validator.create_bank_calls[0].bank_id == bank_id
-        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+        assert await memory.get_bank_profile(bank_id, request_context=ctx) is None
 
     @pytest.mark.asyncio
     async def test_http_create_or_update_validates_create_bank(self, api_client, memory):
@@ -523,6 +525,8 @@ class TestOperationHooksParameters:
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-params"
         ctx = RequestContext(api_key="test-key")
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
         query = "test query"
         question_date = datetime(2024, 1, 15, tzinfo=timezone.utc)
 
@@ -566,6 +570,8 @@ class TestOperationHooksParameters:
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-post"
         ctx = RequestContext(api_key="test-key")
+        # Recall 404s for a bank nobody created (#4442), so create it first.
+        await memory.ensure_bank_profile(bank_id, request_context=ctx)
 
         result = await memory.recall_async(
             bank_id=bank_id,

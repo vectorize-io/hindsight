@@ -1,1 +1,0 @@
-"""Benchmark results visualizer."""

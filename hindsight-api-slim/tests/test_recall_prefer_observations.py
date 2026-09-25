@@ -77,7 +77,7 @@ async def seeded_obs_memory(memory_no_llm_verify: MemoryEngine):
     """Seed two source facts, one non-source fact, and an observation over the two sources."""
     engine = memory_no_llm_verify
     bank_id = f"test-prefer-obs-{uuid.uuid4().hex[:8]}"
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
 
     src1_id = str(uuid.uuid4())
     src2_id = str(uuid.uuid4())

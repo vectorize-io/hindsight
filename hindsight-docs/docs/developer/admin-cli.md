@@ -91,6 +91,42 @@ hindsight-admin repair-bank (--bank BANK_ID | --all) [OPTIONS]
 
 Exactly one of `--bank` or `--all` is required. No-op for backends that use a single global vector index (AlloyDB ScaNN, Oracle). It is idempotent — safe to re-run and safe to run while the API is serving traffic.
 
+It is also a no-op for a bank whose memories a custom store owns, this time decided
+per bank rather than per deployment: such a bank has no rows in `memory_units`, so it
+is owed no per-bank index and nothing is built for it. Nothing is dropped either — a
+bank that carries indexes from before it moved to the store keeps them, because
+shedding them is an operator decision with its own timing, not something a repair
+does on your behalf. A store-owned bank therefore reports `0 present, 0 created`
+whether or not it still carries indexes; to see what one actually carries, query
+the catalog for that bank's own partial indexes:
+
+```sql
+SELECT indexname FROM pg_indexes
+WHERE schemaname = '<tenant schema>'
+  AND tablename = 'memory_units'
+  AND indexname LIKE 'idx_mu_emb_%'
+  AND strpos(indexdef, $$bank_id = '<bank id>'$$) > 0;
+```
+
+Drop the last condition to list every per-bank index in the schema instead.
+
+Those indexes are empty, and Postgres plans against every index on a relation, so on
+a deployment with many store-owned banks they are charged to every other query that
+touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are ready.
+
+**Exit code.** `0` when every schema was reconciled. `1` when an index failed to build
+(the names are printed, and a re-run retries them), or when a schema was not fully
+reconciled — for example because the memories store could not say which banks it
+owns. The command does not guess there, because guessing would rebuild the very
+indexes described above.
+
+A schema is named as skipped whether it failed before its first bank or partway
+through, so it may already have had some banks reconciled; when it got that far the
+per-schema line says how many, and those builds are not undone. Both the failed-index names and the
+skipped schemas are reported before the command exits, so one never hides the other.
+If the database connection itself is lost mid-sweep, the run stops there rather than
+repeating the same error for every remaining schema, and still reports what it did.
+
 **Examples:**
 
 ```bash
@@ -107,6 +143,14 @@ hindsight-admin repair-bank --bank acme-prod
 ---
 
 ### rename-bank
+
+:::tip Consider an alias instead
+
+A rename requires stopping the bank's clients, because the old id stops working the moment it commits. If what you want is to move callers onto a new id, **[bank aliases](./api/memory-banks.mdx#aliases)** do that with no downtime and no row rewrite: the bank answers to both ids until you are done.
+
+Reach for `rename-bank` when the old id must genuinely stop existing — an alias never removes one.
+
+:::
 
 Change a bank's id in place. Every memory, document, entity, mental model and knowledge page is kept exactly as it is. Nothing is re-extracted or re-embedded, and no LLM calls are made.
 
@@ -127,6 +171,8 @@ hindsight-admin rename-bank --from OLD_ID --to NEW_ID [OPTIONS]
 
 - **Stop the bank's clients.** Anything still calling the old id gets a 404, or, if it creates banks on demand, silently starts a new, empty bank under the old id. Point every client, and any API key scoped to the bank, at the new id before restarting them.
 - **Let the bank's operations finish.** The command refuses while the bank has pending or processing operations.
+
+A file's storage key spells the bank id, so after the rows move the bank's stored files — document attachments and uploaded originals — are copied to keys under the new id, their rows repointed, and the old id's prefix cleared. That last step also removes any export or import archive left under the old id: their download links stop working at the rename, and the operation can produce them again. Deleting the bank afterwards removes its files with it.
 
 The rename runs in a single transaction and only locks that bank's rows. Other banks keep serving. Its duration grows with the bank's size. Afterwards, the bank's vector indexes are rebuilt with `CREATE INDEX CONCURRENTLY`, and until that finishes, recall on the renamed bank runs without them. Running API servers may keep answering for the old id until their bank-info cache expires. PostgreSQL only.
 

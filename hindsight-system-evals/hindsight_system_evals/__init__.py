@@ -13,15 +13,18 @@ from hindsight_system_evals.answers import AnswerOutcome, ask, seed_bank
 from hindsight_system_evals.judge import Verdict, evaluate, judge_model
 from hindsight_system_evals.pages import PageOutcome, build_page, facts, questions, split_into_waves
 from hindsight_system_evals.server import EvalServer, provider_environment, start_eval_server
+from hindsight_system_evals.target import Target, eval_target
 from hindsight_system_evals.waiting import wait_until_settled
 
 __all__ = [
     "AnswerOutcome",
     "EvalServer",
     "PageOutcome",
+    "Target",
     "Verdict",
     "ask",
     "build_page",
+    "eval_target",
     "evaluate",
     "facts",
     "judge_model",

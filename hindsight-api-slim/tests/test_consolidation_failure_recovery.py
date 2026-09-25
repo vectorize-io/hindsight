@@ -133,7 +133,7 @@ class TestAdaptiveBatchSplitting:
     async def test_splitting_recovers_all_memories(self, memory_no_llm_verify: MemoryEngine, request_context):
         """When a batch of 2 fails, both are retried individually and succeed."""
         bank_id = f"test-split-recovery-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             mem_ids = await _insert_memories(
@@ -183,7 +183,7 @@ class TestAdaptiveBatchSplitting:
     async def test_splitting_with_larger_batch(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A batch of 4 that always fails at size>1 resolves to 4 individual calls."""
         bank_id = f"test-split-large-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             await _insert_memories(
@@ -230,7 +230,7 @@ class TestConsolidationFailedAt:
     async def test_single_memory_permanent_failure(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A single memory that exhausts all LLM retries gets consolidation_failed_at, not consolidated_at."""
         bank_id = f"test-perm-fail-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             (mem_id,) = await _insert_memories(conn, bank_id, ["Carol enjoys painting watercolors."])
@@ -265,7 +265,7 @@ class TestConsolidationFailedAt:
     async def test_failed_memory_excluded_from_next_run(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A memory marked consolidation_failed_at is not re-processed on the next consolidation run."""
         bank_id = f"test-excluded-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             (mem_id,) = await _insert_memories(conn, bank_id, ["Dave collects vinyl records."])
@@ -308,7 +308,7 @@ class TestConsolidationFailedAt:
     async def test_partial_batch_failure(self, memory_no_llm_verify: MemoryEngine, request_context):
         """In a batch of 2, if only the first individual retry fails, the second still succeeds."""
         bank_id = f"test-partial-fail-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             mem_ids = await _insert_memories(
@@ -360,7 +360,7 @@ class TestRecoverConsolidation:
     async def test_recover_resets_failed_memories(self, memory_no_llm_verify: MemoryEngine, request_context):
         """retry_failed_consolidation resets consolidation_failed_at and consolidated_at."""
         bank_id = f"test-recover-reset-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             ids = await _insert_memories(
@@ -396,7 +396,7 @@ class TestRecoverConsolidation:
     async def test_recover_returns_zero_when_none_failed(self, memory_no_llm_verify: MemoryEngine, request_context):
         """retry_failed_consolidation returns 0 when no memories have failed."""
         bank_id = f"test-recover-zero-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         result = await memory_no_llm_verify.retry_failed_consolidation(bank_id, request_context=request_context)
 
@@ -409,7 +409,7 @@ class TestRecoverConsolidation:
     async def test_recover_then_consolidate_succeeds(self, memory_no_llm_verify: MemoryEngine, request_context):
         """After recovery, the memory is picked up by the next consolidation run."""
         bank_id = f"test-recover-consolidate-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             (mem_id,) = await _insert_memories(conn, bank_id, ["Grace is an expert rock climber."])
@@ -452,7 +452,7 @@ class TestRecoverConsolidation:
         from hindsight_api.api.http import create_app
 
         bank_id = f"test-recover-http-{uuid.uuid4().hex[:8]}"
-        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_no_llm_verify.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             ids = await _insert_memories(

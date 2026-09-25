@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import (
     ENV_CONSOLIDATION_WALL_TIMEOUT,
+    ENV_REFLECT_WALL_TIMEOUT,
     ENV_RETAIN_WALL_TIMEOUT,
     get_config,
 )
@@ -86,6 +87,9 @@ _WALL_CEILINGS: dict[str, _WallCeiling] = {
         env_var=ENV_CONSOLIDATION_WALL_TIMEOUT,
         extends_on_progress=True,
     ),
+    # A refresh is one reflect plus its write, so it shares reflect's budget. Without
+    # a ceiling a wedged refresh held its worker slot until restart (#4581).
+    "refresh_mental_model": _WallCeiling(config_attr="reflect_wall_timeout", env_var=ENV_REFLECT_WALL_TIMEOUT),
 }
 
 
@@ -133,8 +137,9 @@ def _wall_timeout_for(task_type: str) -> float | None:
     For consolidation the ceiling bounds time *without progress* rather than
     total runtime — see ``_WallCeiling.extends_on_progress``.
 
-    Reflect self-bounds inside the engine (``reflect_wall_timeout``); unmapped
-    task types remain unbounded until they get an explicit ceiling.
+    Reflect self-bounds inside the engine (``reflect_wall_timeout``); a mental-model
+    refresh borrows that same value here. Unmapped task types remain unbounded until
+    they get an explicit ceiling.
     """
     ceiling = _WALL_CEILINGS.get(task_type)
     if ceiling is None:

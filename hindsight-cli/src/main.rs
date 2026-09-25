@@ -299,6 +299,12 @@ enum BankCommands {
         yes: bool,
     },
 
+    /// Manage the extra ids this bank also answers to
+    Alias {
+        #[command(subcommand)]
+        command: BankAliasCommands,
+    },
+
     /// Trigger consolidation to create/update observations
     Consolidate {
         /// Bank ID
@@ -447,6 +453,50 @@ enum BankCommands {
 
     /// Print the bank template JSON schema
     TemplateSchema,
+}
+
+#[derive(Subcommand)]
+enum BankAliasCommands {
+    /// List the ids that also reach this bank
+    List {
+        /// Bank ID
+        bank_id: String,
+    },
+
+    /// Add an id that also reaches this bank
+    Add {
+        /// Bank ID
+        bank_id: String,
+
+        /// The extra id. Must not already name a bank or another alias.
+        alias: String,
+    },
+
+    /// Show this bank under one of its aliases instead of its own id
+    Primary {
+        /// Bank ID
+        bank_id: String,
+
+        /// The alias to present the bank under
+        alias: String,
+
+        /// Go back to showing the bank's own id
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Stop an id reaching this bank (the bank and its memories are untouched)
+    Remove {
+        /// Bank ID
+        bank_id: String,
+
+        /// The alias to detach
+        alias: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -740,9 +790,10 @@ enum DocumentCommands {
         /// Document ID
         document_id: String,
 
-        /// New tag list (comma-separated). Triggers observation invalidation + re-consolidation.
+        /// New tag list (comma-separated); `--tags ""` removes every tag. Triggers observation
+        /// invalidation + re-consolidation.
         #[arg(long, value_delimiter = ',')]
-        tags: Vec<String>,
+        tags: Option<Vec<String>>,
     },
 }
 
@@ -1479,6 +1530,38 @@ fn run() -> Result<()> {
             BankCommands::Delete { bank_id, yes } => {
                 commands::bank::delete(&client, &bank_id, yes, verbose, output_format)
             }
+            BankCommands::Alias { command } => match command {
+                BankAliasCommands::List { bank_id } => {
+                    commands::bank::alias_list(&client, &bank_id, verbose, output_format)
+                }
+                BankAliasCommands::Add { bank_id, alias } => {
+                    commands::bank::alias_add(&client, &bank_id, &alias, verbose, output_format)
+                }
+                BankAliasCommands::Primary {
+                    bank_id,
+                    alias,
+                    clear,
+                } => commands::bank::alias_primary(
+                    &client,
+                    &bank_id,
+                    &alias,
+                    !clear,
+                    verbose,
+                    output_format,
+                ),
+                BankAliasCommands::Remove {
+                    bank_id,
+                    alias,
+                    yes,
+                } => commands::bank::alias_remove(
+                    &client,
+                    &bank_id,
+                    &alias,
+                    yes,
+                    verbose,
+                    output_format,
+                ),
+            },
             BankCommands::Consolidate {
                 bank_id,
                 wait,
@@ -1753,12 +1836,14 @@ fn run() -> Result<()> {
                 document_id,
                 tags,
             } => {
-                let tag_opt = if tags.is_empty() { None } else { Some(tags) };
+                // `--tags ""` parses as one empty tag; drop blanks so it clears the set
+                // instead of storing "".
+                let tags = tags.map(|t| t.into_iter().filter(|tag| !tag.is_empty()).collect());
                 commands::document::update(
                     &client,
                     &bank_id,
                     &document_id,
-                    tag_opt,
+                    tags,
                     verbose,
                     output_format,
                 )

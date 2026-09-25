@@ -27,7 +27,7 @@ async def _raise_silent(*_args, **_kwargs):
 async def test_recall_async_error_preserves_original(memory_no_llm_verify: MemoryEngine):
     engine = memory_no_llm_verify
     bank_id = "test-error-propagation"
-    await engine.get_bank_profile(bank_id, request_context=RC)
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
 
     try:
         with patch(

@@ -59,7 +59,7 @@ async def test_retain_with_entity_labels_under_strict_schema(
 
     bank_id = f"test-labels-strict-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         await memory._config_resolver.update_bank_config(
             bank_id=bank_id,
             updates={

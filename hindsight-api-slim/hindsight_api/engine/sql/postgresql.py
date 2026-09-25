@@ -15,15 +15,18 @@ from .base import SQLDialect, bm25_score_gate
 class KnowledgeBm25Arm:
     """Backend-specific BM25 clauses for the knowledge-page full-text arm.
 
-    ``score_expr`` is a relevance score where higher = more relevant (used in the
-    SELECT list of the BM25-only fallback). ``order_by`` is the arm's ranking
-    expression (kept separate so distance-based backends can order by the raw,
-    index-friendly ``ASC`` distance). ``match_filter`` is a WHERE predicate that
-    keeps only genuine term matches, already prefixed with ``AND `` — empty when
-    the backend ranks every row and needs no gate.
+    ``order_by`` is the arm's ranking expression (distance-based backends order by
+    the raw, index-friendly ``ASC`` distance rather than a negated score).
+    ``match_filter`` is a WHERE predicate that keeps only genuine term matches,
+    already prefixed with ``AND `` — empty when the backend ranks every row and
+    needs no gate.
+
+    There is deliberately no raw-score field: each backend's operator returns its
+    own scale (``ts_rank_cd``, a negated distance, ``paradedb.score``), and the
+    caller ranks off ``order_by`` and normalizes the rank instead, so the score it
+    reports means the same thing on every backend.
     """
 
-    score_expr: str
     order_by: str
     match_filter: str
 
@@ -103,7 +106,6 @@ def knowledge_bm25_arm(
         # <&> is the NEGATIVE score (lower = more relevant); negate it.
         expr = f"-({a}.search_vector <&> to_bm25query('idx_mental_models_text_search', tokenize({p}, 'llmlingua2')))"
         return KnowledgeBm25Arm(
-            score_expr=expr,
             order_by=f"{expr} DESC",
             # Gate on a positive score: the operator ranks every row, so a bare
             # LIMIT would pad the arm with zero-score non-matches.
@@ -118,7 +120,6 @@ def knowledge_bm25_arm(
             pg_search_function_schema, ("name", "content"), p, pg_search_tokenizer, max_query_terms
         )
         return KnowledgeBm25Arm(
-            score_expr=score,
             order_by=f"{score} DESC",
             match_filter=f"AND {a}.id @@@ {pg_search_function_schema}.boolean(should => {should})",
         )
@@ -129,7 +130,6 @@ def knowledge_bm25_arm(
         # order by the raw ASC distance so the index drives the ordering.
         distance = f"{a}.content <@> to_bm25query({p}, 'idx_mental_models_text_search')"
         return KnowledgeBm25Arm(
-            score_expr=f"-({distance})",
             order_by=f"{distance} ASC",
             match_filter="",
         )
@@ -152,7 +152,6 @@ def knowledge_bm25_arm(
             f"FROM unnest(pgroonga_tokenize({p}, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')) AS elem)"
         )
         return KnowledgeBm25Arm(
-            score_expr=score,
             order_by=f"{score} DESC, {a}.id",
             match_filter=f"AND {document} &@~ {query_expr}",
         )
@@ -171,7 +170,6 @@ def knowledge_bm25_arm(
     # (search_knowledge_pages runs no reranker either way).
     score = f"ts_rank_cd({a}.search_vector, to_tsquery('english', {p}))"
     return KnowledgeBm25Arm(
-        score_expr=score,
         order_by=f"{score} DESC",
         match_filter=f"AND {a}.search_vector @@ to_tsquery('english', {p})",
     )

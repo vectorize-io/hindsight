@@ -582,6 +582,81 @@ class TestOracleQueryRewriter:
         assert "::uuid" not in query
         assert "::varchar[]" not in query
 
+    def test_jsonb_merge_returns_clob(self):
+        # Without RETURNING CLOB, JSON_MERGEPATCH returns VARCHAR2(4000) with
+        # NULL ON ERROR, so large merged documents silently become NULL.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("UPDATE banks SET config = config || $1::jsonb WHERE bank_id = $2")
+        assert "JSON_MERGEPATCH(config, :1 RETURNING CLOB)" in query
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "UPDATE banks SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE bank_id = $2"
+        )
+        assert "JSON_MERGEPATCH(COALESCE(config, TO_CLOB('{}')), :1 RETURNING CLOB)" in query
+
+    def test_jsonb_merge_returning_clob_is_not_a_returning_clause(self):
+        # The function-level RETURNING CLOB must not be mistaken for a PG RETURNING clause.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, returning_cols = _rewrite_pg_to_oracle(
+            "UPDATE banks SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb, updated_at = now() WHERE bank_id = $2"
+        )
+        assert returning_cols is None
+        assert " INTO " not in query
+        assert query.rstrip().endswith("WHERE bank_id = :2")
+
+        query, _, returning_cols = _rewrite_pg_to_oracle(
+            "UPDATE async_operations SET result_metadata = result_metadata || $1::jsonb WHERE operation_id = $2 RETURNING status"
+        )
+        assert returning_cols == ["status"]
+        assert query.rstrip().endswith("RETURNING status INTO :ret_0")
+
+    def test_set_local_is_a_noop(self):
+        # PG-only session GUCs must not reach Oracle (ORA-00922).
+        from unittest.mock import MagicMock
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        raw = MagicMock()
+        conn = OracleConnection(raw)
+        for q in ("SET LOCAL enable_seqscan = off", "  set local lock_timeout = '5s'"):
+            assert asyncio.run(conn.execute(q)) == "SET"
+        raw.cursor.assert_not_called()
+
+    def test_not_jsonb_contains_is_parent_literal(self):
+        # list_operations(exclude_parents=True) filter: a jsonb literal, not a bind param.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "SELECT id FROM async_operations WHERE NOT (result_metadata::jsonb @> '{\"is_parent\": true}'::jsonb)"
+        )
+        assert "@>" not in query
+        assert "result_metadata IS NOT NULL" in query
+        assert "JSON_VALUE(result_metadata, '$.is_parent') = 'true'" in query
+
+    def test_connect_params_host_port_service(self):
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        params = _oracle_connect_params("oracle://u:p@db:1522/SVC")
+        assert params == {"user": "u", "password": "p", "dsn": "db:1522/SVC"}
+
+    def test_connect_params_decode_credentials(self):
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        params = _oracle_connect_params("oracle+oracledb://ADMIN:Pa%23ss%40w0rd@db/SVC")
+        assert params["user"] == "ADMIN"
+        assert params["password"] == "Pa#ss@w0rd"
+
+    def test_connect_params_full_descriptor(self):
+        from urllib.parse import quote
+
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        desc = "(description=(address=(protocol=tcps)(port=1522)(host=adb.example.com))(connect_data=(service_name=x_low)))"
+        params = _oracle_connect_params(f"oracle://u:p@/?dsn={quote(desc)}")
+        assert params["dsn"] == desc
+
     def test_now_to_systimestamp(self):
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 

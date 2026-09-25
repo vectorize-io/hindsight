@@ -56,6 +56,42 @@ const NON_DESTRUCTIVE_WRITE_ANNOTATIONS: ToolSafetyAnnotations = {
   openWorldHint: false,
 };
 
+/**
+ * Returned alongside every search result set.
+ *
+ * Phrased as an obligation triggered by the CALL, not by the agent judging that it "used" a page: a
+ * model that paraphrases a snippet into its own prose does not register itself as having quoted
+ * anything, and silently absorbs the memory instead of crediting it.
+ */
+const CREDIT_REMINDER =
+  "Crediting is mandatory, not a judgement call: if anything these results contribute reaches your " +
+  "reply — quoted, paraphrased, or merely confirming what you were going to say — open that part " +
+  'with "> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
+  "snippet in your own words does not make it yours. If none of them bear on the turn, ignore them " +
+  "silently — an unhelpful search needs no mention.";
+
+/**
+ * What the agent gets back from reading one page.
+ *
+ * The API returns `body` AND `markdown`, where `markdown` is that same body with YAML frontmatter
+ * on top — so passing the response straight through handed the model the entire page twice, on
+ * every read. `timestamp` goes out as `last_updated_at`: the value is the page's last refresh, and
+ * a bare "timestamp" beside a page tells the model nothing about whether it is looking at something
+ * current.
+ */
+export function shapePage(page: unknown): unknown {
+  const p = (page ?? {}) as Record<string, unknown>;
+  const body = typeof p.body === "string" && p.body.trim() ? p.body : p.markdown;
+  return {
+    id: p.id,
+    name: p.name,
+    ...(p.description ? { description: p.description } : {}),
+    ...(Array.isArray(p.tags) && p.tags.length ? { tags: p.tags } : {}),
+    ...(p.timestamp ? { last_updated_at: p.timestamp } : {}),
+    body,
+  };
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -189,22 +225,35 @@ export function buildKnowledgeTools(
         "hybrid full-text + semantic search, server-side. Call this when the user's question may " +
         "be answered by the project's accumulated knowledge (architecture, conventions, decisions, " +
         "initiatives) rather than by reading code. Returns ranked pages with a relevance snippet; " +
-        "read a full page with hindsight_read_knowledge_page. When a result informs your answer, " +
-        "credit it visibly: start that part with a markdown blockquote header " +
-        '"> 🧠 **From Hindsight memory (<page name>)** — <the facts you drew on>".',
+        // Same sentence the payload carries, from the same constant: two copies of a rule this
+        // fiddly drift apart, and the description is what a host shows when the tool is listed.
+        "read a full page with hindsight_read_knowledge_page. " +
+        CREDIT_REMINDER,
       inputSchema: { query: z.string().describe("what to look for") },
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
         try {
-          const hits = await client.searchKnowledgePages(args.query, 3);
-          return ok(
-            hits.map((h) => ({
+          // Limit comes from the client (`pageSearchLimit`), so the tool and the hook's injection
+          // can never drift apart — this used to pass its own literal 3.
+          const hits = await client.searchKnowledgePages(args.query);
+          // No `score`. The server fuses BM25 and vector search with reciprocal rank fusion, so the
+          // number is ~1/(60+rank) summed over two retrievers: a perfect top hit scores about 0.03
+          // and nothing ever approaches 1. Handed that, a model reads a strong match as 3% relevant
+          // and discounts it. The hits arrive in rank order, which is the ranking that means
+          // something here.
+          // The reminder rides WITH the hits, not only in the session guide. Measured on real
+          // sessions: the agent searched, got ten on-topic pages, wrote an answer built from them
+          // and credited nothing — then credited correctly the moment the user asked "where did you
+          // see that?". The guide had scrolled far up the context by then; the instruction that
+          // lands at the same moment as the results is the one that can still be acted on.
+          return ok({
+            pages: hits.map((h) => ({
               page: h.name,
               page_id: h.id,
               snippet: h.snippet,
-              score: h.score,
-            }))
-          );
+            })),
+            crediting: CREDIT_REMINDER,
+          });
         } catch (e) {
           return err(e);
         }
@@ -234,7 +283,7 @@ export function buildKnowledgeTools(
         "that id. Prefer reading a page over re-deriving the same understanding from source.",
       inputSchema: { page_id: z.string() },
       annotations: READ_ONLY_ANNOTATIONS,
-      handler: guarded(async ({ page_id }) => client.getPage(page_id)),
+      handler: guarded(async ({ page_id }) => shapePage(await client.getPage(page_id))),
     },
     {
       name: "hindsight_reflect",

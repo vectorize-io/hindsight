@@ -36,7 +36,10 @@ hindsight memory reflect my-bank "What do you know about Alice?"
 ### Go
 
 ```go
-# Section 'reflect-basic' not found in api/reflect.go
+client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query: "What should I know about Alice?",
+	}).Execute()
 ```
 
 ---
@@ -79,7 +82,12 @@ hindsight memory reflect my-bank "Summarize my week" --budget high --max-tokens 
 ### Go
 
 ```go
-# Section 'reflect-with-params' not found in api/reflect.go
+budgetMid := hindsight.MID
+client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query:  "We're considering a hybrid work policy. What do you think about remote work?",
+		Budget: &budgetMid,
+	}).Execute()
 ```
 
 ### max_tokens
@@ -169,7 +177,29 @@ rm -f schema.json
 ### Go
 
 ```go
-# Section 'reflect-structured-output' not found in api/reflect.go
+// Define JSON schema for structured output
+responseSchema := map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"recommendation": map[string]interface{}{"type": "string"},
+		"confidence":     map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}},
+		"key_factors":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		"risks":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+	},
+	"required": []string{"recommendation", "confidence", "key_factors"},
+}
+
+structuredResponse, _, _ := client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query:          "Should we hire Alice for the ML team lead position?",
+		ResponseSchema: responseSchema,
+	}).Execute()
+
+// Access structured output
+if out := structuredResponse.GetStructuredOutput(); out != nil {
+	fmt.Println("Recommendation:", out["recommendation"])
+	fmt.Println("Key factors:", out["key_factors"])
+}
 ```
 
 ### tags
@@ -247,7 +277,14 @@ hindsight memory reflect my-bank "What feedback did the user give?" \
 ### Go
 
 ```go
-# Section 'reflect-with-tags' not found in api/reflect.go
+// Filter reflection to only consider memories for a specific user
+tagsMatch := "any_strict"
+client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query:     "What does this user think about our product?",
+		Tags:      []string{"user:alice"},
+		TagsMatch: &tagsMatch,
+	}).Execute()
 ```
 
 #### Common scope examples
@@ -342,12 +379,48 @@ hindsight memory reflect my-bank "Tell me about Alice" --include-facts
 ### Go
 
 ```go
-# Section 'reflect-sources' not found in api/reflect.go
+// include.facts enables the based_on field in the response
+sourcesResponse, _, _ := client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query: "Tell me about Alice",
+		Include: &hindsight.ReflectIncludeOptions{
+			Facts: map[string]interface{}{}, // empty map enables fact inclusion
+		},
+	}).Execute()
+
+fmt.Println("Response:", sourcesResponse.GetText())
+fmt.Println("\nBased on:")
+if basedOn := sourcesResponse.GetBasedOn(); basedOn.Memories != nil {
+	for _, fact := range basedOn.GetMemories() {
+		fmt.Printf("  - [%s] %s\n", fact.GetType(), fact.GetText())
+	}
+}
 ```
 
 #### include.tool_calls
 
 When enabled, the response includes a `trace` object with the full execution log of every tool call and LLM call made during the agentic loop, including inputs, outputs, and durations. Set `output: false` to include only tool inputs for a smaller payload. Useful for debugging why the agent reached a particular conclusion.
+
+### reflect_search_observations_max_tokens
+
+Token budget for the agent's `search_observations` tool when the model names no
+budget of its own. Observation evidence is often the largest single contributor
+to the reflect context on a big bank, so lowering this trades the lowest-ranked
+observations for a smaller (cheaper, faster) LLM context. Defaults to `5000`.
+
+### reflect_search_observations_include_entities
+
+Whether `search_observations` attaches resolved entity names to each
+observation. They are useful when the surface text uses an alias ("Bob" for
+canonical "Robert Smith"), but they can be more than half the serialized tool
+payload; setting `false` keeps the same observations and ranking with a much
+smaller context. Defaults to `true`.
+
+Both options can be defaulted for a whole bank with the
+`reflect_default_options` config key (see
+[Configuration](../configuration.mdx)), and set per mental model through the
+refresh trigger's fields of the same name. An explicit value on the request
+always wins.
 
 ---
 

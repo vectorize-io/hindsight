@@ -22,7 +22,7 @@ from hindsight_api.engine.llm_wrapper import (
 )
 from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
 from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
-from hindsight_api.engine.retain.fact_extraction import Fact
+from hindsight_api.engine.retain.fact_extraction import ExtractionPrompt, Fact
 from hindsight_api.engine.token_encoding import count_tokens, truncate_to_tokens
 
 # A lone high surrogate — valid in a Python str, but rejected by the Rust
@@ -125,7 +125,7 @@ async def test_fact_extraction_sanitizes_surrogates_generated_by_llm():
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
-        return_value=("system prompt", MagicMock()),
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
         facts, _usage = await _extract_facts_from_chunk(
             chunk="Alex laughed at the joke.",

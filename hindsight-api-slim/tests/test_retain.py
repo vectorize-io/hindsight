@@ -2837,7 +2837,7 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
     config.retain_extract_causal_links = False
 
     # The mission is absent from the (cacheable, bank-agnostic) system prompt...
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
     assert spec not in prompt
     assert "FOCUS" not in prompt
     # ...and present in the per-request user-message preamble instead.
@@ -2847,7 +2847,7 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
 
     # Mode-independent: verbose mode → same mission-free prompt, same preamble.
     config.retain_extraction_mode = "verbose"
-    prompt_verbose, _ = _build_extraction_prompt_and_schema(config)
+    prompt_verbose = _build_extraction_prompt_and_schema(config).system_prompt
     assert spec not in prompt_verbose
     assert spec in _retain_mission_preamble(config)
 
@@ -2856,9 +2856,9 @@ def test_retain_mission_in_user_preamble_not_cached_prefix():
     # instead of one cache per mission.
     config.retain_extraction_mode = "concise"
     config.retain_mission = "Track project A architecture decisions."
-    prompt_a, _ = _build_extraction_prompt_and_schema(config)
+    prompt_a = _build_extraction_prompt_and_schema(config).system_prompt
     config.retain_mission = "Track customer B support incidents."
-    prompt_b, _ = _build_extraction_prompt_and_schema(config)
+    prompt_b = _build_extraction_prompt_and_schema(config).system_prompt
     assert prompt_a == prompt_b
 
 
@@ -2891,19 +2891,20 @@ def test_retain_cacheable_prefix_invariant_to_per_bank_freetext(mode):
             "entities_allow_free_form": True,
             "llm_output_language": None,
             "llm_supports_string_pattern": False,
+            "retain_optional_fact_dimensions": False,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
 
-    baseline, _ = _build_extraction_prompt_and_schema(make())
+    baseline = _build_extraction_prompt_and_schema(make()).system_prompt
 
     # The mission must not change the cacheable prefix, whatever its value.
     for mission in ["Track A decisions.", '{"focus": "compliance"}', "Ünïcödé brief", "x" * 600]:
-        prompt, _ = _build_extraction_prompt_and_schema(make(retain_mission=mission))
+        prompt = _build_extraction_prompt_and_schema(make(retain_mission=mission)).system_prompt
         assert prompt == baseline, f"retain_mission leaked into the cacheable {mode} prefix"
 
     # Custom instructions are a custom-mode field; they must not touch concise/verbose.
-    prompt, _ = _build_extraction_prompt_and_schema(make(retain_custom_instructions="Do X with {braces}"))
+    prompt = _build_extraction_prompt_and_schema(make(retain_custom_instructions="Do X with {braces}")).system_prompt
     assert prompt == baseline, f"retain_custom_instructions leaked into the cacheable {mode} prefix"
 
 
@@ -2919,7 +2920,7 @@ def test_retain_mission_absent_when_not_set():
     config.retain_custom_instructions = None
     config.retain_extract_causal_links = False
 
-    prompt, _ = _build_extraction_prompt_and_schema(config)
+    prompt = _build_extraction_prompt_and_schema(config).system_prompt
     assert "FOCUS" not in prompt
     assert "retain_mission_section" not in prompt
 
@@ -3740,7 +3741,7 @@ class TestFactExtractionQuality:
         """
         bank_id = f"test-quality-dims-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
                 content=(
@@ -3782,7 +3783,7 @@ class TestFactExtractionQuality:
         """
         bank_id = f"test-quality-relevance-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             for content in [
                 "Bob is a software engineer.",
                 "Bob's favourite programming language is Rust.",
@@ -3813,7 +3814,7 @@ class TestFactExtractionQuality:
         """A query about one person should not surface facts about an unrelated person."""
         bank_id = f"test-quality-isolation-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             for content in [
                 "Alice works as a data scientist at Netflix.",
                 "Alice holds a master's degree in statistics.",
@@ -3847,7 +3848,7 @@ class TestFactExtractionQuality:
         """Negations in content should survive fact extraction without being reversed."""
         bank_id = f"test-quality-negation-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
                 content=("Marcus does not have a driver's licence. He relies on public transport to commute to work."),
@@ -3878,7 +3879,7 @@ class TestFactExtractionQuality:
         """Technical terms and numbers should survive fact extraction intact."""
         bank_id = f"test-quality-technical-{uuid.uuid4().hex[:8]}"
         try:
-            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
                 content=(

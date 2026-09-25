@@ -169,7 +169,7 @@ async def test_consolidation_records_advancing_progress(memory: MemoryEngine, re
     monkeypatch.setattr(config, "enable_observations", True)
 
     bank_id = f"op_progress_consol_{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     fake_no_obs = type(config)(
         **{**{f: getattr(config, f) for f in config.__dataclass_fields__}, "enable_observations": False}
@@ -230,7 +230,7 @@ async def test_batch_retain_records_chunk_progress(memory: MemoryEngine, request
     pipeline, reaching total/total on completion — so a finished retain's last snapshot
     reflects done, and a long document shows chunks committing rather than an opaque tick."""
     bank_id = f"op_progress_retain_{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     pool = memory._pool
     op_id = await _insert_operation(pool, bank_id, status="processing")

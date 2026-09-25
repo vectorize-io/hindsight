@@ -17,20 +17,15 @@ import mentalModelsPy from '!!raw-loader!@site/examples/api/mental-models.py';
 import mentalModelsMjs from '!!raw-loader!@site/examples/api/mental-models.mjs';
 import mentalModelsSh from '!!raw-loader!@site/examples/api/mental-models.sh';
 import mentalModelsGo from '!!raw-loader!@site/examples/api/mental-models.go';
+import {Flow} from '@vectorize-io/interfig';
+import mentalModelsApi from '@vectorize-io/interfig/figures/mental-models-api';
+import refreshModes from '@vectorize-io/interfig/figures/refresh-modes';
 
 ## What Are Mental Models?
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
-```mermaid
-graph LR
-    A[Create Mental Model] --> B[Run Reflect]
-    B --> C[Store Result]
-    C --> D[Future Queries]
-    D --> E{Match Found?}
-    E -->|Yes| F[Return Mental Model]
-    E -->|No| G[Run Full Reflect]
-```
+<Flow {...mentalModelsApi.props} />
 
 ### Why Use Mental Models?
 
@@ -130,6 +125,8 @@ Mental models can be configured to **automatically refresh** when observations a
 | `include_chunks` | bool \| null | null | Override whether the refresh's internal recall returns raw chunk text. `null` uses the bank/global `recall_include_chunks` default. |
 | `recall_max_tokens` | int \| null | null | Override the token budget for facts retrieved during refresh. `null` uses the bank/global default. |
 | `recall_chunks_max_tokens` | int \| null | null | Override the token budget for raw chunks retrieved during refresh. `null` uses the bank/global default. |
+| `reflect_search_observations_max_tokens` | int \| null | null | Override the token budget for the refresh's `search_observations` calls. A smaller budget drops the lowest-ranked observations and shrinks the reflect context. `null` uses the bank's `reflect_default_options`, then the shipped 5000. |
+| `reflect_search_observations_include_entities` | bool \| null | null | Override whether `search_observations` attaches resolved entity names, which can be more than half the tool payload. `null` uses the bank's `reflect_default_options`, then enabled. |
 | `response_schema` | object \| null | null | JSON Schema for structured output. When set, each refresh also stores a `structured_output` alongside the markdown content. See [Structured Output](#structured-output) below. |
 | `keep_trace` | bool | false | Record how each refresh reached its result under `reflect_response.trace`. See [Troubleshoot a Refresh](#troubleshoot-a-refresh). |
 
@@ -229,6 +226,8 @@ Two strategies are available for how a refresh produces the new content:
 - **`full`** *(default)* — every refresh regenerates the entire content from scratch. Simple and predictable: the LLM synthesises a fresh document from the retrieved memories. Best when the document is short, when you want every refresh to potentially restructure the output, or when you're not yet sure what the final shape should be.
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
+
+<Flow {...refreshModes.props} />
 
 #### How delta mode works
 
@@ -340,16 +339,20 @@ The two endpoints default differently:
 - **List** defaults to `metadata`. Listing is an index — returning every model's synthesized content by default let one request pull a whole bank's knowledge in bulk. Content is opt-in.
 - **Get** defaults to `full`. You already named the one model you want.
 
-```bash
-# List: metadata only, the default (smallest response)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models"
-
-# List with content but without provenance chains (opt-in)
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
-
-# Get one model — full detail is the default here
-curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="mental-model-detail" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="mental-model-detail" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="mental-model-detail" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="mental-model-detail" language="go" />
+</TabItem>
+</Tabs>
 
 The `detail` parameter is available on the `get_mental_model` MCP tool. The
 `list_mental_models` MCP tool does not take it: it always returns metadata
@@ -430,10 +433,20 @@ watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry ru
 reads exactly the window the next real refresh will, and repeating it reads that same
 window again.
 
-```bash
-curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
-  -H "Content-Type: application/json" -d '{}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="dry-run-refresh" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="dry-run-refresh" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="dry-run-refresh" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="dry-run-refresh" language="go" />
+</TabItem>
+</Tabs>
 
 The response answers the questions the stored document can't:
 
@@ -470,11 +483,20 @@ the time you notice a bad document, the run that produced it is gone.
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that
 model — scheduled ones included — under `reflect_response.trace`:
 
-```bash
-curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="keep-trace" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="keep-trace" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="keep-trace" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="keep-trace" language="go" />
+</TabItem>
+</Tabs>
 
 Only the latest refresh's trace is kept, and it is recorded even when a refresh
 fails — which is when it matters most, since a failed refresh leaves nothing else

@@ -31,7 +31,7 @@ async def test_bank_id(memory):
     # Create the bank. Bank-scoped reads 404 for a bank nobody created (#4175),
     # so a stats test that only invents an id would exercise that path instead of
     # the empty-bank one it is about.
-    await memory.get_bank_profile(bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id, request_context=RequestContext())
     return bank_id
 
 

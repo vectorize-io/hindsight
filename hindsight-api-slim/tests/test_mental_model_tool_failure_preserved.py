@@ -28,7 +28,7 @@ EXISTING = "# Team\n\nAlice leads platform. Bob owns ingest.\n"
 
 
 async def _model_with_content(memory: MemoryEngine, request_context, bank_id: str) -> dict:
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
     return await memory.create_mental_model(
         bank_id=bank_id,
         name="Team Info",

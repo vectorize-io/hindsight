@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-client"
-version = "0.10.0"
+version = "0.10.1"
 description = "Python client for Hindsight - Semantic memory system with personality-driven thinking"
 license = "MIT"
 authors = [

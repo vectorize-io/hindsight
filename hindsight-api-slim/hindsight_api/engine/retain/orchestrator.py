@@ -50,6 +50,57 @@ class MemoryDefenseAllBlockedError(Exception):
         super().__init__(f"all {len(violations)} items blocked by Memory Defense policy")
 
 
+async def _persist_operation_document_id(conn: Any, table: str, operation_id: str, document_id: str) -> None:
+    """Record a document id on an async operation for retry-safe retention.
+
+    PostgreSQL can update the JSON atomically with jsonb operators. Oracle has
+    no equivalent operators in the compatibility rewriter, so lock and merge
+    the JSON document in Python within the same transaction.
+    """
+    operation_uuid = uuid.UUID(operation_id)
+    if conn.backend_type == "oracle":
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"SELECT result_metadata FROM {table} WHERE operation_id = $1 FOR UPDATE",
+                operation_uuid,
+            )
+            metadata = conn.parse_json(row["result_metadata"]) if row else {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            document_ids = metadata.get("document_ids")
+            if not isinstance(document_ids, list):
+                document_ids = []
+            if document_id not in document_ids:
+                document_ids.append(document_id)
+            metadata["document_ids"] = document_ids
+            await conn.execute(
+                f"UPDATE {table} SET result_metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE operation_id = $2",
+                json.dumps(metadata),
+                operation_uuid,
+            )
+        return
+
+    await conn.execute(
+        f"""
+        UPDATE {table}
+        SET result_metadata = jsonb_set(
+            COALESCE(result_metadata, '{{}}'::jsonb),
+            '{{document_ids}}',
+            CASE
+                WHEN COALESCE(result_metadata->'document_ids', '[]'::jsonb) @> $1::jsonb
+                    THEN result_metadata->'document_ids'
+                ELSE COALESCE(result_metadata->'document_ids', '[]'::jsonb) || $1::jsonb
+            END,
+            true
+        ),
+        updated_at = now()
+        WHERE operation_id = $2
+        """,
+        json.dumps([document_id]),
+        operation_uuid,
+    )
+
+
 def utcnow():
     """Get current UTC time."""
     return datetime.now(UTC)
@@ -1598,25 +1649,7 @@ async def retain_batch(
     if operation_id:
         try:
             async with acquire_with_retry(pool) as conn:
-                await conn.execute(
-                    f"""
-                    UPDATE {fq_table("async_operations")}
-                    SET result_metadata = jsonb_set(
-                        COALESCE(result_metadata, '{{}}'::jsonb),
-                        '{{document_ids}}',
-                        CASE
-                            WHEN COALESCE(result_metadata->'document_ids', '[]'::jsonb) @> $1::jsonb
-                                THEN result_metadata->'document_ids'
-                            ELSE COALESCE(result_metadata->'document_ids', '[]'::jsonb) || $1::jsonb
-                        END,
-                        true
-                    ),
-                    updated_at = now()
-                    WHERE operation_id = $2
-                    """,
-                    json.dumps([effective_doc_id]),
-                    uuid.UUID(operation_id),
-                )
+                await _persist_operation_document_id(conn, fq_table("async_operations"), operation_id, effective_doc_id)
         except Exception:
             logger.warning("Failed to persist document_id", exc_info=True)
 
@@ -2090,9 +2123,9 @@ async def _store_document_bodies(
     ``observation_scopes`` for such a bank. The store's metadata map is ``string -> string``, so
     the params are carried as one JSON value rather than flattened.
 
-    ``attachment_filenames`` rides the same map for the same reason: it is what
-    ``document_attachments.filename`` holds for a SQL bank, and that table needs a SQL
-    ``documents`` row this bank never has.
+    ``attachment_filenames`` rides the same map as the store's own copy of the names. The
+    authority is ``attachments.filename``, which every bank writes at the ingress; this is
+    what the paths that replay stored text (append, reprocess) restate from.
     """
     from ..memories import get_memories
     from ..memories.base import StoreWriteConflict, document_record_metadata

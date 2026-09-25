@@ -3,7 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { toast } from "sonner";
-import { client, LLMRequestEntry } from "@/lib/api";
+import { client, DocumentTimeField, LLMRequestEntry } from "@/lib/api";
+import {
+  DateRangePreset,
+  resolveCustomRange,
+  resolveDateRangePreset,
+} from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
@@ -746,6 +751,14 @@ export function DocumentsView() {
   // The UI exposes the two useful modes; both map to their *_strict variant so
   // that filtering by a tag never surfaces untagged documents.
   const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
+  // The time window. `timeField` picks the axis the server filters AND orders
+  // on, so it only means anything once a range is chosen — see the note on the
+  // axis Select below.
+  const [dateRange, setDateRange] = useState<DateRangePreset>("all");
+  const [timeField, setTimeField] = useState<DocumentTimeField>("updated_at");
+  // Explicit bounds for dateRange === "custom", as `datetime-local` strings.
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [total, setTotal] = useState(0);
 
   // Document transfer (export/import) state
@@ -808,11 +821,23 @@ export function DocumentsView() {
       setLoading(true);
       try {
         const pageOffset = (page - 1) * ITEMS_PER_PAGE;
+        // Not named `window`: this file reaches for the global elsewhere
+        // (setInterval, addEventListener), and shadowing it here is a trap.
+        const timeWindow =
+          dateRange === "custom"
+            ? resolveCustomRange(customFrom, customTo).bounds
+            : resolveDateRangePreset(dateRange);
+        const hasWindow = Boolean(timeWindow.start_date || timeWindow.end_date);
         const data: any = await client.listDocuments({
           bank_id: currentBank,
           q: searchQuery,
           tags: selectedTags,
           tags_match: tagsMatch === "all" ? "all_strict" : "any_strict",
+          // Send the axis only with a window: on its own it would re-sort the
+          // list for no visible reason.
+          time_field: hasWindow ? timeField : undefined,
+          start_date: timeWindow.start_date,
+          end_date: timeWindow.end_date,
           limit: ITEMS_PER_PAGE,
           offset: pageOffset,
         });
@@ -826,7 +851,7 @@ export function DocumentsView() {
         setLastRefreshedAt(Date.now());
       }
     },
-    [currentBank, searchQuery, selectedTags, tagsMatch]
+    [currentBank, searchQuery, selectedTags, tagsMatch, dateRange, timeField, customFrom, customTo]
   );
 
   // Pull in-flight/failed file uploads straight from the server's
@@ -907,11 +932,23 @@ export function DocumentsView() {
   }, [inFlightDocIds, documents]);
   const hasUpdatingDocs = updatingDocIds.size > 0;
 
+  const customRange = resolveCustomRange(customFrom, customTo);
+  // Whether a window is actually being sent. "Custom range" with both fields
+  // blank — or half-typed — selects a preset but filters nothing yet, so it must
+  // not count as one.
+  const hasTimeWindow =
+    dateRange === "custom"
+      ? Boolean(customRange.bounds.start_date || customRange.bounds.end_date)
+      : dateRange !== "all";
+
   // Pending rows: in-flight/failed uploads that aren't yet in the real list.
   // A tag filter hides them entirely — their tags only exist on the document
   // row the conversion hasn't produced yet, so we can't honestly match them.
+  // A time window hides them for the same reason: the timestamps it filters on
+  // belong to that same unwritten row, so a pending upload left in the table
+  // would be claiming to fall inside a window nothing has placed it in.
   const pendingRows = useMemo<PendingUpload[]>(() => {
-    if (selectedTags.length > 0) return [];
+    if (selectedTags.length > 0 || hasTimeWindow) return [];
     const realIds = new Set(documents.map((doc) => doc.id));
     const q = searchQuery.trim().toLowerCase();
     return pendingUploads
@@ -923,13 +960,20 @@ export function DocumentsView() {
           (upload.filename?.toLowerCase().includes(q) ?? false)
         );
       });
-  }, [documents, pendingUploads, searchQuery, selectedTags]);
+  }, [documents, pendingUploads, searchQuery, selectedTags, hasTimeWindow]);
 
-  const hasActiveFilters = searchQuery.trim().length > 0 || selectedTags.length > 0;
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 || selectedTags.length > 0 || dateRange !== "all";
 
   const clearFilters = () => {
     setSearchQuery("");
     setSelectedTags([]);
+    // The axis goes back to the default too — left behind, it would keep
+    // re-sorting a list the user thinks they have unfiltered.
+    setDateRange("all");
+    setTimeField("updated_at");
+    setCustomFrom("");
+    setCustomTo("");
   };
 
   // Clicking a tag chip in the table toggles it in the filter.
@@ -1512,6 +1556,82 @@ export function DocumentsView() {
           onMatchModeChange={setTagsMatch}
           className="flex-1 min-w-[260px]"
         />
+        <Select
+          value={dateRange}
+          onValueChange={(v) => {
+            const next = v as DateRangePreset;
+            setDateRange(next);
+            // Going back to "all" hides the axis Select, so a non-default axis
+            // would survive unseen and reappear on the next range the user picks.
+            if (next === "all") {
+              setTimeField("updated_at");
+              setCustomFrom("");
+              setCustomTo("");
+            }
+          }}
+        >
+          <SelectTrigger className="w-[150px] h-9" aria-label={t("dateRangeAriaLabel")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value="all">{t("dateRangeAll")}</SelectItem>
+            <SelectItem value="1h">{t("dateRangeLastHour")}</SelectItem>
+            <SelectItem value="1d">{t("dateRangeLast24Hours")}</SelectItem>
+            <SelectItem value="7d">{t("dateRangeLast7Days")}</SelectItem>
+            <SelectItem value="30d">{t("dateRangeLast30Days")}</SelectItem>
+            <SelectItem value="custom">{t("dateRangeCustom")}</SelectItem>
+          </SelectContent>
+        </Select>
+        {dateRange === "custom" && (
+          <div className="flex items-center gap-2">
+            {/* A real <label> rather than a span plus aria-label: the two together
+                name the field once but read it twice in a screen reader's browse
+                mode, and the label also makes the text click into the field. */}
+            <label htmlFor="documents-range-from" className="text-xs text-muted-foreground">
+              {t("dateRangeFrom")}
+            </label>
+            <Input
+              id="documents-range-from"
+              type="datetime-local"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="h-9 w-[200px]"
+            />
+            <label htmlFor="documents-range-to" className="text-xs text-muted-foreground">
+              {t("dateRangeTo")}
+            </label>
+            <Input
+              id="documents-range-to"
+              type="datetime-local"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="h-9 w-[200px]"
+            />
+            {/* A reversed range sends no bounds at all, so without this the list
+                would quietly show everything and look like the filter was ignored. */}
+            {customRange.reversed && (
+              <span className="text-xs text-destructive">{t("dateRangeReversed")}</span>
+            )}
+          </div>
+        )}
+        {/* Shown as soon as a range is picked, not once bounds are actually sent:
+            under "Custom range" it belongs to the form being filled in, and making
+            it appear only on the keystroke that completes a date would make the
+            toolbar jump. With no range at all it is hidden, because it is the
+            window it applies to and there is nothing to apply it to. (Both
+            document timestamps are always set, so unlike the memories axes it
+            never drops rows — the re-sort is the whole of its effect.) */}
+        {dateRange !== "all" && (
+          <Select value={timeField} onValueChange={(v) => setTimeField(v as DocumentTimeField)}>
+            <SelectTrigger className="w-[150px] h-9" aria-label={t("timeFieldAriaLabel")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value="updated_at">{t("timeFieldUpdated")}</SelectItem>
+              <SelectItem value="created_at">{t("timeFieldCreated")}</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         {hasActiveFilters && (
           <Button
             variant="ghost"

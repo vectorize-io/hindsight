@@ -18,7 +18,7 @@ async def test_fact_ordering_within_conversation(memory, request_context):
     bank_id = "test_ordering_agent"
 
     # Get/create agent (auto-creates with defaults)
-    await memory.get_bank_profile(bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
     # Update disposition to match Marcus
     await memory.update_bank_disposition(
@@ -126,7 +126,7 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
 async def test_multiple_documents_ordering(memory, request_context):
     bank_id = "test_multi_doc_agent"
 
-    await memory.get_bank_profile(bank_id, request_context=request_context)  # Auto-creates with defaults
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)  # Auto-creates with defaults
 
     # Two separate conversations with different base times so the
     # temporal offsets produce distinguishable timestamps even when the

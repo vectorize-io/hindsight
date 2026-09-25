@@ -28,12 +28,14 @@ type ToolDraft = { add(tool: Record<string, unknown>): void };
 function fakeContext() {
   const hooks: Record<string, unknown> = {};
   const tools: Record<string, any>[] = [];
+  const skills: Record<string, any>[] = [];
   let subscribeSignal: AbortSignal | undefined;
   const contextCalls: string[] = [];
   const pending: unknown[] = [];
   let waiting: (() => void) | undefined;
   return {
     tools,
+    skills,
     contextCalls,
     prompt: () => hooks.prompt as PromptHook,
     context: () => hooks.context as ContextHook,
@@ -64,6 +66,12 @@ function fakeContext() {
       tool: {
         transform: async (cb: (draft: ToolDraft) => void) => {
           cb({ add: (t) => tools.push(t as Record<string, any>) });
+          return { dispose: async () => {} };
+        },
+      },
+      skill: {
+        transform: async (cb: (draft: { add(skill: Record<string, any>): void }) => void) => {
+          cb({ add: (s) => skills.push(s) });
           return { dispose: async () => {} };
         },
       },
@@ -119,6 +127,34 @@ describe("opencode2 adapter", () => {
     expect(fake.tools[0].options).toEqual({ codemode: false });
     // v2 wants a whole schema, not v1's raw Zod shape.
     expect(typeof fake.tools[0].input?.parse).toBe("function");
+  });
+
+  it("registers the packaged companion skill in the host's registry", async () => {
+    // opencode2 owns no skills DIRECTORY (core/skill-dirs.ts), so the installer has nowhere to drop
+    // a copy: without this registration an opencode2-only user gets the tools and no skill (#4352).
+    const fake = fakeContext();
+    await wireOpencode2Runtime(fakeCore(), fake.ctx);
+    expect(fake.skills).toHaveLength(1);
+    expect(fake.skills[0].id).toBe("hindsight-coding-agent");
+    expect(fake.skills[0].name).toBe("hindsight-coding-agent");
+    expect(fake.skills[0].description).toContain("Hindsight");
+    expect(fake.skills[0].content).toContain("Hindsight Coding-Agent Memory");
+    // Frontmatter is split out, not handed to the host as part of the body.
+    expect(fake.skills[0].content.startsWith("---")).toBe(false);
+  });
+
+  it("keeps the session wired when the host rejects the skill", async () => {
+    // Fail-open like every other seam here: losing the skill must never cost the memory.
+    const fake = fakeContext();
+    (fake.ctx as unknown as { skill: unknown }).skill = {
+      transform: async () => {
+        throw new Error("no skill domain");
+      },
+    };
+    const core = fakeCore();
+    await wireOpencode2Runtime(core, fake.ctx);
+    await fake.prompt()({ sessionID: "ses_1", prompt: { text: "still recalls" } });
+    expect(core.onPrompt).toHaveBeenCalledWith("ses_1", "still recalls");
   });
 
   it("surfaces a tool's MCP-shaped result as v2 text content", async () => {

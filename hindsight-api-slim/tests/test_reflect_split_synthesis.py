@@ -164,6 +164,7 @@ class TestSplitSynthesisAgentFlow:
     def _functions(recall_payload: dict):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value=recall_payload),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -355,8 +356,11 @@ class TestSplitSynthesisAgentFlow:
             for c in llm.call.await_args_list
             if "extract evidence" in c.kwargs["messages"][0]["content"]
         ]
+        # The prompt carries per-reflect aliases (presentation.py) — mem-i is the
+        # (i+1)th fact shown — and a later search lists a memory it already showed
+        # by alias only, so "reaches a map prompt" means written out as an item.
         for i in range(n):
-            holders = [p for p in map_prompts if f'"mem-{i}"' in p]
+            holders = [p for p in map_prompts if f'"id":"f{i + 1}"' in p.replace(" ", "")]
             assert len(holders) == 1, f"mem-{i} appears in {len(holders)} map prompts"
 
 
@@ -396,6 +400,7 @@ class TestSplitSynthesisRealLLM:
 
         functions = {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": memories}),
             "expand_fn": AsyncMock(return_value={"memories": []}),

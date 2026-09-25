@@ -264,6 +264,58 @@ class TestMetricsCollector:
         attributes = collector.operation_duration.record.call_args[0][1]
         assert attributes["bank_id"] == "test_bank"
 
+    def test_tenant_label_excluded_by_default(self):
+        """The per-tenant (schema) label is high-cardinality and off by default.
+
+        metrics_include_tenant=False must strip ``tenant`` from every always-on instrument.
+        Regression for OTel metric blow-up on deployments with many tenant schemas: one series
+        set per tenant, multiplied through every histogram bucket.
+        """
+        from hindsight_api.config import DEFAULT_METRICS_INCLUDE_TENANT
+
+        assert DEFAULT_METRICS_INCLUDE_TENANT is False
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.metrics_include_tenant = False
+        mock_config.recall_diagnostic_phases = True
+        mock_config.recall_phase_sample_every = 1
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+            patch("hindsight_api.metrics._get_tenant", return_value="tenant_abc"),
+        ):
+            collector = MetricsCollector()
+
+        collector.record_operation_result("recall", "test_bank", success=True, duration=0.1)
+        collector.record_recall_phase("engine_auth", 0.01)
+        collector.record_retain_phase("write", 0.01)
+
+        op_attrs = collector.operation_duration.record.call_args[0][1]
+        recall_attrs = collector.recall_phase_duration.record.call_args[0][1]
+        retain_attrs = collector.retain_phase_duration.record.call_args[0][1]
+        assert "tenant" not in op_attrs
+        assert "tenant" not in recall_attrs
+        assert "tenant" not in retain_attrs
+
+    def test_tenant_label_included_when_enabled(self):
+        """metrics_include_tenant=True restores the ``tenant`` label for small deployments."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.metrics_include_tenant = True
+        mock_config.recall_diagnostic_phases = True
+        mock_config.recall_phase_sample_every = 1
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+            patch("hindsight_api.metrics._get_tenant", return_value="tenant_abc"),
+        ):
+            collector = MetricsCollector()
+            # _get_tenant is read at record time, so the phase must be recorded inside the patch.
+            collector.record_recall_phase("engine_auth", 0.01)
+
+        recall_attrs = collector.recall_phase_duration.record.call_args[0][1]
+        assert recall_attrs["tenant"] == "tenant_abc"
+
     @pytest.mark.parametrize("enabled", [True, False])
     def test_recall_diagnostic_phases_follow_config(self, enabled):
         """Diagnostic phases are dropped when disabled; ordinary phases are always recorded, once."""

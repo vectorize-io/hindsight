@@ -247,6 +247,24 @@ class TestGuardedWebhookClient:
         # Host header carried the original authority (virtual host preserved).
         assert f"host=127.0.0.1:{port}" in resp.body
 
+    async def test_ignores_the_proxy_env_vars(self, monkeypatch):
+        # Other clients follow HTTP_PROXY (an egress proxy is how most deployments
+        # reach the internet), but webhook delivery must contact exactly the address
+        # its resolver validated — a proxy would reach one that was never checked.
+        proxied: list[str] = []
+
+        async def proxy_handler(request: web.Request) -> web.StreamResponse:
+            proxied.append(str(request.url))
+            return web.Response(text="via proxy")
+
+        async with stub_server(_echo_host) as base, stub_server(proxy_handler) as proxy_url:
+            monkeypatch.setenv("HTTP_PROXY", proxy_url)
+            monkeypatch.delenv("NO_PROXY", raising=False)
+            monkeypatch.delenv("no_proxy", raising=False)
+            resp = await _send(GuardedWebhookClient(parse_allowlist(["127.0.0.1"])), f"{base}/internal")
+        assert resp.status_code == 200
+        assert proxied == []
+
     async def test_pins_dns_name_and_falls_back_across_addresses(self, monkeypatch):
         # The name resolves to an unreachable IPv6 address first, then 127.0.0.1;
         # the connector must try each validated address rather than pin only one.

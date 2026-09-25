@@ -139,7 +139,7 @@ async def test_failed_create_rolls_back_the_delete_it_was_replacing(memory: Memo
     observation was gone for good.
     """
     bank_id = f"atomic-del-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice moved to Berlin", ["user:alice"])
@@ -188,7 +188,7 @@ async def test_failed_batch_does_not_stamp_consolidated_at(memory: MemoryEngine,
     pending consolidation forever — the silent half of the data loss in #3876.
     """
     bank_id = f"atomic-stamp-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             for i in range(3):
@@ -213,7 +213,7 @@ async def test_failed_batch_does_not_stamp_consolidated_at(memory: MemoryEngine,
 async def test_successful_batch_commits_observations_and_stamps(memory: MemoryEngine, request_context):
     """Guard on the rollback tests: the happy path still writes both halves."""
     bank_id = f"atomic-ok-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
             await _insert_memory(conn, bank_id, "Alice moved to Berlin", ["user:alice"])

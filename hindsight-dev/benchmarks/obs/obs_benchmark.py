@@ -127,7 +127,7 @@ async def _run_document(
     ctx = RequestContext()
     console.print(f"   bank={bank_id} chars={len(content)}")
 
-    await memory.get_bank_profile(bank_id=bank_id, request_context=ctx)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=ctx)
     # Confine consolidation to our explicit drain loop below so it's the single, well-defined
     # measurement point: disable retain's auto-consolidation for THIS bank so retain doesn't
     # also fire a consolidation pass during ingestion. Serial correctness is already guaranteed

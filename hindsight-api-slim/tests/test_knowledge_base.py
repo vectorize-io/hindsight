@@ -17,9 +17,9 @@ import pytest
 import pytest_asyncio
 
 import hindsight_api.engine.memory_engine as memory_engine_module
+from hindsight_api.api import page_markdown
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import (
-    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _may_need_refresh,
     fq_table,
@@ -439,6 +439,22 @@ class TestTree:
         assert single_calls == 0, "no per-page fallback for plain flat-tag scopes"
 
 
+class TestKnowledgeTreeOrder:
+    """The tree is sorted in Python because knowledge_pages.name is a CLOB on Oracle."""
+
+    def test_sorts_by_sort_order_then_name_with_nulls_last(self):
+        from hindsight_api.engine.memory_engine import _knowledge_tree_sort_key
+
+        rows = [
+            {"sort_order": None, "name": "a"},
+            {"sort_order": 2, "name": "b"},
+            {"sort_order": 1, "name": "z"},
+            {"sort_order": 1, "name": "m"},
+        ]
+        ordered = [(r["sort_order"], r["name"]) for r in sorted(rows, key=_knowledge_tree_sort_key)]
+        assert ordered == [(1, "m"), (1, "z"), (2, "b"), (None, "a")]
+
+
 class TestWatermarkRule:
     """The pure rule behind every "may need refresh" badge."""
 
@@ -457,6 +473,15 @@ class TestWatermarkRule:
     def test_a_write_after_the_refresh_may_need_one(self):
         refreshed = datetime.now(timezone.utc)
         assert _may_need_refresh(refreshed, refreshed + timedelta(microseconds=1)) is True
+
+    def test_naive_timestamps_compare_as_utc(self):
+        # Oracle TIMESTAMP columns come back naive; the watermark may be aware.
+        refreshed = datetime.now(timezone.utc)
+        naive = refreshed.replace(tzinfo=None)
+        assert _may_need_refresh(naive, refreshed) is False
+        assert _may_need_refresh(naive, refreshed + timedelta(seconds=1)) is True
+        assert _may_need_refresh(refreshed, naive - timedelta(seconds=1)) is False
+        assert _may_need_refresh(naive, naive + timedelta(seconds=1)) is True
 
 
 class TestSearch:
@@ -481,6 +506,12 @@ class TestSearch:
         # Scores are strictly descending.
         scores = [r["score"] for r in body["results"]]
         assert scores == sorted(scores, reverse=True)
+        # ...and normalized onto 0..1. The raw RRF terms top out near 0.016, which
+        # reads as "no match" to any caller assuming a 0..1 relevance scale, so the
+        # arms are scaled before the score leaves the engine. The top hit here is
+        # found by both arms, so it should sit near the 1.0 ceiling, not at 0.03.
+        assert all(0.0 < s <= 1.0 for s in scores), scores
+        assert scores[0] > 0.5, scores
         top = body["results"][0]
         assert top["id"] == ids.billing
         assert top["mental_model_id"]
@@ -529,6 +560,44 @@ class TestSearch:
 
         assert results, "the BM25 arm must still generate candidates for a question"
         assert results[0]["id"] == ids.billing
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_a_page_with_no_body_says_so_in_its_snippet(
+        self, memory: MemoryEngine, kb_bank, request_context, monkeypatch
+    ):
+        """An empty body must reach a searcher as words, not as a blank snippet.
+
+        A titled hit with nothing under it reads as "matched, snippet came back
+        empty" — which is how an agent decides the topic is uncovered and creates a
+        second page for one that already exists. The marker is built on the way out,
+        so the stored body stays empty and the search index never carries it.
+        """
+
+        async def no_embedding(embeddings, texts, *, input_type=None):
+            return [None]
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", no_embedding)
+
+        bank_id, _ = kb_bank
+        pending = await memory.create_knowledge_page(
+            bank_id=bank_id,
+            name="Refund window",
+            source_query="How long is the refund window?",
+            content="",
+            request_context=request_context,
+        )
+
+        results = await memory.search_knowledge_pages(bank_id, "refund window", request_context=request_context)
+
+        hit = next(r for r in results if r["id"] == pending["id"])
+        assert hit["snippet"] == page_markdown.EMPTY_PAGE_NOTICE
+
+        stored = await memory.get_mental_model(
+            bank_id, pending["mental_model_id"], detail="full", request_context=request_context
+        )
+        assert not (stored["content"] or "").strip(), (
+            "the marker is a read-time label; storing it would put it back in the index"
+        )
 
     @pytest.mark.memory_backend_incompatible
     async def test_query_without_word_characters_returns_nothing(
@@ -750,6 +819,30 @@ class TestGetPage:
         assert page["body"].startswith("# Orders")
         assert page["markdown"].startswith("---\n")
         assert 'type: "runbook"' in page["markdown"]
+
+    async def test_a_page_with_no_body_yet_says_so_in_its_markdown(self, api_client, kb_bank, memory, request_context):
+        """``markdown`` carries the notice; ``body`` stays empty.
+
+        Two readers, two needs: an agent is handed the rendered document and must be
+        told the page is unwritten rather than shown bare frontmatter, while the
+        control plane branches on ``body`` to show its own localized empty state —
+        putting the notice there would replace that string with this one.
+        """
+        bank_id, _ = kb_bank
+        page = await memory.create_knowledge_page(
+            bank_id=bank_id,
+            name="Unwritten",
+            source_query="What is not written yet?",
+            content="",
+            request_context=request_context,
+        )
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page['id']}")
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert page_markdown.EMPTY_PAGE_NOTICE in body["markdown"]
+        assert not (body["body"] or "").strip()
 
     async def test_missing_page_404(self, api_client, kb_bank):
         bank_id, ids = kb_bank
@@ -1392,13 +1485,13 @@ class TestListReportsTheContentItDelivers:
         assert validator.model_reads == []
 
     async def test_a_model_still_generating_is_not_reported(self, memory, kb_bank, request_context, monkeypatch):
-        # The placeholder is not synthesized knowledge; nothing was delivered.
+        # An unwritten page is not synthesized knowledge; nothing was delivered.
         bank_id, ids = kb_bank
         pending = await memory.create_mental_model(
             bank_id=bank_id,
             name="Pending",
             source_query="Not answered yet.",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         validator = _kb_validator()
@@ -1408,6 +1501,29 @@ class TestListReportsTheContentItDelivers:
 
         assert any(m["id"] == pending["id"] for m in page.items), "the pending model should still be listed"
         assert pending["id"] not in validator.model_reads
+
+    async def test_a_legacy_placeholder_is_not_reported_either(self, memory, kb_bank, request_context, monkeypatch):
+        """This path prices what it reports, so a body nobody wrote must not be billed.
+
+        An upgraded bank still holds pages carrying "Generating content..." from
+        before pages were created empty. They are unwritten by every other measure,
+        and metering them charges for content that was never synthesized.
+        """
+        bank_id, _ = kb_bank
+        legacy = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Legacy Pending",
+            source_query="Not answered yet.",
+            content="Generating content...",
+            request_context=request_context,
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
+
+        assert any(m["id"] == legacy["id"] for m in page.items), "the page is still listed"
+        assert legacy["id"] not in validator.model_reads
 
 
 class TestExportReportsOnceNotPerPage:
@@ -1472,6 +1588,35 @@ class TestPageReadIsAModelRead:
         assert len(validator.model_get_tokens) == 1
         assert validator.model_get_tokens[0] == len(body.get("body") or "") // 4
         assert validator.model_get_tokens[0] > 0
+
+    async def test_reading_an_unwritten_page_still_reports_completion_at_zero(
+        self, api_client, kb_bank, memory, request_context, monkeypatch
+    ):
+        """Zero tokens, not a missing hook — for an empty body and for the legacy one.
+
+        A gated read that reports no completion is the shape the post-hook exists to
+        prevent: the deployment authorized a read it then has no record of. So an
+        unwritten page still reports, it just reports nothing delivered — whether its
+        body is the empty string pages are created with now, or the placeholder an
+        upgraded bank's pages were created with before.
+        """
+        bank_id, _ = kb_bank
+        for name, content in (("Unwritten", ""), ("Legacy Unwritten", "Generating content...")):
+            page = await memory.create_knowledge_page(
+                bank_id=bank_id,
+                name=name,
+                source_query=f"what is {name}?",
+                content=content,
+                request_context=request_context,
+            )
+            validator = _kb_validator()
+            monkeypatch.setattr(memory, "_operation_validator", validator)
+
+            resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page['id']}")
+
+            assert resp.status_code == 200, resp.text
+            assert validator.model_gets, f"{name}: the read was gated"
+            assert validator.model_get_tokens == [0], f"{name}: gated but not reported"
 
     async def test_a_refused_model_get_returns_no_page_content(self, api_client, kb_bank, memory, monkeypatch):
         # The gate has to run before the body is handed back, or it is
@@ -1625,6 +1770,61 @@ class TestAuthorizationWriteDenied:
         # Rejected before touching the backing mental model — a single write hook.
         assert _write_ops(validator) == [BankWriteOperation.UPDATE_KNOWLEDGE_PAGE]
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # The empty body too: that check moved from the handler into the
+            # engine, and nothing pinned it there before.
+            {},
+            {"source_query": None},
+            {"tags": None},
+            {"max_tokens": None},
+            {"trigger": None},
+            {"name": None, "source_query": None},
+        ],
+    )
+    async def test_explicit_null_patch_is_rejected_before_any_read(
+        self, api_client, kb_bank, memory, monkeypatch, body
+    ):
+        """A null page field means "not supplied", so the patch changes nothing.
+
+        It used to slip past the "nothing to update" check, run no write
+        validator at all, and still hand back the node's metadata — a read of
+        another tenant's tree for anyone the validator would have denied.
+        """
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json=body,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Orders" not in resp.text
+        assert _write_ops(validator) == []
+
+    @pytest.mark.parametrize("body", [{"tags": []}, {"max_tokens": 0}, {"name": ""}])
+    async def test_empty_but_supplied_values_still_authorize(self, api_client, kb_bank, memory, monkeypatch, body):
+        """The near misses of the guard above: supplied-but-empty is a real change.
+
+        `tags: []` in particular is the documented fix for a page whose tags match
+        no memory, so the guard has to test "is not None", never truthiness — a
+        falsy value must still reach the validator rather than be dismissed as a
+        no-op.
+        """
+        bank_id, ids = kb_bank
+        operation = (
+            BankWriteOperation.RENAME_KNOWLEDGE_NODE if "name" in body else BankWriteOperation.UPDATE_KNOWLEDGE_PAGE
+        )
+        validator = _kb_validator(reject_write=operation)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json=body,
+        )
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [operation]
+
     async def test_delete_denied(self, api_client, kb_bank, memory, monkeypatch):
         bank_id, ids = kb_bank
         validator = _kb_validator(reject_write=BankWriteOperation.DELETE_KNOWLEDGE_NODE)
@@ -1646,7 +1846,7 @@ class TestAuthorizationWriteDenied:
         )
         assert resp.status_code == 403, resp.text
         monkeypatch.setattr(memory, "_operation_validator", None)
-        assert await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None
+        assert await memory.get_bank_profile(bank_id, request_context=request_context) is None
 
 
 class TestAuthorizationSuccessHookCounts:

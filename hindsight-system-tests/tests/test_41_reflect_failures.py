@@ -19,7 +19,7 @@ handed a blank.
 from __future__ import annotations
 
 import pytest
-from hindsight_client_api.exceptions import ServiceException
+from hindsight_client_api.exceptions import ApiException, ServiceException
 
 from hindsight_system_tests import reflect_loop
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -78,3 +78,20 @@ async def test_a_working_model_still_answers(client, llm, bank_with_facts):
     response = await client.areflect(bank_id=bank_with_facts, query=QUERY)
 
     assert response.text == "Alice lives in Berlin."
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+async def test_a_blank_query_is_rejected_before_any_llm_call(client, bank_with_facts, query):
+    """The other end of the same principle: a question that cannot be answered
+    should not be paid for.
+
+    A blank query used to reach the agent loop, where the empty final user
+    message is rejected by the provider with the same 400 on every retry — eight
+    LLM calls, ~26s, and then a 200 carrying a placeholder non-answer (#4416).
+    No reflect rule is scripted here on purpose: the stub fails an unscripted
+    call, so this test is also the proof that nothing reached the model.
+    """
+    with pytest.raises(ApiException) as raised:
+        await client.areflect(bank_id=bank_with_facts, query=query)
+
+    assert raised.value.status == 422

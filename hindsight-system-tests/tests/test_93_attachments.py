@@ -132,11 +132,12 @@ async def _attachment_id(client, bank: str, document_id: str) -> str:
 
 
 async def test_a_shared_image_stays_fetchable_until_its_last_document_goes(client, llm, bank_id, settled):
-    """Content-addressed: two documents carrying the same photo share one stored copy.
+    """Two documents carrying the same photo: one identity, a stored copy each.
 
-    Deleting one must leave it downloadable for the other — reclaiming it there is
-    data loss — and deleting the last must retire it, or it is kept forever behind
-    an id nothing can reach.
+    The id is the content hash, so both documents name the same attachment, but
+    each owns its own copy of the bytes. Deleting one must leave the photo
+    downloadable for the other — reclaiming it there is data loss — and deleting
+    the last must retire it, or it is kept forever behind an id nothing can reach.
     """
     llm.on_step("extract_facts").returns(
         extracted(fact("Alice stood in front of the Brandenburg Gate", who="Alice", entities=["Alice"]))

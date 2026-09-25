@@ -3,10 +3,13 @@ Cross-encoder neural reranking for search results.
 """
 
 import calendar
+import logging
 import math
 from datetime import datetime, timezone
 
 from .types import MergedCandidate, ScoredResult
+
+logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 
@@ -428,4 +431,15 @@ class CrossEncoderReranker:
         # Sort by cross-encoder score
         scored_results.sort(key=lambda x: x.weight, reverse=True)
 
-        return scored_results
+        if not self.cross_encoder.prunes_candidates:
+            return scored_results
+
+        # This backend judges relevance rather than only ordering it, and marks a
+        # candidate it would prune with a score of exactly 0.0. It cannot remove the
+        # candidate itself — predict() returns one score per pair and never sees the
+        # candidates — so acting on the verdict belongs here, where they live. The
+        # alternative is carrying junk down to the token budget, which cuts by rank
+        # and so keeps whatever is left when nothing is relevant.
+        kept = [result for result in scored_results if result.weight > 0.0]
+        logger.info(f"Reranking: reranker kept {len(kept)}/{len(scored_results)} candidates as relevant")
+        return kept

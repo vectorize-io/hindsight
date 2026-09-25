@@ -81,7 +81,7 @@ async def test_requeue_failure_propagates_to_worker_retry(memory: MemoryEngine, 
     the remainder.
     """
     bank_id = f"test-requeue-prop-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
     round_limit = 5
     backlog_size = 12

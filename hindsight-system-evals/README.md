@@ -29,6 +29,8 @@ signal to re-run, not proof of a regression.
 The knowledge-page and reflect suites share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
 specific baited falsehood — the one that matters). The trap is asserted first.
+The two retain suites bring their own inputs, because they grade ingestion
+rather than retrieval.
 
 **`test_01` — knowledge-page convergence.** A page is created with a source
 query and then *accumulates*: data arrives in waves and each refresh edits what
@@ -58,6 +60,76 @@ other than the input's is the trap. The regression behind it (#4283): English
 coding-agent sessions stored as Spanish, French or Russian facts — about one run
 in six on gpt-5.6-luna. Italian and Japanese inputs guard the other direction, a
 fix that just forces English. It does not use the corpus.
+
+**`test_04` — retain fidelity.** The other retain suite asks whether a fact is
+written in the right language; this one asks whether it is true. Each document
+states a date, an owner or a place for one subject, then makes a claim about a
+different subject that has none of its own — and the extracted fact must not
+carry the borrowed value across. A fabrication here is the worst kind, because
+reflect can be asked again while an invented date is written once and read back
+as fact forever. Behind it (#4457): `when`/`where`/`who`/`why` are required
+non-null strings, so under strict structured output a model has no legal way to
+say "not stated" and supplies the nearest plausible value instead.
+`HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS` makes them nullable; this suite
+sets nothing and measures the server as configured, so CI watches the default.
+
+It verifies behaviour rather than guarding the regression, and the difference
+was measured: Qwen3.6-35B under strict schema passes all three cases with the
+nullable fields *and* with the old required-non-null ones. The pressure to
+invent a value only bites a model weak enough to feel it — the reported case was
+a 9B — so a green run means "extraction is sound on this model", not "the
+regression cannot return". The test that fails on that is
+`hindsight-api-slim/tests/test_fact_extraction_nullable_dimensions.py`.
+
+**`test_05` — refresh cost.** Not a quality grade: a baseline of what a
+knowledge-page refresh spends. Every LLM call the refresh makes is read back from
+`/llm-requests` — input, cached and output tokens, and the prompt — for a full
+rebuild and for a delta after a small wave of new facts. Behind it: on real
+project banks a refresh sent 30–90k-token synthesis prompts, because a tool's
+`max_tokens` counts fact text only and the JSON around each fact is 3–4× larger
+(#4566). That missed the 30s call deadline (#4568), ended searches before
+`recall` ran (#4563), and billed metered keys all night (#4532).
+
+It runs against a **frozen bank**, `fixtures/refresh-cost-bank.zip`: 900 facts
+generated from a seed as one fictional product's history, consolidated by a real
+model, with the six pages a coding agent seeds. Seeding that live would cost a
+consolidation pass per run and start each run from a different bank. Rebuild it
+only on purpose — every earlier baseline then measured a different bank:
+
+```bash
+uv run python -m hindsight_system_evals.refresh_cost build
+# measure a candidate archive before replacing the committed one
+HINDSIGHT_EVAL_REFRESH_COST_FIXTURE=/tmp/new.zip uv run pytest evals/test_05_refresh_cost.py
+```
+
+`--cost-output DIR` writes `refresh-cost.json` (every call, every prompt), a
+summary table, and each refresh's synthesis prompt on its own. The table ends in
+USD at the model's list price (`PRICES` in `refresh_cost.py`), including what
+explicit Gemini caching costs to create and store — those are not LLM calls and
+never reach the trace, so they are estimated from the cached tokens. Each refresh
+also records its page size, distinct specifics and citations, a floor under any
+cost cut. The model is not frozen, so compare medians over a few runs, not one.
+
+To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
+`HINDSIGHT_API_<X>=v` (the server's environment is otherwise wiped):
+
+```bash
+HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED=true uv run pytest evals/test_05_refresh_cost.py
+```
+
+**`test_06` — reflect reads the page it was given.** The only suite where the
+page layer is live: the others create their pages with `exclude_mental_models`, so
+`has_mental_models` is false and reflect is never offered the page tools at all.
+This one builds the page, then asks the page's own question and checks reflect
+went to the page layer (from the tool trace) and that the answer says what the
+page says (judged against the page, not the corpus gold — whether the page itself
+converged is `test_01`'s grade).
+
+It exists because that layer changed: `search_mental_models` used to return five
+pages whole, and now returns the best hit whole plus a snippet of the others, with
+`read_mental_models` for the rest. It is what showed that snippets *alone* let the
+model answer from a snippet without ever reading the page, which is why the best
+hit still arrives in full.
 
 ## The corpus
 
@@ -114,6 +186,75 @@ as written) and consolidation/observations off, and each page refresh is
 triggered explicitly. `chunks` also removes a confound: extraction may paraphrase
 a fact, while the gold labels point at the exact authored text.
 
+## Where it points
+
+By default every eval starts its own `hindsight-api` on its own pg0 — that is
+what CI measures, and what makes a run mean the same thing on every machine.
+Pass `--api-url` (or set `HINDSIGHT_EVAL_API_URL`, with `HINDSIGHT_EVAL_API_KEY`)
+to run against a server that is already up instead: cloud dev, a colleague's box,
+a docker compose. The two are independent, so the retain evals can run against a
+deployment while a benchmark runs locally, or the reverse:
+
+```bash
+uv run pytest evals --api-url https://api.dev.example    # evals against cloud dev
+uv run run-amb --dataset locomo --split locomo10         # LoComo against a local server
+```
+
+Two things change on a remote target, and neither is worked around:
+
+- **the model is not asserted, it is read back.** `HINDSIGHT_EVAL_LLM_*` configures
+  a server *we* start; a remote server's model is its own, so the report records
+  what the server says it runs rather than what we hoped;
+- **banks are deleted at the end.** On pg0 they are free and left behind on
+  purpose, for the control plane. In a shared tenant they would accumulate every
+  run. `--keep-banks` opts out, for inspecting a failure.
+
+## Benchmarks (AMB)
+
+LoComo, LongMemEval, BEAM, PersonaMem and the coding-agent suite (sde-bench) live
+in [AMB](https://github.com/vectorize-io/agent-memory-benchmark), which owns their
+datasets, prompts, judge and scoring, and publishes to
+[agentmemorybenchmark.ai](https://agentmemorybenchmark.ai). None of that is
+duplicated here — a second copy of LoComo is how two copies drift until neither
+number means anything. This package only points AMB's `hindsight-http` provider
+at a target:
+
+```bash
+# A split is the dataset slice; one conversation is a `--unit` within it.
+uv run run-amb --dataset locomo --split locomo10 -- --unit conv-26 --query-limit 20
+uv run run-amb --dataset longmemeval --split s -- --category single-session-user --query-limit 20
+uv run run-amb --dataset beam --split 100k --api-url https://api.dev.example
+
+cd "$(uv run python -c 'import os;print(os.path.expanduser("~/.cache/hindsight/amb"))')" && uv run amb splits --dataset locomo
+```
+
+AMB tracks the ref in `AMB_REF` — `main`, so a fix merged in AMB reaches the next
+run without a PR here (override with `--amb-ref`, or `AMB_REF=`, to replay an old
+number). Every run prints the AMB commit it resolved to: benchmark drift and engine
+drift look identical in the numbers, so that commit is what makes a movement
+attributable.
+It needs `GEMINI_API_KEY` — AMB judges and answers with Gemini through the API
+key, not through our VertexAI service account. AMB pins its own interpreter
+(`.python-version`, 3.12) and uv honours it; `--python` / `AMB_PYTHON` override
+that for a one-off. A pin matters there because AMB's `requires-python` is only
+`>=3.11`: unpinned, uv takes the newest interpreter on the machine, and on 3.14
+the install dies before the benchmark starts — `onnxruntime`, via cognee,
+publishes no wheel for it. The sde-bench coding suite needs
+more still (Docker, a boltons host clone, an agent CLI with its own key); it runs
+through the same command with `--dataset sdebench`, but it is a campaign, not a
+scheduled job.
+
+AMB is now the only copy. The in-repo LoComo and LongMemEval runners are gone —
+`hindsight-dev/benchmarks/locomo/`, `longmemeval/`, `run-locomo.sh`,
+`run-longmemeval.sh`, and the benchmark visualizer, which served nothing else.
+`publish-locomo-results.sh` stays — it now reads AMB's report. The `locomo` job in `perf-test.yml` became the `amb`
+job, a matrix over both datasets, and it still publishes the LoComo run to the
+[continuous performance monitor](https://vectorize-io.github.io/hindsight-continuous-performance-monitor/)
+— `publish-locomo-results.sh` normalises AMB's report onto the existing series
+(a percentage, not AMB's 0-1 fraction) so the 86-run chart keeps its shape. `perf/`, `micro/`, `obs/`,
+`document_evolution/` and `multimodal_retain/` measure things AMB does not, and
+stay where they are.
+
 ## Running
 
 ```bash
@@ -140,8 +281,19 @@ If your shell exports `PYTEST_ADDOPTS` with `-n` (the repo `.env` does), unset
 it: xdist is not installed here, and parallel evals against one server would
 compete for it anyway.
 
-The server runs on its own pg0 instance (`hindsight-system-evals`), so a run does
-not compete for connections with a developer's server or with the system tests.
+The server runs on a **fresh** pg0 instance per run (`hindsight-system-evals-<id>`),
+dropped when the session ends. Its own, so a run does not compete for connections
+with a developer's server or with the system tests — and a new one, because a
+reused database still holds the previous run's banks *and their queued refresh
+and consolidation tasks*. The worker claims those within seconds of starting and
+bills them to your provider key: one run spent 5.9M tokens on four banks it never
+created, against 0.8M of its own.
+
+Set `HINDSIGHT_EVAL_PG0_INSTANCE` to pick the instance yourself (the coding-agents
+runner does, one per run); one you named is yours, and is left in place.
+
+A crash can leave an instance behind. `pg0 list` shows them, `pg0 drop <name>`
+removes one.
 
 ## Debugging a failure
 

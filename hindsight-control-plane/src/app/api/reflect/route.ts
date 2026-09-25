@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
     exclude_mental_models,
     exclude_mental_model_ids,
     response_schema,
+    reflect_search_observations_max_tokens,
+    reflect_search_observations_include_entities,
   } = body;
 
   const requestBody: any = {
@@ -46,6 +48,9 @@ export async function POST(request: NextRequest) {
     exclude_mental_models: exclude_mental_models || undefined,
     exclude_mental_model_ids: exclude_mental_model_ids || undefined,
     response_schema: response_schema || undefined,
+    reflect_search_observations_max_tokens: reflect_search_observations_max_tokens || undefined,
+    reflect_search_observations_include_entities:
+      reflect_search_observations_include_entities ?? undefined,
   };
 
   // Add include options if specified

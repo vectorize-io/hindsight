@@ -27,14 +27,14 @@ on:
           - consolidation
           - graph-maintenance
         default: ""
-      locomo_conversations:
-        description: "LoComo conversation IDs (space-separated). Blank = curated set (conv-26 conv-30 conv-43)."
-        type: string
-        default: ""
-      locomo_skip:
-        description: "Skip LoComo job"
+      amb_skip:
+        description: "Skip the AMB benchmark job (LoComo + LongMemEval)"
         type: boolean
         default: false
+      amb_args:
+        description: "Extra `amb run` arguments, e.g. --unit conv-26 --query-limit 20"
+        type: string
+        default: ""
       obs_skip:
         description: "Skip observation-dedup benchmark job"
         type: boolean
@@ -48,7 +48,7 @@ on:
         type: string
         default: "1.0"
       system_evals_skip:
-        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language)"
+        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language, retain fidelity)"
         type: boolean
         default: false
       system_evals_mode:
@@ -138,17 +138,36 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: ./scripts/benchmarks/publish-perf-results.sh hindsight-dev/perf-results.json
 
-  locomo:
-    if: inputs.locomo_skip != true
+  amb:
+    # LoComo and LongMemEval come from AMB (vectorize-io/agent-memory-benchmark),
+    # which owns their datasets, prompts, answer model, judge and scoring and
+    # publishes to agentmemorybenchmark.ai. This job only starts a server and
+    # points AMB's `hindsight-http` provider at it — see
+    # hindsight-system-evals/README.md. It replaced a second in-repo copy of the
+    # same two datasets, which was free to drift from the published ones.
+    if: inputs.amb_skip != true
     runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      # One dataset failing says nothing about the other.
+      fail-fast: false
+      matrix:
+        include:
+          - dataset: locomo
+            split: locomo10
+          - dataset: longmemeval
+            split: s
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      # The server under test. AMB's own answer and judge models are configured
+      # separately, below.
+      HINDSIGHT_EVAL_LLM_PROVIDER: vertexai
+      HINDSIGHT_EVAL_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
-      HINDSIGHT_API_JUDGE_LLM_PROVIDER: vertexai
-      HINDSIGHT_API_JUDGE_LLM_MODEL: google/gemini-2.5-flash-lite
-      HINDSIGHT_API_ANSWER_LLM_PROVIDER: vertexai
-      HINDSIGHT_API_ANSWER_LLM_MODEL: google/gemini-2.5-flash
+      # AMB generates and judges answers itself, through a Gemini API key: its
+      # LLM registry is gemini/groq/openai with no vertexai backend, so the
+      # service account above covers only the server under test.
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AMB_CHECKOUT: ${{ github.workspace }}/.amb
     steps:
     - uses: actions/checkout@v6
       with:
@@ -189,45 +208,52 @@ jobs:
         print('Model downloaded successfully')
         "
 
-    - name: Install hindsight-dev dependencies
-      run: |
-        cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
+    - name: Cache the AMB checkout
+      uses: actions/cache@v5
+      with:
+        path: ${{ github.workspace }}/.amb
+        key: amb-${{ hashFiles('hindsight-system-evals/AMB_REF') }}
 
-    - name: Run LoComo benchmark
-      # Curated 3-conversation subset (best/middle/worst by accuracy on the
-      # last successful full run): conv-26 (best), conv-30 (middle), conv-43
-      # (worst). Excludes conv-44, the bank with the largest unconsolidated
-      # set that has been pushing scheduled runs over the per-bank
-      # _wait_for_consolidation timeout. Override via workflow_dispatch with
-      # the locomo_conversations input.
+    - name: Install server and eval dependencies
       run: |
-        CONVERSATIONS="${{ inputs.locomo_conversations }}"
-        if [ -z "$CONVERSATIONS" ]; then
-          CONVERSATIONS="conv-26 conv-30 conv-43"
+        (cd hindsight-api-slim && uv sync --frozen --all-extras --index-strategy unsafe-best-match)
+        (cd hindsight-system-evals && uv sync)
+
+    - name: Run AMB
+      run: |
+        # Fail here rather than 40 minutes in, mid-dataset: AMB answers and
+        # judges through the Gemini API key, not the VertexAI service account.
+        if [ -z "${GEMINI_API_KEY}" ]; then
+          echo "::error::GEMINI_API_KEY is not set — AMB's answer and judge models need it." >&2
+          exit 1
         fi
-        uv run python hindsight-dev/benchmarks/locomo/locomo_benchmark.py \
-          --wait-consolidation \
-          --conversation $CONVERSATIONS
+        cd hindsight-system-evals
+        uv run run-amb --dataset ${{ matrix.dataset }} --split ${{ matrix.split }} -- ${{ inputs.amb_args }}
 
-    - name: Upload LoComo results
+    - name: Upload AMB results
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: locomo-results-${{ github.sha }}
-        path: hindsight-dev/benchmarks/locomo/results/
+        name: amb-${{ matrix.dataset }}-${{ github.sha }}
+        path: ${{ github.workspace }}/.amb/outputs/
         retention-days: 90
 
     - name: Publish LoComo to dashboard
-      if: success() && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      # LoComo only: the monitor's locomo series is 86 runs deep and the script
+      # writes data/locomo/. LongMemEval has no series there, and inventing one
+      # is not this change. AMB's own numbers still go to agentmemorybenchmark.ai.
+      if: success() && matrix.dataset == 'locomo' && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       env:
         PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: ./scripts/benchmarks/publish-locomo-results.sh hindsight-dev/benchmarks/locomo/results/benchmark_results.json
+      run: |
+        ./scripts/benchmarks/publish-locomo-results.sh \
+          "${{ github.workspace }}/.amb/outputs/locomo/hindsight-http/rag/locomo10.json"
 
   obs:
     # Observation-dedup quality benchmark: ingests a transcript, drains consolidation
     # (serial SyncTaskBackend + embedded pg0 — no external DB / worker), and reports the
-    # near-duplicate observation rate. Real LLM via VertexAI, mirroring the LoComo job.
+    # near-duplicate observation rate. Real LLM via VertexAI, like the other quality jobs.
     if: inputs.obs_skip != true
     runs-on: ubuntu-latest
     env:
@@ -368,7 +394,9 @@ jobs:
         FLAG="--full"
         if [ "$MODE" = "minimum" ]; then FLAG=""; fi
         cd hindsight-system-evals
-        uv run pytest evals $FLAG --output system-evals-results.json
+        # `tests` first: fast, model-free unit tests of the harness itself (target
+        # resolution). They cost seconds and a break there invalidates the evals.
+        uv run pytest tests evals $FLAG --output system-evals-results.json
 
     - name: Upload system-evals results
       if: always()

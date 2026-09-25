@@ -75,12 +75,16 @@ def _config(*, mode: str, causal: bool, supports_pattern: bool) -> MagicMock:
     config.entities_allow_free_form = True
     config.llm_output_language = None
     config.llm_supports_string_pattern = supports_pattern
+    # Explicitly off: an unset attribute on a MagicMock is a truthy mock, which
+    # would switch the optional-dimensions flag on and rebuild the fact model
+    # underneath these assertions.
+    config.retain_optional_fact_dimensions = False
     return config
 
 
 def _fact_model(config: MagicMock) -> type:
     """The per-fact model inside the response wrapper the builder returns."""
-    _, response_schema = _build_extraction_prompt_and_schema(config)
+    response_schema = _build_extraction_prompt_and_schema(config).response_schema
     return response_schema.model_fields["facts"].annotation.__args__[0]
 
 

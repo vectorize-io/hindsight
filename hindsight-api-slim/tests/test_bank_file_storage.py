@@ -65,11 +65,12 @@ async def test_deleting_a_document_deletes_its_uploaded_original(api_client, mem
     assert response.status_code == 200, response.text
     key = f"{bank_storage_prefix(bank_id)}files/{uuid.uuid4()}/notes.txt"
     await memory._file_storage.store(file_data=b"Alice joined Acme.", key=key)
-    # Forge what a file retain leaves behind without running a parser: the key is
-    # only reachable through this column, and no API sets it directly.
-    backend = await memory._get_backend()
-    async with backend.acquire() as conn:
-        await conn.execute("UPDATE documents SET file_storage_key = $2 WHERE bank_id = $1", bank_id, key)
+    # What a file retain leaves behind, left behind the way the file-convert task leaves it,
+    # rather than forged into one backend's column: the reference goes wherever the document's
+    # owner keeps it, so this is the same test on a bank whose documents live in a store.
+    assert await memory.record_document_file(
+        bank_id, "doc", storage_key=key, original_name="notes.txt", content_type="text/plain"
+    )
 
     response = await api_client.delete(f"/v1/default/banks/{bank_id}/documents/doc")
     assert response.status_code == 200, response.text

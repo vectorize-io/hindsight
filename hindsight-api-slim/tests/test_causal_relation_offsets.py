@@ -7,7 +7,7 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain import fact_extraction
-from hindsight_api.engine.retain.fact_extraction import CausalRelation, Fact
+from hindsight_api.engine.retain.fact_extraction import CausalRelation, ExtractionPrompt, Fact, FactExtractionResponse
 from hindsight_api.engine.retain.types import RetainContent
 
 
@@ -142,7 +142,11 @@ async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
             ]
 
     monkeypatch.setattr(fact_extraction, "chunk_text", lambda text, **_kwargs: text.split("|"))
-    monkeypatch.setattr(fact_extraction, "_build_extraction_prompt_and_schema", lambda _config: ("", object))
+    monkeypatch.setattr(
+        fact_extraction,
+        "_build_extraction_prompt_and_schema",
+        lambda _config: ExtractionPrompt(system_prompt="", response_schema=FactExtractionResponse),
+    )
     monkeypatch.setattr(fact_extraction, "_retain_mission_preamble", lambda _config: "")
     monkeypatch.setattr(fact_extraction, "_build_user_message", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(fact_extraction, "_build_request_body", lambda *_args: {})

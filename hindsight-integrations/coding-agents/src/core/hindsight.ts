@@ -9,14 +9,17 @@ import {
   type BankOverrides,
   buildPageTrigger,
   codingBankManifest,
+  type CustomPagesConfig,
   type CurrentPageTrigger,
   PAGE_MAX_TOKENS,
   pagesFor,
+  type PagesConfig,
   pageScopeRule,
   type PageTrigger,
   pageTriggerDrifted,
   pageTriggerFor,
   pageTriggerPatch,
+  type RetainExtractionMode,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -108,6 +111,12 @@ export interface ClientOpts {
   maxParallelRetains?: number;
   /** Observation scoping for every retain this client sends. Default `DEFAULT_OBSERVATION_SCOPES`. */
   observationScopes?: ObservationScopes;
+  /** Pages one knowledge-page search returns. Default `DEFAULT_PAGE_SEARCH_LIMIT`. Lives on the
+   *  client so every caller — the hook's injection and the MCP tool — shares one value. */
+  pageSearchLimit?: number;
+  /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
+   *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
+  recallOptions?: Record<string, unknown>;
   /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
    *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
    *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
@@ -166,6 +175,35 @@ export class KnowledgePagesUnavailableError extends Error {
   }
 }
 
+/**
+ * Does this 404 mean the server has no knowledge-base API, rather than "that bank does not exist yet"?
+ *
+ * The two are indistinguishable by status, and conflating them latched the knowledge-page capability
+ * off for the whole process on the FIRST session in a new bank — the bank is minted by the first
+ * retain, so a session-start page read always precedes it (#4607).
+ *
+ * It matches the ENDPOINT-missing shape (FastAPI answers an unrouted path with exactly
+ * `{"detail":"Not Found"}`), deliberately NOT the bank-missing wording. Matching the bank error
+ * instead would hang the fix on a message the API is free to rephrase, and the day it did, #4607
+ * would come back with no test failing. This way a reworded bank error simply fails to match: the
+ * capability stays unknown and the next call retries, which is the safe direction to be wrong in.
+ */
+async function isEndpointMissing(r: Response): Promise<boolean> {
+  try {
+    // Consumes the body, which is safe: every 404 caller below returns without reading it.
+    const j = (await r.json()) as { detail?: unknown };
+    return (
+      String(j?.detail ?? "")
+        .trim()
+        .toLowerCase() === "not found"
+    );
+  } catch {
+    // No JSON body at all (a proxy's HTML 404, a bare gateway response). Our API always answers
+    // bank-not-found in JSON, so this is not it — latch, as this code did before the fix.
+    return true;
+  }
+}
+
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
 /** Default cap on concurrent retain-related requests; configurable via `maxParallelRetains`. */
@@ -195,6 +233,30 @@ export class ReflectError extends Error {
 }
 
 export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
+/** Knowledge pages returned by one search — the hook's injection and the agent-facing
+ *  `hindsight_search_knowledge_pages` tool both get this, so tuning it moves both.
+ *
+ *  Ten, not three. Three was set when the page roster was injected wholesale and search was a
+ *  rarely-used fallback; search is now the way in, and a repo's pages are narrow by design, so the
+ *  decision one turn needs is routinely split across two of them ("Pricing decisions" AND
+ *  "Conventions") and a three-hit cut drops one. Ten snippets is a few hundred tokens on a call the
+ *  agent made deliberately. */
+export const DEFAULT_PAGE_SEARCH_LIMIT = 10;
+/**
+ * The recall body this client sends when `recallOptions` overrides nothing — one object rather
+ * than a field per parameter, so a new recall parameter needs no plumbing here.
+ *
+ * Observations are the consolidated layer, so they are the best answer per token; a bank whose
+ * consolidation is off never grows any, and recalling only observations there returns nothing.
+ * Such a bank sets `{"types": ["world", "experience"]}`, or `{"types": null}` for every type.
+ * The budget stays low and entities are excluded because this runs inside a hook window.
+ */
+export const DEFAULT_RECALL_OPTIONS: Record<string, unknown> = {
+  types: ["observation"],
+  budget: "low",
+  max_tokens: 2000,
+  include: { entities: null },
+};
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
@@ -229,6 +291,8 @@ export class HindsightClient {
   private readonly log: (msg: string) => void;
   readonly maxParallelRetains: number;
   readonly observationScopes: ObservationScopes;
+  readonly pageSearchLimit: number;
+  readonly recallOptions: Record<string, unknown>;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
@@ -239,6 +303,11 @@ export class HindsightClient {
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
+    this.pageSearchLimit = o.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT;
+    // Merged once here, not per call, and copied rather than aliased: the default is a
+    // module-level object, and handing every client the same reference makes one caller's
+    // mutation everyone's.
+    this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
   }
 
   /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
@@ -413,7 +482,8 @@ export class HindsightClient {
 
   /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
    *  entity labels), then seed knowledge pages when the server supports them. Both halves are
-   *  idempotent and strictly ADDITIVE — nothing the bank already says is overwritten (#3927) — so
+   *  idempotent and ADDITIVE — nothing the bank already says is overwritten (#3927), bar the
+   *  extraction mode of the plugin's own strategies, which follows its config (#4560) — so
    *  the deepen engine can re-run this every pass. Creates the bank if missing; legacy servers
    *  continue with the template-only path.
    *
@@ -422,7 +492,17 @@ export class HindsightClient {
    *  `conversation`, `document`, `survey`): an unknown strategy name is not an error server-side,
    *  it just falls back to the bank's own config, so the miss is silent. */
   async configureBank(
-    opts: { reset?: boolean; pageTrigger?: PageTrigger; manage?: boolean } = {}
+    opts: {
+      reset?: boolean;
+      pageTrigger?: PageTrigger;
+      /** Which pages to seed and with what query — see RawConfig.pages. */
+      pages?: PagesConfig;
+      /** Pages of the user's own to seed alongside them — see RawConfig.customPages. */
+      customPages?: CustomPagesConfig;
+      manage?: boolean;
+      /** Extraction mode for the plugin's own strategies — see RawConfig.retainExtractionMode. */
+      extractionMode?: RetainExtractionMode;
+    } = {}
   ): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
@@ -433,8 +513,12 @@ export class HindsightClient {
     } else {
       // What the bank ALREADY overrides decides what is left to write: the missions are seeded once
       // and then belong to whoever set them (#2492), and every other field is added only where the
-      // bank is silent (#3927). A reset just deleted the bank, so there is nothing to read.
-      const manifest = codingBankManifest(opts.reset ? undefined : await this.readBankOverrides());
+      // bank is silent (#3927) — bar the extraction mode of the plugin's own strategies, which is
+      // re-synced to `extractionMode` (#4560). A reset just deleted the bank, so there is nothing to read.
+      const manifest = codingBankManifest(
+        opts.reset ? undefined : await this.readBankOverrides(),
+        opts.extractionMode
+      );
       if (!manifest) {
         this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);
       } else {
@@ -442,7 +526,7 @@ export class HindsightClient {
         this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
       }
     }
-    await this.seedPages(opts.pageTrigger);
+    await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
   }
 
   /**
@@ -573,23 +657,22 @@ export class HindsightClient {
   }
 
   /**
-   * Raw recall restricted to consolidated observations — no LLM in the loop, so it still answers
-   * when reflect's synthesis times out or 5xxs. Returns the observation texts in rank order.
+   * Raw recall with no LLM in the loop, so it still answers when reflect's synthesis times out or
+   * 5xxs. The body is `recallOptions` (consolidated observations by default) — a bank that grows
+   * no observations widens it rather than getting nothing back. Returns the texts in rank order.
+   *
+   * The name predates `recallOptions` (the observation type used to be hardcoded here) and is
+   * kept deliberately: this is the client's published surface, so renaming it would break
+   * importers for a cosmetic gain. The doc above is the contract, not the name.
    */
-  async recallObservations(
-    query: string,
-    opts: { maxTokens: number; timeoutMs: number }
-  ): Promise<string[]> {
+  async recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]> {
     const r = await this.req(
       "POST",
       this.bankUrl("/memories/recall"),
-      {
-        query,
-        types: ["observation"],
-        budget: "low",
-        max_tokens: opts.maxTokens,
-        include: { entities: null },
-      },
+      // `query` is applied AFTER the spread: everything else is the caller's to override, but a
+      // config that could replace the goal with a fixed string would silently recall for the
+      // wrong question on every turn.
+      { ...this.recallOptions, query },
       [],
       opts.timeoutMs
     );
@@ -599,16 +682,30 @@ export class HindsightClient {
   }
 
   /**
+   * Latch `knowledgePagesSupported = false` iff this response really means the endpoint is absent.
+   * Returns whether it latched. A bank-not-found 404 is NOT a capability verdict — it is the
+   * expected answer before the bank's first retain — so it must never cache a negative (#4607).
+   *
+   * Only 404 is tested: `req` throws on every other non-ok status it was not told to tolerate, so
+   * the 405/501 this used to check for never reach a caller in the first place.
+   */
+  private async pagesUnsupported(r: Response): Promise<boolean> {
+    if (r.status !== 404 || !(await isEndpointMissing(r))) return false;
+    this.knowledgePagesSupported = false;
+    return true;
+  }
+
+  /**
    * The bank's knowledge-base tree (folders + pages, nested). The tree carries names, source
    * queries and staleness but NOT synthesized content, so it is cheap enough to poll.
    */
   async tree(): Promise<KnowledgeNode[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
     const r = await this.req("GET", this.bankUrl("/knowledge-base/tree"));
-    if ([404, 405, 501].includes(r.status)) {
-      this.knowledgePagesSupported = false;
-      throw new KnowledgePagesUnavailableError();
-    }
+    if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
+    // Bank not created yet: it genuinely has no pages, and the capability stays UNKNOWN so the
+    // next call (after the first retain mints the bank) asks again instead of short-circuiting.
+    if (r.status === 404) return [];
     this.knowledgePagesSupported = true;
     try {
       return ((await r.json()) as { roots?: KnowledgeNode[] }).roots ?? [];
@@ -667,18 +764,22 @@ export class HindsightClient {
    *  hindsight_search_knowledge_pages. */
   async searchKnowledgePages(
     query: string,
-    limit = 3,
-    timeoutMs?: number
+    opts: { limit?: number; timeoutMs?: number } = {}
   ): Promise<{ id: string; name: string; snippet: string; score: number }[]> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
-    const q = `?q=${encodeURIComponent(query)}&limit=${limit}`;
+    const q = `?q=${encodeURIComponent(query)}&limit=${opts.limit ?? this.pageSearchLimit}`;
     const r = await this.req(
       "GET",
       this.bankUrl(`/knowledge-base/search${q}`),
       undefined,
       [],
-      timeoutMs
+      opts.timeoutMs
     );
+    // Routed through the same check as every other page endpoint. Without it a server with no
+    // knowledge-base API parsed its own 404 body into zero hits and reported "nothing matched"
+    // forever, which reads as an empty bank rather than a missing feature.
+    if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
+    if (r.status === 404) return []; // bank not created yet — no pages to match
     const j = (await r.json()) as {
       results?: { id: string; name: string; snippet?: string; score?: number }[];
     };
@@ -701,11 +802,15 @@ export class HindsightClient {
    * `source_query` re-syncs onto the live page instead of orphaning its synthesized content —
    * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
-  async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
+  async seedPages(
+    pageTrigger: PageTrigger = buildPageTrigger(),
+    pagesConfig: PagesConfig = {},
+    customPages: CustomPagesConfig = {}
+  ): Promise<void> {
     // The bank id is the fallback subject, not a degraded one: for a bank no single repository
     // owns it is the only name that stays put across sessions, and under the default
     // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
-    const pages = pagesFor(this.project ?? this.bank);
+    const pages = pagesFor(this.project ?? this.bank, pagesConfig, customPages);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -722,6 +827,7 @@ export class HindsightClient {
     }
     let created = 0;
     let updated = 0;
+    let vanished = 0; // deleted under us mid-run — neither re-synced nor unchanged
     for (const page of pages) {
       const hit = existing.get(page.name.toLowerCase());
       const body = {
@@ -737,11 +843,14 @@ export class HindsightClient {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
         // the outcome we wanted anyway, so tolerate it rather than failing the whole run.
         const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), body, [409]);
-        if ([404, 405, 501].includes(r.status)) {
-          this.knowledgePagesSupported = false;
+        if (await this.pagesUnsupported(r)) {
           this.log(
             `[bank] knowledge pages unavailable on ${this.apiUrl}; continuing without pages`
           );
+          return;
+        }
+        if (r.status === 404) {
+          this.log(`[bank] ${this.bank} does not exist yet; pages seed on the next session`);
           return;
         }
         if (r.status !== 409) created++;
@@ -765,6 +874,12 @@ export class HindsightClient {
         if (sourceDrift) {
           patch.source_query = page.source_query;
           patch.tags = page.tags;
+          // Say so. This replaces a query edited through the API or the control plane, which used
+          // to happen silently and read as the edit never having saved (#4460).
+          this.log(
+            `[bank] re-syncing "${page.name}" to its configured source_query — set ` +
+              `pages[${JSON.stringify(page.name)}].source_query to keep your own wording`
+          );
         }
         // The page's OWN resolved trigger (a hashed cron differs per page), not the shared one.
         if (triggerDrift) patch.trigger = pageTriggerPatch(body.trigger);
@@ -773,12 +888,17 @@ export class HindsightClient {
           this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(hit.id)}`),
           patch
         );
-        if ([404, 405, 501].includes(r.status)) {
-          this.knowledgePagesSupported = false;
+        if (await this.pagesUnsupported(r)) {
           this.log(
             `[bank] knowledge pages unavailable on ${this.apiUrl}; continuing without pages`
           );
           return;
+        }
+        // The node vanished under us (a concurrent delete). Skip it — the remaining pages are
+        // still worth syncing, and the run's summary line is still worth logging.
+        if (r.status === 404) {
+          vanished++;
+          continue;
         }
         updated++;
       }
@@ -787,7 +907,8 @@ export class HindsightClient {
     this.log(
       `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
         `${created} created, ${updated} re-synced, ` +
-        `${pages.length - created - updated} unchanged` +
+        `${pages.length - created - updated - vanished} unchanged` +
+        (vanished ? `, ${vanished} deleted under us` : "") +
         (initiatives ? `, ${initiatives} initiative pages re-synced` : "")
     );
   }
@@ -822,7 +943,14 @@ export class HindsightClient {
         this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
         { trigger: pageTriggerPatch(desired) }
       );
-      if ([404, 405, 501].includes(r.status)) break;
+      // 404 only: `req` throws on every other non-ok status it was not told to tolerate, so the
+      // 405/501 this used to test for never arrive (see `pagesUnsupported`). No latch here — a
+      // node that has gone missing says nothing about the server's capabilities, and nothing about
+      // the pages after it either, so skip it rather than abandoning the rest of the re-sync (this
+      // `break`ed while the status still carried a server-wide meaning). If it is the BANK that
+      // went rather than one node, this costs one wasted PATCH per initiative page instead of one
+      // total — bounded by the folder's size, and the next session re-syncs from scratch anyway.
+      if (r.status === 404) continue;
       updated++;
     }
     return updated;

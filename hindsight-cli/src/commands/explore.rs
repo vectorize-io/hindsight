@@ -359,6 +359,9 @@ impl App {
                         fact_types: None,
                         exclude_mental_models: false,
                         exclude_mental_model_ids: None,
+                        // See memory.rs: set per bank, not per CLI call.
+                        reflect_search_observations_max_tokens: None,
+                        reflect_search_observations_include_entities: None,
                     };
 
                     let result = client

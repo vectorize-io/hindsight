@@ -28,12 +28,12 @@ DOC_ORDER = [
     "developer/api/documents.md",
     "developer/api/operations.md",
     "developer/installation.md",
-    "developer/configuration.md",
+    "developer/configuration.mdx",
     "developer/models.md",
     "developer/rag-vs-hindsight.md",
     "sdks/python.md",
     "sdks/nodejs.md",
-    "sdks/cli.md",
+    "sdks/cli.mdx",
     "sdks/mcp.md",
     "cookbook/index.mdx",
     "cookbook/recipes/quickstart.md",
@@ -69,14 +69,52 @@ def strip_frontmatter(content: str) -> str:
     return re.sub(r"^---\n[\s\S]*?\n---\n", "", content)
 
 
+def extract_section(code: str, section: str) -> str:
+    """Return the lines between `[docs:section]` markers, as CodeSnippet.tsx does."""
+    start = re.compile(rf"(?:#|//)\s*\[docs:{re.escape(section)}\]")
+    end = re.compile(rf"(?:#|//)\s*\[/docs:{re.escape(section)}\]")
+    lines: list[str] = []
+    inside = False
+    for line in code.split("\n"):
+        if start.search(line):
+            inside = True
+        elif end.search(line):
+            inside = False
+        elif inside:
+            lines.append(line)
+    indent = min((len(line) - len(line.lstrip()) for line in lines if line.strip()), default=0)
+    return "\n".join(line[indent:] for line in lines).strip("\n")
+
+
+def inline_code_snippets(content: str) -> str:
+    """Replace <CodeSnippet> tags with the example code they render."""
+    site_dir = get_docs_dir().parent
+    sources = {
+        var: (site_dir / path).read_text()
+        for var, path in re.findall(r"^import\s+(\w+)\s+from\s+'!!raw-loader!@site/(.+?)';", content, re.MULTILINE)
+    }
+
+    def render(match: re.Match[str]) -> str:
+        var, section, language = match.groups()
+        code = extract_section(sources[var], section)
+        if not code:
+            raise ValueError(f"CodeSnippet section {section!r} not found in {var}")
+        return f"```{language}\n{code}\n```"
+
+    return re.sub(r'<CodeSnippet\s+code=\{(\w+)\}\s+section="([^"]+)"\s+language="([^"]+)"[^>]*/>', render, content)
+
+
 def clean_markdown(content: str) -> str:
     """Clean markdown content for LLM consumption."""
-    cleaned = strip_frontmatter(content)
+    cleaned = inline_code_snippets(strip_frontmatter(content))
 
-    # Remove import statements
-    cleaned = re.sub(r"^import\s+.*$", "", cleaned, flags=re.MULTILINE)
+    # Remove the page's MDX imports (all from @site/ or @theme/), not import lines inside code examples
+    cleaned = re.sub(r"^import\s+.*\s+from\s+'(?:!!raw-loader!)?@(?:site|theme)/.*$", "", cleaned, flags=re.MULTILINE)
 
-    # Remove JSX components (like <RecipeCarousel ... />)
+    # Remove JSX components (like <RecipeCarousel ... />) and the Tabs wrappers
+    # around the inlined snippets, keeping each tab's code
+    cleaned = re.sub(r'<TabItem value="[^"]*" label="([^"]+)">', r"**\1**", cleaned)
+    cleaned = re.sub(r"</?(Tabs|TabItem)>", "", cleaned)
     cleaned = re.sub(r"<[A-Z][a-zA-Z]*\s+[^>]*/>", "", cleaned)
     cleaned = re.sub(r"<[A-Z][a-zA-Z]*[^>]*>[\s\S]*?</[A-Z][a-zA-Z]*>", "", cleaned)
 
@@ -101,10 +139,13 @@ def main():
     remaining_files = set(all_files)
 
     # Add prioritized files in order
-    for file in DOC_ORDER:
-        if file in remaining_files:
-            ordered_files.append(file)
-            remaining_files.discard(file)
+    # Match on the name without extension, so a page renamed .md -> .mdx keeps its place
+    for entry in DOC_ORDER:
+        for file in (entry, str(Path(entry).with_suffix(".md")), str(Path(entry).with_suffix(".mdx"))):
+            if file in remaining_files:
+                ordered_files.append(file)
+                remaining_files.discard(file)
+                break
 
     # Add remaining files (sorted alphabetically)
     ordered_files.extend(sorted(remaining_files))

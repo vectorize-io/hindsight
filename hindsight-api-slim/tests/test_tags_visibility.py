@@ -1419,7 +1419,7 @@ async def test_list_tags_empty_bank(api_client, memory):
     """Test that list_tags returns empty for bank with no tags."""
     bank_id = f"list_tags_empty_test_{datetime.now().timestamp()}"
     # The bank has to exist: a bank nobody created is a 404, not an empty list (#4175).
-    await memory.get_bank_profile(bank_id, request_context=RequestContext())
+    await memory.ensure_bank_profile(bank_id, request_context=RequestContext())
 
     # List tags without storing anything
     response = await api_client.get(f"/v1/default/banks/{bank_id}/tags")
@@ -1826,7 +1826,7 @@ async def test_tag_groups_nested_and_containing_or(api_client):
 async def _create_mental_model_via_engine(memory, *, bank_id, name, tags, request_context):
     """Helper that creates a mental model directly through the engine without an LLM call."""
     # Ensure the bank exists (mental_models has a FK to banks).
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     return await memory.create_mental_model(
         bank_id=bank_id,
         name=name,

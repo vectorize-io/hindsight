@@ -8,6 +8,9 @@ import {
   DEFAULT_PAGE_TRIGGER_CRON,
   expandCronHash,
   KNOWLEDGE_LABELS,
+  PAGE_NAMES,
+  pagesFor,
+  pageScopeRule,
   pageTriggerDrifted,
   pageTriggerFor,
   pageTriggerPatch,
@@ -334,7 +337,7 @@ describe("codingBankManifest (#3927)", () => {
   it("never deletes a strategy the user defined, nor reverts their edits to ours", () => {
     const mine = {
       ...RETAIN_STRATEGIES,
-      // The user made the conversation strategy concise and small; that is theirs to decide.
+      // The user rewrote the conversation strategy's mission; that is theirs to decide.
       conversation: { retain_mission: "MINE", retain_extraction_mode: "concise" },
       mycustom: { retain_chunk_size: 500 },
     };
@@ -342,6 +345,37 @@ describe("codingBankManifest (#3927)", () => {
     expect(bankOf({ reflect_mission: "seeded", retain_strategies: mine })).not.toHaveProperty(
       "retain_strategies"
     );
+  });
+
+  it("re-syncs the extraction mode of the plugin's own strategies to the configured one (#4560)", () => {
+    // A bank seeded by a release that defaulted to verbose, plus a user tweak and a user strategy.
+    const seeded = Object.fromEntries(
+      Object.entries(RETAIN_STRATEGIES).map(([n, d]) => [
+        n,
+        d.retain_extraction_mode === "custom" ? d : { ...d, retain_extraction_mode: "verbose" },
+      ])
+    );
+    const current = {
+      ...seeded,
+      conversation: { ...seeded.conversation, retain_chunk_size: 500 },
+      mycustom: { retain_extraction_mode: "verbose" },
+    };
+    const strategies = bankOf({ reflect_mission: "seeded", retain_strategies: current })!
+      .retain_strategies as Record<string, Record<string, unknown>>;
+    for (const name of ["git", "gitlog", "conversation", "document"])
+      expect(strategies[name].retain_extraction_mode).toBe("concise");
+    // Only the mode moves: the user's other edits, their own strategy and the survey stay put.
+    expect(strategies.conversation.retain_chunk_size).toBe(500);
+    expect(strategies.mycustom).toEqual({ retain_extraction_mode: "verbose" });
+    expect(strategies.survey).toEqual(RETAIN_STRATEGIES.survey);
+
+    // An explicit choice is honoured the same way, and seeds a new bank with it.
+    const verbose = codingBankManifest(
+      { reflect_mission: "seeded", retain_strategies: RETAIN_STRATEGIES },
+      "verbose"
+    )!.bank.retain_strategies as Record<string, Record<string, unknown>>;
+    expect(verbose.git.retain_extraction_mode).toBe("verbose");
+    expect(codingBankManifest(undefined, "chunks")!.bank.retain_extraction_mode).toBe("chunks");
   });
 
   it("leaves a bank that already carries the whole structure completely alone", () => {
@@ -395,5 +429,78 @@ describe("codingBankManifest (#3927)", () => {
     }
     // A blank override is not a choice.
     expect(bankOf({ reflect_mission: "   " })!.reflect_mission).toBe(REFLECT_MISSION);
+  });
+});
+
+/**
+ * WHICH pages a repo gets and what each one asks. The config surface behind #4460, where a
+ * `source_query` edited through the API was silently restored on the next session because the
+ * taxonomy was the only wording `seedPages` would accept.
+ */
+describe("pagesFor page configuration", () => {
+  const scope = pageScopeRule("repo-a");
+
+  it("seeds the whole taxonomy with its built-in queries when no config is given", () => {
+    const pages = pagesFor("repo-a");
+    expect(pages.map((p) => p.name)).toEqual([...PAGE_NAMES]);
+    for (const page of pages) expect(page.source_query.endsWith(scope)).toBe(true);
+  });
+
+  it("false skips a page and leaves the rest in taxonomy order", () => {
+    const pages = pagesFor("repo-a", { "Component map": false });
+    expect(pages.map((p) => p.name)).toEqual(PAGE_NAMES.filter((n) => n !== "Component map"));
+  });
+
+  it("a custom source_query replaces the built-in one, scoping clause still appended", () => {
+    const pages = pagesFor("repo-a", { "Key decisions and rationale": { source_query: "why?" } });
+    const page = pages.find((p) => p.name === "Key decisions and rationale")!;
+    // The clause rides along with a reworded query: it is what keeps a dependency's decisions off
+    // this project's page (#3476), which rewording the question is not a choice to take on.
+    expect(page.source_query).toBe("why?" + scope);
+    // The tier tag is the taxonomy's — it selects the facts the synthesis reads, so a reworded
+    // query must not drop it.
+    expect(page.tags).toEqual(["knowledge:decision"]);
+    expect(pages.find((p) => p.name === "Core concepts")!.source_query).toContain("core concepts");
+  });
+
+  it("matches names case- and whitespace-insensitively, as seedPages matches live pages", () => {
+    expect(pagesFor("repo-a", { "  component MAP  ": false }).map((p) => p.name)).not.toContain(
+      "Component map"
+    );
+  });
+
+  it("customPages are appended after the taxonomy, scoped, with their own tags", () => {
+    const pages = pagesFor(
+      "repo-a",
+      {},
+      {
+        "Security posture": {
+          source_query: "what are our security decisions?",
+          tags: ["knowledge:decision"],
+        },
+      }
+    );
+    expect(pages).toHaveLength(PAGE_NAMES.length + 1);
+    const custom = pages[pages.length - 1];
+    expect(custom.name).toBe("Security posture");
+    expect(custom.source_query).toBe("what are our security decisions?" + scope);
+    expect(custom.tags).toEqual(["knowledge:decision"]);
+  });
+
+  it("a custom page without tags gets none — `all` then puts no tag constraint on it", () => {
+    const pages = pagesFor("repo-a", {}, { Roadmap: { source_query: "where is this going?" } });
+    expect(pages.find((p) => p.name === "Roadmap")!.tags).toEqual([]);
+  });
+
+  it("disabling a taxonomy page and adding one of your own compose", () => {
+    const pages = pagesFor(
+      "repo-a",
+      { "Component map": false },
+      { Roadmap: { source_query: "where is this going?" } }
+    );
+    expect(pages.map((p) => p.name)).toEqual([
+      ...PAGE_NAMES.filter((n) => n !== "Component map"),
+      "Roadmap",
+    ]);
   });
 });

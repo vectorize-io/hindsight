@@ -23,7 +23,7 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 
 async def _make_bank(memory: MemoryEngine, request_context) -> str:
     bank_id = f"mmdedupe-{uuid.uuid4().hex[:8]}"
-    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     return bank_id
 
 

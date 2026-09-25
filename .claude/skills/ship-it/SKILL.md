@@ -1,6 +1,6 @@
 ---
 name: ship-it
-description: Take a PR from review to merged — run the repo's code-review skill on it, apply ALL fixes on the PR branch, wait for CI green, then squash-merge. Use when asked to "ship it", "ship PR #N", or "review, fix and merge" a PR.
+description: Take a PR from review to merged — run the repo's code-review skill on it in a loop (review, fix, re-review) until nothing is left to fix, applying ALL fixes on the PR branch, wait for CI green, then squash-merge. Use when asked to "ship it", "ship PR #N", or "review, fix and merge" a PR.
 user_invocable: true
 ---
 
@@ -9,6 +9,20 @@ user_invocable: true
 Input: a PR number or URL, or nothing — then use the current branch's PR (`gh pr view` with no
 argument resolves it). If the current branch has no PR yet, push it and open one with
 `gh pr create` (maintainer branch only), then continue. Goal: the PR merged with every code-review finding fixed and CI green.
+
+## 0b. A figure in the description, when the change has a shape
+
+If the PR changes how something *flows* — a request path, a background job, what a feature does step
+by step — a picture explains it faster than the diff does. Use the `figure` skill: write a JSON
+spec, render one animated SVG, and put it at the top of the PR description. It plays in the
+description with no upload and no click.
+
+Reference it by **commit SHA**, not branch name, or the image dies when the branch is deleted at
+merge: `https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>.svg`. If the SVG is not part
+of the change itself, don't commit it to the repo — render it, commit it on the PR branch only if it
+belongs there, and otherwise keep the description's image pinned to the commit that carried it.
+
+Skip it for a fix with no shape: a one-line guard, a dependency bump, a typo.
 
 ## 0. Blocker rule (applies at every step)
 
@@ -58,7 +72,12 @@ Classify each against step 0. Any blocker → stop and ask.
 - Fix every finding, not just the must-fixes. Stay in the PR's scope — don't refactor neighbouring code the review didn't flag.
 - Run `./scripts/hooks/lint.sh` and the tests covering the touched code (see CLAUDE.md for commands).
   Regenerate OpenAPI/clients/docs-skill if the change requires it.
-- Re-run `code-review` on the result; repeat until it's clean (or only blockers remain → stop and ask).
+- **Loop until clean.** One review pass is never enough: fixes introduce new findings, and the
+  review only sees what the last pass changed. So repeat — review → fix everything → review again —
+  until a full `code-review` pass returns **zero** findings of any severity (must fix, should fix,
+  nits). Don't stop at "only nits left", don't stop because the last pass found fewer things, and
+  don't declare done on a pass you didn't actually re-run. The only early exit is a blocker (step 0)
+  → stop and ask.
 - Commit with a message that lists what was fixed, then push to the PR branch.
 
 Don't post a review comment on a maintainer's PR — findings go in the chat reply and the commit
@@ -108,3 +127,12 @@ git push origin --delete ci/pr-<N>-verify   # if you created it
 
 Report: PR link, the findings fixed (one line each), anything deliberately left, and the CI run
 that gated the merge.
+
+## Note on `gh pr edit`
+
+It fails on this repo — a GraphQL "Projects (classic)" deprecation aborts it and nothing changes,
+silently. To edit a description use the REST API instead:
+
+```bash
+gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@body.md
+```
