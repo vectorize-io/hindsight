@@ -246,6 +246,12 @@ function mergeHarnessHooks(
   dist: string
 ): void {
   const spec = HOOK_HARNESSES[harness];
+  // A harness whose hooks live outside the two JSON shapes must never reach the generic
+  // writer: the ternary below would silently take the FLAT branch and emit a JSON block
+  // into a file that host never reads. tsc cannot catch that, so fail loudly here.
+  if (spec.configStyle === "toml-array")
+    throw new Error(`${harness} writes its own TOML hook block; mergeHarnessHooks cannot emit it`);
+
   const installedEvents = new Set<string>();
   for (const hook of [...Object.values(spec.install), ...(spec.additionalHooks ?? [])]) {
     // Antigravity has no SessionStart event. Its first PreInvocation performs the same seed guard,
@@ -1416,6 +1422,69 @@ const grok: HarnessInstaller = {
   },
 };
 
+const KIMI_MARKER_START = "# HINDSIGHT_CODING_AGENTS_KIMI_START";
+const KIMI_MARKER_END = "# HINDSIGHT_CODING_AGENTS_KIMI_END";
+const KIMI_BLOCK_RE = new RegExp(`\\n?${KIMI_MARKER_START}[\\s\\S]*?${KIMI_MARKER_END}\\n?`);
+
+const kimi: HarnessInstaller = {
+  name: "kimi-code",
+  detect: (c) => onPath("kimi") || existsSync(join(c.home, ".kimi-code")),
+  install(c) {
+    const path = join(c.home, ".kimi-code", "config.toml");
+    const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+    // Replace a previous block rather than skipping when one exists, so a re-install repairs
+    // paths that moved with the package (the grok-build precedent).
+    const withoutOurs = existing.replace(KIMI_BLOCK_RE, "\n");
+    // Kimi validates every [[hooks]] entry against a STRICT 4-key schema
+    // (event / matcher / command / timeout). One unknown key does not drop that entry — it
+    // drops EVERY hook in the file, at warning severity only. So emit those keys and nothing
+    // else, and take the values from the lifecycle spec so the installed hooks can never
+    // diverge from the ones the runtime entrypoints implement.
+    const spec = HOOK_HARNESSES["kimi-code"];
+    const entries = Object.values(spec.install)
+      .map(
+        (h) =>
+          `[[hooks]]\nevent = ${JSON.stringify(h.event)}\n` +
+          `command = ${JSON.stringify(`node "${join(c.dist, h.entry)}"`)}\n` +
+          `timeout = ${h.timeout}\n`
+      )
+      .join("\n");
+    const block = `\n${KIMI_MARKER_START}\n${entries}${KIMI_MARKER_END}\n`;
+    if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
+      copyFileSync(path, `${path}.hindsight-backup`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${withoutOurs.replace(/\n*$/, "\n")}${block}`);
+    // Kimi keeps MCP registration in its own mcp.json, not config.toml. Register the packaged
+    // stdio server: it reads the endpoint and token from ~/.hindsight/coding-agent.json, so the
+    // entry needs no bearerTokenEnvVar — the http shape this replaces required HINDSIGHT_API_KEY
+    // to be exported into Kimi's environment, and silently 401s when it is not.
+    const mcpPath = join(c.home, ".kimi-code", "mcp.json");
+    const mcp = readJson(mcpPath);
+    mcp.mcpServers = { ...(mcp.mcpServers ?? {}), hindsight: mcpServerEntry(c.dist, "kimi-code") };
+    writeJson(mcpPath, mcp);
+    installSkill(c, "kimi-code");
+    c.log?.(`kimi-code: native hooks installed in ${path}, MCP in ${mcpPath}`);
+  },
+  uninstall(c) {
+    const path = join(c.home, ".kimi-code", "config.toml");
+    if (existsSync(path)) {
+      const existing = readFileSync(path, "utf8");
+      const cleaned = existing.replace(KIMI_BLOCK_RE, "\n");
+      if (cleaned !== existing) writeFileSync(path, cleaned);
+    }
+    const mcpPath = join(c.home, ".kimi-code", "mcp.json");
+    if (existsSync(mcpPath)) {
+      const mcp = readJson(mcpPath);
+      if (mcp.mcpServers?.hindsight) {
+        delete mcp.mcpServers.hindsight;
+        writeJson(mcpPath, mcp);
+      }
+    }
+    uninstallSkill(c, "kimi-code");
+    c.log?.("kimi-code: native hooks + MCP + skill removed");
+  },
+};
+
 const CLINE_HOOK_MARKER = "HINDSIGHT_CODING_AGENTS_CLINE";
 const CLINE_OLD_HOOK_EVENTS = ["TaskStart", "UserPromptSubmit", "TaskComplete"];
 const CLINE_PLUGIN_NAME = "@vectorize-io/hindsight-coding-agents";
@@ -1909,6 +1978,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   copilot,
   grok,
   qwen,
+  kimi,
   cline,
   dcode,
   dsh,

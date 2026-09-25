@@ -26,6 +26,8 @@ export const SKILL_DIRS: Record<string, string[]> = {
   "grok-build": [".grok", "skills"],
   "cline-cli": [".cline", "data", "settings", "skills"],
   "qwen-code": [".qwen", "skills"], // Qwen's user-level skills root (Storage.getUserSkillsDirs)
+  // Kimi Code's user-level skills root, alongside its config.toml and mcp.json.
+  "kimi-code": [".kimi-code", "skills"],
   "factory-droid": [".factory", "skills"], // Droid's user-level skills root
   // ZCode scans TWO user roots by default (its resolveDefaultSkillRoots): `~/.zcode/skills` and the
   // shared agentskills `~/.agents/skills`. Write its OWN, for the same reason the pi family does —

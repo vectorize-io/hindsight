@@ -12,7 +12,7 @@ import codingAgents from '@vectorize-io/interfig/figures/coding-agents';
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Kimi Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -158,6 +158,14 @@ npx @vectorize-io/hindsight-coding-agents install qwen-code
 ```
 
 Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
+
+#### <img src="/img/harness/kimi-code.svg" alt="" width="20" height="20" /> Kimi Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install kimi-code
+```
+
+Native hooks in `~/.kimi-code/config.toml`, plus MCP in `~/.kimi-code/mcp.json` and the companion skill.
 
 > Qwen's hook `timeout` is in **milliseconds** (its own docs: "Timeout in milliseconds, default
 > 60000"), unlike every other supported agent, so the installed values are `30000/30000/60000`.
