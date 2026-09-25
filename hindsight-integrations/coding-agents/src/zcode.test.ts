@@ -52,7 +52,7 @@ const stubClient = () => {
   const retain = vi.fn().mockResolvedValue(undefined);
   const makeClient = vi.fn(() => ({
     retain,
-    supportsIdempotentRetain: async () => false,
+    supportsAppendRetain: async () => false,
   })) as unknown as Parameters<typeof runRetainHook>[1];
   return { retain, makeClient };
 };

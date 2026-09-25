@@ -451,6 +451,18 @@ export class HindsightClient {
     }
   }
 
+  async supportsAppendRetain(): Promise<boolean> {
+    if (!(await this.supportsIdempotentRetain())) return false;
+    try {
+      const r = await this.req("GET", this.bankUrl("/config"));
+      if (!r.ok) return false;
+      const j = (await r.json()) as { config?: { store_document_text?: boolean } };
+      return j.config?.store_document_text === true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Every document_id currently in the bank under a strategy tag (e.g. `source:git`), paginated into a
    * Set. Powers the incremental git-sync's "what's already ingested?" check — since git commits are stored
