@@ -11,16 +11,12 @@ import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
 import type { RetainContentBlock as ContentBlock } from "@/lib/api";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-
-/** One element of a document composed as an ordered block list. */
-type DocBlock =
-  | { kind: "text"; text: string }
-  | { kind: "attachment"; name: string; mediaType: string; data: string; size: number };
+  ContentComposer,
+  hasComposedContent,
+  toRetainContent,
+  type ComposeMode,
+  type ComposerBlock,
+} from "@/components/content-composer";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
@@ -56,8 +52,6 @@ import {
   ChevronRight,
   LogOut,
   Copy,
-  Paperclip,
-  ChevronUp,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
@@ -143,18 +137,8 @@ function BankSelectorInner() {
   const [docDialogOpen, setDocDialogOpen] = React.useState(false);
   const [docTab, setDocTab] = React.useState<"text" | "upload">("text");
   const [docContent, setDocContent] = React.useState("");
-  // Attachments to interleave into the document's content. Kept in order, and
-  // appended after the prose: the API takes an ordered block list, and a form
-  // with one textarea has no way to express "this picture goes *here*". Anyone
-  // needing exact placement sends blocks through the API directly.
-  // How the document's content is being composed. "text" is the plain textarea
-  // every document has always used; "blocks" is the ordered list that lets an
-  // attachment sit *between* two runs of prose, which is the whole point of
-  // inline attachments and cannot be expressed with one textarea. Kept as a
-  // switch so the common case — typing some text — is not cluttered by an
-  // editor most documents never need.
-  const [docComposeMode, setDocComposeMode] = React.useState<"text" | "blocks">("text");
-  const [docBlocks, setDocBlocks] = React.useState<DocBlock[]>([]);
+  const [docComposeMode, setDocComposeMode] = React.useState<ComposeMode>("text");
+  const [docBlocks, setDocBlocks] = React.useState<ComposerBlock[]>([]);
   const [docContext, setDocContext] = React.useState("");
   const [docEventDate, setDocEventDate] = React.useState("");
   const [docDocumentId, setDocDocumentId] = React.useState("");
@@ -488,11 +472,7 @@ function BankSelectorInner() {
   };
 
   const handleCreateDocument = async () => {
-    const hasBlockContent = docBlocks.some((b) =>
-      b.kind === "text" ? b.text.trim().length > 0 : true
-    );
-    const hasContent = docComposeMode === "blocks" ? hasBlockContent : docContent.trim().length > 0;
-    if (!currentBank || !hasContent) return;
+    if (!currentBank || !hasComposedContent(docComposeMode, docContent, docBlocks)) return;
 
     setIsCreatingDoc(true);
 
@@ -512,29 +492,7 @@ function BankSelectorInner() {
         metadata?: Record<string, string>;
         entities?: Array<{ text: string }>;
         strategy?: string;
-      } = { content: docContent };
-      if (docComposeMode === "blocks") {
-        // Sent in the order they were arranged, so an attachment reaches the
-        // extractor between the sentences that frame it. An image block for
-        // images and a file block for everything else — the distinction the API
-        // keeps because the providers keep it.
-        item.content = docBlocks
-          .filter((b) => (b.kind === "text" ? b.text.trim().length > 0 : true))
-          .map((b) =>
-            b.kind === "text"
-              ? { type: "text" as const, text: b.text }
-              : b.mediaType.startsWith("image/")
-                ? {
-                    type: "image" as const,
-                    source: { type: "base64" as const, media_type: b.mediaType, data: b.data },
-                  }
-                : {
-                    type: "file" as const,
-                    filename: b.name,
-                    source: { type: "base64" as const, media_type: b.mediaType, data: b.data },
-                  }
-          );
-      }
+      } = { content: toRetainContent(docComposeMode, docContent, docBlocks) };
       if (docContext) item.context = docContext;
       if (docEventDate) item.timestamp = toIsoTimestamp(docEventDate);
       if (docDocumentId) item.document_id = docDocumentId;
@@ -1029,204 +987,20 @@ function BankSelectorInner() {
                 </TabsList>
 
                 <TabsContent value="text" className="mt-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-bold text-sm text-foreground">
-                      {tAddDocument("contentLabel")}
-                    </label>
-                    {/* The switch, rather than always showing the block editor:
-                        most documents are just text, and an ordered block list
-                        would be clutter in front of every one of them. */}
-                    <div className="flex items-center rounded border border-border overflow-hidden text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setDocComposeMode("text")}
-                        className={`px-2 py-1 ${
-                          docComposeMode === "text"
-                            ? "bg-muted text-foreground font-semibold"
-                            : "text-muted-foreground hover:bg-muted/50"
-                        }`}
-                      >
-                        {tAddDocument("composeText")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Carry the typed text across so switching never
-                          // silently loses what is already written.
-                          setDocBlocks((current) =>
-                            current.length > 0 ? current : [{ kind: "text", text: docContent }]
-                          );
-                          setDocComposeMode("blocks");
-                        }}
-                        className={`px-2 py-1 border-l border-border ${
-                          docComposeMode === "blocks"
-                            ? "bg-muted text-foreground font-semibold"
-                            : "text-muted-foreground hover:bg-muted/50"
-                        }`}
-                      >
-                        {tAddDocument("composeBlocks")}
-                      </button>
-                    </div>
-                  </div>
-
-                  {docComposeMode === "text" ? (
-                    <Textarea
-                      value={docContent}
-                      onChange={(e) => setDocContent(e.target.value)}
-                      placeholder={tAddDocument("contentPlaceholder")}
-                      className="min-h-[150px] resize-y"
-                      autoFocus
-                    />
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        {tAddDocument("composeBlocksHint")}
-                      </p>
-                      {docBlocks.map((block, index) => (
-                        <div
-                          key={index}
-                          className="group relative rounded border border-border bg-muted/20 p-2"
-                        >
-                          {/* Controls overlay the block rather than sitting in a
-                              column beside it: at this width a fixed gutter of
-                              arrows and a close button squeezed the content into
-                              a sliver. Revealed on hover and on keyboard focus,
-                              so they stay reachable without a pointer. */}
-                          <div className="absolute top-1 right-1 flex items-center gap-0.5 rounded bg-background/80 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                            <button
-                              type="button"
-                              aria-label={tAddDocument("blockMoveUp")}
-                              disabled={index === 0}
-                              onClick={() =>
-                                setDocBlocks((current) => {
-                                  const next = [...current];
-                                  [next[index - 1], next[index]] = [next[index], next[index - 1]];
-                                  return next;
-                                })
-                              }
-                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25"
-                            >
-                              <ChevronUp className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={tAddDocument("blockMoveDown")}
-                              disabled={index === docBlocks.length - 1}
-                              onClick={() =>
-                                setDocBlocks((current) => {
-                                  const next = [...current];
-                                  [next[index], next[index + 1]] = [next[index + 1], next[index]];
-                                  return next;
-                                })
-                              }
-                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25"
-                            >
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={tAddDocument("blockRemove")}
-                              onClick={() =>
-                                setDocBlocks((current) => current.filter((_, i) => i !== index))
-                              }
-                              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-
-                          {block.kind === "text" ? (
-                            <Textarea
-                              value={block.text}
-                              onChange={(e) =>
-                                setDocBlocks((current) =>
-                                  current.map((b, i) =>
-                                    i === index && b.kind === "text"
-                                      ? { ...b, text: e.target.value }
-                                      : b
-                                  )
-                                )
-                              }
-                              placeholder={tAddDocument("contentPlaceholder")}
-                              // Room for the overlay so the first line never runs
-                              // underneath it.
-                              className="min-h-[80px] resize-y border-0 bg-transparent p-0 pr-20 shadow-none focus-visible:ring-0"
-                            />
-                          ) : (
-                            <div className="flex items-center gap-2 pr-20 text-sm">
-                              <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              <span className="truncate">{block.name}</span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {(block.size / 1024).toFixed(0)} KB
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                      <input
-                        id="doc-attachment-input"
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={async (e) => {
-                          const files = Array.from(e.target.files ?? []);
-                          const encoded = await Promise.all(
-                            files.map(
-                              (file) =>
-                                new Promise<DocBlock>((resolve, reject) => {
-                                  const reader = new FileReader();
-                                  reader.onerror = () => reject(reader.error);
-                                  reader.onload = () =>
-                                    resolve({
-                                      kind: "attachment",
-                                      name: file.name,
-                                      // Some browsers report "" for unusual
-                                      // extensions; the API accepts any
-                                      // well-formed type, so fall back to a
-                                      // generic one rather than refusing it.
-                                      mediaType: file.type || "application/octet-stream",
-                                      size: file.size,
-                                      // readAsDataURL gives "data:<type>;base64,<payload>";
-                                      // the API wants the payload alone.
-                                      data: String(reader.result).split(",", 2)[1] ?? "",
-                                    });
-                                  reader.readAsDataURL(file);
-                                })
-                            )
-                          );
-                          setDocBlocks((current) => [...current, ...encoded]);
-                          // Let the same file be picked again after removal.
-                          e.target.value = "";
-                        }}
-                      />
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button type="button" variant="outline" size="sm">
-                            <Plus className="mr-1.5 h-3.5 w-3.5" />
-                            {tAddDocument("blockAdd")}
-                            <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              setDocBlocks((current) => [...current, { kind: "text", text: "" }])
-                            }
-                          >
-                            {tAddDocument("blockAddText")}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              document.getElementById("doc-attachment-input")?.click()
-                            }
-                          >
-                            {tAddDocument("blockAddAttachment")}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
+                  <ContentComposer
+                    label={
+                      <label className="font-bold text-sm text-foreground">
+                        {tAddDocument("contentLabel")}
+                      </label>
+                    }
+                    mode={docComposeMode}
+                    onModeChange={setDocComposeMode}
+                    text={docContent}
+                    onTextChange={setDocContent}
+                    blocks={docBlocks}
+                    onBlocksChange={setDocBlocks}
+                    autoFocus
+                  />
                 </TabsContent>
 
                 <TabsContent value="upload" className="mt-3">
@@ -1775,12 +1549,7 @@ function BankSelectorInner() {
                 <Button
                   onClick={handleCreateDocument}
                   disabled={
-                    isCreatingDoc ||
-                    (docComposeMode === "blocks"
-                      ? !docBlocks.some((b) =>
-                          b.kind === "text" ? b.text.trim().length > 0 : true
-                        )
-                      : !docContent.trim())
+                    isCreatingDoc || !hasComposedContent(docComposeMode, docContent, docBlocks)
                   }
                 >
                   {isCreatingDoc

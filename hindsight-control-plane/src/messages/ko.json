@@ -389,8 +389,6 @@
     "testerSampleDefault": "Sarah는 2024년 3월 결제 팀을 이끌기 위해 베를린으로 이주했습니다. 회의보다 비동기 업데이트를 선호합니다.",
     "testerRunAction": "실행",
     "testerRunNote": "실제 retain을 시뮬레이션합니다. LLM이 구성되어 있으면 LLM 호출도 포함됩니다. 저장되지 않습니다.",
-    "testerAttachAction": "파일 첨부",
-    "testerRemoveAttachment": "{name} 제거",
     "testerNoFacts": "이 텍스트에서 추출된 사실이 없습니다.",
     "testerOccurredStart": "발생 시작",
     "testerOccurredEnd": "발생 종료",

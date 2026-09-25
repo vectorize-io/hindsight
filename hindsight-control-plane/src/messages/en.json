@@ -389,8 +389,6 @@
     "testerSampleDefault": "Sarah moved to Berlin in March 2024 to lead the payments team. She prefers async updates over meetings.",
     "testerRunAction": "Run",
     "testerRunNote": "Simulates a real retain, including the LLM if one is configured. Nothing is stored.",
-    "testerAttachAction": "Attach file",
-    "testerRemoveAttachment": "Remove {name}",
     "testerNoFacts": "No facts extracted from this text.",
     "testerOccurredStart": "Occurred from",
     "testerOccurredEnd": "Occurred until",

@@ -389,8 +389,6 @@
     "testerSampleDefault": "Sarah 于 2024 年 3 月搬到柏林，负责支付团队。她更喜欢异步更新而不是开会。",
     "testerRunAction": "运行",
     "testerRunNote": "模拟一次真实的 retain，若已配置 LLM 则包含 LLM 调用。不会保存任何内容。",
-    "testerAttachAction": "附加文件",
-    "testerRemoveAttachment": "移除 {name}",
     "testerNoFacts": "未从该文本中提取到事实。",
     "testerOccurredStart": "发生起始",
     "testerOccurredEnd": "发生结束",

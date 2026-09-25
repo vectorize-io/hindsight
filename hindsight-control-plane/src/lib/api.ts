@@ -2208,7 +2208,7 @@ export class ControlPlaneClient {
    */
   async dryRunExtract(
     bankId: string,
-    content: string | DryRunContentBlock[],
+    content: string | RetainContentBlock[],
     strategy?: string | null
   ) {
     return this.fetchApi<{
@@ -2465,12 +2465,3 @@ export interface ConsolidationStrategiesPreview {
   scopes_scanned: number;
   complete: boolean;
 }
-
-/** One block of a multimodal dry-run `content` array, in the order it was written. */
-export type DryRunContentBlock =
-  | { type: "text"; text: string }
-  | {
-      type: "image" | "file";
-      source: { type: "base64"; media_type: string; data: string };
-      filename?: string;
-    };

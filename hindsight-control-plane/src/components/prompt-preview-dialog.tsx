@@ -12,7 +12,6 @@ import {
   Globe,
   Paperclip,
   User,
-  X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -29,7 +28,15 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { EntityLabelsEditor, type LabelGroup } from "@/components/entity-labels-editor";
-import { client, type DryRunContentBlock } from "@/lib/api";
+import {
+  ContentComposer,
+  hasComposedContent,
+  nonEmptyBlocks,
+  toRetainContent,
+  type ComposeMode,
+  type ComposerBlock,
+} from "@/components/content-composer";
+import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { cn } from "@/lib/utils";
 
@@ -75,40 +82,6 @@ type RunSetting = {
 };
 type Chunk = { text: string; fact_count: number };
 type DryRunResult = { facts: Fact[]; chunks?: Chunk[]; usage?: Record<string, unknown> | null };
-
-/** Base64 of a file, without the `data:...;base64,` prefix the reader puts in front. */
-function readBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-/**
- * The sample as retain would receive it: plain text when nothing is attached (the
- * path every existing caller takes), else the text followed by one block per file.
- * Returns the file each block index stands for, so facts can name their source.
- */
-async function buildDryRunContent(
-  text: string,
-  files: File[]
-): Promise<{ content: string | DryRunContentBlock[]; fileByBlock: Map<number, File> }> {
-  const fileByBlock = new Map<number, File>();
-  if (!files.length) return { content: text, fileByBlock };
-  const blocks: DryRunContentBlock[] = text.trim() ? [{ type: "text", text }] : [];
-  for (const file of files) {
-    const mediaType = file.type || "application/octet-stream";
-    fileByBlock.set(blocks.length, file);
-    blocks.push({
-      type: mediaType.startsWith("image/") ? "image" : "file",
-      source: { type: "base64", media_type: mediaType, data: await readBase64(file) },
-      filename: file.name,
-    });
-  }
-  return { content: blocks, fileByBlock };
-}
 
 /**
  * Colour is the point of this screen: a reader should tell at a glance which blocks
@@ -565,13 +538,13 @@ function ChunkCard({
   index,
   facts,
   defaultOpen,
-  fileByBlock,
+  fileNames,
 }: {
   chunk: Chunk;
   index: number;
   facts: Fact[];
   defaultOpen: boolean;
-  fileByBlock: Map<number, File>;
+  fileNames: Map<number, string>;
 }) {
   const t = useTranslations("bankConfig");
   const [open, setOpen] = useState(defaultOpen);
@@ -604,7 +577,7 @@ function ChunkCard({
           <ChunkText text={chunk.text} />
           <ul className="space-y-2">
             {facts.map((fact, i) => (
-              <FactRow key={i} fact={fact} fileByBlock={fileByBlock} />
+              <FactRow key={i} fact={fact} fileNames={fileNames} />
             ))}
           </ul>
         </div>
@@ -652,7 +625,7 @@ function factDate(value: string): string {
 }
 
 /** One extracted fact: what it is, when it happened, and what it mentions. */
-function FactRow({ fact, fileByBlock }: { fact: Fact; fileByBlock?: Map<number, File> }) {
+function FactRow({ fact, fileNames }: { fact: Fact; fileNames?: Map<number, string> }) {
   const t = useTranslations("bankConfig");
   const isExperience = fact.fact_type === "experience";
 
@@ -703,7 +676,7 @@ function FactRow({ fact, fileByBlock }: { fact: Fact; fileByBlock?: Map<number, 
             title={attachment.media_type}
           >
             <Paperclip className="h-3 w-3" />
-            {fileByBlock?.get(attachment.block_index)?.name ?? attachment.media_type}
+            {fileNames?.get(attachment.block_index) ?? attachment.media_type}
           </span>
         ))}
 
@@ -790,10 +763,11 @@ function ExtractionPanel({
   // Seeded, not left empty: the run button is disabled without text, so an empty box
   // makes the panel look broken until you think of something to paste.
   const [content, setContent] = useState(() => t("testerSampleDefault"));
-  const [files, setFiles] = useState<File[]>([]);
+  const [mode, setMode] = useState<ComposeMode>("text");
+  const [blocks, setBlocks] = useState<ComposerBlock[]>([]);
   // Which file each block index of the last run stood for — frozen with the result,
-  // so removing a file afterwards does not relabel the facts already on screen.
-  const [fileByBlock, setFileByBlock] = useState<Map<number, File>>(new Map());
+  // so editing the blocks afterwards does not relabel the facts already on screen.
+  const [fileNames, setFileNames] = useState<Map<number, string>>(new Map());
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
@@ -807,12 +781,15 @@ function ExtractionPanel({
     // is the slow part of a retain, and the number that matters is how long this
     // bank's configuration takes, not the provider's own accounting.
     const startedAt = performance.now();
-    buildDryRunContent(content, files)
-      .then(({ content: body, fileByBlock: blockFiles }) =>
-        client.dryRunExtract(bankId, body, strategy).then((value) => ({ value, blockFiles }))
-      )
-      .then(({ value, blockFiles }) => {
-        setFileByBlock(blockFiles);
+    // The API reports a fact's sources by their index in the blocks it was sent,
+    // which are the non-empty ones, in order.
+    const sent = mode === "blocks" ? nonEmptyBlocks(blocks) : [];
+    const names = new Map<number, string>();
+    sent.forEach((block, i) => block.kind === "attachment" && names.set(i, block.name));
+    client
+      .dryRunExtract(bankId, toRetainContent(mode, content, blocks), strategy)
+      .then((value) => {
+        setFileNames(names);
         setResult(value);
         setElapsedMs(Math.round(performance.now() - startedAt));
         setRunId((n) => n + 1);
@@ -851,56 +828,31 @@ function ExtractionPanel({
         </details>
       ) : null}
 
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {t("testerSampleLabel")}
-      </p>
-      <textarea
-        rows={3}
-        className="w-full shrink-0 resize-y rounded-md border border-border bg-background px-3 py-2 text-sm"
-        placeholder={t("testerSamplePlaceholder")}
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-      />
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-        {files.map((file, i) => (
-          <span
-            key={`${file.name}-${i}`}
-            className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
-          >
-            <Paperclip className="h-3 w-3" />
-            {file.name}
-            <button
-              type="button"
-              aria-label={t("testerRemoveAttachment", { name: file.name })}
-              className="hover:text-foreground"
-              onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        ))}
-        <label className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground">
-          <Paperclip className="h-3 w-3" />
-          {t("testerAttachAction")}
-          <input
-            type="file"
-            multiple
-            className="sr-only"
-            onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              setFiles((prev) => [...prev, ...picked]);
-              // Cleared so picking the same file again still fires a change.
-              e.target.value = "";
-            }}
-          />
-        </label>
+      {/* Capped and scrolled on its own: a few blocks would otherwise push the run
+          button below the dialog, and this column only scrolls its results. */}
+      <div className="max-h-[45%] shrink-0 overflow-y-auto">
+        <ContentComposer
+          label={
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("testerSampleLabel")}
+            </p>
+          }
+          mode={mode}
+          onModeChange={setMode}
+          text={content}
+          onTextChange={setContent}
+          blocks={blocks}
+          onBlocksChange={setBlocks}
+          placeholder={t("testerSamplePlaceholder")}
+          textClassName="min-h-0 shrink-0"
+        />
       </div>
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs leading-relaxed text-muted-foreground">{t("testerRunNote")}</p>
         <Button
           size="sm"
           className="shrink-0"
-          disabled={running || (!content.trim() && !files.length)}
+          disabled={running || !hasComposedContent(mode, content, blocks)}
           onClick={run}
         >
           {running ? <Spinner size="sm" className="mr-2" /> : null}
@@ -947,7 +899,7 @@ function ExtractionPanel({
                 index={index}
                 facts={facts.filter((fact) => fact.chunk_index === index)}
                 defaultOpen={index === 0}
-                fileByBlock={fileByBlock}
+                fileNames={fileNames}
               />
             ))}
 
@@ -958,7 +910,7 @@ function ExtractionPanel({
                 {facts
                   .filter((fact) => fact.chunk_index == null)
                   .map((fact, i) => (
-                    <FactRow key={i} fact={fact} fileByBlock={fileByBlock} />
+                    <FactRow key={i} fact={fact} fileNames={fileNames} />
                   ))}
               </ul>
             ) : null}
