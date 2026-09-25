@@ -1,8 +1,8 @@
 ---
 title: "Does Hindsight + Hermes = AGI?"
 authors: [benfrank241]
-slug: "2026/09/24/hindsight-hermes-plugin-catalog"
-date: 2026-09-24T15:00
+slug: "2026/09/25/hindsight-hermes-plugin-catalog"
+date: 2026-09-25T15:00
 tags: [hindsight, hermes, nous-research, plugins, memory-provider, integration, migration]
 description: "Hermes moved its memory providers out of core and into the plugin catalog. Hindsight went first. Here is what changed, what you need to do about it, and where updates come from now."
 image: /img/blog/hindsight-hermes-agi.png
