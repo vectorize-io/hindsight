@@ -95,6 +95,8 @@ async def test_a_page_is_findable_by_searching_its_content(client, bank_id, bank
 
     assert [result.id for result in found.results] == [bank_with_page.page_id]
     assert found.results[0].name == PAGE_NAME
+    # The hit says what the page is for, not only how it opens.
+    assert found.results[0].source_query == SOURCE_QUERY
     # The score is normalized onto 0..1, so the one page every arm ranks first
     # scores exactly 1.0. It used to be the raw RRF term (1/61 per arm, ~0.033
     # fused), which read as "no match" to anyone assuming a relevance scale.

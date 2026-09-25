@@ -19729,8 +19729,8 @@ class MemoryEngine(MemoryEngineInterface):
         Fuses a full-text (BM25) match over the page name + content with vector
         similarity (``mm.embedding``) using Reciprocal Rank Fusion, in a single
         round trip. No reranker — this path is tuned for latency. Returns pages
-        ranked by fused score, each with a short content snippet. Folders are
-        excluded.
+        ranked by fused score, each with its ``source_query`` (the question it
+        answers) and a short content snippet. Folders are excluded.
 
         ``score`` is normalized to ``0..1``, where 1.0 is the best a page can do
         on this query: every arm at rank 1. It is a *rank* score, not a relevance
