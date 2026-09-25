@@ -179,6 +179,8 @@ class FakeClient:
         self.reflects: list[dict] = []
         self._recall_texts = list(recall_texts)
         self._reflect_text = reflect_text
+        self.mental_model: str | Exception | None = None
+        self.mental_model_gets: list[dict] = []
 
     async def aretain_batch(self, **kwargs):
         self.retains.append(kwargs)
@@ -191,6 +193,12 @@ class FakeClient:
     async def areflect(self, **kwargs):
         self.reflects.append(kwargs)
         return FakeReflectResponse(self._reflect_text)
+
+    async def aget_mental_model(self, bank_id, mental_model_id, detail=None):
+        self.mental_model_gets.append({"bank_id": bank_id, "mental_model_id": mental_model_id, "detail": detail})
+        if isinstance(self.mental_model, Exception):
+            raise self.mental_model
+        return types.SimpleNamespace(content=self.mental_model)
 
     async def aclose(self):
         pass

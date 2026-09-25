@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 
 _LOCAL_MODES = {"local", "local_embedded"}
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
+# The mental model is a stored document (no LLM call) read once at initialize(), before the
+# first system prompt is built, so an unreachable server must not hold session start for the
+# full request timeout.
+_MENTAL_MODEL_FETCH_TIMEOUT = 5.0
 
 
 def _scoped_setting(name: str, default: str = "") -> str:
@@ -390,6 +394,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
         self._bank_mission, self._bank_retain_mission = "", None
+        self._mental_model_id = self._mental_model_content = ""
         self._memory_mode = "hybrid"  # "context", "tools", or "hybrid"
         self._prefetch_method = "recall"  # "recall" or "reflect"
         for name in _SESSION_KWARGS:
@@ -998,6 +1003,57 @@ class HindsightMemoryProvider(MemoryProvider):
 
         if self._mode == "local_embedded":
             self._start_embedded_daemon()
+        if self._mode != "disabled":
+            self._load_mental_model()
+
+    def _load_mental_model(self) -> None:
+        """Read the configured mental model once, for system_prompt_block().
+
+        Runs at the end of initialize() so the content exists before the first system prompt
+        is built. It is never refreshed mid-session: the block must stay byte-identical for
+        the session so provider prompt caching keeps working. Any failure leaves the block
+        unchanged.
+        """
+        self._mental_model_id = str(self._config.get("mental_model_id") or "").strip()
+        self._mental_model_content = ""
+        if not self._mental_model_id:
+            return
+        model_id = self._mental_model_id
+        # In local_embedded mode any client attribute lookup runs HindsightEmbedded's
+        # _ensure_started() on this thread, which would block session start for a full daemon
+        # cold start (the request timeout below cannot bound it). Only read the model when the
+        # daemon is already up; otherwise this session goes without it.
+        if self._mode == "local_embedded" and not self._embedded_daemon_running():
+            logger.info("Hindsight mental model '%s' skipped: embedded daemon is not running yet", model_id)
+            return
+        bank_id = self._bank_id
+        try:
+            # The top-level client call, not client.mental_models: HindsightEmbedded's
+            # mental_models namespace is its own wrapper without get_mental_model().
+            resp = self._run_hindsight_operation(
+                lambda client: asyncio.wait_for(
+                    client.aget_mental_model(bank_id, model_id, detail="content"),
+                    timeout=_MENTAL_MODEL_FETCH_TIMEOUT,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Hindsight mental model '%s' could not be loaded: %r", model_id, exc)
+            return
+        self._mental_model_content = str(getattr(resp, "content", None) or "")
+        if self._mental_model_content:
+            logger.info("Hindsight mental model '%s' loaded (%d chars)", model_id, len(self._mental_model_content))
+        else:
+            logger.warning("Hindsight mental model '%s' is configured but has no content", model_id)
+
+    def _embedded_daemon_running(self) -> bool:
+        """Liveness probe for the embedded daemon that never starts it (short /health check)."""
+        try:
+            from hindsight_embed import get_embed_manager
+
+            return bool(get_embed_manager().is_running(self._config.get("profile", "hermes")))
+        except Exception as exc:
+            logger.debug("Hindsight embedded daemon liveness check failed: %s", exc)
+            return False
 
     def _apply_connection_settings(self, cfg: dict) -> None:
         """Endpoint, bank and mode selectors from *cfg* (env fallbacks where documented)."""
@@ -1162,7 +1218,16 @@ class HindsightMemoryProvider(MemoryProvider):
     def system_prompt_block(self) -> str:
         mode = self._memory_mode if self._memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         label = "" if mode == "hybrid" else f" ({mode} mode)"
-        return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{_SYSTEM_PROMPT_TAILS[mode]}"
+        block = f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{_SYSTEM_PROMPT_TAILS[mode]}"
+        if self._mental_model_id and self._mental_model_content:
+            block += (
+                "\n\n<memory-context>\n"
+                "# Hindsight Mental Model (synthesized cross-session context)\n"
+                f"ID: {self._mental_model_id}\n\n"
+                f"{self._mental_model_content}\n"
+                "</memory-context>"
+            )
+        return block
 
     # -- recall ------------------------------------------------------------------
 
