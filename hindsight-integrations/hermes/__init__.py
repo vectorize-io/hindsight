@@ -50,6 +50,7 @@ from .settings import (
     _DEFAULT_IDLE_TIMEOUT,
     _DEFAULT_LOCAL_URL,
     _DEFAULT_RETAIN_SOURCE,
+    _DEFAULT_RETAIN_STRATEGY,
     _DEFAULT_TIMEOUT,
     _HINDSIGHT_GLYPH,
     _MIN_CLIENT_VERSION,
@@ -310,6 +311,7 @@ def _load_config() -> dict:
         "retain_tags": get_secret("HINDSIGHT_RETAIN_TAGS", "") or "",
         "observation_scopes": get_secret("HINDSIGHT_RETAIN_OBSERVATION_SCOPES", "") or "",
         "retain_source": _scoped_setting("HINDSIGHT_RETAIN_SOURCE", _DEFAULT_RETAIN_SOURCE),
+        "retain_strategy": _scoped_setting("HINDSIGHT_RETAIN_STRATEGY", _DEFAULT_RETAIN_STRATEGY),
         "retain_user_prefix": _scoped_setting("HINDSIGHT_RETAIN_USER_PREFIX", "User"),
         "retain_assistant_prefix": _scoped_setting("HINDSIGHT_RETAIN_ASSISTANT_PREFIX", "Assistant"),
         "banks": {
@@ -421,6 +423,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._retain_tags: List[str] = []
         self._tags: list[str] | None = None
         self._retain_source = _DEFAULT_RETAIN_SOURCE
+        self._retain_strategy = _DEFAULT_RETAIN_STRATEGY
         self._retain_user_prefix, self._retain_assistant_prefix = "User", "Assistant"
         self._turn_counter = self._turn_index = 0
         self._session_turns: list[str] = []  # ALL turns for the session
@@ -607,6 +610,16 @@ class HindsightMemoryProvider(MemoryProvider):
                 "key": "retain_source",
                 "description": "Metadata source value attached to retained memories (identifies the client that stored them)",
                 "default": _DEFAULT_RETAIN_SOURCE,
+            },
+            {
+                "key": "retain_strategy",
+                "description": (
+                    "Named retain strategy applied to every stored item, steering extraction for "
+                    "this content type. The bank must define the name under retain_strategies; an "
+                    "unknown name is ignored by the server and the item falls back to unmissioned "
+                    "extraction. Empty means let the bank decide."
+                ),
+                "default": _DEFAULT_RETAIN_STRATEGY,
             },
             {
                 "key": "retain_user_prefix",
@@ -1049,6 +1062,9 @@ class HindsightMemoryProvider(MemoryProvider):
         self._retain_source = str(
             _cfg_or_env("retain_source", "HINDSIGHT_RETAIN_SOURCE", _DEFAULT_RETAIN_SOURCE)
         ).strip()
+        self._retain_strategy = str(
+            _cfg_or_env("retain_strategy", "HINDSIGHT_RETAIN_STRATEGY", _DEFAULT_RETAIN_STRATEGY)
+        ).strip()
         self._retain_user_prefix = (
             str(_cfg_or_env("retain_user_prefix", "HINDSIGHT_RETAIN_USER_PREFIX", "User")).strip() or "User"
         )
@@ -1333,6 +1349,10 @@ class HindsightMemoryProvider(MemoryProvider):
         merged_tags = _normalize_retain_tags(list(self._retain_tags) + _normalize_retain_tags(tags))
         item.update({k: v for k, v in (("context", context), ("update_mode", update_mode)) if v is not None})
         item.update({k: v for k, v in (("tags", merged_tags), ("observation_scopes", self._observation_scopes)) if v})
+        # Per-item strategy: overrides the bank default for this item only. Omitted when
+        # unset so the bank keeps deciding.
+        if self._retain_strategy:
+            item["strategy"] = self._retain_strategy
         return item
 
     def _retain_batch(

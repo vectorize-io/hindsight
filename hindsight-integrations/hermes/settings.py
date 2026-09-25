@@ -22,6 +22,10 @@ _DEFAULT_IDLE_TIMEOUT = 300  # seconds — Hindsight embedded daemon default
 # ``metadata.source`` on retained memories is OPT-IN (AGENTS.md forbids
 # on-by-default attribution tags): ``retain_source`` / HINDSIGHT_RETAIN_SOURCE.
 _DEFAULT_RETAIN_SOURCE = ""
+# Named retain strategy applied to every item this plugin stores. Empty means the bank
+# decides (its ``retain_default_strategy``, else unmissioned ``concise`` extraction).
+# The bank must already define the name under ``retain_strategies``.
+_DEFAULT_RETAIN_STRATEGY = ""
 # Hindsight brand mark (eye ringed by graph nodes) for the recall/retain indicators.
 _HINDSIGHT_GLYPH = "👁️"
 # Hindsight 0.5.0 added ``update_mode='append'``; older APIs would silently
