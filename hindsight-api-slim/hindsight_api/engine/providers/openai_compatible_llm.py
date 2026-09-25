@@ -1594,8 +1594,8 @@ class OpenAICompatibleLLM(LLMInterface):
         if "deepseek" in self.model.lower() and tool_choice.mode is not LLMToolChoiceMode.AUTO:
             request_tool_choice = None
 
-        # Meta rejects any tool_choice other than "auto" outright (HTTP 400), so the
-        # field has to come off the request entirely. A named choice has already been
+        # Meta and Z.AI (direct or via a gateway) reject any tool_choice other than
+        # "auto" outright (HTTP 400), so the field has to come off the request entirely. A named choice has already been
         # narrowed to a single tool above, so the call stays practically forced under
         # auto — the same reasoning as the DeepSeek branch. NOTE: "none" cannot be
         # expressed this way and would become "auto"; no caller on this path uses it

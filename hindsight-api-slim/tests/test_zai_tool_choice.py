@@ -9,6 +9,7 @@ names the endpoint.
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -60,7 +61,7 @@ def _tool_call_response() -> MagicMock:
     return resp
 
 
-async def _captured_params(llm: OpenAICompatibleLLM, tool_choice) -> dict:
+async def _captured_params(llm: OpenAICompatibleLLM, tool_choice: LLMToolChoice) -> dict[str, Any]:
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
         create.return_value = _tool_call_response()
         await llm.call_with_tools(
