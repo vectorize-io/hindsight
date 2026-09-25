@@ -55,10 +55,12 @@ def test_retain_every_n_turns_uses_banks_hermes_when_top_level_missing(provider)
 
 
 def test_retain_every_n_turns_top_level_overrides_banks_hermes(provider):
-    instance, _ = provider({
-        "retain_every_n_turns": 3,
-        "banks": {"hermes": {"retain_every_n_turns": 2}},
-    })
+    instance, _ = provider(
+        {
+            "retain_every_n_turns": 3,
+            "banks": {"hermes": {"retain_every_n_turns": 2}},
+        }
+    )
     assert instance._retain_every_n_turns == 3
     instance.shutdown()
 

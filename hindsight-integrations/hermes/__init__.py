@@ -1052,7 +1052,9 @@ class HindsightMemoryProvider(MemoryProvider):
     def _apply_retain_policy(self, cfg: dict) -> None:
         """Pure-config retain knobs (no env/secret reads; ``{}`` yields the defaults)."""
         self._auto_retain = cfg.get("auto_retain", True)
-        self._retain_every_n_turns = max(1, int(cfg.get("retain_every_n_turns", cfg_get(cfg, "banks", "hermes", "retain_every_n_turns", default=1))))
+        self._retain_every_n_turns = max(
+            1, int(cfg.get("retain_every_n_turns", cfg_get(cfg, "banks", "hermes", "retain_every_n_turns", default=1)))
+        )
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
         # On by default so the user SEES memory working whether or not the model
