@@ -19,7 +19,7 @@
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
  */
 import { readFileSync } from "node:fs";
-import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
+import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
 import { maybeAutoUpdate } from "./auto-update";
@@ -42,6 +42,9 @@ import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-c
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+  // Optional: lets the git note see a git-log document written at a commit HEAD is behind
+  // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
+  documentTags?(documentId: string): Promise<string[] | undefined>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
@@ -74,8 +77,10 @@ export function buildSeedBanner(bankId: string, cold = true, gitNote?: string): 
 /**
  * One-phrase git-sync state for the banner (the syncStatus contract, condensed): whether the bank
  * is current with the repo's commits. Cheap — reuses the cold-check's doc-id set plus ONE tag query
- * (gitlog-head:<sha>, the freshness marker the deepen engine maintains). Returns undefined when
- * there's nothing meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
+ * (gitlog-head:<sha>, the freshness marker the deepen engine maintains), and one read of that tag
+ * when HEAD is not the commit it names. Same check as the deepen engine's (gitLogIsCurrent), so the
+ * banner never promises a catch-up the engine will skip. Returns undefined when there's nothing
+ * meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
  */
 async function gitSyncNote(args: {
   client: SeedContextClient;
@@ -88,10 +93,7 @@ async function gitSyncNote(args: {
   if (mode === "none" || cold) return undefined;
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
-  const gitlogCurrent = await client
-    .listDocumentIds(`gitlog-head:${head}`, "all_strict")
-    .then((s) => s.has(`gitlog:${repoNameOf(cwd)}`))
-    .catch(() => undefined);
+  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch(() => undefined);
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
   // full: deepening progress = per-commit docs vs the recent-history target
