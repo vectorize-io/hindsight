@@ -15,6 +15,7 @@ Flow:
 
 Exit codes:
   0 — always (graceful degradation on any error)
+Unexpected errors are also appended to ~/.hindsight/codex/state/hook-errors.log
 """
 
 import io
@@ -36,7 +37,7 @@ from lib.content import (
     truncate_recall_query,
 )
 from lib.daemon import get_api_url
-from lib.state import write_state
+from lib.state import log_hook_error, write_state
 
 LAST_RECALL_STATE = "last_recall.json"
 
@@ -199,6 +200,10 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"[Hindsight] Unexpected error in recall: {e}", file=sys.stderr)
+        try:
+            log_hook_error("recall", repr(e))
+        except Exception:
+            pass
         try:
             from lib.config import load_config
 
