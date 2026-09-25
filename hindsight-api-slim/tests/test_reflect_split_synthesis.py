@@ -113,6 +113,34 @@ class TestSplitContextHistory:
         assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
         assert total_entries < 30, "history was shredded into per-entry chunks"
 
+    def test_big_sibling_is_packed_once_not_copied_into_every_piece(self):
+        """#4495: recall's raw ``chunks`` rides beside ``memories``. Copied into
+        every piece, it left no piece room for a second memory, so 30 memories
+        became 30 cut blocks, each re-carrying the chunks. It must instead be
+        packed on its own, every source chunk exactly once, with the memories
+        packing as if it were not there."""
+        entry = _entry("recall", "memories", 30, 300)
+        entry["output"]["chunks"] = {
+            f"c{i}": {"chunk_text": " ".join(f"source {i} word {j}" for j in range(250)), "chunk_index": i}
+            for i in range(10)
+        }
+        without_sibling = split_context_history([_entry("recall", "memories", 30, 300)], _MAX_CONTEXT)
+
+        chunks = split_context_history([entry], _MAX_CONTEXT)
+
+        blocks = [e["output"] for c in chunks for e in c]
+        assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
+        source_ids = [cid for b in blocks for cid in b.get("chunks", {})]
+        assert source_ids == [f"c{i}" for i in range(10)], "each source chunk exactly once, in order"
+        assert not any("memories" in b and "chunks" in b for b in blocks)
+        assert all(b["query"] == "q" for b in blocks), "small siblings still ride along"
+        assert not any(b.get("truncated") for b in blocks)
+        memory_blocks = [b for b in blocks if "memories" in b]
+        assert len(memory_blocks) == sum(len(c) for c in without_sibling)
+        for chunk in chunks:
+            rendered = "".join(_render_history_block(e) for e in chunk)
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
+
 
 class TestSplitSynthesisPrompts:
     def test_chunk_claims_prompt_carries_evidence_and_question(self):

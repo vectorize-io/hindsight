@@ -8,6 +8,7 @@ The reflect agent uses hierarchical retrieval:
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -589,6 +590,12 @@ def build_system_prompt_for_tools(
 #: these entry boundaries so no retrieved evidence is dropped.
 _SPLITTABLE_RESULT_KEYS = ("observations", "memories", "results")
 
+#: A sibling of the split list bigger than this fraction of the per-chunk budget
+#: is packed into blocks of its own instead of riding along in every piece of the
+#: list. Half, not the whole budget: a sibling just under budget still leaves no
+#: room for a second item, so the list would fan out one item per chunk (#4495).
+_MAX_SHARED_SIBLING_FRACTION = 0.5
+
 #: Above this many synthesis chunks the retrieval volume is pathological
 #: (each chunk is ~0.8 * max_context_tokens); we still process everything,
 #: but loudly, so the real cause (an unbounded tool result) gets looked at.
@@ -682,10 +689,12 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
     (``observations``/``memories``/``results``) into synthetic partial blocks,
     so evidence is split across chunks rather than dropped — the failure mode
     of the old ``break`` was answering from nothing while citing everything
-    (#3122). Only an *indivisible* over-budget entry gets token-cut.
+    (#3122). A big sibling of that list (recall's raw ``chunks``) is packed
+    into blocks of its own rather than copied into every piece (#4495). Only
+    an *indivisible* over-budget entry gets token-cut.
 
     Returns at least one chunk when history is non-empty; every original
-    result entry appears in exactly one chunk.
+    result entry, and every entry of a big sibling, appears in exactly one chunk.
     """
     budget = max(_MIN_SPLIT_CHUNK_TOKENS, int(max_context_tokens * _FINAL_PROMPT_CONTEXT_FRACTION))
     chunks: list[list[dict]] = []
@@ -705,6 +714,26 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
             _close_current()
         current.append(entry)
         current_tokens += tokens
+
+    def _pack_items(entry: dict, shared: dict, key: str, items: list, join: Callable[[list], Any]) -> None:
+        """Pack ``items`` under ``output[key]`` (next to ``shared``) into in-budget blocks."""
+        piece: list = []
+        for item in items:
+            candidate = {**entry, "output": {**shared, key: join(piece + [item])}}
+            if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
+                partial = {**entry, "output": {**shared, key: join(piece)}}
+                _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
+                piece = []
+                candidate = {**entry, "output": {**shared, key: join([item])}}
+            single_tokens = count_prompt_tokens(_render_history_block(candidate))
+            if not piece and single_tokens > budget:
+                cut = _cut_entry_to_budget(candidate, budget)
+                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
+            else:
+                piece.append(item)
+        if piece:
+            partial = {**entry, "output": {**shared, key: join(piece)}}
+            _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
 
     for entry in context_history:
         tokens = count_prompt_tokens(_render_history_block(entry))
@@ -727,24 +756,29 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
             _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             continue
 
-        items = output[split_key]
-        piece: list = []
-        for item in items:
-            candidate = {**entry, "output": {**output, split_key: piece + [item]}}
-            if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
-                partial = {**entry, "output": {**output, split_key: piece}}
-                _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
-                piece = []
-                candidate = {**entry, "output": {**output, split_key: [item]}}
-            single_tokens = count_prompt_tokens(_render_history_block(candidate))
-            if not piece and single_tokens > budget:
-                cut = _cut_entry_to_budget({**entry, "output": {**output, split_key: [item]}}, budget)
-                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
+        # Every piece of the list carries the entry's other keys, so a big one
+        # (tool_recall's raw "chunks" beside its "memories") left no piece room
+        # for a second item: N items became N cut blocks, each re-carrying the
+        # same sibling (#4495). A big sibling is packed on its own instead —
+        # once, and split by its own entries, so none of it is dropped.
+        allowance = int(budget * _MAX_SHARED_SIBLING_FRACTION)
+        big = [
+            k
+            for k, v in output.items()
+            if k != split_key
+            and count_prompt_tokens(_render_history_block({"tool": entry["tool"], "output": {k: v}})) > allowance
+        ]
+        shared = {k: v for k, v in output.items() if k != split_key and k not in big}
+        _pack_items(entry, shared, split_key, output[split_key], list)
+        for k in big:
+            value = output[k]
+            if isinstance(value, dict):
+                _pack_items(entry, shared, k, list(value.items()), dict)
+            elif isinstance(value, list):
+                _pack_items(entry, shared, k, value, list)
             else:
-                piece.append(item)
-        if piece:
-            partial = {**entry, "output": {**output, split_key: piece}}
-            _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
+                cut = _cut_entry_to_budget({**entry, "output": {**shared, k: value}}, budget)
+                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
 
     _close_current()
     return chunks
