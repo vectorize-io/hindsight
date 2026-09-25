@@ -1,0 +1,34 @@
+{
+  "A": {
+    "prior": {
+      "role": "assistant",
+      "name": "Rowan",
+      "timestamp": "2026-09-24T09:00:00Z",
+      "content": "We need your decision on the Lantern pilot. Option 1: Keep the Lantern pilot on Monday with Theo as its owner. Option 2: Move the Lantern pilot to Friday with Nia as its owner. These are mutually exclusive alternatives, not approved plans. I have not scheduled either one or assigned an owner. Please choose an option before I update the plan. Separately, the Cedar room is booked for Tuesday; that room booking is already confirmed and is unrelated to the pilot decision."
+    },
+    "target": {
+      "role": "user",
+      "name": "Mira",
+      "timestamp": "2026-09-24T09:01:00Z",
+      "content": "Let's go with option 2. I approve its proposed day and owner for the Lantern pilot; please reject option 1. Treat this as my final decision, not a request for another proposal. I will circulate the final decision to the team after lunch. Keep the room booking separate from this decision."
+    },
+    "expected": "Move the Lantern pilot to Friday with Nia as its owner.",
+    "rejected": "Keep the Lantern pilot on Monday with Theo as its owner."
+  },
+  "B": {
+    "prior": {
+      "role": "assistant",
+      "name": "Rowan",
+      "timestamp": "2026-09-24T09:00:00Z",
+      "content": "We need your decision on the Lantern pilot. Option 1: Move the Lantern pilot to Friday with Nia as its owner. Option 2: Keep the Lantern pilot on Monday with Theo as its owner. These are mutually exclusive alternatives, not approved plans. I have not scheduled either one or assigned an owner. Please choose an option before I update the plan. Separately, the Cedar room is booked for Tuesday; that room booking is already confirmed and is unrelated to the pilot decision."
+    },
+    "target": {
+      "role": "user",
+      "name": "Mira",
+      "timestamp": "2026-09-24T09:01:00Z",
+      "content": "Let's go with option 2. I approve its proposed day and owner for the Lantern pilot; please reject option 1. Treat this as my final decision, not a request for another proposal. I will circulate the final decision to the team after lunch. Keep the room booking separate from this decision."
+    },
+    "expected": "Keep the Lantern pilot on Monday with Theo as its owner.",
+    "rejected": "Move the Lantern pilot to Friday with Nia as its owner."
+  }
+}

@@ -55,6 +55,21 @@
           "description": "Custom extraction prompt (when mode='custom')",
           "title": "Retain Custom Instructions"
         },
+        "retain_context_chars": {
+          "anyOf": [
+            {
+              "maximum": 32000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Previous source characters for extraction reference resolution (0 disables; enabled updates re-extract)",
+          "title": "Retain Context Chars"
+        },
         "retain_chunk_size": {
           "anyOf": [
             {

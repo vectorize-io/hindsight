@@ -341,6 +341,56 @@ POST /v1/default/banks/{bank_id}/documents/{document_id}/reprocess
 
 ---
 
+## Resolving references to preceding source
+
+`retain_context_chars` optionally gives each extraction chunk a bounded window of
+preceding source text. For example, a reply choosing “option 2” can use the earlier
+options even when they fall in a different chunk. The default is `0` (disabled);
+the maximum is `32000` characters, including separators between source chunks.
+Set it in bank config or in a named retain strategy for selected items:
+
+```json
+{
+  "updates": {
+    "retain_strategies": {
+      "chat": {"retain_context_chars": 3000}
+    }
+  }
+}
+```
+
+Select `"strategy": "chat"` on the retain item. Dry-run extraction also accepts a
+strategy name. The setting is available globally as
+`HINDSIGHT_API_RETAIN_CONTEXT_CHARS`.
+
+The window is built from source text before parallel extraction. Supporting text
+is labelled separately in the prompt; stored chunks, their indices, and the
+caller's `context` remain unchanged. The model is instructed to use the window
+only to resolve references in the target, not to extract prior-only facts. This
+instruction reduces the scope of extraction but does not guarantee that a model
+will never duplicate a prior fact.
+
+Windows stay within a retain item, including its internal sub-batches and retry
+splits. Independent items do not share a window, even when they use the same
+`document_id`. An append can use the stored document as preceding source. A window
+can start mid-chunk if its budget does not cover the whole preceding chunk. Prior
+attachment bytes are omitted; only the target's attachments are loaded.
+
+**Updates currently re-extract the full document when this setting is enabled.**
+This conservative reuse policy handles edits to earlier source and changes to
+extraction settings without leaving an unchanged target's facts stale. Disabling
+the setting also forces one refresh of documents previously extracted with a
+window. Source hashes keep their existing meaning. These extractions cost more
+than delta retain, including for repeated identical submissions and appends.
+Provider batches with changed context-dependent prompts cannot resume; they fail
+explicitly and require a new retain.
+
+This is a bounded reference-resolution option, not a solution to every attribution
+problem. References outside the window remain unavailable, and quoted-author or
+speaker ambiguity may need more context. It has no extraction benefit in `chunks`
+mode, which makes no LLM call. In `verbatim` mode it can inform extracted metadata,
+while the stored fact text remains the target chunk.
+
 ## Observation Consolidation
 
 After `retain()` completes, Hindsight automatically triggers **observation consolidation** in the background. This process:

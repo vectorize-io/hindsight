@@ -775,6 +775,7 @@ ENV_LLM_DEBUG_DUMP_4XX = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
 
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
+ENV_RETAIN_CONTEXT_CHARS = "HINDSIGHT_API_RETAIN_CONTEXT_CHARS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
@@ -1615,6 +1616,7 @@ DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) k
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
+DEFAULT_RETAIN_CONTEXT_CHARS = 0
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
 # Let a fact leave when/where/who/why empty instead of filling them with "N/A" (#4457).
@@ -2204,6 +2206,12 @@ def _validate_retain_chunking_int(name: str, value: Any) -> int:
     if value < 1:
         raise ValueError(f"{name} must be >= 1, got {value}")
     return value
+
+
+def validate_retain_context_chars(value: Any) -> None:
+    """Bound the opt-in source window independently of the target chunk size."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 32000:
+        raise ValueError("retain_context_chars must be an integer between 0 and 32000")
 
 
 def validate_retain_chunking_config(
@@ -3314,6 +3322,7 @@ class HindsightConfig:
 
     # Retain settings
     retain_max_completion_tokens: int
+    retain_context_chars: int
     retain_chunk_size: int
     retain_structured_chunk_size: int | None
     retain_extract_causal_links: bool
@@ -3704,6 +3713,7 @@ class HindsightConfig:
         # others retain the raw source for expansion/re-extraction.
         "store_document_text",
         # Retention settings (behavioral)
+        "retain_context_chars",
         "retain_chunk_size",
         "retain_structured_chunk_size",
         "retain_extraction_mode",
@@ -4014,6 +4024,7 @@ class HindsightConfig:
                 "disabling observations/consolidation. Reflect will return HTTP 400."
             )
 
+        validate_retain_context_chars(self.retain_context_chars)
         validate_retain_chunking_config(
             self.retain_chunk_size,
             self.retain_structured_chunk_size,
@@ -4851,6 +4862,7 @@ class HindsightConfig:
             retain_max_completion_tokens=int(
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
             ),
+            retain_context_chars=int(os.getenv(ENV_RETAIN_CONTEXT_CHARS, str(DEFAULT_RETAIN_CONTEXT_CHARS))),
             retain_chunk_size=int(os.getenv(ENV_RETAIN_CHUNK_SIZE, str(DEFAULT_RETAIN_CHUNK_SIZE))),
             retain_structured_chunk_size=_parse_optional_positive_int(
                 ENV_RETAIN_STRUCTURED_CHUNK_SIZE,

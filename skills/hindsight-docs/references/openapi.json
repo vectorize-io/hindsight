@@ -8808,6 +8808,20 @@
             "title": "Retain Custom Instructions",
             "description": "Custom extraction prompt (when mode='custom')"
           },
+          "retain_context_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 32000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Context Chars",
+            "description": "Previous source characters for extraction reference resolution (0 disables; enabled updates re-extract)"
+          },
           "retain_chunk_size": {
             "anyOf": [
               {

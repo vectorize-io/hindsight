@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "Contrôler ce qui est extrait et stocké depuis le contenu",
     "retainFailedToSave": "Échec de l'enregistrement des paramètres Retain",
+    "sourceContextLabel": "Contexte source précédent (caractères)",
+    "sourceContextDescription": "Utiliser le texte précédent pour résoudre les références. 0 désactive cette option ; laisser vide pour hériter. Si activée, chaque mémorisation réextrait le document entier.",
     "chunkSizeLabel": "Taille des segments",
     "chunkSizeDescription": "Taille des segments de texte pour le traitement (caractères)",
     "structuredChunkSizeLabel": "Taille de segment structuré",

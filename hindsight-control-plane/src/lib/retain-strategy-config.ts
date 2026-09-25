@@ -1,5 +1,6 @@
 export type RetainStrategyValues<TLabels = unknown> = {
   retain_extraction_mode: string | null;
+  retain_context_chars: number | null;
   retain_chunk_size: number | null;
   retain_structured_chunk_size: number | null;
   retain_mission: string | null;
@@ -25,6 +26,7 @@ export function deserializeRetainStrategies<TLabels>(
       name,
       values: {
         retain_extraction_mode: overrides.retain_extraction_mode ?? null,
+        retain_context_chars: overrides.retain_context_chars ?? null,
         retain_chunk_size: overrides.retain_chunk_size ?? null,
         retain_structured_chunk_size: overrides.retain_structured_chunk_size ?? null,
         retain_mission: overrides.retain_mission ?? null,
@@ -45,6 +47,8 @@ export function serializeRetainStrategies<TLabels>(
     const overrides: Record<string, any> = {};
     if (s.values.retain_extraction_mode !== null)
       overrides.retain_extraction_mode = s.values.retain_extraction_mode;
+    if (s.values.retain_context_chars !== null)
+      overrides.retain_context_chars = s.values.retain_context_chars;
     if (s.values.retain_chunk_size !== null)
       overrides.retain_chunk_size = s.values.retain_chunk_size;
     if (s.values.retain_structured_chunk_size !== null) {

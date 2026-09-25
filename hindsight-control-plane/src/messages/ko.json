@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "콘텐츠에서 추출 및 저장되는 항목 제어",
     "retainFailedToSave": "Retain 설정 저장에 실패했습니다",
+    "sourceContextLabel": "이전 원문 컨텍스트(문자 수)",
+    "sourceContextDescription": "이전 원문을 사용하여 참조를 해석합니다. 0은 비활성화이며, 비워 두면 상속합니다. 활성화하면 저장할 때마다 전체 문서를 다시 추출합니다.",
     "chunkSizeLabel": "청크 크기",
     "chunkSizeDescription": "처리를 위한 텍스트 청크 크기 (문자 수)",
     "structuredChunkSizeLabel": "구조화 청크 크기",

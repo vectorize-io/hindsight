@@ -869,6 +869,8 @@ export class HindsightClient {
       retainMission?: string;
       retainExtractionMode?: string;
       retainCustomInstructions?: string;
+      /** Previous source characters for reference resolution (0 disables; max 32000). Enabled updates re-extract the document. */
+      retainContextChars?: number;
       retainChunkSize?: number;
       retainStructuredChunkSize?: number;
       /** Max inline attachments one extraction chunk may carry. `retainChunkSize`
@@ -975,6 +977,8 @@ export class HindsightClient {
       updates.retain_extraction_mode = options.retainExtractionMode;
     if (options.retainCustomInstructions !== undefined)
       updates.retain_custom_instructions = options.retainCustomInstructions;
+    if (options.retainContextChars !== undefined)
+      updates.retain_context_chars = options.retainContextChars;
     if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
     if (options.retainStructuredChunkSize !== undefined)
       updates.retain_structured_chunk_size = options.retainStructuredChunkSize;

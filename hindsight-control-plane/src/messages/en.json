@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "Control what gets extracted and stored from content",
     "retainFailedToSave": "Failed to save retain settings",
+    "sourceContextLabel": "Previous source context (characters)",
+    "sourceContextDescription": "Use earlier source to resolve references. 0 disables; leave blank to inherit. When enabled, every retain re-extracts the full document.",
     "chunkSizeLabel": "Chunk Size",
     "chunkSizeDescription": "Size of text chunks for processing (characters)",
     "structuredChunkSizeLabel": "Structured Chunk Size",

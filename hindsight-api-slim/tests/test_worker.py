@@ -1286,6 +1286,114 @@ class TestWorkerRecovery:
     """Tests for worker task recovery on startup."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("checkpoint_shape", ["keyed", "legacy"])
+    @pytest.mark.parametrize("context_chars", [0, 800])
+    async def test_provider_batches_survive_repeated_worker_recovery(
+        self, pool, backend, clean_operations, isolated_ops_schema, caplog, checkpoint_shape: str, context_chars: int
+    ) -> None:
+        from dataclasses import replace
+        from types import SimpleNamespace
+
+        from hindsight_api.config import HindsightConfig
+        from hindsight_api.engine.chunk_ids import build_chunk_id
+        from hindsight_api.engine.retain.fact_extraction import extract_facts_from_contents_batch_api
+        from hindsight_api.engine.retain.types import RetainContent
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        operation_id = uuid.uuid4()
+        worker_id = "batch-recovery-worker"
+        await pool.execute(
+            """INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, worker_id, task_payload)
+               VALUES ($1, $2, 'retain', 'processing', $3, $4::jsonb)""",
+            operation_id,
+            bank_id,
+            worker_id,
+            json.dumps({"type": "retain", "bank_id": bank_id}),
+        )
+        impl = SimpleNamespace(
+            provider="openai",
+            model="test",
+            openai_service_tier=None,
+            batch_account_key="account",
+            submit_batch=AsyncMock(return_value={"batch_id": "provider-batch-pending"}),
+            get_batch_status=AsyncMock(side_effect=RuntimeError("provider still pending")),
+        )
+        config = replace(HindsightConfig.from_env(), retain_context_chars=context_chars)
+        with pytest.raises(RuntimeError, match="provider still pending"):
+            # Persist through the real extraction writer, including with lookback
+            # off. Recovery must recognize its representation without a test-only marker.
+            await extract_facts_from_contents_batch_api(
+                [RetainContent(content="A source chunk.")],
+                SimpleNamespace(batch_provider_impl=AsyncMock(return_value=impl)),
+                config,
+                pool,
+                str(operation_id),
+                isolated_ops_schema,
+                batch_checkpoint_key=(
+                    f"retain_batch:{build_chunk_id(bank_id, 'doc', 0)}" if checkpoint_shape == "keyed" else None
+                ),
+            )
+        original_metadata = await pool.fetchval(
+            "SELECT result_metadata FROM async_operations WHERE operation_id = $1", operation_id
+        )
+        caplog.set_level("INFO", logger="hindsight_api.worker.poller")
+        poller = WorkerPoller(
+            backend=backend, worker_id=worker_id, executor=AsyncMock(), schema=isolated_ops_schema, max_retries=2
+        )
+        for _ in range(4):
+            # Shutdown leaves provider batches for the startup batch-recovery
+            # pass. Neither pass may spend an ordinary task's retry allowance.
+            assert await poller.release_own_tasks() == 0
+            assert await poller.recover_own_tasks() == 1
+            row = await pool.fetchrow("SELECT * FROM async_operations WHERE operation_id = $1", operation_id)
+            assert row["status"] == "pending"
+            assert row["worker_id"] is None
+            assert row["retry_count"] == 0
+            assert row["result_metadata"] == original_metadata
+            claims = await poller.claim_batch()
+            assert [task.operation_id for task in claims] == [str(operation_id)]
+        assert "provider-batch-pending" in caplog.text
+        impl.submit_batch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "metadata", [{}, {"retain_batch:unsubmitted": {"batch_id": None}}, {"other": {"batch_id": "x"}}]
+    )
+    async def test_ordinary_retains_keep_the_recovery_retry_limit(
+        self, pool, backend, clean_operations, isolated_ops_schema, metadata
+    ) -> None:
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        operation_id = uuid.uuid4()
+        worker_id = "ordinary-recovery-worker"
+        await pool.execute(
+            """INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, worker_id, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', 'processing', $3, $4::jsonb, $5::jsonb)""",
+            operation_id,
+            bank_id,
+            worker_id,
+            json.dumps({"type": "retain", "bank_id": bank_id}),
+            json.dumps(metadata),
+        )
+        poller = WorkerPoller(
+            backend=backend, worker_id=worker_id, executor=AsyncMock(), schema=isolated_ops_schema, max_retries=1
+        )
+        assert await poller.recover_own_tasks() == 1
+        assert len(await poller.claim_batch()) == 1
+        assert await poller.release_own_tasks() == 0
+        row = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1", operation_id
+        )
+        assert row["status"] == "failed"
+        assert row["retry_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_recover_own_tasks_resets_processing_to_pending(self, pool, backend, clean_operations):
         """Test that recover_own_tasks resets processing tasks back to pending."""
         from hindsight_api.worker import WorkerPoller

@@ -151,6 +151,7 @@ class RetainContentDict(TypedDict, total=False):
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
     force_reextract: bool
+    _previous_source: str  # Internal carry across slices of one retain item; never persisted.
 
 
 @dataclass
@@ -190,6 +191,10 @@ class RetainContent:
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
+
+    # Internal source window, separate from persisted context and target text.
+    previous_source: str = ""
+    event_date_is_default: bool = False
 
     def __post_init__(self) -> None:
         # Drop null-valued metadata keys (issue #3209): the retain API accepts

@@ -9,6 +9,7 @@ import {
 const parseEntityLabels = (raw: unknown) => (Array.isArray(raw) ? raw : null);
 const baseValues = (overrides: Partial<RetainStrategyValues> = {}): RetainStrategyValues => ({
   retain_extraction_mode: null,
+  retain_context_chars: null,
   retain_chunk_size: 3000,
   retain_structured_chunk_size: null,
   retain_mission: null,
@@ -63,6 +64,7 @@ describe("retain strategy config serialization", () => {
         name: "wide-jsonl",
         values: {
           retain_extraction_mode: null,
+          retain_context_chars: null,
           retain_chunk_size: 4000,
           retain_structured_chunk_size: 2000,
           retain_mission: null,
@@ -78,6 +80,22 @@ describe("retain strategy config serialization", () => {
         retain_chunk_size: 4000,
         retain_structured_chunk_size: 2000,
       },
+    });
+  });
+});
+
+describe("source context survives strategy editing", () => {
+  it.each([800, 0, undefined])("preserves %s on rename and an unrelated edit", (budget) => {
+    const overrides = budget === undefined ? {} : { retain_context_chars: budget };
+    const strategies = deserializeRetainStrategies(
+      { chat: overrides, other: { retain_mission: "Before" } },
+      parseEntityLabels
+    );
+    strategies[0].name = "renamed-chat";
+    strategies[1].values.retain_mission = "After";
+    expect(serializeRetainStrategies(strategies)).toEqual({
+      "renamed-chat": overrides,
+      other: { retain_mission: "After" },
     });
   });
 });

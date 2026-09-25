@@ -32,6 +32,12 @@ describe("full bank config surface mapping", () => {
     mockedReflect.mockResolvedValue({ data: { text: "ok" } } as any);
   });
 
+  test.each([undefined, 0, 800])("maps the source window setting %s", async (budget) => {
+    await client.updateBankConfig("bank", { retainContextChars: budget });
+    const body = mockedUpdateConfig.mock.calls[0][0].body;
+    expect(body?.updates).toEqual(budget === undefined ? {} : { retain_context_chars: budget });
+  });
+
   test("maps the recall budget group onto the updates map", async () => {
     await client.updateBankConfig("bank", {
       recallMaxTokens: 4096,

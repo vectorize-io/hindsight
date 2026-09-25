@@ -171,6 +171,16 @@ def document_record_metadata(
     return out
 
 
+def document_retain_params(record: "Mapping | None") -> dict[str, Any]:
+    """Decode the dynamic replay parameters from a store-owned document record.
+
+    Document metadata carries JSON strings, including when lookback was never
+    enabled. Keep that storage detail out of callers deciding extraction reuse.
+    """
+    raw = ((record or {}).get("metadata") or {}).get(DOC_META_RETAIN_PARAMS)
+    return json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
+
+
 def document_attachment_filenames(record: "Mapping | None") -> dict[str, str]:
     """A store-owned document record's attachment names (short id -> filename); ``{}`` if none.
 

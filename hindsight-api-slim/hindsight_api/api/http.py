@@ -3817,6 +3817,12 @@ class BankTemplateConfig(BaseModel):
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
     )
+    retain_context_chars: int | None = Field(
+        default=None,
+        ge=0,
+        le=32000,
+        description="Previous source characters for extraction reference resolution (0 disables; enabled updates re-extract)",
+    )
     retain_chunk_size: int | None = Field(default=None, description="Target max characters for each content chunk")
     retain_structured_chunk_size: int | None = Field(
         default=None,

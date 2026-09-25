@@ -52,6 +52,15 @@ from .stage import StageHolder, bind_holder
 # pass through unchanged.
 _RETAIN_OP_TYPES = {"retain", "batch_retain", "file_convert_retain"}
 
+# Discovery is separate from extraction identity: streaming chunks each own a
+# keyed checkpoint, while older operations carry one top-level batch_id. Reuse
+# this predicate for both discovery and retry exclusion so restarts never spend
+# an ordinary task's retry budget on a long-running provider batch.
+_PROVIDER_BATCH_OPERATION = """(
+    result_metadata->>'batch_id' IS NOT NULL
+    OR COALESCE(result_metadata->>'provider_batch', 'false') = 'true'
+)"""
+
 
 @dataclass(frozen=True)
 class _WallCeiling:
@@ -1305,7 +1314,7 @@ class WorkerPoller:
                 SET status = 'pending', worker_id = NULL, claimed_at = NULL,
                     retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
                 WHERE status = 'processing' AND worker_id = $1
-                  AND result_metadata->>'batch_id' IS NULL
+                  AND NOT {_PROVIDER_BATCH_OPERATION}
                   AND COALESCE(retry_count, 0) < $2
                   {op_filter}
                 """,
@@ -1326,7 +1335,7 @@ class WorkerPoller:
                     error_message = 'exceeded max recovery attempts (retry_count >= {max_retries})',
                     completed_at = now(), updated_at = now()
                 WHERE status = 'processing' AND worker_id = $1
-                  AND result_metadata->>'batch_id' IS NULL
+                  AND NOT {_PROVIDER_BATCH_OPERATION}
                   AND COALESCE(retry_count, 0) >= $2
                   {op_filter}
                 RETURNING operation_id
@@ -1438,8 +1447,8 @@ class WorkerPoller:
         """
         Recover batch API operations that were in-flight when worker crashed.
 
-        Finds operations with batch_id in metadata and re-submits them as tasks
-        so polling can resume.
+        Finds operations marked as provider batches (or with a legacy batch_id)
+        and re-submits them as tasks so polling can resume.
 
         Args:
             schema: Database schema to recover from
@@ -1451,13 +1460,13 @@ class WorkerPoller:
 
         try:
             async with self._backend.acquire() as conn:
-                # Find operations with batch_id in metadata (batch API operations)
+                # Match both the keyed-checkpoint marker and legacy metadata.
                 rows = await conn.fetch(
                     f"""
                     SELECT operation_id, task_payload, result_metadata
                     FROM {table}
                     WHERE status = 'processing'
-                      AND result_metadata ? 'batch_id'
+                      AND {_PROVIDER_BATCH_OPERATION}
                       AND task_payload IS NOT NULL
                     """
                 )
@@ -1474,12 +1483,13 @@ class WorkerPoller:
                 if isinstance(result_metadata, str):
                     result_metadata = json.loads(result_metadata)
 
-                batch_id = result_metadata.get("batch_id")
-                batch_provider = result_metadata.get("batch_provider", "openai")
-
-                logger.info(
-                    f"Recovering batch operation: operation_id={operation_id}, batch_id={batch_id}, provider={batch_provider}"
+                batch_ids = [result_metadata["batch_id"]] if result_metadata.get("batch_id") else []
+                batch_ids.extend(
+                    checkpoint["batch_id"]
+                    for key, checkpoint in result_metadata.items()
+                    if key.startswith("retain_batch:") and isinstance(checkpoint, dict) and checkpoint.get("batch_id")
                 )
+                logger.info("Recovering batch operation: operation_id=%s, batch_ids=%s", operation_id, batch_ids)
 
                 # Mark operation as ready for re-processing
                 # Reset to pending with task_payload intact so worker picks it up again

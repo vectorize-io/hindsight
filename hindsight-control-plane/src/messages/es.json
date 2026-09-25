@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "Controla qué se extrae y almacena del contenido",
     "retainFailedToSave": "Error al guardar la configuración de Retain",
+    "sourceContextLabel": "Contexto de origen anterior (caracteres)",
+    "sourceContextDescription": "Usa el texto anterior para resolver referencias. 0 desactiva la opción; deja el campo vacío para heredar. Al activarla, cada retención vuelve a extraer todo el documento.",
     "chunkSizeLabel": "Tamaño de fragmento",
     "chunkSizeDescription": "Tamaño de los fragmentos de texto para el procesamiento (caracteres)",
     "structuredChunkSizeLabel": "Tamaño de chunk estructurado",

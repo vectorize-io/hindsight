@@ -2741,6 +2741,7 @@ class Hindsight:
         retain_mission: str | None = None,
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
+        retain_context_chars: int | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
         retain_max_attachments_per_chunk: int | None = None,
@@ -2808,6 +2809,7 @@ class Hindsight:
                 retain_mission=retain_mission,
                 retain_extraction_mode=retain_extraction_mode,
                 retain_custom_instructions=retain_custom_instructions,
+                retain_context_chars=retain_context_chars,
                 retain_chunk_size=retain_chunk_size,
                 retain_structured_chunk_size=retain_structured_chunk_size,
                 retain_max_attachments_per_chunk=retain_max_attachments_per_chunk,
@@ -2868,6 +2870,7 @@ class Hindsight:
         retain_mission: str | None = None,
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
+        retain_context_chars: int | None = None,
         retain_chunk_size: int | None = None,
         retain_structured_chunk_size: int | None = None,
         retain_max_attachments_per_chunk: int | None = None,
@@ -2935,6 +2938,8 @@ class Hindsight:
             retain_mission: Steers what gets extracted during retain().
             retain_extraction_mode: Fact extraction mode: 'concise', 'verbose', or 'custom'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
+            retain_context_chars: Previous source characters for reference resolution (0 disables;
+                maximum 32000). Enabled updates re-extract the full document.
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
@@ -3010,6 +3015,7 @@ class Hindsight:
                 "retain_mission": retain_mission,
                 "retain_extraction_mode": retain_extraction_mode,
                 "retain_custom_instructions": retain_custom_instructions,
+                "retain_context_chars": retain_context_chars,
                 "retain_chunk_size": retain_chunk_size,
                 "retain_structured_chunk_size": retain_structured_chunk_size,
                 "retain_max_attachments_per_chunk": retain_max_attachments_per_chunk,

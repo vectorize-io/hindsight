@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "コンテンツから抽出・保存される内容を制御",
     "retainFailedToSave": "Retain設定の保存に失敗しました",
+    "sourceContextLabel": "直前のソースコンテキスト（文字数）",
+    "sourceContextDescription": "前のソーステキストを使って参照を解決します。0で無効、空欄で継承します。有効にすると、保存のたびにドキュメント全体を再抽出します。",
     "chunkSizeLabel": "チャンクサイズ",
     "chunkSizeDescription": "処理用テキストチャンクのサイズ（文字数）",
     "structuredChunkSizeLabel": "構造化チャンクサイズ",

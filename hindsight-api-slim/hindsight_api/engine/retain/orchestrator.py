@@ -490,10 +490,12 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
 # and only the resulting facts are wrong. Inverting it makes the safe case the
 # default — a new retain field round-trips unless someone deliberately excludes it,
 # and the single source of truth becomes what api_retain puts on the content dict.
-_RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
+_RETAIN_PARAMS_NOT_REPLAYED = frozenset(
+    {"content", "document_id", "update_mode", "tags", "force_reextract", "_previous_source", "_retain_context_chars"}
+)
 
 
-def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
+def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None, *, context_chars: int = 0):
     """Build retain_params and merged_tags from content dicts."""
     if doc_contents is not None:
         # Per-document mode: doc_contents is list of (idx, content_dict)
@@ -520,6 +522,8 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
                 value = value.isoformat() if hasattr(value, "isoformat") else str(value)
             retain_params[key] = value
 
+    if context_chars:
+        retain_params["_retain_context_chars"] = context_chars
     return retain_params, merged_tags
 
 
@@ -1050,7 +1054,9 @@ async def _delta_store_owned_write(
         combined_content = full_document_body
     else:
         combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
-    retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+    retain_params, merged_tags = _build_retain_params(
+        contents_dicts, document_tags, context_chars=config.retain_context_chars
+    )
 
     # The fence, and it must be this batch's FIRST store write. `expect_watermark` guards on
     # the namespace's WAL head, and the fact write below MOVES that head — fencing after it
@@ -1190,6 +1196,7 @@ async def _extract_and_embed(
     schema: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    batch_checkpoint_key: str | None = None,
 ) -> _EmbeddedExtraction:
     """Shared pipeline: extract facts from contents and generate embeddings."""
     set_stage("retain.extract_and_embed")
@@ -1211,6 +1218,7 @@ async def _extract_and_embed(
         schema,
         attachment_loader=attachment_loader,
         vlm_config=vlm_config,
+        batch_checkpoint_key=batch_checkpoint_key,
     )
     extracted_facts, chunks, usage = extraction.facts, extraction.chunks, extraction.usage
     log_buffer.append(
@@ -1524,6 +1532,38 @@ async def retain_batch(
                 # submitted, not whichever doc_id the batch happens to share.
                 _item_doc_id = contents_dicts[_idx].get("document_id") or document_id
 
+                # Internal slice seeds are source too. Screen them before they can
+                # enter a prompt; a blocked seed is omitted, never used as context.
+                if _content.previous_source:
+                    _source_decision = await memory_defense_extension.screen(
+                        policy=_policy,
+                        bank_id=bank_id,
+                        document_id=_item_doc_id,
+                        content=_content.previous_source,
+                        tags=_content.tags,
+                    )
+                    if _source_decision.action is DefenseAction.BLOCK:
+                        _content.previous_source = ""
+                    elif _source_decision.action is DefenseAction.REDACT:
+                        _content.previous_source = _source_decision.redacted_content or ""
+                    if _source_decision.action is not DefenseAction.ALLOW:
+                        await _fire_memory_defense_webhook(
+                            webhook_manager,
+                            conn=_defense_conn,
+                            schema=schema,
+                            bank_id=bank_id,
+                            operation_id=operation_id,
+                            document_id=_item_doc_id,
+                            decision=_source_decision,
+                        )
+                        await _audit_memory_defense(
+                            audit_logger,
+                            bank_id=bank_id,
+                            document_id=_item_doc_id,
+                            decision=_source_decision,
+                        )
+
+                contents_dicts[_idx]["_previous_source"] = _content.previous_source
                 _decision = await memory_defense_extension.screen(
                     policy=_policy,
                     bank_id=bank_id,
@@ -1642,6 +1682,10 @@ async def retain_batch(
     # operation payload and the oversized-item splitter (which copies every field onto each
     # slice) without a parameter on every frame in between.
     force_reextract = any(bool(item.get("force_reextract")) for item in contents_dicts)
+    # Target-only hashes cannot prove context-dependent extraction reusable. Until
+    # per-chunk extraction dependencies are persisted, opt-in retains deliberately
+    # re-extract the whole document, including when settings or a strategy change.
+    force_reextract = force_reextract or config.retain_context_chars > 0
 
     # The document version this append was built on. Captured with the text it
     # reads so the write path can prove nothing else appended in between — see
@@ -1712,12 +1756,24 @@ async def retain_batch(
                 existing_content["observation_scopes"] = first["observation_scopes"]
             if first.get("tags"):
                 existing_content["tags"] = first["tags"]
+            if config.retain_context_chars:
+                from .source_context import extend_source_context
+
+                # Each incoming item may consult the stored base, never a sibling
+                # submitted alongside it. The JSON body merge below is storage-only.
+                for incoming in contents_dicts:
+                    incoming["_previous_source"] = extend_source_context("", existing_text, config.retain_context_chars)
             contents_dicts = [existing_content, *contents_dicts]
             # Collapse to the merged array when every part is one, so `original_text` stays valid
             # JSON (#2409). `merge_json_array_parts` is the same function the splitter predicts an
             # oversized append's body with, so the two cannot disagree about what this produces.
             _merged_text = merge_json_array_parts([_item.get("content", "") for _item in contents_dicts])
-            if _merged_text is not None:
+            merged_append_body: str | None = None
+            if _merged_text is not None and config.retain_context_chars and len(contents_dicts) > 2:
+                # Preserve extraction boundaries for independent incoming arrays.
+                # Storage still receives the same valid, merged JSON document.
+                merged_append_body = _merged_text
+            elif _merged_text is not None:
                 merged_item: RetainContentDict = {"content": _merged_text}
                 merged_filenames: dict[str, str] = {}
                 for _item in contents_dicts:
@@ -1746,6 +1802,12 @@ async def retain_batch(
             # instead of a silently truncated document (#3989).
             if full_document_body is not None:
                 assert_append_extends_stored_body(existing_text, full_document_body, document_id=effective_doc_id)
+            elif merged_append_body is not None:
+                # This body was constructed from the base above, unlike a caller's
+                # predicted oversized body. JSON array merging is not a byte-prefix
+                # append (the base's closing bracket moves), so do not apply that
+                # prediction guard to the body we just assembled ourselves.
+                full_document_body = merged_append_body
 
     # --- Stale-request check (best-effort, before LLM extraction) ---
     # If the document was already updated by a more recent retain (updated_at > our
@@ -1764,10 +1826,16 @@ async def retain_batch(
     if not _get_memories_stale().store_owned_for(bank_id):
         async with acquire_with_retry(pool) as conn:
             doc_row = await conn.fetchrow(
-                f"SELECT updated_at FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                f"SELECT updated_at, retain_params FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
                 effective_doc_id,
                 bank_id,
             )
+    if doc_row:
+        prior_params = doc_row["retain_params"] or {}
+        if isinstance(prior_params, str):
+            prior_params = json.loads(prior_params)
+        # Disabling lookback must also refresh facts produced with supporting text.
+        force_reextract = force_reextract or bool(prior_params.get("_retain_context_chars"))
     if doc_row and doc_row["updated_at"]:
         doc_updated = doc_row["updated_at"].timestamp()
         if doc_updated > start_time:
@@ -1881,19 +1949,24 @@ async def retain_batch(
     # Same reasoning for the image cap: it moves chunk boundaries in exactly the
     # same way, so it must come from this resolved config too.
     max_attachments_per_chunk = config.retain_max_attachments_per_chunk
+    from .source_context import contextual_chunks
+
     all_pre_chunks: list[str] = []
+    previous_sources: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
         # Streamed, not materialised per content: `iter_chunks` yields each chunk as it is
         # cut, so the peak here is one chunk rather than the intermediate splits an eager
         # chunker builds for the whole body (a 45 MB one cost ~130 MB live before #3756).
-        for chunk in fact_extraction.iter_chunks(
+        native_chunks = fact_extraction.iter_chunks(
             content.content,
             chunk_size,
             structured_chunk_size=structured_chunk_size,
             max_attachments_per_chunk=max_attachments_per_chunk,
-        ):
-            all_pre_chunks.append(chunk)
+        )
+        for chunk in contextual_chunks(native_chunks, config.retain_context_chars, content.previous_source):
+            all_pre_chunks.append(chunk.text)
+            previous_sources.append(chunk.previous_source)
             chunk_to_content.append(content_idx)
 
     # Memory: after chunking, the original content bodies in RetainContent are
@@ -1928,6 +2001,7 @@ async def retain_batch(
         log_buffer=log_buffer,
         start_time=start_time,
         all_pre_chunks=all_pre_chunks,
+        previous_sources=previous_sources,
         chunk_to_content=chunk_to_content,
         chunk_batch_size=chunk_batch_size,
         operation_id=operation_id,
@@ -2374,6 +2448,7 @@ async def _streaming_retain_batch(
     force_reextract: bool = False,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    previous_sources: list[str] | None = None,
 ) -> RetainBatchResult:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -2483,7 +2558,9 @@ async def _streaming_retain_batch(
     # workers. Each batch TXN also verifies document ownership via content_hash
     # to detect when a concurrent request has taken over the document.
     # See _run_mini_batch_db_work() for the implementation.
-    retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+    retain_params, merged_tags = _build_retain_params(
+        contents_dicts, document_tags, context_chars=config.retain_context_chars
+    )
 
     # Route the document's bulky bodies (extracted text + ordered chunk texts) to the store's
     # dedicated document store when it owns one — up front, before the streaming batches
@@ -2653,8 +2730,10 @@ async def _streaming_retain_batch(
             source = contents[chunk_to_content[global_idx]] if contents else _default_content
             content = RetainContent(
                 content=chunk_text,
+                previous_source=previous_sources[global_idx] if previous_sources else "",
                 context=source.context,
                 event_date=source.event_date,
+                event_date_is_default=source.event_date_is_default,
                 metadata=source.metadata,
                 entities=source.entities,
                 resolve_entities=source.resolve_entities,
@@ -2683,6 +2762,10 @@ async def _streaming_retain_batch(
                     schema,
                     attachment_loader=attachment_loader,
                     vlm_config=vlm_config,
+                    # Index is document-absolute even in a later internal slice.
+                    # Source/settings stay in the fingerprint, not the identity,
+                    # so changed prompts are rejected rather than submitted anew.
+                    batch_checkpoint_key=f"retain_batch:{build_chunk_id(bank_id, effective_doc_id, chunk_index_offset + global_idx)}",
                 )
             finally:
                 reset_call_metadata(meta_token)
@@ -2700,6 +2783,8 @@ async def _streaming_retain_batch(
             # Memory: release the chunk text from the shared list now that it's
             # been extracted and queued. The queued RetainContent holds its own copy.
             all_pre_chunks[global_idx] = ""
+            if previous_sources:
+                previous_sources[global_idx] = ""
 
         tasks: list[asyncio.Task] = []
         skipped_total = 0
@@ -3685,6 +3770,14 @@ async def _try_delta_retain(
                 document_id=effective_doc_id,
                 include_text=full_document_body is not None,
             )
+        # A store-owned bank has no SQL document row at the earlier reuse gate.
+        # Its persisted marker must also force a refresh when lookback is disabled.
+        from ..memories.base import document_retain_params
+
+        prior_params = document_retain_params(record)
+        if prior_params.get("_retain_context_chars"):
+            log_buffer.append("[delta] Prior extraction used source context — refreshing without lookback")
+            return None
         doc_hash_at_load = (record or {}).get("content_hash")
         doc_watermark_at_load = (record or {}).get("watermark")
         original_text_at_load = (record or {}).get("original_text") if full_document_body is not None else None
@@ -4032,7 +4125,9 @@ async def _try_delta_retain(
                     combined_content = full_document_body
                 else:
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
-                retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+                retain_params, merged_tags = _build_retain_params(
+                    contents_dicts, document_tags, context_chars=config.retain_context_chars
+                )
                 await fact_storage.upsert_document_metadata(
                     conn,
                     bank_id,
@@ -4224,7 +4319,9 @@ async def _delta_metadata_only(
             if full_document_body is not None
             else "\n".join([c.get("content", "") for c in contents_dicts])
         )
-        retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+        retain_params, merged_tags = _build_retain_params(
+            contents_dicts, document_tags, context_chars=config.retain_context_chars
+        )
         # Re-put the record with the SAME body hashes: PutDocuments mints upload URLs only for
         # bodies it is missing, and none are missing, so this changes labels without moving bytes.
         chunk_texts = await _meta_store.list_chunk_texts(bank_id=bank_id, document_id=document_id) or []
@@ -4291,7 +4388,9 @@ async def _delta_metadata_only(
                 combined_content = full_document_body
             else:
                 combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
-            retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+            retain_params, merged_tags = _build_retain_params(
+                contents_dicts, document_tags, context_chars=config.retain_context_chars
+            )
             await fact_storage.upsert_document_metadata(
                 conn,
                 bank_id,
@@ -4345,8 +4444,10 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
 
         content = RetainContent(
             content=item["content"],
+            previous_source=item.get("_previous_source", ""),
             context=item.get("context", ""),
             event_date=event_date_value,
+            event_date_is_default="event_date" not in item,
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
             resolve_entities=item.get("resolve_entities", True),

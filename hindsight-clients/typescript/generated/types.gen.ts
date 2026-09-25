@@ -541,6 +541,12 @@ export type BankTemplateConfig = {
    */
   retain_custom_instructions?: string | null;
   /**
+   * Retain Context Chars
+   *
+   * Previous source characters for extraction reference resolution (0 disables; enabled updates re-extract)
+   */
+  retain_context_chars?: number | null;
+  /**
    * Retain Chunk Size
    *
    * Target max characters for each content chunk

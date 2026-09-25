@@ -1169,6 +1169,7 @@ def _iter_raw_sub_batches(
     structured_chunk_size: int | None = None,
     max_attachments_per_chunk: int,
     append_base_text: dict[str, str] | None = None,
+    context_chars: int = 0,
 ) -> Iterator[_RawSubBatch]:
     """Stream the sub-batches of ``contents`` — see ``_split_contents_into_sub_batches``.
 
@@ -1186,6 +1187,7 @@ def _iter_raw_sub_batches(
     """
     from .retain import fact_extraction
     from .retain.orchestrator import append_document_body
+    from .retain.source_context import extend_source_context
 
     def _chunks_of(text: str) -> Iterator[str]:
         return fact_extraction.iter_chunks(
@@ -1257,6 +1259,9 @@ def _iter_raw_sub_batches(
                 if _append_base and item.get("update_mode") == "append"
                 else content_str
             )
+            previous_source = extend_source_context(
+                "", _append_base if item.get("update_mode") == "append" and _append_base else "", context_chars
+            )
             for run in _pack_native_chunks(_chunks_of(content_str), tokens_per_batch):
                 # Prefer the ORIGINAL span over a guessed rejoin: it carries whatever separators
                 # the document actually used, so it reconstructs runs the guessing cannot. Verified
@@ -1279,14 +1284,21 @@ def _iter_raw_sub_batches(
                         structured_chunk_size,
                         max_attachments_per_chunk=max_attachments_per_chunk,
                     )
-                slices = [(joined, len(run))] if joined is not None else [(chunk, 1) for chunk in run]
-                for slice_text, slice_chunk_count in slices:
+                slices = [(joined, run)] if joined is not None else [(chunk, [chunk]) for chunk in run]
+                for slice_text, slice_chunks in slices:
                     chunk_item = cast(RetainContentDict, {**item, "content": slice_text})
+                    if context_chars:
+                        chunk_item["_previous_source"] = previous_source
+                        # Reconstructed bodies preserve original separators (or
+                        # merge JSON arrays). Windows follow native chunks just
+                        # as unsliced extraction does, independent of packing.
+                        for chunk in slice_chunks:
+                            previous_source = extend_source_context(previous_source, chunk, context_chars)
                     yield _RawSubBatch(
                         contents=[chunk_item],
                         origins=[original_idx],
                         full_document_body=full_document_body,
-                        chunk_count=slice_chunk_count,
+                        chunk_count=len(slice_chunks),
                     )
             continue
 
@@ -1338,6 +1350,7 @@ def iter_sub_batches(
         structured_chunk_size=structured_chunk_size,
         max_attachments_per_chunk=config.retain_max_attachments_per_chunk,
         append_base_text=append_base_text,
+        context_chars=config.retain_context_chars,
     ):
         if held is not None:
             index += 1

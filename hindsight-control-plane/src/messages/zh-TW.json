@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "控制從內容中擷取和儲存的內容",
     "retainFailedToSave": "無法儲存保留設定",
+    "sourceContextLabel": "前文上下文（字元數）",
+    "sourceContextDescription": "使用前面的原文解析參照。0 表示停用，留空表示繼承。啟用後，每次儲存都會重新擷取整份文件。",
     "chunkSizeLabel": "片段大小",
     "chunkSizeDescription": "處理的文字片段大小（字元數）",
     "structuredChunkSizeLabel": "結構化片段大小",

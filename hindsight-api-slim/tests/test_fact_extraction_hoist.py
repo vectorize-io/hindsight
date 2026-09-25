@@ -32,6 +32,7 @@ def _minimal_config(**overrides):
         "llm_output_language": None,
         "llm_supports_string_pattern": False,
         "retain_optional_fact_dimensions": False,
+        "retain_context_chars": 0,
         "retain_chunk_size": 50,
         "retain_structured_chunk_size": None,
         "retain_max_attachments_per_chunk": 8,

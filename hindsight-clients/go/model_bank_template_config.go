@@ -23,6 +23,7 @@ type BankTemplateConfig struct {
 	RetainMission NullableString `json:"retain_mission,omitempty"`
 	RetainExtractionMode NullableString `json:"retain_extraction_mode,omitempty"`
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
+	RetainContextChars NullableInt32 `json:"retain_context_chars,omitempty"`
 	RetainChunkSize NullableInt32 `json:"retain_chunk_size,omitempty"`
 	RetainStructuredChunkSize NullableInt32 `json:"retain_structured_chunk_size,omitempty"`
 	EnableObservations NullableBool `json:"enable_observations,omitempty"`
@@ -255,6 +256,48 @@ func (o *BankTemplateConfig) SetRetainCustomInstructionsNil() {
 // UnsetRetainCustomInstructions ensures that no value is present for RetainCustomInstructions, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRetainCustomInstructions() {
 	o.RetainCustomInstructions.Unset()
+}
+
+// GetRetainContextChars returns the RetainContextChars field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRetainContextChars() int32 {
+	if o == nil || IsNil(o.RetainContextChars.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetainContextChars.Get()
+}
+
+// GetRetainContextCharsOk returns a tuple with the RetainContextChars field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRetainContextCharsOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainContextChars.Get(), o.RetainContextChars.IsSet()
+}
+
+// HasRetainContextChars returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRetainContextChars() bool {
+	if o != nil && o.RetainContextChars.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainContextChars gets a reference to the given NullableInt32 and assigns it to the RetainContextChars field.
+func (o *BankTemplateConfig) SetRetainContextChars(v int32) {
+	o.RetainContextChars.Set(&v)
+}
+// SetRetainContextCharsNil sets the value for RetainContextChars to be an explicit nil
+func (o *BankTemplateConfig) SetRetainContextCharsNil() {
+	o.RetainContextChars.Set(nil)
+}
+
+// UnsetRetainContextChars ensures that no value is present for RetainContextChars, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRetainContextChars() {
+	o.RetainContextChars.Unset()
 }
 
 // GetRetainChunkSize returns the RetainChunkSize field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2171,6 +2214,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainCustomInstructions.IsSet() {
 		toSerialize["retain_custom_instructions"] = o.RetainCustomInstructions.Get()
+	}
+	if o.RetainContextChars.IsSet() {
+		toSerialize["retain_context_chars"] = o.RetainContextChars.Get()
 	}
 	if o.RetainChunkSize.IsSet() {
 		toSerialize["retain_chunk_size"] = o.RetainChunkSize.Get()

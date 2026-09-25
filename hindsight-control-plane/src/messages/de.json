@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "Steuern, was aus Inhalten extrahiert und gespeichert wird",
     "retainFailedToSave": "Retain-Einstellungen konnten nicht gespeichert werden",
+    "sourceContextLabel": "Vorheriger Quellkontext (Zeichen)",
+    "sourceContextDescription": "Früheren Quelltext zum Auflösen von Verweisen verwenden. 0 deaktiviert; leer lassen zum Erben. Bei Aktivierung wird bei jedem Speichern das gesamte Dokument erneut extrahiert.",
     "chunkSizeLabel": "Chunk-Größe",
     "chunkSizeDescription": "Größe der Textblöcke für die Verarbeitung (Zeichen)",
     "structuredChunkSizeLabel": "Strukturierte Chunk-Größe",

@@ -93,6 +93,7 @@ interface ProfileData {
 }
 
 type RetainEdits = {
+  retain_context_chars: number | null;
   retain_chunk_size: number | null;
   retain_structured_chunk_size: number | null;
   retain_extraction_mode: string | null;
@@ -339,6 +340,7 @@ function parseEntityLabels(raw: unknown): LabelGroup[] | null {
 
 function retainSlice(config: Record<string, any>): RetainEdits {
   return {
+    retain_context_chars: config.retain_context_chars ?? null,
     retain_chunk_size: config.retain_chunk_size ?? null,
     retain_structured_chunk_size: config.retain_structured_chunk_size ?? null,
     retain_extraction_mode: config.retain_extraction_mode ?? null,
@@ -1505,6 +1507,20 @@ function RetainStrategyForm({
           </SelectContent>
         </Select>
       </FieldRow>
+      <FieldRow label={t("sourceContextLabel")} description={t("sourceContextDescription")}>
+        <Input
+          aria-label={t("sourceContextLabel")}
+          type="number"
+          min={0}
+          max={32000}
+          step={1}
+          value={values.retain_context_chars ?? ""}
+          onChange={(e) =>
+            onChange({ retain_context_chars: e.target.value ? parseInt(e.target.value, 10) : null })
+          }
+          placeholder={isOverride ? t("inherited") : undefined}
+        />
+      </FieldRow>
       <FieldRow label={t("chunkSizeLabel")} description={t("chunkSizeDescription")}>
         <Input
           type="number"
@@ -1623,6 +1639,7 @@ function RetainStrategiesPanel({
         name: "",
         values: {
           retain_extraction_mode: null,
+          retain_context_chars: null,
           retain_chunk_size: null,
           retain_structured_chunk_size: null,
           retain_mission: null,

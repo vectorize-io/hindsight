@@ -6107,6 +6107,11 @@ components:
         retain_custom_instructions:
           nullable: true
           type: string
+        retain_context_chars:
+          maximum: 32000.0
+          minimum: 0.0
+          nullable: true
+          type: integer
         retain_chunk_size:
           nullable: true
           type: integer

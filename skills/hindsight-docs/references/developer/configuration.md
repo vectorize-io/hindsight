@@ -1681,6 +1681,7 @@ Controls the retain (memory ingestion) pipeline.
 |----------|-------------|---------|
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
+| `HINDSIGHT_API_RETAIN_CONTEXT_CHARS` | Previous source characters supplied separately to resolve references in each extraction target. Integer 0–32000; 0 disables. Configurable per bank or named retain strategy. Enabled retains re-extract the full document on updates. | `0` |
 | `HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE` | Max characters for a single JSONL line or conversation turn to keep whole. Unset uses `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. Must be a positive integer when set. | - |
 | `HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_SIZE_MB` | Max decoded size of a single attachment sent as inline retain content. Above every mainstream provider's own per-file ceiling, so the provider's limit binds first for legitimate content while an abusive upload is refused at the ingress. | `20` |
 | `HINDSIGHT_API_RETAIN_ATTACHMENT_MAX_COUNT` | Max inline attachments in one retain item. Split larger documents across several items. | `50` |

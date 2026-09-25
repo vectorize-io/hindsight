@@ -24,6 +24,7 @@ from hindsight_api.config import (
     normalize_config_dict,
     validate_retain_chunking_config,
     validate_retain_completion_token_budget,
+    validate_retain_context_chars,
     validate_retain_image_chunking_config,
 )
 from hindsight_api.engine.memory_engine import fq_table
@@ -58,6 +59,7 @@ _CROSS_FIELD_CONSTRAINED_FIELDS = frozenset(
     {
         # retain_max_completion_tokens (server-level) > retain_chunk_size, for the
         # bank config and for every retain strategy spliced onto it.
+        "retain_context_chars",
         "retain_chunk_size",
         "retain_structured_chunk_size",
         "retain_strategies",
@@ -111,6 +113,7 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
             continue
         try:
             resolved = replace(base_config, **filtered)
+            validate_retain_context_chars(resolved.retain_context_chars)
             validate_retain_chunking_config(
                 resolved.retain_chunk_size,
                 resolved.retain_structured_chunk_size,
@@ -152,6 +155,7 @@ def _validate_projected_bank_config(
             projected[key] = value
 
     base_config = replace(parent_config, **projected) if projected else parent_config
+    validate_retain_context_chars(base_config.retain_context_chars)
     validate_retain_chunking_config(
         base_config.retain_chunk_size,
         base_config.retain_structured_chunk_size,
@@ -255,6 +259,7 @@ class ConfigResolver:
             logger.debug(f"Applied bank config overrides for bank {bank_id}: {list(bank_overrides.keys())}")
 
         resolved_config = self._with_overrides(overrides)
+        validate_retain_context_chars(resolved_config.retain_context_chars)
         validate_retain_chunking_config(
             resolved_config.retain_chunk_size,
             resolved_config.retain_structured_chunk_size,
@@ -1043,6 +1048,7 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
 
     logger.debug(f"Applying retain strategy '{strategy_name}': {list(filtered.keys())}")
     resolved = replace(config, **filtered)
+    validate_retain_context_chars(resolved.retain_context_chars)
     validate_retain_chunking_config(
         resolved.retain_chunk_size,
         resolved.retain_structured_chunk_size,

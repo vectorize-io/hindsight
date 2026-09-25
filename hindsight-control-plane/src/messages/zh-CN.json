@@ -357,6 +357,8 @@
     "retainTitle": "Retain",
     "retainDescription": "控制从内容中提取和存储的内容",
     "retainFailedToSave": "无法保存保留设置",
+    "sourceContextLabel": "前文上下文（字符数）",
+    "sourceContextDescription": "使用前面的原文解析引用。0 表示禁用，留空表示继承。启用后，每次存储都会重新提取整个文档。",
     "chunkSizeLabel": "分块大小",
     "chunkSizeDescription": "处理的文本分块大小（字符数）",
     "structuredChunkSizeLabel": "结构化分块大小",

@@ -1,3 +1,7 @@
+from unittest.mock import AsyncMock
+
+import pytest
+
 from hindsight_client import Hindsight
 
 
@@ -326,3 +330,22 @@ def test_update_bank_config_gemini_safety_settings_is_a_list(monkeypatch):
     client.update_bank_config("test-bank", llm_gemini_safety_settings=settings)
 
     assert captured["updates"] == {"llm_gemini_safety_settings": settings}
+
+
+@pytest.mark.parametrize("budget", [None, 0, 800])
+def test_update_bank_config_forwards_source_window(monkeypatch, budget: int | None) -> None:
+    update = AsyncMock(return_value={})
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", update)
+    client = Hindsight(base_url="http://example.invalid")
+    client.update_bank_config("test-bank", retain_context_chars=budget)
+    update.assert_awaited_once_with("test-bank", {} if budget is None else {"retain_context_chars": budget})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [None, 0, 800])
+async def test_async_update_bank_config_forwards_source_window(monkeypatch, budget: int | None) -> None:
+    update = AsyncMock(return_value={})
+    monkeypatch.setattr(Hindsight, "_aupdate_bank_config", update)
+    client = Hindsight(base_url="http://example.invalid")
+    await client.aupdate_bank_config("test-bank", retain_context_chars=budget)
+    update.assert_awaited_once_with("test-bank", {} if budget is None else {"retain_context_chars": budget})
