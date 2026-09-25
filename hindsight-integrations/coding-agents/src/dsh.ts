@@ -59,7 +59,7 @@ interface DshAgent {
 interface DshUserMessage {
   role: "user";
   content: { type: string; text?: string }[];
-  source: { kind: string; plugin?: string; form?: string };
+  source: { kind: string; form?: string };
   id?: string;
 }
 
@@ -206,7 +206,8 @@ function workspaceForAgent(agent: DshAgent): Workspace | undefined {
  * The human text in this step's claimed batch.
  *
  * `agent/pre-step` fires before EVERY step, including tool continuations that claimed no new input,
- * and other plugins contribute their own `kind: 'plugin'` messages to the same batch. Only a
+ * and other plugins contribute their own context messages to the same batch (V3 hosts tag them
+ * `kind: 'plugin'`, V4 hosts use a producer-owned kind such as `time-context`). Only a
  * `kind: 'user'` message is a prompt worth recalling on.
  */
 function promptOf(messages: readonly DshUserMessage[]): string {
@@ -223,16 +224,16 @@ function promptOf(messages: readonly DshUserMessage[]): string {
  * Build the injected memory message.
  *
  * `form: 'recall'` is dsh's own vocabulary for retrieved context, so its UI renders the block as
- * recalled material rather than as something the user typed, and `plugin: 'hindsight'` names us in
- * the durable log. Neither is what keeps the block out of a write-back — transcript-dsh.ts drops
- * every plugin-sourced message, ours included.
+ * recalled material rather than as something the user typed. Session format V4 requires injected
+ * messages to use a producer-owned source kind; `plugin:hindsight` is the canonical fallback name
+ * for an unregistered plugin. The non-user source also keeps the block out of a write-back.
  */
 function injectionMessage(text: string): DshUserMessage {
   return {
     id: randomUUID(),
     role: "user",
     content: [{ type: "text", text }],
-    source: { kind: "plugin", plugin: HINDSIGHT_PLUGIN, form: "recall" },
+    source: { kind: `plugin:${HINDSIGHT_PLUGIN}`, form: "recall" },
   };
 }
 

@@ -342,6 +342,13 @@ export function MentalModelTriggerFields({
             value={form.factTypes}
             onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
           />
+          {/* An empty selection is not "no types" — it means no filter, i.e. all
+              types (it saves as fact_types: null). The "?" Hint says so, but empty
+              checkboxes read as "none"; surface the effective value inline, matching
+              the read-only summary/detail view, so the editor can't be misread. */}
+          {form.factTypes.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">{t("triggerFactTypesAll")}</p>
+          )}
         </div>
         <Row
           label={t("optionsExcludeAllLabel")}

@@ -1760,6 +1760,122 @@ class TestNoAnswerFailsHard:
         assert result.text == "The user has a cat named Luna."
 
 
+_DOCUMENT = {
+    "sections": [
+        {
+            "heading": "Ops",
+            "level": 2,
+            "blocks": ["Quarterly planning is owned by the platform team.", "- one\n- two"],
+        }
+    ]
+}
+
+
+class TestDoneToolStringDocument:
+    """A string-encoded ``document`` argument in document mode must render like an object.
+
+    Models on OpenAI-compatible transports sometimes double-encode nested tool
+    arguments: the ``document`` arrives as a JSON *string* instead of an object.
+    In document mode the done tool has no ``answer`` field, so the dict-only
+    branch fell through to ``args.get("answer", "")`` -- always empty -- and
+    every well-formed-but-string-encoded completion was a deterministic
+    ReflectNoAnswerError misread as truncation. Same transport-artifact class
+    PR #899 fixed for MCP tool arguments.
+    """
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.provider = "openai"
+        llm.model = "gpt-test"
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content="Synthesized answer from gathered evidence.",
+                usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions(self):
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @staticmethod
+    def _recall_then(done_arguments: dict) -> list[LLMToolCallResult]:
+        """Gather evidence first, so ``done`` is not rejected by the evidence guardrail."""
+        return [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments=done_arguments)],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+    async def _run(self, mock_llm, mock_functions):
+        return await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=False,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+    @pytest.mark.asyncio
+    async def test_object_document_renders(self, mock_llm, mock_functions):
+        """Object form: the render path runs and returns the document markdown."""
+        mock_llm.call_with_tools.side_effect = self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "## Ops" in result.text
+        assert "Quarterly planning is owned by the platform team." in result.text
+
+    @pytest.mark.asyncio
+    async def test_string_document_renders_identically(self, mock_llm, mock_functions):
+        """The bug: a JSON-string-encoded ``document`` must render exactly like the object form."""
+        mock_llm.call_with_tools.side_effect = self._recall_then(
+            {"document": json.dumps(_DOCUMENT), "memory_ids": ["mem-1"]}
+        )
+
+        result = await self._run(mock_llm, mock_functions)
+
+        mock_llm.call_with_tools.side_effect = self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
+        expected = await self._run(mock_llm, mock_functions)
+        assert result.text == expected.text
+
+    @pytest.mark.asyncio
+    async def test_empty_document_still_raises(self, mock_llm, mock_functions):
+        """Document mode that renders to nothing is unchanged: it raises."""
+        mock_llm.call_with_tools.side_effect = self._recall_then(
+            {"document": {"sections": []}, "memory_ids": ["mem-1"]}
+        )
+
+        with pytest.raises(ReflectNoAnswerError):
+            await self._run(mock_llm, mock_functions)
+
+    @pytest.mark.asyncio
+    async def test_unparseable_string_document_without_answer_raises(self, mock_llm, mock_functions):
+        """An unparseable ``document`` string with no ``answer`` must raise, not slip through."""
+        mock_llm.call_with_tools.side_effect = self._recall_then({"document": "not json", "memory_ids": ["mem-1"]})
+
+        with pytest.raises(ReflectNoAnswerError) as exc_info:
+            await self._run(mock_llm, mock_functions)
+
+        assert "no answer" in str(exc_info.value)
+
+
 class TestDirectiveLeakageOnEmptyBank:
     """Test that directives don't leak into the answer when the bank has no data.
 

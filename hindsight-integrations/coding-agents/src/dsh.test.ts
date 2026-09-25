@@ -52,8 +52,10 @@ describe("dsh pre-step injection", () => {
     expect(appended).toMatchObject({
       role: "user",
       content: [{ type: "text", text: "<hindsight_memory>past decision</hindsight_memory>" }],
-      source: { kind: "plugin", plugin: "hindsight", form: "recall" },
     });
+    // Exact, not a partial match: dsh 0.1.7 (session format V4) aborts the turn on the retired
+    // `kind: "plugin"` wrapper, so no `plugin` field may ride along either.
+    expect(appended.source).toEqual({ kind: "plugin:hindsight", form: "recall" });
     expect(appended.id).toEqual(expect.any(String));
   });
 

@@ -72,6 +72,20 @@ describe("readDshEvents", () => {
           plugin: "@deepseek-ai/dsh-system-prompt",
         }),
       },
+      // Session format V4 (dsh 0.1.7+): the producer owns the kind, with no `plugin` field.
+      {
+        type: "user/message",
+        time: at("2026-08-14T10:00:01Z"),
+        data: userMessage("<hindsight_memory>recalled</hindsight_memory>", {
+          kind: "plugin:hindsight",
+          form: "recall",
+        }),
+      },
+      {
+        type: "user/message",
+        time: at("2026-08-14T10:00:01Z"),
+        data: userMessage("Current time context…", { kind: "time-context" }),
+      },
       { type: "user/message", time: at("2026-08-14T10:00:02Z"), data: userMessage("carry on") },
     ];
 
