@@ -389,6 +389,8 @@
     "testerSampleDefault": "Sarah は 2024 年 3 月に決済チームを率いるためベルリンへ移りました。会議よりも非同期の更新を好みます。",
     "testerRunAction": "実行",
     "testerRunNote": "実際の retain をシミュレートします（LLM が設定されていれば LLM も含みます）。保存はされません。",
+    "testerAttachAction": "ファイルを添付",
+    "testerRemoveAttachment": "{name} を削除",
     "testerNoFacts": "このテキストからは事実が抽出されませんでした。",
     "testerOccurredStart": "発生開始",
     "testerOccurredEnd": "発生終了",

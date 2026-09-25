@@ -389,6 +389,8 @@
     "testerSampleDefault": "Sarah mudou-se para Berlim em março de 2024 para liderar a equipe de pagamentos. Ela prefere atualizações assíncronas a reuniões.",
     "testerRunAction": "Executar",
     "testerRunNote": "Simula um retain real, incluindo o LLM se houver um configurado. Nada é salvo.",
+    "testerAttachAction": "Anexar arquivo",
+    "testerRemoveAttachment": "Remover {name}",
     "testerNoFacts": "Nenhum fato extraído deste texto.",
     "testerOccurredStart": "Ocorreu a partir de",
     "testerOccurredEnd": "Ocorreu até",

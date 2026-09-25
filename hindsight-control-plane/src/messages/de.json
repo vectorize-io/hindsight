@@ -389,6 +389,8 @@
     "testerSampleDefault": "Sarah zog im März 2024 nach Berlin, um das Payments-Team zu leiten. Sie bevorzugt asynchrone Updates gegenüber Meetings.",
     "testerRunAction": "Ausführen",
     "testerRunNote": "Simuliert einen echten Retain, inklusive LLM, sofern eines konfiguriert ist. Es wird nichts gespeichert.",
+    "testerAttachAction": "Datei anhängen",
+    "testerRemoveAttachment": "{name} entfernen",
     "testerNoFacts": "Aus diesem Text wurden keine Fakten extrahiert.",
     "testerOccurredStart": "Ereignet ab",
     "testerOccurredEnd": "Ereignet bis",
