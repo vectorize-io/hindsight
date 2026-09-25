@@ -33,7 +33,8 @@ _SNIPPET_CHARS = 280
 #: Retrieval plumbing that the reflect agent never reads, dropped from tool
 #: results before they reach the model.
 #:
-#: These are scoring and provenance internals, not evidence: the agent cites by
+#: These are scores and internal pointers, not evidence the agent can reason with
+#: (provenance it CAN reason with is kept -- see ``metadata`` below): the agent cites by
 #: ``id``, ``based_on`` re-reads the cited memories' provenance from the store
 #: (``MemoryEngine._evidence_as_stored``), and the expand tool takes
 #: ``memory_ids`` and resolves chunks server-side -- so nothing downstream needs
