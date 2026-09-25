@@ -868,7 +868,8 @@ describe("hindsightApiKeyRef", () => {
     // its own picker submits: "Configuration does not match the plugin's
     // instanceConfigSchema". The schema must admit the reference object too.
     const objectBranch = field?.oneOf?.find((branch) => branch.type === "object") as
-      { required?: string[]; properties?: Record<string, unknown> } | undefined;
+      | { required?: string[]; properties?: Record<string, unknown> }
+      | undefined;
     expect(objectBranch).toBeDefined();
     expect(objectBranch?.required).toEqual(["type", "secretId"]);
     expect(field?.oneOf?.some((branch) => branch.type === "string")).toBe(true);
