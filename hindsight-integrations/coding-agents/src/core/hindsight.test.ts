@@ -74,6 +74,49 @@ describe("HindsightClient document-list safety", () => {
   });
 });
 
+describe("HindsightClient.documentTags", () => {
+  it("reads one document's tags from the id-filtered listing, not the full document", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const fetchMock = vi.fn(async (_url: string | URL | Request) =>
+      jsonResponse(200, {
+        items: [
+          { id: "gitlog:repo-fork", tags: ["gitlog-head:aaa"] },
+          { id: "gitlog:repo", tags: ["source:git-log", "gitlog-head:bbb"] },
+        ],
+        total: 2,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await client.documentTags("gitlog:repo")).toEqual(["source:git-log", "gitlog-head:bbb"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://x/v1/default/banks/shared-bank/documents?q=gitlog%3Arepo&limit=100&offset=0"
+    );
+  });
+
+  it("pages past ids that only contain the requested one, and answers undefined without it", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const lookalikes = Array.from({ length: 100 }, (_, i) => ({
+      id: `gitlog:repo-${i}`,
+      tags: [],
+    }));
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      jsonResponse(200, {
+        items: String(url).includes("offset=100")
+          ? [{ id: "gitlog:repo-100", tags: [] }]
+          : lookalikes,
+        total: 101,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await client.documentTags("gitlog:repo")).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("q=gitlog%3Arepo&limit=100&offset=100");
+  });
+});
+
 describe("HindsightClient.drain", () => {
   it("polls at most maxParallelRetains ops concurrently", async () => {
     const cap = 2;

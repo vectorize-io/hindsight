@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSessionStartContext, runSessionStartHook } from "./session-start";
 import { resolveConfig } from "./config";
+import { repoNameOf } from "./git";
 import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
 
 /** Default roster the mock client returns; asserted on by name below. */
@@ -227,6 +228,60 @@ describe("buildSessionStartContext", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  describe("git note against a git-log document written at another commit", () => {
+    /** A repo with two commits, the git-log document recorded at `writtenAt`, HEAD at `head`. */
+    async function banner(writtenAt: "first" | "second", head: "first" | "second") {
+      const repo = mkdtempSync(join(tmpdir(), "hs-session-start-written-at-"));
+      try {
+        execFileSync("git", ["-C", repo, "init", "-q"]);
+        execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+        const sha: Record<string, string> = {};
+        for (const name of ["first", "second"]) {
+          execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", name]);
+          sha[name] = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim();
+        }
+        execFileSync("git", ["-C", repo, "checkout", "-q", "--detach", sha[head]]);
+        const documentTags = vi.fn(async (_id: string) => [
+          "source:git-log",
+          `gitlog-head:${sha[writtenAt]}`,
+        ]);
+        const out = await buildSessionStartContext({
+          cwd: repo,
+          bankId: "bank-1",
+          cfg: resolveConfig({ codebaseSurvey: false }),
+          client: {
+            // Only the cold check finds anything: no document carries HEAD's own tag.
+            listDocumentIds: async (tag: string) =>
+              tag === "source:git" ? new Set(["git:existing"]) : new Set<string>(),
+            documentTags,
+            listPages: listPagesOk,
+          },
+          hasGit: () => true,
+          startSeed: vi.fn(),
+        });
+        return { out, documentTags, canonical: `gitlog:${repoNameOf(repo)}` };
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    }
+
+    it("reports git in sync from a worktree behind that commit, as the deepen engine skips it (#4661)", async () => {
+      const { out, documentTags, canonical } = await banner("second", "first");
+
+      expect(out.systemMessage).toContain("git in sync");
+      expect(documentTags).toHaveBeenCalledWith(canonical);
+    });
+
+    it("still reports catching up when HEAD has a commit the document lacks", async () => {
+      const { out } = await banner("first", "second");
+
+      expect(out.systemMessage).toContain("catching up on new commits");
+    });
   });
 
   it("listDocumentIds throws (server unreachable) -> no seed, roster preamble only", async () => {

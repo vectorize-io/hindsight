@@ -192,6 +192,73 @@ describe("syncGitLog", () => {
     expect(listDocumentIds.mock.calls[0][1]).toBe("all_strict");
     expect(retain).not.toHaveBeenCalled();
   });
+
+  /** A bank that keeps what the git-log retain writes (document id -> tags) and answers the two
+   *  reads the freshness check makes. */
+  function bank() {
+    const docs = new Map<string, string[]>();
+    const retain = vi.fn(async (_content: string, _context: string, id: string, tags: string[]) => {
+      docs.set(id, tags);
+    });
+    const client = {
+      retain,
+      opIds: [],
+      listDocumentIds: async (tag: string) =>
+        new Set([...docs].filter(([, tags]) => tags.includes(tag)).map(([id]) => id)),
+      documentTags: async (id: string) => docs.get(id),
+    } as unknown as HindsightClient;
+    return { client, retain, docs };
+  }
+
+  it("does not re-send the log when switching back to a worktree behind the last writer (#4661)", async () => {
+    commit(dir, "feat: shared history");
+    const ahead = join(dir, "wt");
+    execFileSync("git", ["-C", dir, "worktree", "add", "-q", "-b", "feature", ahead]);
+    commit(ahead, "feat: only on the feature branch");
+    const { client, retain } = bank();
+
+    for (const worktree of [dir, ahead, dir, ahead]) {
+      await syncGitLog(client, worktree, { limit: 10 });
+    }
+
+    // Both worktrees write the one canonical document. The feature worktree's copy holds every
+    // commit the behind one would send, so only the first visit to each writes it — main re-sent
+    // it on every switch.
+    expect(retain.mock.calls.map((call) => call[2])).toEqual([
+      `gitlog:${repoNameOf(dir)}`,
+      `gitlog:${repoNameOf(dir)}`,
+    ]);
+    expect(retain.mock.calls[1][0]).toContain("feat: only on the feature branch");
+  });
+
+  it("still re-sends the log from a worktree with a commit the document lacks", async () => {
+    commit(dir, "feat: shared history");
+    const other = join(dir, "wt");
+    execFileSync("git", ["-C", dir, "worktree", "add", "-q", "-b", "feature", other]);
+    commit(other, "feat: only on the feature branch");
+    commit(dir, "fix: only on the main branch");
+    const { client, retain } = bank();
+
+    for (const worktree of [dir, other, dir]) {
+      await syncGitLog(client, worktree, { limit: 10 });
+    }
+
+    // The worktrees diverged: each log has a commit the other lacks, so every switch changes what
+    // the one document must hold.
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(retain.mock.calls[2][0]).toContain("fix: only on the main branch");
+  });
+
+  it("re-sends the log when the recorded commit is unknown to this clone", async () => {
+    commit(dir, "feat: current repo");
+    const { client, retain, docs } = bank();
+    // A same-named repository elsewhere, or a rebase that dropped the commit.
+    docs.set(`gitlog:${repoNameOf(dir)}`, ["source:git-log", `gitlog-head:${"f".repeat(40)}`]);
+
+    await syncGitLog(client, dir, { limit: 10 });
+
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("commitsSince", () => {
