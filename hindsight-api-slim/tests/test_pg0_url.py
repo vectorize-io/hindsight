@@ -128,19 +128,15 @@ def test_empty_password_after_colon_is_empty_string():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("db_url", "expected_username", "expected_password"),
+    ("db_url", "expected_extra"),
     [
-        ("pg0://alice:s3cret@mydb:5544", "alice", "s3cret"),
-        ("pg0://alice:@mydb:5544", "alice", ""),
-        ("pg0://mydb:5544", None, None),
-        ("pg0://mydb:5544?max_connections=300", None, None),
+        ("pg0://alice:s3cret@mydb:5544", {"username": "alice", "password": "s3cret"}),
+        ("pg0://alice:@mydb:5544", {"username": "alice", "password": ""}),
+        ("pg0://mydb:5544", {}),
+        ("pg0://mydb:5544?max_connections=300", {"config": {"max_connections": "300"}}),
     ],
 )
-async def test_memory_engine_forwards_pg0_credentials(
-    db_url: str,
-    expected_username: str | None,
-    expected_password: str | None,
-) -> None:
+async def test_memory_engine_forwards_pg0_url_fields(db_url: str, expected_extra: dict[str, object]) -> None:
     """The primary server startup must honor the same URL contract as the parser."""
     with patch("hindsight_api.engine.memory_engine.EmbeddedPostgres") as embedded_postgres:
         pg0 = embedded_postgres.return_value
@@ -164,14 +160,4 @@ async def test_memory_engine_forwards_pg0_credentials(
         with pytest.raises(_StopInitialization):
             await engine.initialize()
 
-    if "?" in db_url:
-        embedded_postgres.assert_called_once_with(name="mydb", port=5544, config={"max_connections": "300"})
-    elif expected_username is None:
-        embedded_postgres.assert_called_once_with(name="mydb", port=5544)
-    else:
-        embedded_postgres.assert_called_once_with(
-            name="mydb",
-            port=5544,
-            username=expected_username,
-            password=expected_password,
-        )
+    embedded_postgres.assert_called_once_with(name="mydb", port=5544, **expected_extra)
