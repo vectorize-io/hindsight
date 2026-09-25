@@ -63,19 +63,15 @@ export async function ingestChats(
       // the decision it superseded. This synthetic stagger is therefore only a FALLBACK, for a
       // transcript that carries no clocks of its own.
       const sessBase = NOW - (sessions.length - 1 - i) * 3600000;
-      // A backfilled session keeps the clock it actually happened on. When the turns carry source
-      // timestamps, the document must not be dated to the import instead — an old session would
-      // surface as recent even though every turn inside it is dated correctly. The same anchor backs
-      // the turns that have no timestamp of their own, so the transcript can never contradict the
-      // document it belongs to.
+      // A backfilled session keeps the clock it actually happened on: when any turn carries a source
+      // timestamp, the first one dates the document (verbatim, offset included) and anchors the
+      // turns that have none. Dating it to the import made an old session surface as recent even
+      // though every turn inside it was dated correctly.
       const sourceTs = (s.turns || [])
         .map((t) => t.timestamp)
-        .filter((v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)));
-      // The source value is kept verbatim — offset and precision included, the same way `t.timestamp`
-      // below is passed through. Only the numeric form is needed, to place the turns that carry no
-      // timestamp of their own on the session's timeline instead of the import's.
-      const anchorMs = sourceTs.length ? Date.parse(sourceTs[0]) : sessBase;
-      const baseIso = sourceTs.length ? sourceTs[0] : new Date(sessBase).toISOString();
+        .find((v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)));
+      const anchorMs = sourceTs ? Date.parse(sourceTs) : sessBase;
+      const baseIso = sourceTs ?? new Date(sessBase).toISOString();
       const turns = withRefId(
         `chat:${id}`,
         (s.turns || []).map((t, j) => ({

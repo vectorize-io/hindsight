@@ -139,7 +139,10 @@ describe("ingestChats", () => {
 
     const importedAt = Date.now();
     await ingestChats(client, [
-      { id: "s-clockless", turns: [{ role: "user", text: "no clocks here", timestamp: "not-a-date" }] },
+      {
+        id: "s-clockless",
+        turns: [{ role: "user", text: "no clocks here", timestamp: "not-a-date" }],
+      },
     ]);
 
     const [, , , , , opts] = retain.mock.calls[0];
