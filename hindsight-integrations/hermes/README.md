@@ -189,6 +189,35 @@ Config file: `~/.hermes/hindsight/config.json`
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
 | `recall_indicator` | `true` | Show a `👁️ Hindsight — recalled N memories` status line when auto-recall injects memory. Turn off for customer-facing agents. |
 
+### Optional importance decay
+
+An opt-in, profile-scoped SQLite ledger can hide sufficiently old, low-importance
+results from Hermes recall context. It does not edit or delete memories in
+Hindsight. The policy applies to automatic recall and `hindsight_recall`;
+`hindsight_reflect` stays Hindsight-native because it returns a synthesized
+answer rather than individual memory candidates.
+
+Add these keys to `~/.hermes/hindsight/config.json` (under the active
+`HERMES_HOME` when using profiles):
+
+```json
+{
+  "decay_enabled": true,
+  "decay_rate_per_day": 0.01,
+  "decay_access_window_days": 30,
+  "decay_initial_importance": 0.5,
+  "decay_min_importance": 0.2,
+  "decay_cleanup_age_days": 60,
+  "decay_exempt_tags": "permanent,memory:permanent,hindsight:permanent"
+}
+```
+
+The ledger lives at `<HERMES_HOME>/hindsight/decay.sqlite3`; bank IDs are
+separate within it. Exempt tags and `metadata.source=permanent` bypass decay.
+Frequently accessed results decay more slowly. The feature is disabled by
+default, and turning it off restores unfiltered recall without changing the
+stored memories.
+
 > **Behavior change — `recall_types` defaults to `observation` only.**
 >
 > Previously recall returned all three fact types. It now returns only observations.

@@ -2,6 +2,8 @@
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import hindsight_hermes as plugin
 from conftest import FakeClient
@@ -61,6 +63,54 @@ def test_recall_tool_queries_the_bank_and_formats_results(provider):
     assert fake.recalls[0]["budget"] == "high"
     assert fake.recalls[0]["types"] == ["observation"]  # observation-only default
     assert result["result"] == "1. fact one\n2. fact two"
+    instance.shutdown()
+
+
+def test_decay_filters_tool_and_auto_recall_but_not_reflect(provider, hermes_env):
+    old = SimpleNamespace(
+        id="old",
+        text="stale fact",
+        mentioned_at=datetime.now(timezone.utc) - timedelta(days=100),
+        tags=[],
+        metadata={},
+    )
+    permanent = SimpleNamespace(
+        id="permanent",
+        text="keep this fact",
+        mentioned_at=datetime.now(timezone.utc) - timedelta(days=100),
+        tags=["permanent"],
+        metadata={},
+    )
+    instance, _ = provider(
+        {"bank_id": "team", "decay_enabled": True, "recall_sync": True},
+        client=FakeClient(recall_texts=[old, permanent], reflect_text="synthesized"),
+    )
+    assert instance._decay_store is not None
+    assert instance._decay_store.path == hermes_env / "hindsight" / "decay.sqlite3"
+    assert instance._decay_store.bank_id == "team"
+    assert (
+        json.loads(instance.handle_tool_call("hindsight_recall", {"query": "facts"}))["result"] == "1. keep this fact"
+    )
+    assert "keep this fact" in instance.prefetch("facts")
+    assert "stale fact" not in instance.prefetch("facts")
+    assert json.loads(instance.handle_tool_call("hindsight_reflect", {"query": "facts"}))["result"] == "synthesized"
+    instance.shutdown()
+
+
+def test_decay_defaults_off_and_false_string_stays_off(provider):
+    for config in ({}, {"decay_enabled": "false"}):
+        instance, _ = provider(config, client=FakeClient(recall_texts=["visible"]))
+        assert instance._decay_store is None
+        assert json.loads(instance.handle_tool_call("hindsight_recall", {"query": "fact"}))["result"] == "1. visible"
+        instance.shutdown()
+
+
+def test_decay_ledger_failure_preserves_recall(provider, monkeypatch):
+    instance, _ = provider({"decay_enabled": True}, client=FakeClient(recall_texts=["visible"]))
+    monkeypatch.setattr(
+        instance._decay_store, "filter_results", lambda _: (_ for _ in ()).throw(OSError("ledger unavailable"))
+    )
+    assert json.loads(instance.handle_tool_call("hindsight_recall", {"query": "fact"}))["result"] == "1. visible"
     instance.shutdown()
 
 
