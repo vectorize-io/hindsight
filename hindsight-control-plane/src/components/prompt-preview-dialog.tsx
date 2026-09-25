@@ -779,7 +779,7 @@ function Column({
         onClick={onToggle}
         aria-label={t("testerColumnExpand", { name: title })}
         className={cn(
-          "flex min-h-0 items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground lg:flex-col",
+          "flex min-h-0 items-center gap-2 text-sm font-semibold text-muted-foreground animate-soft-fade-in hover:text-foreground lg:flex-col",
           edge
         )}
       >
@@ -789,9 +789,9 @@ function Column({
     );
   }
   return (
-    <section className={cn("flex min-h-0 flex-col gap-3", edge)}>
-      <header className="flex shrink-0 items-center justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+    <section className={cn("flex min-h-0 flex-col gap-3 animate-soft-fade-in", edge)}>
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border pb-2">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         <button
           type="button"
           onClick={onToggle}
@@ -814,14 +814,14 @@ function ExtractionPanel({
   onSaved,
   collapsed,
   onToggle,
-  onRan,
+  onRun,
 }: {
   bankId: string;
   strategy?: string | null;
   collapsed: Collapsed;
   onToggle: (column: TesterColumn) => void;
-  /** Told when a run lands, so the dialog can make room for its result. */
-  onRan: () => void;
+  /** Told the moment a run starts, so the dialog can make room for its result. */
+  onRun: () => void;
   /** Driven by the dialog's single Show raw switch, so prompt and result flip together. */
   raw: boolean;
   /** Settings that shape the run without appearing in the prompt — the chunk sizes. */
@@ -845,6 +845,7 @@ function ExtractionPanel({
 
   function run() {
     setRunning(true);
+    onRun();
     setError(null);
     // Wall-clock around the whole call, which is what a reader is judging: extraction
     // is the slow part of a retain, and the number that matters is how long this
@@ -862,7 +863,6 @@ function ExtractionPanel({
         setResult(value);
         setElapsedMs(Math.round(performance.now() - startedAt));
         setRunId((n) => n + 1);
-        onRan();
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setRunning(false));
@@ -935,9 +935,16 @@ function ExtractionPanel({
         collapsed={collapsed.result}
         onToggle={() => onToggle("result")}
       >
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {error && !running ? <p className="text-xs text-destructive">{error}</p> : null}
 
-        {result ? (
+        {running ? (
+          // Replaces the previous result rather than sitting above it: facts from the
+          // last run under a spinner read as the answer to this one.
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+            <Spinner size="sm" />
+            {t("testerRunning")}
+          </div>
+        ) : result ? (
           <p className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{t("testerFactCount", { count: result.facts.length })}</span>
             {result.chunks?.length ? (
@@ -953,13 +960,17 @@ function ExtractionPanel({
               </>
             ) : null}
           </p>
-        ) : running ? (
-          <Spinner size="sm" />
         ) : !error ? (
           <p className="text-xs text-muted-foreground">{t("testerResultEmpty")}</p>
         ) : null}
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+        <div
+          className={cn(
+            "min-h-0 flex-1 space-y-2 overflow-y-auto animate-soft-fade-in",
+            running && "hidden"
+          )}
+          key={runId}
+        >
           {/* The dialog's one Show raw switch drives both halves: the prompt on the left
             and the whole dry-run payload here, `usage` included. */}
           {raw && result ? (
@@ -1183,12 +1194,15 @@ function PromptPreviewDialog({
             ) : null}
 
             <div
-              className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-(--tester-cols)"
+              // Every track is minmax(rail, Nfr), open at 1fr and folded at 0fr, so the
+              // browser can animate between them: mixing a fixed rail width with fr
+              // tracks made the columns jump instead of slide.
+              className="grid min-h-0 flex-1 grid-cols-1 gap-4 transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none lg:grid-cols-(--tester-cols)"
               style={
                 {
                   "--tester-cols": isLab
                     ? (["prompt", "input", "result"] as const)
-                        .map((c) => (collapsed[c] ? "1.25rem" : "minmax(0,1fr)"))
+                        .map((c) => `minmax(1.25rem,${collapsed[c] ? 0 : 1}fr)`)
                         .join(" ")
                     : "minmax(0,1fr)",
                 } as React.CSSProperties
@@ -1266,7 +1280,7 @@ function PromptPreviewDialog({
                   onSaved={() => setReloads((n) => n + 1)}
                   collapsed={collapsed}
                   onToggle={toggle}
-                  onRan={() => setCollapsed((c) => ({ ...c, prompt: true, result: false }))}
+                  onRun={() => setCollapsed((c) => ({ ...c, prompt: true, result: false }))}
                 />
               ) : null}
             </div>
