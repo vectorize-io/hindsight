@@ -213,7 +213,11 @@ export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 // both, and rows with no value on it are excluded — see the dataplane's
 // engine/time_filter.py.
 export type MemoryTimeField =
-  "created_at" | "updated_at" | "mentioned_at" | "occurred_start" | "occurred_end";
+  | "created_at"
+  | "updated_at"
+  | "mentioned_at"
+  | "occurred_start"
+  | "occurred_end";
 export type DocumentTimeField = "created_at" | "updated_at";
 
 export type TagResolution = "exact" | "fuzzy";
