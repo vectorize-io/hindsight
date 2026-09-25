@@ -697,4 +697,4 @@ def test_detach_popen_kwargs_pins_stdin():
     ``sys.stdin = None`` and crash in ``_redirect_stdio_to_log()``.
     """
     kwargs = _detach_popen_kwargs(io.BytesIO())
-    assert kwargs.get("stdin") == subprocess.DEVNULL
+    assert kwargs["stdin"] == subprocess.DEVNULL
