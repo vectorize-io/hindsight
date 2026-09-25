@@ -83,22 +83,24 @@ async def test_oversized_json_conversation_append_preserves_old_and_new_turns(cl
     """
     berlin = fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"])
     cello = fact("Alice plays cello", who="Alice", entities=["Alice", "cello"])
-    llm.on_step("extract_facts", contains=["Berlin", "cello"]).returns(extracted(berlin, cello))
     llm.on_step("extract_facts", contains="Berlin").returns(extracted(berlin))
     llm.on_step("extract_facts", contains="cello").returns(extracted(cello))
+    llm.on_step("extract_facts", contains="Nothing to remember").returns(extracted())
     llm.on_step("consolidate").returns(consolidation())
 
     first = [{"role": "user", "content": FIRST}]
-    large_tail = [{"role": "user", "content": (SECOND + " ") * 4000}]
+    # Neutral filler, so the oversized turn states no fact of its own: repeating a fact
+    # sentence would extract it once per chunk and blur what the story checks.
+    large_tail = [{"role": "user", "content": "Nothing to remember here. " * 4000}]
     final_tail = [{"role": "user", "content": SECOND}]
     await client.aretain(bank_id=bank_id, content=json.dumps(first), document_id=DOCUMENT_ID)
     await settled(bank_id)
 
     expected = first.copy()
-    for tail in (large_tail, final_tail):
+    for tail, facts in ((large_tail, [BERLIN]), (final_tail, [BERLIN, CELLO])):
         await client.aretain(bank_id=bank_id, content=json.dumps(tail), document_id=DOCUMENT_ID, update_mode="append")
         await settled(bank_id)
         expected.extend(tail)
         document = await client.documents.get_document(bank_id, DOCUMENT_ID)
         assert json.loads(document.original_text) == expected
-        assert await _fact_texts(client, bank_id) == sorted([BERLIN, CELLO])
+        assert await _fact_texts(client, bank_id) == sorted(facts)

@@ -183,8 +183,8 @@ def append_document_body(existing_text: str, incoming_text: str) -> str:
 class AppendWouldTruncateDocument(Exception):
     """An append produced a body that does not extend the document it was appending to.
 
-    An append is monotonic by definition: whatever it writes must preserve the stored prefix
-    (text, or the ordered objects of a JSON conversation array). When
+    An append is monotonic by definition: whatever it writes must preserve what was stored — the
+    stored text as a prefix, or every object of a stored JSON conversation array, in order. When
     that does not hold, the write is about to DESTROY committed content — and silently, because the
     chunks come from the real content, so extraction still looks correct and only the stored body
     is wrong. That is exactly how #3989 went unnoticed: an oversized append reported the new tail
