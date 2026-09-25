@@ -205,6 +205,8 @@ echo "    hermes-agent @ $(git -C "$HERMES_SRC" rev-parse --short HEAD)"
 # and gates every one of its dependencies on `python_version >= '3.14'`, so an
 # older interpreter installs Hermes with none of its deps (ModuleNotFoundError:
 # ruamel). The repo default (3.11) would hit exactly that.
+# Linux only: on macOS Hindsight pins litellm<1.92 (no mac wheels past it), which
+# caps itself at <3.14, so step 2's `uv pip check` fails there.
 uv venv --python 3.14 "$VENV" >/dev/null
 
 DIST="$WORKDIR/dist"
