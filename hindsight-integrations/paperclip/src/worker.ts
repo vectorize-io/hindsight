@@ -412,7 +412,7 @@ const plugin = definePlugin({
     }
 
     try {
-      const client = new HindsightClient(c.hindsightApiUrl);
+      const client = new HindsightClient(c.hindsightApiUrl, undefined, c.requestTimeoutMs);
       const healthy = await client.health();
       if (!healthy) {
         return {
