@@ -2,8 +2,9 @@
 Claude Code LLM provider using Claude Agent SDK.
 
 This provider enables using Claude Pro/Max subscriptions for API calls
-via the Claude CLI authentication. It uses the Claude Agent SDK which
-automatically handles authentication via `claude auth login` credentials.
+via the Claude CLI authentication. It uses the Claude Agent SDK, which
+authenticates with a server-held `claude setup-token` token when one is
+configured as the API key, and otherwise with the host's `claude auth login`.
 """
 
 import asyncio
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 # back to the canonical un-suffixed entry that `claude auth login` wrote;
 # otherwise it would be namespaced by sha256(CLAUDE_CONFIG_DIR) and OAuth
 # lookup would fail. Requires bundled CLI >= 2.1.150 (claude-agent-sdk 0.2.82).
+# When a setup-token is configured, _claude_env() below drops that override on
+# purpose so the host login is NOT found and the token is used instead.
 _isolated_claude_env: dict[str, str] | None = None
 
 
