@@ -107,20 +107,22 @@ For a version you choose and freeze, install with an explicit commit:
 
 ```bash
 hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes \
-  --force --ref 3dab15dec8df5823022499cafdaae2352b21de4b
+  --force --ref <40-character-commit-sha>
 ```
 
-Substitute the SHA you want. Do not wrap it in angle brackets: `<` and `>` are redirection
-operators in most shells, and the command will fail to parse. If you copy the two lines above,
-keep the trailing `\` at the end of the first line or join them into one line, since a `\`
-followed by anything other than a newline is a shell parse error.
+Replace the whole placeholder, angle brackets included: `<` and `>` are redirection operators in
+most shells, so leaving them in makes the command fail to parse. And if you copy both lines, keep
+the trailing `\` at the end of the first one or join them into a single line, since a `\` followed
+by anything other than a newline is also a parse error.
 
 `--ref` takes a full 40-character commit SHA and **rejects tag names**, so take the SHA from the
-release notes of the [release](https://github.com/vectorize-io/hindsight/releases) you want
-rather than typing `v1.1.0`. The copy button next to a commit on
+release notes of the [release](https://github.com/vectorize-io/hindsight/releases) you want rather
+than typing `v1.1.0`. The copy button beside a commit on
 [the plugin's history](https://github.com/vectorize-io/hindsight/commits/main/hindsight-integrations/hermes)
-gives you the full SHA; the abbreviated one shown on screen is too short. A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately
-refuses to move it — install again with a new `--ref` when you want a different version.
+gives you the full SHA; the abbreviated one shown on screen is too short.
+
+A `--ref` install is marked pinned, and `hermes plugins update hindsight` deliberately refuses to
+move it — install again with a new `--ref` when you want a different version.
 
 ### Track the latest development code
 
