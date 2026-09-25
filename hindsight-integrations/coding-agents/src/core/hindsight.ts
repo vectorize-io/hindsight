@@ -480,6 +480,25 @@ export class HindsightClient {
     return ids;
   }
 
+  /**
+   * The tags on one document, or undefined when the bank holds none with that id. Read from the
+   * document LISTING narrowed by `q` (a substring match on the id, so the exact id is picked out of
+   * the page) rather than GET /documents/{id}, which also sends the document's full text: the
+   * caller, the git-log freshness check on SessionStart, reads a ~100k-character document for one tag.
+   */
+  async documentTags(documentId: string): Promise<string[] | undefined> {
+    const limit = 100;
+    for (let offset = 0; ; offset += limit) {
+      const q = `?q=${encodeURIComponent(documentId)}&limit=${limit}&offset=${offset}`;
+      const r = await this.req("GET", this.bankUrl(`/documents${q}`));
+      const j = (await r.json()) as { items?: { id?: string; tags?: string[] }[]; total?: number };
+      const items = j.items ?? [];
+      const hit = items.find((it) => it.id === documentId);
+      if (hit) return hit.tags ?? [];
+      if (items.length < limit || offset + limit >= (j.total ?? 0)) return undefined;
+    }
+  }
+
   /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
    *  entity labels), then seed knowledge pages when the server supports them. Both halves are
    *  idempotent and ADDITIVE — nothing the bank already says is overwritten (#3927), bar the
