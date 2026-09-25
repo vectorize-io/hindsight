@@ -1,9 +1,12 @@
 """Tests for EmbedManager interface."""
 
 import io
+import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -788,7 +791,8 @@ def test_run_probe_still_reports_a_failed_command_as_none():
     assert DaemonEmbedManager._run_probe([_sys.executable, "-c", "raise SystemExit(3)"]) is None
 
 
-def test_detach_popen_kwargs_pins_stdin():
+@pytest.mark.parametrize("system", ["Linux", "Darwin", "Windows"])
+def test_detach_popen_kwargs_pins_stdin(system: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """The daemon child must never inherit the caller's fd 0.
 
     A caller can hold an fd 0 that is a socket opened with FD_CLOEXEC (e.g. a
@@ -796,5 +800,52 @@ def test_detach_popen_kwargs_pins_stdin():
     fd 0 is closed by the kernel at exec, so the child would start with
     ``sys.stdin = None`` and crash in ``_redirect_stdio_to_log()``.
     """
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: system)
     kwargs = _detach_popen_kwargs(io.BytesIO())
     assert kwargs["stdin"] == subprocess.DEVNULL
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console inheritance")
+def test_windows_daemon_descendants_inherit_console(tmp_path: Path) -> None:
+    """A console launcher must not leave its descendants to allocate a new console."""
+    probe = dedent("""\
+        import ctypes
+        from ctypes import wintypes
+
+        pids = (wintypes.DWORD * 32)()
+        count = ctypes.windll.kernel32.GetConsoleProcessList(pids, len(pids))
+        assert 0 < count <= len(pids)
+        print(*pids[:count])
+    """)
+    launcher = dedent("""\
+        import subprocess
+        import sys
+
+        assert sys.stdin.read() == ""
+        info = subprocess.STARTUPINFO()
+        info.dwFlags = subprocess.STARTF_USESHOWWINDOW
+        info.wShowWindow = subprocess.SW_HIDE
+        subprocess.run([sys.executable, "-c", sys.argv[1]], startupinfo=info, check=True, timeout=15)
+    """)
+    # Keep a regressing implementation from flashing windows during the test.
+    # SW_HIDE hides a newly allocated window; it does not change console membership.
+    info = subprocess.STARTUPINFO()
+    info.dwFlags = subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = subprocess.SW_HIDE
+    log = tmp_path / "daemon.log"
+    with log.open("wb") as log_handle:
+        with subprocess.Popen(
+            [sys.executable, "-c", launcher, probe], startupinfo=info, **_detach_popen_kwargs(log_handle)
+        ) as process:
+            try:
+                returncode = process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise
+
+    output = log.read_text()
+    assert returncode == 0, output
+    console_pids = {int(pid) for pid in output.split()}
+    assert process.pid in console_pids
+    assert os.getpid() not in console_pids
