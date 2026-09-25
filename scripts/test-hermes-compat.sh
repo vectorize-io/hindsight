@@ -201,11 +201,11 @@ if [ "$clone_ok" -ne 1 ]; then
 fi
 echo "    hermes-agent @ $(git -C "$HERMES_SRC" rev-parse --short HEAD)"
 
-# Pinned rather than taken from .python-version: Hermes caps itself at
-# `>=3.11,<3.14` (their Rust-backed transitives have no cp314 wheels), so this
-# venv has to sit inside both projects' windows. 3.12 does; the repo default
-# would silently stop doing so the day Hindsight moves to 3.14.
-uv venv --python 3.12 "$VENV" >/dev/null
+# Pinned rather than taken from .python-version: Hermes now supports only 3.14
+# and gates every one of its dependencies on `python_version >= '3.14'`, so an
+# older interpreter installs Hermes with none of its deps (ModuleNotFoundError:
+# ruamel). The repo default (3.11) would hit exactly that.
+uv venv --python 3.14 "$VENV" >/dev/null
 
 DIST="$WORKDIR/dist"
 for project in hindsight-api-slim hindsight-clients/python hindsight-embed hindsight-all; do
