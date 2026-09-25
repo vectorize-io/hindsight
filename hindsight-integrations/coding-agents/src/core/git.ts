@@ -48,8 +48,13 @@ export function gitHeadSha(dir: string): string | null {
  * switching to a behind-branch yields 0 and a feature branch counts only its own new commits. Returns
  * null when `sinceSha` is unknown to the repo (rebased/gc'd/foreign) or on any git error — the caller
  * treats null as "not a reachable baseline" rather than "0 new".
+ *
+ * `sinceSha` is read back from the bank (survey-baseline document ids), so only a full object
+ * name reaches git: `git rev-list` parses an argument that starts with "-" as an option, and
+ * `--output=<path>..HEAD` creates that file before failing.
  */
 export function commitsSince(dir: string, sinceSha: string): number | null {
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sinceSha)) return null;
   try {
     const n = Number.parseInt(git(dir, "rev-list", "--count", `${sinceSha}..HEAD`).trim(), 10);
     return Number.isFinite(n) ? n : null;
