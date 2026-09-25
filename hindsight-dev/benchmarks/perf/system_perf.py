@@ -82,8 +82,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 15,
         "stats_bank_size": 20,
-        # Fraction of the #4715 bank shape the observation-hubs suite loads.
-        "obs_hub_fraction": 0.01,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 1,
     },
     "small": {
         "retain_items": 200,
@@ -99,8 +99,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 25,
         "stats_bank_size": 200,
-        # Fraction of the #4715 bank shape the observation-hubs suite loads.
-        "obs_hub_fraction": 0.02,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 2,
     },
     "medium": {
         "retain_items": 1_000,
@@ -116,8 +116,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 1_000,
-        # Fraction of the #4715 bank shape the observation-hubs suite loads.
-        "obs_hub_fraction": 0.05,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 5,
     },
     "large": {
         "retain_items": 5_000,
@@ -155,8 +155,8 @@ SCALES: dict[str, dict[str, int]] = {
         # Large, entity-dense bank so the unit_entities→memory_units rollup join
         # in _compute_bank_stats is exercised at a size where its cost shows.
         "stats_bank_size": 15_000,
-        # Fraction of the #4715 bank shape the observation-hubs suite loads.
-        "obs_hub_fraction": 0.2,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 20,
     },
     # Prod-simulation scale for the `stats` suite only. The numbers mirror a real
     # deployed bank: ~500k units and ~17.8M *physical* memory_links rows
@@ -180,8 +180,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 500_000,  # unused by the bulk path; kept for key parity
-        # Fraction of the #4715 bank shape the observation-hubs suite loads.
-        "obs_hub_fraction": 1.0,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 100,
         "stats_units": 500_000,
         "stats_semantic_links": 9_460_147,
         "stats_temporal_links": 8_344_084,
@@ -365,6 +365,23 @@ class StatsResult:
     # sees once the short-TTL per-process cache is warm.
     warm_latency: PercentileStats
     cache_speedup: float
+
+
+@dataclass
+class _ObsHubBank:
+    """What _bulk_populate_obs_hub_bank actually loaded."""
+
+    units: int
+    observation_ids: list[uuid.UUID]
+    links: int
+    max_hub_degree: int
+
+
+@dataclass
+class _ExpandTiming:
+    seconds: float
+    # None when the call hit the statement timeout.
+    digest: str | None
 
 
 @dataclass
@@ -2102,10 +2119,8 @@ OBS_HUB_BUDGET = 100
 OBS_HUB_STATEMENT_TIMEOUT = "60s"  # the prod DB command timeout the issue hit
 
 
-async def _bulk_populate_obs_hub_bank(
-    engine: Any, bank_id: str, fraction: float, rng: random.Random
-) -> list[uuid.UUID]:
-    """COPY-load a #4715-shaped bank; returns the observation ids.
+async def _bulk_populate_obs_hub_bank(engine: Any, bank_id: str, fraction: float, rng: random.Random) -> _ObsHubBank:
+    """COPY-load a #4715-shaped bank.
 
     Facts get every hub with probability degree/facts plus 1-2 long-tail
     entities, so a seed batch fans out across ~a hundred entities the way the
@@ -2209,10 +2224,10 @@ async def _bulk_populate_obs_hub_bank(
             for table in ("memory_units", "memory_links", "unit_entities"):
                 await conn.execute(f"VACUUM (ANALYZE) {_q(table)}", timeout=bulk_timeout)
             await conn.execute(f"SET statement_timeout = '{prev_stmt_timeout}'")
-    return obs_ids
+    return _ObsHubBank(units=len(all_units), observation_ids=obs_ids, links=n_links, max_hub_degree=max(hub_degrees))
 
 
-async def run_obs_hubs_suite(scale_cfg: dict[str, Any]) -> SuiteResult:
+async def run_obs_hubs_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     """Time expand_observations on a #4715-shaped bank with large entity hubs.
 
     Drives DataAccessOps.expand_observations directly — the query that timed out
@@ -2231,23 +2246,22 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, Any]) -> SuiteResult:
     from hindsight_api.engine.schema import fq_table
     from hindsight_api.models import RequestContext
 
-    fraction = scale_cfg["obs_hub_fraction"]
+    fraction = scale_cfg["obs_hub_percent"] / 100
     bank_id = f"perf-obs-hubs-{uuid.uuid4().hex[:8]}"
     console.print(f"\n[bold cyan]Suite: observation-hubs[/bold cyan]  fraction={fraction}  bank={bank_id}")
 
     engine = _build_engine(disable_observations=True)
     await engine.initialize()
     rng = random.Random(4715)
-    obs_ids = await _bulk_populate_obs_hub_bank(engine, bank_id, fraction, rng)
-    seed_sets = [rng.sample(obs_ids, OBS_HUB_SEEDS_PER_SET) for _ in range(OBS_HUB_SEED_SETS)]
+    bank = await _bulk_populate_obs_hub_bank(engine, bank_id, fraction, rng)
+    seed_sets = [rng.sample(bank.observation_ids, OBS_HUB_SEEDS_PER_SET) for _ in range(OBS_HUB_SEED_SETS)]
 
     ops = create_data_access_ops("postgresql")
     per_entity_limit = get_config().link_expansion_per_entity_limit
     mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
     pool = await engine._get_pool()
 
-    async def expand(seeds: list[uuid.UUID]) -> tuple[float, str | None]:
-        """Returns (seconds, digest); digest is None on a statement timeout."""
+    async def expand(seeds: list[uuid.UUID]) -> _ExpandTiming:
         t0 = time.perf_counter()
         async with pool.acquire() as conn, conn.transaction():
             await conn.execute(f"SET LOCAL statement_timeout = '{OBS_HUB_STATEMENT_TIMEOUT}'")
@@ -2263,7 +2277,7 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, Any]) -> SuiteResult:
                     UpdatedWindow(after=None, before=None, first_param_index=3),
                 )
             except asyncpg.QueryCanceledError:
-                return time.perf_counter() - t0, None
+                return _ExpandTiming(seconds=time.perf_counter() - t0, digest=None)
         elapsed = time.perf_counter() - t0
         # Each arm is ORDER BY score LIMIT budget with no tie-break, so which rows
         # tied at the cut-off score make it in depends on the plan. Leave those
@@ -2274,7 +2288,7 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, Any]) -> SuiteResult:
             cut = min((r["score"] for r in arm_rows), default=None) if len(arm_rows) >= OBS_HUB_BUDGET else None
             lines.extend(f"{arm}:{r['id']}:{float(r['score']):.6f}" for r in arm_rows if r["score"] != cut)
         lines.sort()
-        return elapsed, hashlib.md5("\n".join(lines).encode()).hexdigest()
+        return _ExpandTiming(seconds=elapsed, digest=hashlib.md5("\n".join(lines).encode()).hexdigest())
 
     # Shape check against the issue (81 seed sources -> 17,488 connected sources).
     seed_source_counts: list[int] = []
@@ -2308,27 +2322,27 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, Any]) -> SuiteResult:
     timeouts = 0
     for i, seeds in enumerate(seed_sets):
         await expand(seeds)  # warm-up
-        elapsed, digest = await expand(seeds)
-        latencies.append(elapsed)
-        digests.append(digest or "TIMEOUT")
-        timeouts += digest is None
-        console.print(f"  seed set {i}: {elapsed:.3f}s  {digest or 'TIMEOUT'}")
+        timing = await expand(seeds)
+        latencies.append(timing.seconds)
+        digests.append(timing.digest or "TIMEOUT")
+        timeouts += timing.digest is None
+        console.print(f"  seed set {i}: {timing.seconds:.3f}s  {timing.digest or 'TIMEOUT'}")
 
     t0 = time.perf_counter()
     concurrent = await asyncio.gather(*[expand(seeds) for seeds in seed_sets])
     concurrent_wall = time.perf_counter() - t0
-    timeouts += sum(d is None for _, d in concurrent)
-    latencies.extend(e for e, _ in concurrent)
+    timeouts += sum(t.digest is None for t in concurrent)
+    latencies.extend(t.seconds for t in concurrent)
 
     await engine.delete_bank(bank_id=bank_id, request_context=RequestContext())
     await engine.close()
 
     lat = PercentileStats.from_samples(latencies)
     result = ObsHubResult(
-        units=int(ISSUE_4715_FACTS * fraction) + len(obs_ids),
-        observations=len(obs_ids),
-        links=int(ISSUE_4715_LINKS * fraction),
-        max_hub_degree=int(ISSUE_4715_HUB_DEGREES[0] * fraction),
+        units=bank.units,
+        observations=len(bank.observation_ids),
+        links=bank.links,
+        max_hub_degree=bank.max_hub_degree,
         seed_sources=statistics.mean(seed_source_counts),
         connected_sources=statistics.mean(connected_counts),
         latency=lat,

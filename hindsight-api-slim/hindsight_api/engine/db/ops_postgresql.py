@@ -1083,7 +1083,9 @@ class PostgreSQLOps(DataAccessOps):
         # O(sum of degree) rather than O(entities x per_entity_limit). Measured at
         # parity up to ~12k-degree hubs and +50% traversal cost at 38k. If banks
         # grow hubs far past that, re-measure before assuming this is still the
-        # right shape.
+        # right shape. Re-measured for #4715 at 138k-degree hubs with the
+        # `observation-hubs` perf suite: the whole call is ~0.2-0.4s, so the
+        # window still holds once the candidate probe below is per-source.
         #
         # `candidate_ids` probes the source_memory_ids GIN index once per connected
         # source with a one-element `@>`, not once with `&& <all connected sources>`
