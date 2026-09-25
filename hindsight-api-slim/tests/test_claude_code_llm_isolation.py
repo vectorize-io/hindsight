@@ -177,3 +177,19 @@ def test_isolation_dir_is_not_home():
     assert env["CLAUDE_CONFIG_DIR"] != os.path.expanduser("~"), (
         "Isolated dir must not be $HOME, or it would still load installed_plugins.json"
     )
+
+
+def test_setup_token_is_passed_to_cli_as_oauth_token():
+    """A configured `claude setup-token` token reaches the CLI; no key leaves CLI login in charge."""
+    from hindsight_api.engine.providers.claude_code_llm import ClaudeCodeLLM, _get_isolated_claude_env
+
+    with_token = ClaudeCodeLLM(provider="claude-code", api_key=" sk-ant-oat01-x ", base_url="", model="m")
+    assert with_token._env["CLAUDE_CONFIG_DIR"] == _get_isolated_claude_env()["CLAUDE_CONFIG_DIR"]
+    assert with_token._env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-x"
+    # The CLI prefers a stored login over the token; the un-suffixed keychain
+    # redirect would hand it the host login and silently ignore the token.
+    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in with_token._env
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in _get_isolated_claude_env(), "token must not leak into the shared env"
+
+    without = ClaudeCodeLLM(provider="claude-code", api_key="", base_url="", model="m")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in without._env
