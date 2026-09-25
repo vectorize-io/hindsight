@@ -34,6 +34,8 @@ ARG INCLUDE_LOCAL_MODELS
 WORKDIR /app
 
 # Install system dependencies and uv
+# ca-certificates is listed explicitly: with --no-install-recommends it no longer
+# arrives as a recommend of curl, and TLS for curl/pip must not depend on that.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
