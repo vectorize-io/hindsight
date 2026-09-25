@@ -528,6 +528,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive — the one exception is the extraction mode of its own strategies, which follows `retainExtractionMode`. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                                                                                                                                      |
 | `retainExtractionMode`  | `"concise"`                          | how the server extracts memories from sessions, commits and documents: `"concise"`, `"verbose"`, `"verbatim"` or `"chunks"` (store the text, no extraction). Every Stop writes the session back, so this is what each turn costs — `"verbose"` pulls more detail for several times the tokens. Kept in sync on the plugin's own retain strategies every session, so a change reaches existing banks too (not with `manageBankConfig: false`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `defaultBankConfig`     | —                                    | bank-config fields of your own for the banks the plugin shapes, e.g. `{"enable_observations": false, "enable_auto_consolidation": false, "mental_model_min_refresh_interval_seconds": 21600}`. Keys are the bank-config API's own field names. Written under the same additive rule as the rest: only where the bank does not define the field, so a bank the plugin creates is born with these instead of the server's defaults and a value you set in the control plane is never overwritten. Wins over the template on a key both name (`enable_observations`); `retain_strategies`, `entity_labels` and `retain_extraction_mode` are refused, since the plugin governs them itself. Ignored with `manageBankConfig: false` — see **A bank you shape yourself** below. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                     |
 | `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`; `"per_source"` adds a scope per `source:` kind alongside the global one, so commit knowledge and conversation knowledge consolidate apart                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `reflectTimeoutMs`      | `20000`                              | **automatic** session-reflect timeout; on hook harnesses the installer registers a 30s prompt-hook timeout, so going above ~20s also means raising that hook's `timeout` in the host's config, or the host kills the hook mid-reflect; on timeout or a 5xx the hook falls back to knowledge-page search, then to a raw recall of observations (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -738,13 +739,40 @@ One field is the exception: the extraction mode of the plugin's own four strateg
 if it drifts — the same way a seeded page's query is. Change it in `coding-agent.json`, not in the
 control plane. The strategies' other fields, and your own strategies, are still left alone.
 
-Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether — the
-right setting for a bank you share with non-coding work, or one you configure yourself. That bank
-should then define the five strategies above itself. Note that the miss is **silent**: the server
-does not reject a retain naming a strategy the bank lacks, it logs a warning and extracts with the
-bank's own configuration — so a commit diff, a session transcript and a survey marker would all get
-the same generic treatment instead of the extraction each needs. Knowledge pages are seeded either
-way; `pageTriggerType` governs what they cost.
+**Your own defaults for new banks — `defaultBankConfig`.** Everything the template does not name, a
+bank the plugin creates gets from the server: auto-consolidation on, observations on, a 60s floor
+between mental-model refreshes. With one bank per repo those are the settings that cost money, and
+a new repo an agent touches spawns a new bank with all of them switched on — while every bank you had
+hand-tuned in the control plane sits at a cheaper baseline. `defaultBankConfig` names the baseline
+once, in the plugin's config, and it travels in the same import that creates the bank:
+
+```json
+{
+  "defaultBankConfig": {
+    "enable_observations": false,
+    "enable_auto_consolidation": false,
+    "mental_model_min_refresh_interval_seconds": 21600
+  }
+}
+```
+
+The keys are the bank-config API's own field names, passed straight through, so anything the
+bank-config accepts can go here. They follow the same additive rule as the template: written only
+where the bank is silent, so an existing bank picks them up on its next session **except** for the
+fields it already sets — a value you chose in the control plane stays, even one equal to the server
+default, and so does a value an earlier plugin release seeded (the template writes
+`enable_observations: true` alongside the missions; clear that override on the bank to let your
+default in). On a key the template also names, your default wins. The three fields the plugin
+governs itself — `retain_strategies`, `entity_labels` and `retain_extraction_mode` — are refused
+with a warning: the first two are merged entry by entry, the last is `retainExtractionMode`'s.
+
+Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether,
+`defaultBankConfig` included — the right setting for a bank you share with non-coding work, or one
+you configure yourself. That bank should then define the five strategies above itself. Note that the
+miss is **silent**: the server does not reject a retain naming a strategy the bank lacks, it logs a
+warning and extracts with the bank's own configuration — so a commit diff, a session transcript and
+a survey marker would all get the same generic treatment instead of the extraction each needs.
+Knowledge pages are seeded either way; `pageTriggerType` governs what they cost.
 
 Like every field here it can be set per bank, which is usually where it belongs:
 

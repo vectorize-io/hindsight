@@ -30,6 +30,7 @@ import {
   PAGE_NAMES,
   type PagesConfig,
   parseHashedCron,
+  PLUGIN_GOVERNED_BANK_FIELDS,
   RETAIN_EXTRACTION_MODES,
   type RetainExtractionMode,
 } from "./missions";
@@ -243,6 +244,22 @@ export interface RawConfig {
    *  strategies on every session start, so changing it reaches an existing bank too (unless
    *  `manageBankConfig` is false). Anything else falls back to the default. */
   retainExtractionMode?: RetainExtractionMode;
+  /** Bank-config fields of your own for the banks this plugin shapes, e.g.
+   *    {"enable_observations": false, "enable_auto_consolidation": false,
+   *     "mental_model_min_refresh_interval_seconds": 21600}
+   *  Keys are the bank-config API's own field names, passed straight through, so anything the
+   *  bank-config accepts is settable here. Written under the same rule as the rest of the
+   *  template — only where the bank does not already define the field — so a bank the plugin
+   *  creates is born with these instead of the server's defaults, while a value you set in the
+   *  control plane is never overwritten (#4725). Wins over the template on a key both name
+   *  (`enable_observations`). The fields the plugin governs itself (`retain_strategies`,
+   *  `entity_labels`, `retain_extraction_mode`) are refused with a warning: the first two are
+   *  merged per entry, the last follows `retainExtractionMode`. Ignored when `manageBankConfig`
+   *  is false.
+   *
+   *  File-only, like `recallOptions` — a nested object does not flatten into an env var. In a
+   *  `banks.<id>` section it REPLACES the global map rather than merging into it. */
+  defaultBankConfig?: Record<string, unknown>;
   /** How consolidation groups the observations this plugin's memories feed (default "shared" — one
    *  global scope per bank, so every agent working a repo builds ONE set of beliefs; see
    *  DEFAULT_OBSERVATION_SCOPES). "combined" restores the server default of one scope per distinct
@@ -309,6 +326,7 @@ export interface Config {
   retainMetadata: Record<string, string>;
   manageBankConfig: boolean;
   retainExtractionMode: RetainExtractionMode;
+  defaultBankConfig: Record<string, unknown>;
   observationScopes: ObservationScopes;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -502,6 +520,32 @@ function resolveObservationScopes(raw: RawConfig["observationScopes"]): Observat
   return DEFAULT_OBSERVATION_SCOPES;
 }
 
+/**
+ * Validate `defaultBankConfig`: an object, minus the fields the plugin governs itself.
+ *
+ * Same shape rule as `recallOptions` — an array would spread into numeric keys and reach the
+ * import as garbage, so anything but a plain object contributes nothing. A governed key is dropped
+ * here, with a warning naming the setting that owns it, rather than silently in the manifest: a
+ * user who wrote `retain_strategies` there would otherwise watch it do nothing every session.
+ */
+function resolveDefaultBankConfig(raw: RawConfig["defaultBankConfig"]): Record<string, unknown> {
+  const value: unknown = raw;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (PLUGIN_GOVERNED_BANK_FIELDS.includes(key)) {
+      log.warn(
+        "config",
+        `ignoring defaultBankConfig.${key} — the plugin manages this field itself` +
+          (key === "retain_extraction_mode" ? " (set retainExtractionMode instead)" : "")
+      );
+      continue;
+    }
+    out[key] = v;
+  }
+  return out;
+}
+
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
 export type AutoInject = "reflect" | "pages" | "recall" | "none";
 const AUTO_INJECT_MODES: readonly AutoInject[] = ["reflect", "pages", "recall", "none"];
@@ -554,6 +598,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     retainExtractionMode: RETAIN_EXTRACTION_MODES.includes(raw.retainExtractionMode!)
       ? raw.retainExtractionMode!
       : DEFAULT_RETAIN_EXTRACTION_MODE,
+    defaultBankConfig: resolveDefaultBankConfig(raw.defaultBankConfig),
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || DEFAULT_REFLECT_TIMEOUT_MS,
     // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
@@ -659,7 +704,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * credential to disk.
  *
  * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
- * customPages) are deliberately
+ * customPages, defaultBankConfig) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */

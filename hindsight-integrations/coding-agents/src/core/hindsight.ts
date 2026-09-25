@@ -42,12 +42,7 @@ export interface KnowledgeNode {
  * retain API). The scalar modes are the server's; a `string[][]` declares the scopes explicitly.
  */
 export type ObservationScopes =
-  | "shared"
-  | "combined"
-  | "per_tag"
-  | "all_combinations"
-  | "per_source"
-  | string[][];
+  "shared" | "combined" | "per_tag" | "all_combinations" | "per_source" | string[][];
 
 /**
  * `per_source` is resolved HERE, per document, and never reaches the server: it expands to the
@@ -502,6 +497,8 @@ export class HindsightClient {
       manage?: boolean;
       /** Extraction mode for the plugin's own strategies — see RawConfig.retainExtractionMode. */
       extractionMode?: RetainExtractionMode;
+      /** Bank-config fields to add where the bank is silent — see RawConfig.defaultBankConfig. */
+      defaults?: Record<string, unknown>;
     } = {}
   ): Promise<void> {
     if (opts.reset) {
@@ -517,7 +514,8 @@ export class HindsightClient {
       // re-synced to `extractionMode` (#4560). A reset just deleted the bank, so there is nothing to read.
       const manifest = codingBankManifest(
         opts.reset ? undefined : await this.readBankOverrides(),
-        opts.extractionMode
+        opts.extractionMode,
+        opts.defaults
       );
       if (!manifest) {
         this.log(`[bank] ${this.bank} already carries the coding structure — nothing to apply`);

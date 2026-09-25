@@ -1294,6 +1294,32 @@ describe("HindsightClient.configureBank — missions are seeded once (#2492)", (
     expect(calls.some((k) => k.url.includes("/knowledge-base/"))).toBe(true);
   });
 
+  it("writes defaultBankConfig into the import where the bank is silent (#4725)", async () => {
+    // A bank the plugin creates is otherwise born with the server's defaults for everything the
+    // template does not name; the cheap baseline has to travel in the SAME import that creates it.
+    const calls: any[] = [];
+    const routeList = routes({ reflect_mission: "seeded", enable_auto_consolidation: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        const method = init?.method;
+        calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
+        const route = routeList.find((r) => r.match(method, url));
+        return { ok: true, status: 200, json: async () => route?.json ?? { ok: true } } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank({
+      defaults: {
+        enable_auto_consolidation: false,
+        mental_model_min_refresh_interval_seconds: 21600,
+      },
+    });
+    const body = calls.find((k) => k.method === "POST" && k.url.endsWith("/import")).body;
+    expect(body.bank.mental_model_min_refresh_interval_seconds).toBe(21600);
+    // The operator's own choice on this bank is not this plugin's to revert.
+    expect(body.bank).not.toHaveProperty("enable_auto_consolidation");
+  });
+
   it("re-seeds the missions after an explicit reset", async () => {
     const calls: any[] = [];
     vi.stubGlobal(

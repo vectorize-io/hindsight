@@ -207,6 +207,56 @@ describe("retainExtractionMode (#4560)", () => {
   });
 });
 
+describe("defaultBankConfig (#4725)", () => {
+  it("is empty by default and passed through as the bank-config API's own field names", () => {
+    expect(resolveConfig({}).defaultBankConfig).toEqual({});
+    const cheap = {
+      enable_observations: false,
+      enable_auto_consolidation: false,
+      mental_model_min_refresh_interval_seconds: 21600,
+    };
+    expect(resolveConfig({ defaultBankConfig: cheap }).defaultBankConfig).toEqual(cheap);
+  });
+
+  it("rejects anything but a plain object", () => {
+    // An array would spread into numeric keys and reach the import as garbage.
+    expect(resolveConfig({ defaultBankConfig: ["x"] as never }).defaultBankConfig).toEqual({});
+    expect(resolveConfig({ defaultBankConfig: "x" as never }).defaultBankConfig).toEqual({});
+    expect(resolveConfig({ defaultBankConfig: null as never }).defaultBankConfig).toEqual({});
+  });
+
+  it("drops the fields the plugin governs itself, with a warning", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    const cfg = resolveConfig({
+      defaultBankConfig: {
+        retain_strategies: { mine: {} },
+        entity_labels: [],
+        retain_extraction_mode: "verbose",
+        enable_auto_consolidation: false,
+      },
+    });
+    expect(cfg.defaultBankConfig).toEqual({ enable_auto_consolidation: false });
+    const warnings = warn.mock.calls.map(([, msg]) => msg);
+    expect(warnings).toHaveLength(3);
+    expect(warnings.some((w) => w.includes("defaultBankConfig.retain_strategies"))).toBe(true);
+    expect(warnings.some((w) => w.includes("set retainExtractionMode instead"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("is settable per bank, replacing the global map rather than merging into it", () => {
+    const cfg = resolveConfig({
+      defaultBankConfig: { enable_auto_consolidation: false },
+      banks: { "coding-agent::hot": { defaultBankConfig: { enable_observations: true } } },
+    });
+    expect(applyBankConfig(cfg, "coding-agent::hot").cfg.defaultBankConfig).toEqual({
+      enable_observations: true,
+    });
+    expect(applyBankConfig(cfg, "coding-agent::other").cfg.defaultBankConfig).toEqual({
+      enable_auto_consolidation: false,
+    });
+  });
+});
+
 describe("banks.<bankId> overrides (per-repo opt-in/out, applied AFTER bank resolution)", () => {
   it("overrides behavioral fields for the matching bank only; others untouched", () => {
     const cfg = resolveConfig({

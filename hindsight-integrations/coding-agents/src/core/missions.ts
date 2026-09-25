@@ -637,6 +637,18 @@ export interface BankManifest {
   bank: Record<string, unknown>;
 }
 
+/**
+ * Bank-config fields `defaultBankConfig` may NOT set, because this plugin already governs them:
+ * the two containers are merged per entry (see below), and the extraction mode has its own
+ * setting. Letting a default name one of these would either replace a merged map wholesale — the
+ * very failure #3927 fixed — or fight the re-sync that `retainExtractionMode` performs.
+ */
+export const PLUGIN_GOVERNED_BANK_FIELDS: readonly string[] = [
+  "retain_strategies",
+  "entity_labels",
+  "retain_extraction_mode",
+];
+
 /** A bank-config override the bank's owner actually made. Blank is not a choice; `false` is. */
 function isSet(v: unknown): boolean {
   if (v === null || v === undefined) return false;
@@ -673,10 +685,22 @@ function isSet(v: unknown): boolean {
  * `seedPages()` re-syncs a page's query. It is what every session write-back costs, so it has to be
  * changeable from the plugin's config and reach banks seeded before the change (#4560). The
  * strategy's other fields, and any strategy the plugin did not define, are still left alone.
+ *
+ * `defaults` (RawConfig.defaultBankConfig) are the user's OWN additions to the template — bank-config
+ * fields written under the same rule, only where the bank is silent. They exist because a bank this
+ * plugin creates is otherwise born with the server's defaults for everything the template does not
+ * name — `enable_auto_consolidation`, `mental_model_min_refresh_interval_seconds` — and on a
+ * cost-conscious deployment those are the expensive settings (#4725): a new repo an agent touched
+ * spawned a bank running auto-consolidation on a 60s refresh floor while every other bank had been
+ * hand-set to a cheap baseline. On a key the template also names (`enable_observations`), the
+ * user's default wins, since it is the more specific statement. Applied under the same
+ * silent-only rule, a default reaches an existing bank too — but only where that bank never took
+ * a position, so a value set in the control plane (even one equal to the server default) is kept.
  */
 export function codingBankManifest(
   overrides: BankOverrides | undefined,
-  mode: RetainExtractionMode = DEFAULT_RETAIN_EXTRACTION_MODE
+  mode: RetainExtractionMode = DEFAULT_RETAIN_EXTRACTION_MODE,
+  defaults: Record<string, unknown> = {}
 ): BankManifest | undefined {
   // Unreadable overrides — the bank does not exist yet, or the deployment has the bank-config API
   // switched off. Nothing can have been customised through an API that is not there, and this same
@@ -721,6 +745,14 @@ export function codingBankManifest(
   const [knowledgeGroup] = template.entity_labels;
   if (!labels.some((g) => (g as { key?: unknown } | null)?.key === knowledgeGroup.key))
     bank.entity_labels = [...labels, knowledgeGroup];
+
+  // After the template, so a default wins the keys both name. The governed fields are dropped at
+  // config resolution (with a warning) and skipped again here, so a caller of this function alone
+  // cannot replace a merged container either.
+  for (const [key, value] of Object.entries(defaults)) {
+    if (PLUGIN_GOVERNED_BANK_FIELDS.includes(key) || !isSet(value) || isSet(current[key])) continue;
+    bank[key] = value;
+  }
 
   return Object.keys(bank).length > 0 ? { version: "1", bank } : undefined;
 }
