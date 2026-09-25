@@ -23,14 +23,16 @@ import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 from pydantic import BaseModel, ValidationError
 
-# The memory tools the connect prompt tells Muse to call. The root URL (multi-bank) and a
-# bank-scoped URL (/mcp/<bank>/) both expose these; only the root URL adds list_banks and
-# create_bank, which the prompt uses to give Muse its own bank.
-REQUIRED_TOOLS: tuple[str, ...] = ("recall", "retain", "reflect")
+# The tools the connect prompt tells Muse to call. The root URL (multi-bank) and a
+# bank-scoped URL (/mcp/<bank>/) both expose these, unless a bank's MCP tool allowlist drops one.
+REQUIRED_TOOLS: tuple[str, ...] = ("recall", "retain", "reflect", "create_mental_model", "get_mental_model")
+# Only the root URL exposes bank management; the prompt uses these to give Muse its own bank.
+ROOT_URL_TOOLS: tuple[str, ...] = ("list_banks", "create_bank")
 
 # Protocol revision sent in `initialize`. Servers negotiate down if they speak an older one.
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -198,6 +200,11 @@ async def _check_oauth(session: aiohttp.ClientSession, url: str, report: Preflig
     )
 
 
+def _is_root_url(url: str) -> bool:
+    """True for the multi-bank root (``.../mcp``), false for a bank-scoped ``.../mcp/<bank>/``."""
+    return urlsplit(url).path.rstrip("/").endswith("/mcp")
+
+
 async def _check_tools(session: aiohttp.ClientSession, url: str, token: str, report: PreflightReport) -> None:
     init = await _post_mcp(
         session,
@@ -221,7 +228,8 @@ async def _check_tools(session: aiohttp.ClientSession, url: str, token: str, rep
     await _post_mcp(session, url, _rpc("notifications/initialized", None), token, init.session_id)
     listed = await _post_mcp(session, url, _rpc("tools/list", 2), token, init.session_id)
     if listed.message is None or listed.message.result is None:
-        report.add("tools/list returns tools", False, f"HTTP {listed.status}")
+        error = listed.message.error if listed.message is not None else None
+        report.add("tools/list returns tools", False, error.message if error else f"HTTP {listed.status}")
         return
     try:
         tools = ToolsListResult.model_validate(listed.message.result)
@@ -229,9 +237,10 @@ async def _check_tools(session: aiohttp.ClientSession, url: str, token: str, rep
         report.add("tools/list returns tools", False, str(exc))
         return
     names = {tool.name for tool in tools.tools}
-    missing = [name for name in REQUIRED_TOOLS if name not in names]
+    required = REQUIRED_TOOLS + (ROOT_URL_TOOLS if _is_root_url(url) else ())
+    missing = [name for name in required if name not in names]
     report.add(
-        "recall, retain and reflect are exposed",
+        "the tools the connect prompt uses are exposed",
         not missing,
         f"missing: {', '.join(missing)}" if missing else f"{len(names)} tools",
     )

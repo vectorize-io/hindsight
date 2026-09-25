@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from hindsight_meta_muse.preflight import REQUIRED_TOOLS
+from hindsight_meta_muse.preflight import REQUIRED_TOOLS, ROOT_URL_TOOLS
 
 INTEGRATION_DIR = Path(__file__).resolve().parent.parent
 PROMPT = (INTEGRATION_DIR / "connect-prompt.md").read_text()
@@ -19,8 +19,6 @@ def test_prompt_uses_the_root_cloud_url() -> None:
 
 
 def test_prompt_gives_muse_its_own_bank() -> None:
-    assert "`create_bank`" in PROMPT
-    assert "`list_banks`" in PROMPT
     assert "`muse`" in PROMPT
 
 
@@ -32,7 +30,7 @@ def test_prompt_forbids_destructive_bank_tools() -> None:
 
 
 def test_prompt_names_every_required_tool() -> None:
-    for tool in REQUIRED_TOOLS:
+    for tool in REQUIRED_TOOLS + ROOT_URL_TOOLS:
         assert f"`{tool}`" in PROMPT
 
 

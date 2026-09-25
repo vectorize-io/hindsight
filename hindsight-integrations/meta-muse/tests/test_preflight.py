@@ -23,7 +23,18 @@ GOOD_TOKEN = "good-token"
 
 @dataclass
 class FakeHindsight:
-    tools: list[str] = field(default_factory=lambda: ["recall", "retain", "reflect", "list_mental_models"])
+    tools: list[str] = field(
+        default_factory=lambda: [
+            "recall",
+            "retain",
+            "reflect",
+            "create_mental_model",
+            "get_mental_model",
+            "list_banks",
+            "create_bank",
+        ]
+    )
+    tools_list_error: bool = False
     challenge: bool = True
     registration: bool = True
     sse: bool = True
@@ -32,6 +43,7 @@ class FakeHindsight:
 
     def app(self) -> web.Application:
         app = web.Application()
+        app.router.add_post("/mcp", self.mcp)
         app.router.add_post("/mcp/{bank}/", self.mcp)
         app.router.add_get("/.well-known/oauth-protected-resource", self.resource_metadata)
         app.router.add_get("/.well-known/oauth-authorization-server", self.server_metadata)
@@ -68,10 +80,11 @@ class FakeHindsight:
             return web.Response(status=202)
         if body["method"] == "initialize":
             result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake"}}
-        elif body["method"] == "tools/list":
+        elif body["method"] == "tools/list" and not self.tools_list_error:
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}} for name in self.tools]}
         else:
-            return web.json_response({"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32601, "message": "?"}})
+            error = {"code": -32601, "message": f"method not allowed: {body['method']}"}
+            return web.json_response({"jsonrpc": "2.0", "id": body["id"], "error": error})
         message = {"jsonrpc": "2.0", "id": body["id"], "result": result}
         headers = {"Mcp-Session-Id": "session-1"}
         if self.sse:
@@ -89,11 +102,13 @@ async def http() -> AsyncIterator[aiohttp.ClientSession]:
         yield session
 
 
-async def _run(fake: FakeHindsight, http: aiohttp.ClientSession, token: str | None) -> PreflightReport:
+async def _run(
+    fake: FakeHindsight, http: aiohttp.ClientSession, token: str | None, path: str = "/mcp/my-bank/"
+) -> PreflightReport:
     server = TestServer(fake.app())
     await server.start_server()
     try:
-        return await run_preflight(str(server.make_url("/mcp/my-bank/")), token, http)
+        return await run_preflight(str(server.make_url(path)), token, http)
     finally:
         await server.close()
 
@@ -128,10 +143,40 @@ async def test_without_token_only_oauth_is_checked(http: aiohttp.ClientSession) 
 
 
 async def test_missing_memory_tool_fails(http: aiohttp.ClientSession) -> None:
-    report = await _run(FakeHindsight(tools=["recall", "retain"]), http, GOOD_TOKEN)
+    tools = ["recall", "retain", "create_mental_model", "get_mental_model"]
+    report = await _run(FakeHindsight(tools=tools), http, GOOD_TOKEN)
 
-    assert _failed(report) == ["recall, retain and reflect are exposed"]
-    assert "reflect" in report.checks[-1].detail
+    assert _failed(report) == ["the tools the connect prompt uses are exposed"]
+    assert report.checks[-1].detail == "missing: reflect"
+
+
+async def test_bank_url_does_not_need_bank_management_tools(http: aiohttp.ClientSession) -> None:
+    tools = ["recall", "retain", "reflect", "create_mental_model", "get_mental_model"]
+    report = await _run(FakeHindsight(tools=tools), http, GOOD_TOKEN)
+
+    assert report.ok, _failed(report)
+
+
+async def test_root_url_passes_with_bank_management_tools(http: aiohttp.ClientSession) -> None:
+    report = await _run(FakeHindsight(), http, GOOD_TOKEN, path="/mcp")
+
+    assert report.ok, _failed(report)
+
+
+async def test_root_url_needs_bank_management_tools(http: aiohttp.ClientSession) -> None:
+    # The connect prompt points Muse at the root URL and has it call list_banks and create_bank there.
+    tools = ["recall", "retain", "reflect", "create_mental_model", "get_mental_model"]
+    report = await _run(FakeHindsight(tools=tools), http, GOOD_TOKEN, path="/mcp")
+
+    assert _failed(report) == ["the tools the connect prompt uses are exposed"]
+    assert report.checks[-1].detail == "missing: list_banks, create_bank"
+
+
+async def test_tools_list_error_is_reported(http: aiohttp.ClientSession) -> None:
+    report = await _run(FakeHindsight(tools_list_error=True), http, GOOD_TOKEN)
+
+    assert _failed(report) == ["tools/list returns tools"]
+    assert report.checks[-1].detail == "method not allowed: tools/list"
 
 
 async def test_missing_oauth_challenge_fails(http: aiohttp.ClientSession) -> None:
