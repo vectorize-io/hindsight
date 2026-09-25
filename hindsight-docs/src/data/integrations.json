@@ -423,7 +423,7 @@
     {
       "id": "eve",
       "name": "Eve",
-      "description": "Automatic long-term memory for Vercel Eve agents. Memory is injected before each turn and retained after, with no model tool-calling.",
+      "description": "Memory provider for Vercel Eve agents. Scoped recall before each turn, automatic capture after, and a reflect tool — no model tool-calling required.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",

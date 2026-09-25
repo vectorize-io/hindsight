@@ -64,6 +64,35 @@ describe("HindsightRestClient.retain", () => {
   });
 });
 
+describe("HindsightRestClient.recall on a missing bank", () => {
+  it("treats a 404 as no memories, since retain creates the bank on first write", async () => {
+    mockFetchOnce(404, { detail: "Bank 'b' not found" });
+    const client = new HindsightRestClient("http://localhost:8000", null);
+    await expect(client.recall("b", "q")).resolves.toEqual({ results: [] });
+  });
+
+  it("still surfaces other statuses with their code", async () => {
+    mockFetchOnce(503, { detail: "down" });
+    const client = new HindsightRestClient("http://localhost:8000", null);
+    await expect(client.recall("b", "q")).rejects.toMatchObject({
+      name: "HindsightHttpError",
+      status: 503,
+    });
+  });
+});
+
+describe("HindsightRestClient.reflect", () => {
+  it("POSTs the question to the reflect path with a low budget by default", async () => {
+    const fetchFn = mockFetchOnce(200, { text: "You prefer tabs." });
+    const client = new HindsightRestClient("http://localhost:8000", null);
+    const res = await client.reflect("b", "what indentation do I use?");
+    expect(res.text).toBe("You prefer tabs.");
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("http://localhost:8000/v1/default/banks/b/reflect");
+    expect(JSON.parse(init.body)).toEqual({ query: "what indentation do I use?", budget: "low" });
+  });
+});
+
 describe("HindsightRestClient error handling", () => {
   it("throws on a non-2xx response", async () => {
     mockFetchOnce(401, { detail: "unauthorized" });
@@ -73,6 +102,32 @@ describe("HindsightRestClient error handling", () => {
 
   it("requires a non-empty base URL", () => {
     expect(() => new HindsightRestClient("   ")).toThrow(/API URL is required/);
+  });
+
+  it("passes the caller's abort signal to fetch and lets its abort through", async () => {
+    const fetchFn = vi.fn(async (_url: string, init: { signal: AbortSignal }) => {
+      if (init.signal.aborted) throw new DOMException("aborted", "AbortError");
+      return { ok: true, status: 200, json: async () => ({ results: [] }), text: async () => "" };
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const controller = new AbortController();
+    controller.abort();
+    const client = new HindsightRestClient("http://localhost:8000", null);
+    await expect(client.recall("b", "q", { signal: controller.signal })).rejects.toThrow(/aborted/);
+  });
+
+  it("reports a timeout as an ordinary error naming the path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener("abort", () => reject(init.signal.reason));
+          })
+      )
+    );
+    const client = new HindsightRestClient("http://localhost:8000", null, 5);
+    await expect(client.recall("b", "q")).rejects.toThrow(/timed out after 5ms/);
   });
 });
 

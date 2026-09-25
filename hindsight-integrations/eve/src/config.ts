@@ -14,14 +14,8 @@ export const DEFAULT_RECALL_QUERY = "user preferences, identity, and working con
 /** Default bank when none is configured (Hindsight auto-creates it). */
 export const DEFAULT_BANK_ID = "default";
 
-export interface AutoMemoryOptions {
-  /** Hindsight REST base URL. Defaults to `HINDSIGHT_API_URL`, then Cloud. */
-  apiUrl?: string;
-  /**
-   * API key sent as `Authorization: Bearer <key>`. Defaults to `HINDSIGHT_API_KEY`.
-   * Pass `null` for a no-auth self-hosted server.
-   */
-  apiKey?: string | null;
+/** @deprecated Options for the v0.2 hooks/instructions entrypoints. See {@link ConnectionOptions}. */
+export interface AutoMemoryOptions extends ConnectionOptions {
   /** Bank to scope memory to (REST path). Defaults to `HINDSIGHT_BANK_ID`, then `"default"`. */
   bankId?: string;
   /** Broad query used for each turn's recall injection. */
@@ -80,11 +74,27 @@ export function isHindsightCloudUrl(url: string): boolean {
   }
 }
 
-/** Resolve options against env defaults. Pure; throws on Cloud + no key. */
-export function resolveAutoMemory(
-  options: AutoMemoryOptions = {},
+/** How to reach a Hindsight server; shared by every entrypoint in this package. */
+export interface ConnectionOptions {
+  /** Hindsight REST base URL. Defaults to `HINDSIGHT_API_URL`, then Cloud. */
+  apiUrl?: string;
+  /**
+   * API key sent as `Authorization: Bearer <key>`. Defaults to `HINDSIGHT_API_KEY`.
+   * Pass `null` for a no-auth self-hosted server.
+   */
+  apiKey?: string | null;
+}
+
+export interface ResolvedConnection {
+  apiUrl: string;
+  apiKey: string | null;
+}
+
+/** Resolve URL + key against env defaults. Pure; throws on Cloud + no key. */
+export function resolveConnection(
+  options: ConnectionOptions,
   env: NodeJS.ProcessEnv = process.env
-): ResolvedAutoMemory {
+): ResolvedConnection {
   const apiUrl = options.apiUrl ?? firstNonEmpty(env.HINDSIGHT_API_URL) ?? HINDSIGHT_CLOUD_API_URL;
 
   // `apiKey: null` is an explicit no-auth opt-out; `undefined` falls back to the env var.
@@ -97,7 +107,15 @@ export function resolveAutoMemory(
         "`apiUrl`/HINDSIGHT_API_URL at a self-hosted server (use `apiKey: null` for a no-auth server)."
     );
   }
+  return { apiUrl, apiKey };
+}
 
+/** Resolve options against env defaults. Pure; throws on Cloud + no key. */
+export function resolveAutoMemory(
+  options: AutoMemoryOptions = {},
+  env: NodeJS.ProcessEnv = process.env
+): ResolvedAutoMemory {
+  const { apiUrl, apiKey } = resolveConnection(options, env);
   return {
     apiUrl,
     apiKey,
