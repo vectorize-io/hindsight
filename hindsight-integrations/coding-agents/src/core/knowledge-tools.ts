@@ -250,6 +250,9 @@ export function buildKnowledgeTools(
             pages: hits.map((h) => ({
               page: h.name,
               page_id: h.id,
+              // The question the page answers — the same `description` the list and read tools
+              // carry, so a hit says what the page is FOR, not just how it opens.
+              ...(h.source_query ? { description: h.source_query } : {}),
               snippet: h.snippet,
             })),
             crediting: CREDIT_REMINDER,

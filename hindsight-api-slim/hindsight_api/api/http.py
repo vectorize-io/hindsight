@@ -3645,6 +3645,7 @@ class KnowledgePageSearchResult(BaseModel):
     id: str
     name: str
     mental_model_id: str | None = None
+    source_query: str | None = Field(default=None, description="The question the page answers.")
     snippet: str = Field(
         description=(
             "The page's opening text. A page whose body is still empty says so in words — "

@@ -3021,6 +3021,12 @@ export type KnowledgePageSearchResult = {
    */
   mental_model_id?: string | null;
   /**
+   * Source Query
+   *
+   * The question the page answers.
+   */
+  source_query?: string | null;
+  /**
    * Snippet
    *
    * The page's opening text. A page whose body is still empty says so in words — 'No content yet.' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.

@@ -12721,6 +12721,18 @@
             ],
             "title": "Mental Model Id"
           },
+          "source_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Query",
+            "description": "The question the page answers."
+          },
           "snippet": {
             "type": "string",
             "title": "Snippet",

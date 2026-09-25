@@ -8633,12 +8633,14 @@ components:
         results:
         - snippet: snippet
           score: 0.8008281904610115
+          source_query: source_query
           updated_at: updated_at
           name: name
           id: id
           mental_model_id: mental_model_id
         - snippet: snippet
           score: 0.8008281904610115
+          source_query: source_query
           updated_at: updated_at
           name: name
           id: id
@@ -8661,6 +8663,7 @@ components:
       example:
         snippet: snippet
         score: 0.8008281904610115
+        source_query: source_query
         updated_at: updated_at
         name: name
         id: id
@@ -8673,6 +8676,9 @@ components:
           title: Name
           type: string
         mental_model_id:
+          nullable: true
+          type: string
+        source_query:
           nullable: true
           type: string
         snippet:

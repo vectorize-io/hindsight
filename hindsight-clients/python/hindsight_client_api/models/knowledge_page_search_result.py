@@ -29,10 +29,11 @@ class KnowledgePageSearchResult(BaseModel):
     id: StrictStr
     name: StrictStr
     mental_model_id: Optional[StrictStr] = None
+    source_query: Optional[StrictStr] = None
     snippet: StrictStr = Field(description="The page's opening text. A page whose body is still empty says so in words — 'No content yet.' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.")
     score: Union[StrictFloat, StrictInt] = Field(description="Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.")
     updated_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["id", "name", "mental_model_id", "snippet", "score", "updated_at"]
+    __properties: ClassVar[List[str]] = ["id", "name", "mental_model_id", "source_query", "snippet", "score", "updated_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +79,11 @@ class KnowledgePageSearchResult(BaseModel):
         if self.mental_model_id is None and "mental_model_id" in self.model_fields_set:
             _dict['mental_model_id'] = None
 
+        # set to None if source_query (nullable) is None
+        # and model_fields_set contains the field
+        if self.source_query is None and "source_query" in self.model_fields_set:
+            _dict['source_query'] = None
+
         # set to None if updated_at (nullable) is None
         # and model_fields_set contains the field
         if self.updated_at is None and "updated_at" in self.model_fields_set:
@@ -98,6 +104,7 @@ class KnowledgePageSearchResult(BaseModel):
             "id": obj.get("id"),
             "name": obj.get("name"),
             "mental_model_id": obj.get("mental_model_id"),
+            "source_query": obj.get("source_query"),
             "snippet": obj.get("snippet"),
             "score": obj.get("score"),
             "updated_at": obj.get("updated_at")

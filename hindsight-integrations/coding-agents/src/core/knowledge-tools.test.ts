@@ -150,7 +150,13 @@ describe("buildKnowledgeTools", () => {
   it("hindsight_search_knowledge_pages calls the server hybrid search and returns ranked hits", async () => {
     const client = stubClient({
       searchKnowledgePages: vi.fn(async () => [
-        { id: "p1", name: "Uploader guide", snippet: "Uploads retry with backoff…", score: 0.031 },
+        {
+          id: "p1",
+          name: "Uploader guide",
+          source_query: "How do uploads recover from failures?",
+          snippet: "Uploads retry with backoff…",
+          score: 0.031,
+        },
         { id: "p2", name: "Auth notes", snippet: "Tokens rotate daily.", score: 0.012 },
       ]),
     });
@@ -164,7 +170,12 @@ describe("buildKnowledgeTools", () => {
     // hit as 3% relevant. Rank order carries the ranking.
     const payload = JSON.parse(result.content[0].text);
     expect(payload.pages).toEqual([
-      { page: "Uploader guide", page_id: "p1", snippet: "Uploads retry with backoff…" },
+      {
+        page: "Uploader guide",
+        page_id: "p1",
+        description: "How do uploads recover from failures?",
+        snippet: "Uploads retry with backoff…",
+      },
       { page: "Auth notes", page_id: "p2", snippet: "Tokens rotate daily." },
     ]);
     // The credit reminder rides with the hits: the session guide has scrolled away by the time a

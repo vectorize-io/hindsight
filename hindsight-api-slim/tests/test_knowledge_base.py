@@ -502,6 +502,7 @@ class TestSearch:
         names = [r["name"] for r in body["results"]]
         assert names, "expected at least one hit"
         assert names[0] == "Billing"
+        assert body["results"][0]["source_query"] == "What is the billing policy?"
         assert body["total"] == len(body["results"])
         # Scores are strictly descending.
         scores = [r["score"] for r in body["results"]]

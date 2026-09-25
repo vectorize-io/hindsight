@@ -765,7 +765,9 @@ export class HindsightClient {
   async searchKnowledgePages(
     query: string,
     opts: { limit?: number; timeoutMs?: number } = {}
-  ): Promise<{ id: string; name: string; snippet: string; score: number }[]> {
+  ): Promise<
+    { id: string; name: string; source_query?: string; snippet: string; score: number }[]
+  > {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
     const q = `?q=${encodeURIComponent(query)}&limit=${opts.limit ?? this.pageSearchLimit}`;
     const r = await this.req(
@@ -781,11 +783,18 @@ export class HindsightClient {
     if (await this.pagesUnsupported(r)) throw new KnowledgePagesUnavailableError();
     if (r.status === 404) return []; // bank not created yet — no pages to match
     const j = (await r.json()) as {
-      results?: { id: string; name: string; snippet?: string; score?: number }[];
+      results?: {
+        id: string;
+        name: string;
+        source_query?: string | null;
+        snippet?: string;
+        score?: number;
+      }[];
     };
     return (j.results ?? []).map((x) => ({
       id: x.id,
       name: x.name,
+      ...(x.source_query ? { source_query: x.source_query } : {}),
       snippet: x.snippet ?? "",
       score: x.score ?? 0,
     }));

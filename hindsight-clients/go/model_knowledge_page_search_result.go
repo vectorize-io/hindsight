@@ -24,6 +24,7 @@ type KnowledgePageSearchResult struct {
 	Id string `json:"id"`
 	Name string `json:"name"`
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
+	SourceQuery NullableString `json:"source_query,omitempty"`
 	// The page's opening text. A page whose body is still empty says so in words — 'No content yet.' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.
 	Snippet string `json:"snippet"`
 	// Rank-fusion score in 0..1, where 1.0 means every search arm placed this page first. It reflects where the page ranked for this query, not how well its text matched, so it is only comparable within one result set.
@@ -144,6 +145,48 @@ func (o *KnowledgePageSearchResult) UnsetMentalModelId() {
 	o.MentalModelId.Unset()
 }
 
+// GetSourceQuery returns the SourceQuery field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *KnowledgePageSearchResult) GetSourceQuery() string {
+	if o == nil || IsNil(o.SourceQuery.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.SourceQuery.Get()
+}
+
+// GetSourceQueryOk returns a tuple with the SourceQuery field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *KnowledgePageSearchResult) GetSourceQueryOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SourceQuery.Get(), o.SourceQuery.IsSet()
+}
+
+// HasSourceQuery returns a boolean if a field has been set.
+func (o *KnowledgePageSearchResult) HasSourceQuery() bool {
+	if o != nil && o.SourceQuery.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSourceQuery gets a reference to the given NullableString and assigns it to the SourceQuery field.
+func (o *KnowledgePageSearchResult) SetSourceQuery(v string) {
+	o.SourceQuery.Set(&v)
+}
+// SetSourceQueryNil sets the value for SourceQuery to be an explicit nil
+func (o *KnowledgePageSearchResult) SetSourceQueryNil() {
+	o.SourceQuery.Set(nil)
+}
+
+// UnsetSourceQuery ensures that no value is present for SourceQuery, not even an explicit nil
+func (o *KnowledgePageSearchResult) UnsetSourceQuery() {
+	o.SourceQuery.Unset()
+}
+
 // GetSnippet returns the Snippet field value
 func (o *KnowledgePageSearchResult) GetSnippet() string {
 	if o == nil {
@@ -248,6 +291,9 @@ func (o KnowledgePageSearchResult) ToMap() (map[string]interface{}, error) {
 	toSerialize["name"] = o.Name
 	if o.MentalModelId.IsSet() {
 		toSerialize["mental_model_id"] = o.MentalModelId.Get()
+	}
+	if o.SourceQuery.IsSet() {
+		toSerialize["source_query"] = o.SourceQuery.Get()
 	}
 	toSerialize["snippet"] = o.Snippet
 	toSerialize["score"] = o.Score
