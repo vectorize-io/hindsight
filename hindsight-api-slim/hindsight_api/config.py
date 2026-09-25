@@ -151,6 +151,7 @@ def normalize_config_dict(config: dict[str, Any]) -> dict[str, Any]:
 # Environment variable names
 ENV_DATABASE_BACKEND = "HINDSIGHT_API_DATABASE_BACKEND"
 ENV_DATABASE_URL = "HINDSIGHT_API_DATABASE_URL"
+ENV_PG0_MAX_CONNECTIONS = "HINDSIGHT_API_PG0_MAX_CONNECTIONS"
 ENV_READ_DATABASE_URL = "HINDSIGHT_API_READ_DATABASE_URL"
 ENV_READ_DB_POOL_MIN_SIZE = "HINDSIGHT_API_READ_DB_POOL_MIN_SIZE"
 ENV_READ_DB_POOL_MAX_SIZE = "HINDSIGHT_API_READ_DB_POOL_MAX_SIZE"
@@ -1084,6 +1085,7 @@ ENV_DISPOSITION_EMPATHY = "HINDSIGHT_API_DISPOSITION_EMPATHY"
 # Default values
 DEFAULT_DATABASE_BACKEND = "postgresql"
 DEFAULT_DATABASE_URL = "pg0"
+DEFAULT_PG0_MAX_CONNECTIONS = 300
 DEFAULT_DATABASE_SCHEMA = "public"
 DEFAULT_LLM_PROVIDER = "openai"
 
@@ -2910,6 +2912,7 @@ class HindsightConfig:
     # Database
     database_backend: Literal["postgresql", "oracle"]
     database_url: str
+    pg0_max_connections: int
     # Optional read-replica URL for recall queries. When set, the engine opens
     # a second pool and routes recall SELECTs through it.
     read_database_url: str | None
@@ -3908,6 +3911,9 @@ class HindsightConfig:
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
+        if self.pg0_max_connections < 1:
+            raise ValueError(f"{ENV_PG0_MAX_CONNECTIONS} must be >= 1, got {self.pg0_max_connections}")
+
         # Validate vector_extension
         validate_extension(self.vector_extension)
 
@@ -4111,6 +4117,7 @@ class HindsightConfig:
             # Database
             database_backend=os.getenv(ENV_DATABASE_BACKEND, DEFAULT_DATABASE_BACKEND).lower(),
             database_url=os.getenv(ENV_DATABASE_URL, DEFAULT_DATABASE_URL),
+            pg0_max_connections=int(os.getenv(ENV_PG0_MAX_CONNECTIONS, str(DEFAULT_PG0_MAX_CONNECTIONS))),
             read_database_url=os.getenv(ENV_READ_DATABASE_URL) or None,
             read_db_pool_min_size=int(os.getenv(ENV_READ_DB_POOL_MIN_SIZE, str(DEFAULT_DB_POOL_MIN_SIZE))),
             read_db_pool_max_size=int(os.getenv(ENV_READ_DB_POOL_MAX_SIZE, str(DEFAULT_DB_POOL_MAX_SIZE))),

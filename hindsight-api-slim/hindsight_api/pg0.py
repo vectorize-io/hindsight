@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from hindsight_api.config import get_config
+
 if TYPE_CHECKING:
     from pg0 import Pg0
 
@@ -58,8 +60,14 @@ class EmbeddedPostgres:
             # Only set port if explicitly specified
             if self.port is not None:
                 kwargs["port"] = self.port
-            if self.config is not None:
-                kwargs["config"] = self.config
+            # PostgreSQL's default of 100 slots matches the default application
+            # pool ceiling, leaving no room for direct maintenance connections.
+            # Apply the budget here so engine and admin startup paths agree;
+            # explicit per-instance settings (e.g. xdist fixtures) still win.
+            kwargs["config"] = {
+                "max_connections": str(get_config().pg0_max_connections),
+                **(self.config or {}),
+            }
             self._pg0 = Pg0(**kwargs)
         return self._pg0
 

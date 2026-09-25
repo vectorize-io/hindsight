@@ -24,6 +24,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
+| `HINDSIGHT_API_PG0_MAX_CONNECTIONS` | Embedded PostgreSQL connection limit. Server-level only; requires restarting the embedded database. Does not change external PostgreSQL servers. | `300` |
 | `HINDSIGHT_API_READ_DATABASE_URL` | Optional read-replica PostgreSQL URL. When set, recall queries (semantic, BM25, graph, temporal) are routed through a separate connection pool against this URL, offloading the primary. Typically points to a read-only endpoint (e.g., CNPG's `<cluster>-ro` service or Aurora reader endpoint). | Unset (uses primary) |
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
@@ -104,6 +105,8 @@ A few things to know:
 | `HINDSIGHT_API_ENTITY_MERGE_MIN_SIMILARITY` | Minimum trigram similarity a name must have with an **existing** entity before that entity can be reused for it, whatever the other resolution signals say. Sits between the recall threshold above (`0.15`, which only decides what is *considered*) and the same-batch fold-in cutoff below (`0.5`). Must be between `0` (exclusive) and `1`. Lower it for corpora of very short names, where trigram similarity is unavoidably low (`Jon`/`John` is `0.29`); raise it to merge only clear surface variants. | `0.3` |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
+
+For embedded PostgreSQL, keep `PG0_MAX_CONNECTIONS` above the sum of the maximum sizes of all pools connecting to the same instance (including separate API/worker processes and any read pool targeting that instance), with spare connections for migrations, index maintenance, and administration. The default of `300` leaves headroom above the default primary pool of `100`; larger deployments must size both limits together. This setting applies when the embedded database starts, so restarting only an API process that attaches to an already-running instance does not apply a new limit.
 
 To run migrations manually (e.g., before starting the API), use the admin CLI:
 
