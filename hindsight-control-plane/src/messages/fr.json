@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "Relations causales",
         "retain_extraction_mode": "Règles d'extraction",
         "retain_mission": "Mission",
+        "retain_optional_fact_dimensions": "Champs de fait facultatifs",
         "retain_structured_chunk_size": "Taille de fragment structuré"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "Non défini : le mode custom retombe donc sur les règles intégrées ci-dessus. Écrivez des instructions pour les remplacer.",
         "retain_extract_causal_links": "Demanderait au modèle de relier les faits qui se sont causés, et élargirait le schéma de réponse.",
         "retain_extraction_mode": "Mode chunks : chaque fragment est stocké tel quel, aucun prompt n'est envoyé. Choisissez un autre mode pour en voir un.",
-        "retain_mission": "Serait placé ici, prioritaire sur les règles générales d'extraction."
+        "retain_mission": "Serait placé ici, prioritaire sur les règles générales d'extraction.",
+        "retain_optional_fact_dimensions": "Permettrait au modèle de laisser « quand », « où », « qui » et « pourquoi » vides au lieu d'écrire « N/A »."
       }
     }
   },

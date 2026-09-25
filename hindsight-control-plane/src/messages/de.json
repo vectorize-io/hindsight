@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "Kausale Beziehungen",
         "retain_extraction_mode": "Extraktionsregeln",
         "retain_mission": "Mission",
+        "retain_optional_fact_dimensions": "Optionale Faktfelder",
         "retain_structured_chunk_size": "Strukturierte Chunk-Größe"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "Nicht gesetzt, daher greift im Custom-Modus die eingebaute Regel oben. Schreiben Sie Anweisungen, um sie zu ersetzen.",
         "retain_extract_causal_links": "Würde das Modell bitten, kausal zusammenhängende Fakten zu verknüpfen, und das Antwortschema erweitern.",
         "retain_extraction_mode": "Chunks-Modus: Jeder Chunk wird wörtlich gespeichert, es wird kein Prompt gesendet. Wählen Sie einen anderen Modus, um einen zu sehen.",
-        "retain_mission": "Würde hier vorangestellt und hätte Vorrang vor den allgemeinen Extraktionsregeln."
+        "retain_mission": "Würde hier vorangestellt und hätte Vorrang vor den allgemeinen Extraktionsregeln.",
+        "retain_optional_fact_dimensions": "Würde dem Modell erlauben, „wann“, „wo“, „wer“ und „warum“ leer zu lassen, statt „N/A“ zu schreiben."
       }
     }
   },

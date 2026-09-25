@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "인과 관계",
         "retain_extraction_mode": "추출 규칙",
         "retain_mission": "미션",
+        "retain_optional_fact_dimensions": "선택적 사실 필드",
         "retain_structured_chunk_size": "구조화 청크 크기"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "설정되지 않아 custom 모드에서도 위의 기본 규칙이 사용됩니다. 지침을 작성해 대체하세요.",
         "retain_extract_causal_links": "서로 원인이 된 사실을 연결하도록 모델에 요청하고 응답 스키마를 넓힙니다.",
         "retain_extraction_mode": "chunks 모드: 각 청크가 그대로 저장되므로 프롬프트가 전송되지 않습니다. 다른 모드를 선택하면 볼 수 있습니다.",
-        "retain_mission": "여기에 먼저 붙어 일반 추출 규칙보다 우선합니다."
+        "retain_mission": "여기에 먼저 붙어 일반 추출 규칙보다 우선합니다.",
+        "retain_optional_fact_dimensions": "모델이 \"N/A\"를 쓰는 대신 \"언제\", \"어디서\", \"누가\", \"왜\"를 비워 둘 수 있게 합니다."
       }
     }
   },

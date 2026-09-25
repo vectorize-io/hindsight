@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "因果關係",
         "retain_extraction_mode": "擷取規則",
         "retain_mission": "使命設定",
+        "retain_optional_fact_dimensions": "可選事實欄位",
         "retain_structured_chunk_size": "結構化分塊大小"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "未設定，所以 custom 模式都係用上面嘅內建規則。寫低說明就可以換走佢。",
         "retain_extract_causal_links": "會叫模型連埋互為因果嘅事實，同埋擴充回應結構。",
         "retain_extraction_mode": "chunks 模式：每個分塊照原文儲存，所以唔會送出提示詞。揀第二個模式就見到。",
-        "retain_mission": "會擺喺呢度，行先過一般擷取規則。"
+        "retain_mission": "會擺喺呢度，行先過一般擷取規則。",
+        "retain_optional_fact_dimensions": "會畀模型將「幾時」、「喺邊」、「邊個」同「點解」留空，而唔係寫「N/A」。"
       }
     }
   },

@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "因果関係",
         "retain_extraction_mode": "抽出ルール",
         "retain_mission": "ミッション",
+        "retain_optional_fact_dimensions": "任意の事実フィールド",
         "retain_structured_chunk_size": "構造化チャンクサイズ"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "未設定のため、カスタムモードでも上の組み込みルールが使われます。置き換えるには指示を書いてください。",
         "retain_extract_causal_links": "因果関係のある事実を結び付けるようモデルに求め、レスポンススキーマを拡張します。",
         "retain_extraction_mode": "chunks モード: 各チャンクはそのまま保存され、プロンプトは送信されません。別のモードを選ぶと表示されます。",
-        "retain_mission": "ここに前置きされ、一般的な抽出ルールより優先されます。"
+        "retain_mission": "ここに前置きされ、一般的な抽出ルールより優先されます。",
+        "retain_optional_fact_dimensions": "「いつ」「どこで」「誰が」「なぜ」を「N/A」と書かずに空のままにできるようにします。"
       }
     }
   },

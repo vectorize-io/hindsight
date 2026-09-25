@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "Relaciones causales",
         "retain_extraction_mode": "Reglas de extracción",
         "retain_mission": "Misión",
+        "retain_optional_fact_dimensions": "Campos opcionales del hecho",
         "retain_structured_chunk_size": "Tamaño de fragmento estructurado"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "Sin definir, así que el modo custom recurre a las reglas integradas de arriba. Escribe instrucciones para reemplazarlas.",
         "retain_extract_causal_links": "Pediría al modelo enlazar hechos que se causaron entre sí, y ampliaría el esquema de respuesta.",
         "retain_extraction_mode": "Modo chunks: cada fragmento se guarda literalmente, así que no se envía ningún prompt. Elige otro modo para ver uno.",
-        "retain_mission": "Se antepondría aquí, con prioridad sobre las reglas generales de extracción."
+        "retain_mission": "Se antepondría aquí, con prioridad sobre las reglas generales de extracción.",
+        "retain_optional_fact_dimensions": "Permitiría al modelo dejar vacíos «cuándo», «dónde», «quién» y «por qué» en lugar de escribir «N/A»."
       }
     }
   },

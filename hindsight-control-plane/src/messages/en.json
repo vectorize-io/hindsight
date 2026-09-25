@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "Causal relationships",
         "retain_extraction_mode": "Extraction rules",
         "retain_mission": "Mission",
+        "retain_optional_fact_dimensions": "Optional fact fields",
         "retain_structured_chunk_size": "Structured chunk size"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "Unset, so custom mode falls back to the built-in rules above. Write instructions to replace them.",
         "retain_extract_causal_links": "Would ask the model to link facts that caused one another, and widen the response schema.",
         "retain_extraction_mode": "Chunks mode: each chunk is stored verbatim, so no prompt is sent. Pick another mode to see one.",
-        "retain_mission": "Would be prepended here, taking priority over the general extraction rules."
+        "retain_mission": "Would be prepended here, taking priority over the general extraction rules.",
+        "retain_optional_fact_dimensions": "Would let the model leave \"when\", \"where\", \"who\" and \"why\" empty instead of writing \"N/A\"."
       }
     }
   },

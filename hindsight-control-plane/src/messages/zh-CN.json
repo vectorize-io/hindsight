@@ -630,6 +630,7 @@
         "retain_extract_causal_links": "因果关系",
         "retain_extraction_mode": "提取规则",
         "retain_mission": "使命设定",
+        "retain_optional_fact_dimensions": "可选事实字段",
         "retain_structured_chunk_size": "结构化分块大小"
       },
       "section": {
@@ -649,7 +650,8 @@
         "retain_custom_instructions": "未设置，因此 custom 模式仍使用上面的内置规则。写入说明即可替换。",
         "retain_extract_causal_links": "会要求模型关联互为因果的事实，并扩展响应结构。",
         "retain_extraction_mode": "chunks 模式：每个分块按原文存储，因此不会发送提示词。切换其他模式即可查看。",
-        "retain_mission": "会被放在这里，优先于通用提取规则。"
+        "retain_mission": "会被放在这里，优先于通用提取规则。",
+        "retain_optional_fact_dimensions": "允许模型将“何时”、“何地”、“何人”和“为何”留空，而不是写“N/A”。"
       }
     }
   },
