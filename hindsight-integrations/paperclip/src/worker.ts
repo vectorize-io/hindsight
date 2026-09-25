@@ -18,13 +18,21 @@
  */
 
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { ToolRunContext } from "@paperclipai/plugin-sdk";
+import type {
+  EnvSecretRefBinding,
+  PluginContext,
+  ToolRunContext,
+} from "@paperclipai/plugin-sdk";
 import { HindsightClient, formatMemories } from "./client.js";
 import { deriveBankId, extractUserFromIssue } from "./bank.js";
 
 interface PluginConfig {
   hindsightApiUrl: string;
-  hindsightApiKeyRef?: string;
+  /**
+   * Reference stored by the host's secret picker for the `format: "secret-ref"`
+   * field. The host fails closed on a bare string, so it travels through as-is.
+   */
+  hindsightApiKeyRef?: EnvSecretRefBinding;
   bankId?: string;
   dynamicBankId?: boolean;
   bankGranularity?: Array<"company" | "agent" | "user">;
@@ -59,11 +67,17 @@ async function getConfig(ctx: {
 }
 
 async function resolveApiKey(
-  ctx: { secrets: { resolve(ref: string): Promise<string | null> } },
-  config: PluginConfig
+  ctx: Pick<PluginContext, "secrets">,
+  config: PluginConfig,
+  companyId: string
 ): Promise<string | undefined> {
   if (!config.hindsightApiKeyRef) return undefined;
-  const resolved = await ctx.secrets.resolve(config.hindsightApiKeyRef);
+  // configPath identifies which binding to read when a plugin holds several
+  // secrets; companyId scopes the lookup to the run's company.
+  const resolved = await ctx.secrets.resolve(config.hindsightApiKeyRef, {
+    companyId,
+    configPath: "hindsightApiKeyRef",
+  });
   return resolved ?? undefined;
 }
 
@@ -121,7 +135,7 @@ const plugin = definePlugin({
       }
 
       try {
-        const apiKey = await resolveApiKey(ctx, config);
+        const apiKey = await resolveApiKey(ctx, config, companyId);
         const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
         const bankId = deriveBankId({ companyId, agentId, userId }, config);
 
@@ -227,7 +241,7 @@ const plugin = definePlugin({
       }
 
       try {
-        const apiKey = await resolveApiKey(ctx, config);
+        const apiKey = await resolveApiKey(ctx, config, companyId);
         const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
         const bankId = deriveBankId({ companyId, agentId: bankAgentId, userId }, config);
         await client.retain(bankId, body, commentId, {
@@ -324,7 +338,7 @@ const plugin = definePlugin({
 
         // Live recall fallback
         try {
-          const apiKey = await resolveApiKey(ctx, config);
+          const apiKey = await resolveApiKey(ctx, config, runCtx.companyId);
           const client = new HindsightClient(
             config.hindsightApiUrl,
             apiKey,
@@ -380,7 +394,7 @@ const plugin = definePlugin({
         );
 
         try {
-          const apiKey = await resolveApiKey(ctx, config);
+          const apiKey = await resolveApiKey(ctx, config, runCtx.companyId);
           const client = new HindsightClient(
             config.hindsightApiUrl,
             apiKey,
