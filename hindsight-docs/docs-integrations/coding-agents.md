@@ -433,14 +433,16 @@ Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. Layering, 
    (`HINDSIGHT_<FIELD_IN_CAPS>`), for containers and CI that inject config rather than write a file
 3. the file's top level
 4. its `harnesses.<name>` section — per-agent override
-5. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
+5. its `paths.<prefix>` section — per-directory override, applied after the bank is resolved
+   (see Per-directory overrides)
+6. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
    (see Per-repo opt-in/out)
 
 Environment variables are a **fallback**: the file wins wherever it sets a value, so adding env to
 an existing setup changes nothing. The two list-valued settings, `retainTags` and `optInPaths`, take
 a comma-separated value (`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are
 trimmed and blanks dropped.
-The map-valued settings (`mapPathToBank`, `harnesses`, `banks`, `retainMetadata`) are file-only —
+The map-valued settings (`mapPathToBank`, `harnesses`, `paths`, `banks`, `retainMetadata`) are file-only —
 per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
 as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
 
@@ -803,6 +805,27 @@ every repo (present and future) beneath it:
 
 Rule of thumb: converge by **id** for a hand-picked set of repos; map by **path** when a folder is
 the boundary ("everything I clone under `work/client-x` shares memory").
+
+### Per-directory overrides — `paths.<prefix>`
+
+When a folder is the boundary for something other than the bank — typically a different server
+or tenant for client work — key the override by directory instead of by bank id:
+
+```jsonc
+{
+  "apiToken": "personal-key",
+  "paths": {
+    "~/work/client-x": { "apiToken": "client-x-key" },
+  },
+}
+```
+
+Every repo under the prefix, present and future, keeps its own bank but uses the entry's
+settings. The longest matching prefix wins, and a linked worktree outside the tree uses its main
+checkout's entry, as with `mapPathToBank`. The section applies after bank resolution and before
+`banks.<bankId>`, so a bank section still wins for its one repo. Bank-resolution and approval
+fields (`bankId`, `mapPathToBank`, `bank`, `optInOnly`, `optInPaths`, ...) are ignored inside a
+path section. The token is re-read on a rejected request, like the top-level `apiToken`.
 
 ### Bank resolution
 

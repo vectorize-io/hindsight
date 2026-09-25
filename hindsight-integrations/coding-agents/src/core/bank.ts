@@ -207,16 +207,16 @@ function isWithin(directory: string, configured: string): boolean {
 }
 
 /** Longest-prefix match of `directory` against the map's absolute paths (exact or ancestor). */
-function mapLookup(map: Record<string, string>, directory: string): string | undefined {
+function mapLookup<T>(map: Record<string, T>, directory: string): T | undefined {
   const cwd = normalize(directory);
-  let best: { len: number; bank: string } | undefined;
-  for (const [dir, bank] of Object.entries(map)) {
+  let best: { len: number; value: T } | undefined;
+  for (const [dir, value] of Object.entries(map)) {
     const p = configuredDir(dir);
     if (isWithin(cwd, p)) {
-      if (!best || p.length > best.len) best = { len: p.length, bank };
+      if (!best || p.length > best.len) best = { len: p.length, value };
     }
   }
-  return best?.bank;
+  return best?.value;
 }
 
 /** Current directory first, then its main Git root. Keeping the literal path first preserves an
@@ -266,6 +266,20 @@ export function isOptedIn(config: BankConfig, directory: string): boolean {
     return true;
   const pathMap = config.mapPathToBank;
   return Boolean(pathMap && directories.some((candidate) => mapLookup(pathMap, candidate)));
+}
+
+/** The `paths.<prefix>` section for a directory, if any: longest prefix, checked against the
+ *  directory first and then its main Git root, the same cascade as `mapPathToBank`, so a linked
+ *  worktree outside the tree still gets its checkout's section. */
+export function pathSection<T>(
+  config: BankConfig,
+  paths: Record<string, T> | undefined,
+  directory: string
+): T | undefined {
+  if (!directory || !paths) return undefined;
+  return lookupDirectories(config, directory)
+    .map((candidate) => mapLookup(paths, candidate))
+    .find((section) => section !== undefined);
 }
 
 /** The `mapPathToBank` destination for a directory, if any — resolution step 1, shared by
