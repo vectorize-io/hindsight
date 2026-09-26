@@ -26,6 +26,7 @@ from ..config import (
     ENV_RETAIN_WALL_TIMEOUT,
     get_config,
 )
+from ..engine.db.ops import _BANK_SERIALIZED_OPERATION_TYPES
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
 from .backpressure import is_store_backpressure
@@ -270,6 +271,28 @@ class ClaimedTask:
     def all_operation_ids(self) -> list[str]:
         """Every operation this execution is responsible for completing."""
         return [self.operation_id, *self.folded_operation_ids]
+
+
+@dataclass
+class PendingBuckets:
+    """Pending rows of one operation type, bucketed by the claim filter that holds them back.
+
+    ``payload_null``, ``retry_blocked`` and ``serialization_blocked`` are mutually
+    exclusive, taken in the claim query's WHERE order, so ``claimable`` is exact
+    rather than a residual that double-subtracts rows failing two filters.
+    ``assigned`` overlaps the others and is not subtracted: no claim query
+    filters on ``worker_id``, so a pending row carrying one is still claimed.
+    """
+
+    total: int = 0
+    payload_null: int = 0
+    retry_blocked: int = 0
+    serialization_blocked: int = 0
+    assigned: int = 0
+
+    @property
+    def claimable(self) -> int:
+        return self.total - self.payload_null - self.retry_blocked - self.serialization_blocked
 
 
 @dataclass
@@ -1818,7 +1841,7 @@ class WorkerPoller:
             global_pending = 0
             all_worker_counts: dict[str, int] = {}
             # operation_type -> aggregated bucket counts across schemas
-            pending_breakdown: dict[str, dict[str, int]] = {}
+            pending_breakdown: dict[str, PendingBuckets] = {}
             schemas_to_query: set[str | None] = set()
 
             async with self._backend.acquire() as conn:
@@ -1837,20 +1860,82 @@ class WorkerPoller:
                     # Bucket pending rows by the same predicates the claim query
                     # filters on, so an operator can see why pending > 0 but
                     # nothing is being claimed (orphaned batch_retain parents,
-                    # retry backoff, etc.).
+                    # retry backoff, a document or bank queued behind a peer).
+                    # Buckets are exclusive, in the claim's WHERE order, so a row
+                    # failing two filters is counted once.
+                    #
+                    # serialization_blocked restates key_serialization_sql and
+                    # bank_serialization_sql (engine/db/ops.py) as window
+                    # functions: within each serialization group only the oldest
+                    # eligible row can run, and only while no peer is processing.
+                    # The groups are the predicates' peer sets exactly: both match
+                    # peers on operation_type as well as bank_id (and key), which
+                    # matters since #4389 gave mental-model refreshes their own
+                    # serialization_key, so a refresh and a retain that share a
+                    # key never block each other. Ties on created_at break on
+                    # operation_id, as in the predicates.
+                    # A first version (#4527) called those predicates directly,
+                    # but they are a correlated NOT EXISTS per row: fine for the
+                    # claim query's LIMIT, quadratic here, because this counts
+                    # every pending row. 20k appends queued on one document took
+                    # 40 s per stats tick; this form takes ~115 ms on the same
+                    # rows (~310 ms on a 50k mixed backlog). Restating the rule
+                    # can drift from the claim query, which is what #4527 was, so
+                    # test_pending_breakdown_claimable_matches_claim_query checks
+                    # the counts against a real claim over the same rows.
+                    #
+                    # `live` reduces task_payload, next_retry_at and worker_id to
+                    # 0/1 flags up front so the window sorts carry only narrow
+                    # rows: a retain's payload holds the text being retained, and
+                    # dragging that through two sorts is what would push them to
+                    # disk on a real backlog.
+                    #
                     # Use SUM(CASE WHEN ...) instead of COUNT(*) FILTER (WHERE ...)
                     # for Oracle compatibility — FILTER is PG-specific.
+                    bank_serialized = ", ".join(f"'{t}'" for t in _BANK_SERIALIZED_OPERATION_TYPES)
                     try:
                         breakdown_rows = await conn.fetch(
                             f"""
+                            WITH live AS (
+                                SELECT operation_id, bank_id, operation_type, serialization_key, status, created_at,
+                                       CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END AS payload_null,
+                                       CASE WHEN task_payload IS NOT NULL
+                                                 AND next_retry_at IS NOT NULL AND next_retry_at > now()
+                                            THEN 1 ELSE 0 END AS retry_blocked,
+                                       CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END AS assigned,
+                                       CASE WHEN status = 'pending' AND task_payload IS NOT NULL
+                                                 AND (next_retry_at IS NULL OR next_retry_at <= now())
+                                            THEN 1 ELSE 0 END AS eligible
+                                FROM {table}
+                                WHERE status IN ('pending', 'processing')
+                            ),
+                            ranked AS (
+                                SELECT live.*,
+                                    MAX(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) OVER (
+                                        PARTITION BY bank_id, operation_type, serialization_key) AS key_busy,
+                                    MAX(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) OVER (
+                                        PARTITION BY bank_id, operation_type) AS bank_busy,
+                                    ROW_NUMBER() OVER (
+                                        PARTITION BY bank_id, operation_type, serialization_key, eligible
+                                        ORDER BY created_at, operation_id) AS key_rank,
+                                    ROW_NUMBER() OVER (
+                                        PARTITION BY bank_id, operation_type, eligible
+                                        ORDER BY created_at, operation_id) AS bank_rank
+                                FROM live
+                            )
                             SELECT
                                 operation_type,
                                 COUNT(*) AS total,
-                                SUM(CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END) AS payload_null,
-                                SUM(CASE WHEN next_retry_at IS NOT NULL AND next_retry_at > now()
-                                    THEN 1 ELSE 0 END) AS retry_blocked,
-                                SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
-                            FROM {table}
+                                SUM(payload_null) AS payload_null,
+                                SUM(retry_blocked) AS retry_blocked,
+                                SUM(CASE WHEN eligible = 1
+                                              AND ((serialization_key IS NOT NULL
+                                                    AND (key_busy = 1 OR key_rank > 1))
+                                                   OR (operation_type IN ({bank_serialized})
+                                                       AND (bank_busy = 1 OR bank_rank > 1)))
+                                    THEN 1 ELSE 0 END) AS serialization_blocked,
+                                SUM(assigned) AS assigned
+                            FROM ranked
                             WHERE status = 'pending'
                             GROUP BY operation_type
                             """
@@ -1860,13 +1945,12 @@ class WorkerPoller:
                         breakdown_rows = []
                     for br in breakdown_rows:
                         op_type = br["operation_type"] or "unknown"
-                        bucket = pending_breakdown.setdefault(
-                            op_type, {"total": 0, "payload_null": 0, "retry_blocked": 0, "assigned": 0}
-                        )
-                        bucket["total"] += br["total"]
-                        bucket["payload_null"] += br["payload_null"]
-                        bucket["retry_blocked"] += br["retry_blocked"]
-                        bucket["assigned"] += br["assigned"]
+                        bucket = pending_breakdown.setdefault(op_type, PendingBuckets())
+                        bucket.total += br["total"]
+                        bucket.payload_null += br["payload_null"]
+                        bucket.retry_blocked += br["retry_blocked"]
+                        bucket.serialization_blocked += br["serialization_blocked"]
+                        bucket.assigned += br["assigned"]
                         global_pending += br["total"]
 
                     try:
@@ -1999,20 +2083,36 @@ class WorkerPoller:
             logger.debug(f"Pool stats unavailable: {e}")
             return "unavailable"
 
-    def _log_pending_breakdown(self, breakdown: dict[str, dict[str, int]]) -> None:
+    def _log_pending_breakdown(self, breakdown: dict[str, PendingBuckets]) -> None:
         """Emit one [PENDING_BREAKDOWN] line bucketing pending rows by claimability.
 
-        Each bucket mirrors a predicate in the claim query:
-          * payload_null   - row has no task_payload (e.g. batch_retain parent
-                             whose reconciliation never fired); claim query
-                             skips it forever
-          * retry_blocked  - next_retry_at is still in the future
-          * assigned       - worker_id already set; another worker owns it
+        Each bucket mirrors a predicate in the claim query, first match wins:
+          * payload_null          - row has no task_payload (e.g. batch_retain
+                                    parent whose reconciliation never fired);
+                                    claim query skips it forever
+          * retry_blocked         - next_retry_at is still in the future
+          * serialization_blocked - queued behind a peer: an older or running
+                                    op for the same document / mental model,
+                                    or a running consolidation or
+                                    graph_maintenance for the same bank.
+                                    Not necessarily stuck: when the group's
+                                    oldest retain is claimed, up to 16 of the
+                                    retains queued behind it are folded into
+                                    that execution (engine.retain.fold), so
+                                    these can drain with the next claim
 
-        ``claimable`` is the residual that *should* be picked up on the next
-        poll. If ``claimable > 0`` while workers report free slots, the bug is
-        somewhere else (lock contention, tenant discovery, etc.) - this line
-        narrows the search.
+        ``claimable`` is what *should* be picked up on the next poll. If
+        ``claimable > 0`` while workers report free slots, the bug is somewhere
+        else (lock contention, tenant discovery, etc.) - this line narrows the
+        search.
+
+        ``assigned`` (worker_id set on a pending row) is reported but not
+        subtracted. It used to be, but no claim query filters on worker_id, so
+        those rows are claimed like any other; subtracting them under-reported
+        claimable. Normal operation never produces it: worker_id is only set by
+        mark_operations_processing, and every path back to 'pending' clears it.
+        A non-zero ``assigned`` is therefore a stale marker left by some path
+        that requeued a row without clearing it, not a queue condition.
         """
         if not breakdown:
             return
@@ -2020,11 +2120,10 @@ class WorkerPoller:
         parts = []
         for op_type in sorted(breakdown):
             b = breakdown[op_type]
-            claimable = b["total"] - b["payload_null"] - b["retry_blocked"] - b["assigned"]
             parts.append(
-                f"{op_type}: total={b['total']} claimable={claimable} "
-                f"payload_null={b['payload_null']} retry_blocked={b['retry_blocked']} "
-                f"assigned={b['assigned']}"
+                f"{op_type}: total={b.total} claimable={b.claimable} "
+                f"payload_null={b.payload_null} retry_blocked={b.retry_blocked} "
+                f"serialization_blocked={b.serialization_blocked} assigned={b.assigned}"
             )
         logger.info(f"[PENDING_BREAKDOWN] {' | '.join(parts)}")
 
