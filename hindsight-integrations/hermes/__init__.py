@@ -460,20 +460,36 @@ class HindsightMemoryProvider(MemoryProvider):
             return False
 
     def unavailable_reason(self) -> str:
-        """Install hint for an unavailable local_embedded runtime (is_available() gates
+        """Install hint for an unavailable provider: the local_embedded runtime that cannot be
+        imported, or a cloud config with neither an endpoint nor a key (is_available() gates
         initialize() out, so the hint it would log never fires; agent_init shows this).
 
         ``is_available()`` returns False for local modes when the embedded runtime can't be imported, so
         ``initialize()`` — and the hint it would log — is never reached (#7718). Surface the install
-        guidance here, where agent_init warns about an unavailable provider.
+        guidance here, where agent_init warns about an unavailable provider. Cloud mode dead-ends the
+        same way in the other direction: with no key and no endpoint the provider is dropped and the
+        warning never names the variables to set — the host's warning text says *why* they can be
+        missing (a service unit does not inherit ``~/.hermes/.env``), not *which* ones.
+        NousResearch/hermes-agent#86078.
         """
         try:
-            if _load_config().get("mode", "cloud") not in _LOCAL_MODES:
-                return ""
+            config = _load_config()
+            mode = config.get("mode", "cloud")
         except Exception:
             return ""
-        available, reason = _check_local_runtime()
-        return "" if available else _local_runtime_hint(reason).strip()
+        if mode in _LOCAL_MODES:
+            available, reason = _check_local_runtime()
+            return "" if available else _local_runtime_hint(reason).strip()
+        if mode == "cloud" and not (
+            _cloud_api_key(config) or config.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
+        ):
+            return (
+                "Hindsight cloud mode has no endpoint or API key: set HINDSIGHT_API_URL and "
+                "HINDSIGHT_API_KEY in the environment this agent runs in, or write api_url and "
+                f"apiKey into {get_hermes_home() / 'hindsight' / 'config.json'} "
+                "('hermes memory setup' fills both)."
+            )
+        return ""
 
     def save_config(self, values, hermes_home):
         """Merge *values* into $HERMES_HOME/hindsight/config.json."""
