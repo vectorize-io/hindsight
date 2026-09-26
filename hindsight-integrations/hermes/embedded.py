@@ -235,6 +235,16 @@ def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | No
     return env_values
 
 
+# The keys ``_build_embedded_profile_env`` emits only while the matching knob is set. The sync check
+# has to carry them even when the build does not: the file is what a daemon started without an
+# explicit value reads, so clearing ``llm_base_url``/``idle_timeout`` would leave the previous value
+# live and still report the env as in sync. Optional keys are governed in both directions.
+_OPTIONAL_PROFILE_ENV_KEYS = (
+    "HINDSIGHT_API_LLM_BASE_URL",
+    "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT",
+)
+
+
 def _secure_write_profile_env(profile_env: Path, content: str) -> None:
     """Create/overwrite *profile_env* owner-only (0600); a pre-existing file is
     tightened BEFORE the plaintext LLM API key is written."""
@@ -274,3 +284,21 @@ def _materialize_embedded_profile_env(config: dict[str, Any], *, llm_api_key: st
             profile_env.unlink()
         raise
     return profile_env
+
+
+def _profile_env_out_of_sync(config: dict[str, Any], *, llm_api_key: str | None = None) -> bool:
+    """Whether the profile env file disagrees with config on a key this build governs.
+
+    The governed set is the keys ``_build_embedded_profile_env`` produces, plus the optional ones it
+    omits while their knob is unset (``_OPTIONAL_PROFILE_ENV_KEYS``): a key missing from the build
+    means it must be missing from the file too, or clearing the knob leaves the old value live.
+    Keys this build never owns (added by hindsight-embed, or set by the operator) are not a
+    mismatch. The file is shared with hindsight-embed, which appends its own (``HINDSIGHT_API_PORT``
+    and friends) on every daemon start, so comparing the two mappings whole was permanently
+    unequal — every start rewrote the file and SIGTERM'd a healthy daemon, in-flight retains
+    included.
+    """
+    expected = _build_embedded_profile_env(config, llm_api_key=llm_api_key)
+    on_disk = _load_simple_env(_embedded_profile_env_path(config))
+    governed = set(expected) | set(_OPTIONAL_PROFILE_ENV_KEYS)
+    return any(on_disk.get(key) != expected.get(key) for key in governed)
