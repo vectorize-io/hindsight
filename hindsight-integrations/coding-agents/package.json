@@ -35,6 +35,9 @@
     "hindsight-zcode-hook": "dist/zcode-hook.js",
     "hindsight-zcode-sessionstart-hook": "dist/zcode-sessionstart-hook.js",
     "hindsight-zcode-stop-hook": "dist/zcode-stop-hook.js",
+    "hindsight-traecode-hook": "dist/traecode-hook.js",
+    "hindsight-traecode-sessionstart-hook": "dist/traecode-sessionstart-hook.js",
+    "hindsight-traecode-stop-hook": "dist/traecode-stop-hook.js",
     "hindsight-droid-hook": "dist/droid-hook.js",
     "hindsight-droid-sessionstart-hook": "dist/droid-sessionstart-hook.js",
     "hindsight-droid-stop-hook": "dist/droid-stop-hook.js"

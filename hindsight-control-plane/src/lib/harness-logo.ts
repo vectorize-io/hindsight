@@ -112,6 +112,7 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
     invertOnDark: true,
   },
   zcode: { id: "zcode", label: "ZCode", src: "/img/harness/zcode.svg" },
+  traecode: { id: "traecode", label: "TraeCode", src: "/img/harness/traecode.png" },
 };
 
 const HARNESS_TAG_PREFIX = "harness:";

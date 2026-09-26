@@ -42,6 +42,7 @@ export const CODING_AGENT_HARNESSES: CodingAgentHarness[] = [
   {id: 'qwen-code', label: 'Qwen Code', file: 'qwen-code.svg'},
   {id: 'factory-droid', label: 'Factory Droid', file: 'factory-droid.svg'},
   {id: 'zcode', label: 'ZCode', file: 'zcode.svg'},
+  {id: 'traecode', label: 'TraeCode', file: 'traecode.png'},
   {id: 'antigravity-cli', label: 'Antigravity CLI', file: 'antigravity-cli.png'},
   {id: 'devin-cli', label: 'Devin CLI', file: 'devin-cli.svg'},
   {id: 'cline-cli', label: 'Cline CLI', file: 'cline-cli.svg'},

@@ -19,7 +19,7 @@ import { cpSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKILL_DIRS } from "./skill-dirs";
+import { resolveSkillDirs } from "./skill-dirs";
 
 /** The packaged skill dir (pkgRoot/skill): one level up from the flat `dist/` bundle, two from this
  *  file in the source tree — so the source tree resolves it too, and a test asserts on the real
@@ -35,7 +35,7 @@ export function syncCompanionSkill(
   opts: { home?: string; srcDir?: string; install?: boolean } = {}
 ): void {
   try {
-    const parts = SKILL_DIRS[harness];
+    const parts = resolveSkillDirs(harness, opts.home ?? homedir());
     if (!parts) return; // host without a skills DIRECTORY (opencode, opencode2 — see skill-dirs.ts)
     const src = opts.srcDir ?? packagedSkillDir();
     const srcMd = join(src, "SKILL.md");

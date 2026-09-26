@@ -200,6 +200,24 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       zcode.retain.journal?.assistantText({ responseText: "", responsePreview: "trunc" })
     ).toBe("trunc");
     expect(zcode.retain.journal?.assistantText({})).toBe("");
+
+    const traecode = HOOK_HARNESSES.traecode;
+    expect(traecode.configStyle).toBe("nested");
+    expect(traecode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "traecode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "traecode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "traecode-stop-hook.js", timeout: 60 },
+    });
+    expect(traecode.prompt.parse({ prompt: "hi", cwd: "/repo", session_id: "s1" })).toEqual({
+      prompt: "hi",
+      cwd: "/repo",
+      sessionId: "s1",
+    });
+    // The Stop payload carries the full reply, and the journal closes the turn with it.
+    expect(traecode.retain.journal?.assistantText({ last_assistant_message: " reply " })).toBe(
+      "reply"
+    );
+    expect(traecode.retain.journal?.assistantText({})).toBe("");
   });
 
   /**

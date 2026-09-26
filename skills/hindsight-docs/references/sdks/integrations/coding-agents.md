@@ -5,7 +5,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **TraeCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -221,6 +221,56 @@ refuses to touch an MCP server named `hindsight` that it did not write.
 > `Stop` hook records the reply - and the write-back then behaves like every other agent's,
 > appending each new turn to the same session document. `--import-conversations` is therefore not
 > available for ZCode: there is no past history on disk to backfill from.
+
+####  TraeCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install traecode
+```
+
+Three hook registrations in TraeCode's user-level `hooks.json`, the companion skill under the
+same dot-dir's `skills/`, and two `filesystem.readWrite` rules in `sandbox.json` — one for
+`~/.hindsight`, without which the hooks fail silently (exit 0, no effect) because the sandbox
+blocks those writes, and one for Trae's per-window storage DBs
+(`<userData>/User/workspaceStorage`), which the SessionStart hook seeds with the workspace's
+MCP enable switch. Network is allowed by default. TRAE ships two editions with different brand
+roots — the CN build uses `~/.trae-cn` and "Trae CN", the international build `~/.trae` and
+"Trae" — so every path resolves by probing for the edition dir that exists and defaulting to the
+CN names. Plain JSON files, no CLI round-trip. TraeCode speaks Claude Code's hook protocol, so
+recall and injection work exactly as they do there; the event map lives under the top-level
+`hooks` key and the `version` field the host writes is preserved.
+
+MCP is registered per repo, never at the user level: Trae launches user-level servers with the
+Electron process's cwd (your home directory), where a hindsight entry either self-disables under
+`optInOnly` (zero tools) or resolves the home bank instead of the repo's. So the installer
+pre-seeds the per-repo registration for every repo opted in via `mapPathToBank` — a
+`mcpServers.hindsight` stdio server in `<repo>/.trae/mcp.json`, pinned to that repo via
+`HINDSIGHT_MCP_PROJECT_CWD` — migrates any stale user-level entry back out of
+`<userData>/User/mcp.json`, and seeds the per-workspace enable switch directly. The SessionStart
+hook re-checks both on every session and writes them only when missing or stale (idempotent
+fallback) — Trae's hook sandbox cannot be relied on to perform those writes itself. The per-repo
+file is merged not clobbered, and gitignored when the repo has a `.gitignore` (the path is
+machine-specific). A foreign `hindsight` entry — in either file — is the user's own server and
+is never touched.
+
+Trae only reads that per-repo file once the global `trae.mcp.enableWorkspaceMcp` setting is on
+(default off), so the installer handles the gate: an interactive run asks, a non-interactive run
+takes `--enable-workspace-mcp`, and either way the setting is written and Trae windows must be
+restarted to pick it up (declining, or a settings file with comments, prints the manual step).
+Registrations and enable switches take effect on the NEXT window, so the MCP tools appear when
+you reload after the first session; repos opted into `mapPathToBank` after install need one more
+`install traecode` run, and if a repo's server still shows disabled in the MCP panel, flip it on
+once there.
+
+> One manual step remains after install (UI state the installer cannot write): enable the hooks
+> under TraeCode Settings > Hooks. If you declined the workspace-MCP prompt, enable it later in
+> Trae settings (search "enableWorkspaceMcp").
+
+> TraeCode keeps no readable session transcript - sessions live in an encrypted local DB or the
+> cloud. Like ZCode, its conversation is journaled by the plugin itself: the prompt hook records
+> what you asked, and the `Stop` hook closes the turn with the reply it carries in
+> `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
+> there is no past history on disk to backfill from.
 
 ####  Antigravity CLI
 

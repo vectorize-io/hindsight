@@ -130,6 +130,12 @@ export interface SessionStartHookSpec {
   harness: string;
   parse(event: Record<string, unknown>): { cwd?: string; sessionId?: string };
   emit(output: SessionStartOutput): unknown;
+  /** Optional per-repo host registration, run once memory is confirmed LIVE for the repo (after
+   *  bank derivation and the opt-in/`disabled` gates). Returns an optional user-facing banner
+   *  hint (registration maintenance is host business, its absence a host problem) and must never
+   *  throw. TraeCode uses this to keep `<repo>/.trae/mcp.json` registering its MCP server and to
+   *  nudge when the workspace-MCP gate hides it (core/traecode-mcp.ts). */
+  ensureMcpRegistration?: (cwd: string) => string | undefined;
 }
 
 /**
@@ -385,6 +391,9 @@ export async function runSessionStartHook(
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+    const mcpHint = spec.ensureMcpRegistration?.(cwd);
     // Daemon mode: warm it up now, before the user has typed anything. The start itself is
     // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
     // cold one keeps coming up in the background and is picked up by a later turn.
@@ -398,6 +407,10 @@ export async function runSessionStartHook(
     });
 
     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+    if (mcpHint)
+      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${mcpHint}` : mcpHint;
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }
