@@ -98,6 +98,44 @@ def _local_runtime_hint(reason: str | None) -> str:
 _local_runtime_install_attempted = False
 
 
+def _optional_dependency_installer():
+    """Hermes's environment-aware optional-dependency installer, or ``None`` when unusable.
+
+    ``tools.lazy_deps.install_specs`` was the supported way for a plugin to pull an optional
+    dependency for years. Hermes 0.21.5 turned that module into a **relaunch shim**: its
+    ``install_specs`` is annotated ``-> NoReturn`` because it calls
+    ``hermes_cli._old_updater.stop_for_relaunch()``, which re-runs the whole update handoff and
+    exits the calling process. Invoked from an availability probe that turns *an optional runtime is
+    missing* — previously a degraded provider — into *every new session dies*, and it wedges a
+    gateway turn until its drain timeout.
+
+    So the module is imported lazily and a callable that declares it never returns is refused: an
+    installer has to hand back an outcome. Absent, unimportable or shimmed, the caller degrades with
+    the manual install hint instead of exiting.
+    """
+    import importlib
+    from typing import NoReturn
+
+    try:
+        module = importlib.import_module("tools.lazy_deps")
+    except Exception:
+        return None
+    installer = getattr(module, "install_specs", None)
+    if not callable(installer):
+        return None
+    declared = getattr(installer, "__annotations__", {}).get("return")
+    # Two independent fingerprints, because either can be missing on its own: the NoReturn
+    # declaration (some packagers strip annotations) and the shim's own import of the relaunch
+    # helper it wraps. A genuine installer matches neither.
+    if declared is NoReturn or declared == "NoReturn" or hasattr(module, "stop_for_relaunch"):
+        logger.warning(
+            "tools.lazy_deps.install_specs is a relaunch shim in this Hermes build (annotated "
+            "NoReturn); not calling it — it would re-run the update handoff and exit this process."
+        )
+        return None
+    return installer
+
+
 def _ensure_local_runtime() -> tuple[bool, str | None]:
     """``_check_local_runtime``, self-installing ``hindsight-all`` once if that is what's missing.
 
@@ -113,8 +151,10 @@ def _ensure_local_runtime() -> tuple[bool, str | None]:
     Only fires for the configured provider, so a stale ``local_embedded`` in ``config.json`` cannot
     make a dashboard availability probe pull the ML stack down. Only fires when the hint recognises
     the reason as a missing package: an import that fails for another cause (older CPUs raise inside
-    NumPy) is not something reinstalling can fix. Once per process, and ``install_specs`` enforces
-    ``security.allow_lazy_installs`` and sealed-venv policy for us.
+    NumPy) is not something reinstalling can fix. Once per process. The installer is resolved through
+    ``_optional_dependency_installer()`` — a build whose ``tools.lazy_deps`` is the relaunch shim is
+    refused, so the worst case here is a degraded provider, never a killed process; when the installer
+    does exist it still enforces ``security.allow_lazy_installs`` and the sealed-venv policy for us.
     """
     global _local_runtime_install_attempted
     available, reason = _check_local_runtime()
@@ -127,10 +167,19 @@ def _ensure_local_runtime() -> tuple[bool, str | None]:
         return available, reason
 
     _local_runtime_install_attempted = True
-    logger.warning("Hindsight local_embedded runtime is missing (%s); installing hindsight-all...", reason)
-    from tools.lazy_deps import install_specs
 
-    outcome = install_specs(["hindsight-all"], timeout=600)
+    installer = _optional_dependency_installer()
+    if installer is None:
+        logger.warning(
+            "Hindsight local_embedded runtime is missing (%s) and this Hermes build exposes no "
+            "usable optional-dependency installer. Install it with: "
+            "uv pip install --python %s hindsight-all",
+            reason, sys.executable,
+        )
+        return available, reason
+
+    logger.warning("Hindsight local_embedded runtime is missing (%s); installing hindsight-all...", reason)
+    outcome = installer(["hindsight-all"], timeout=600)
     if not outcome.ok:
         logger.warning(
             "Could not install hindsight-all automatically: %s",
