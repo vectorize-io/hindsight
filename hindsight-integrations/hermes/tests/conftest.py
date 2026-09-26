@@ -120,6 +120,7 @@ def _install_hermes_stubs(hermes_home: Path) -> None:
     module("plugins.memory", _get_active_memory_provider=lambda: "hindsight")
     module(
         "plugins.memory.config_schema",
+        KIND_JSON="json",
         KIND_SECRET="secret",
         KIND_SELECT="select",
         KIND_TEXT="text",

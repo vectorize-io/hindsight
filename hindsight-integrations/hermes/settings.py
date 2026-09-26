@@ -130,3 +130,29 @@ def _resolve_bank_id_template(template: str, fallback: str, **placeholders: str)
         logger.warning("Invalid bank_id_template %r: %s — using fallback %r", template, exc, fallback)
         return fallback
     return re.sub(r"([-_])\1+", r"\1", rendered).strip("-_") or fallback
+
+
+def _resolve_bank_id_for_user(
+    default_bank_id: str,
+    mapping: Any,
+    platform: str,
+    user_id: str,
+) -> str:
+    """Apply an explicit platform-scoped user bank override.
+
+    Gateway user ids are only unique within one platform, so configured gateway
+    keys use <platform>:<user_id>. A raw user_id key is consulted only when no
+    platform is available, preventing identical ids on different adapters from
+    crossing memory banks.
+
+    Unmatched, empty, or malformed entries preserve default_bank_id.
+    """
+    if not user_id or not isinstance(mapping, dict):
+        return default_bank_id
+
+    normalized_platform = str(platform or "").strip().lower()
+    lookup_key = f"{normalized_platform}:{user_id}" if normalized_platform else user_id
+    routed = mapping.get(lookup_key)
+    if not isinstance(routed, str) or not routed.strip():
+        return default_bank_id
+    return _sanitize_bank_segment(routed) or default_bank_id

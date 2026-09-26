@@ -1,6 +1,7 @@
 """Hindsight's declared config surface — rendered by the generic desktop panel."""
 
 from plugins.memory.config_schema import (
+    KIND_JSON,
     KIND_SECRET,
     KIND_SELECT,
     KIND_TEXT,
@@ -45,6 +46,15 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         ),
         ProviderField(
             key="bank_id", label="Bank ID", kind=KIND_TEXT, default="hermes", aliases=("bankId",), inline=True
+        ),
+        ProviderField(
+            key="bank_id_by_user",
+            label="Per-user bank routing",
+            kind=KIND_JSON,
+            default={},
+            description="Platform-scoped <platform>:<user_id> to bank_id mapping for hard gateway-user memory isolation.",
+            info="Use exact gateway keys such as dingtalk:<user_id>. Keep identifiers in private profile config.",
+            group="Advanced",
         ),
         ProviderField(
             key="recall_budget",

@@ -60,6 +60,7 @@ from .settings import (
     _normalize_observation_scopes,
     _normalize_retain_tags,
     _parse_int_setting,
+    _resolve_bank_id_for_user,
     _resolve_bank_id_template,
 )
 
@@ -573,6 +574,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Optional template to derive bank_id dynamically. Placeholders: {profile}, {workspace}, {platform}, {user}, {session}. Example: hermes-{profile}",
                 "default": "",
             },
+            {
+                "key": "bank_id_by_user",
+                "description": "Optional platform-scoped <platform>:<user_id> -> bank_id mapping for hard per-user bank routing. Matching users override the normal static/template bank.",
+                "default": {},
+            },
             {"key": "bank_mission", "description": "Mission/purpose description for the memory bank"},
             {"key": "bank_retain_mission", "description": "Custom extraction prompt for memory retention"},
             {
@@ -1026,6 +1032,15 @@ class HindsightMemoryProvider(MemoryProvider):
             user=self._user_id,
             session=self._session_id,
         )
+        default_bank_id = self._bank_id
+        self._bank_id = _resolve_bank_id_for_user(
+            default_bank_id,
+            cfg.get("bank_id_by_user"),
+            self._platform,
+            self._user_id,
+        )
+        if self._bank_id != default_bank_id:
+            logger.info("Hindsight platform-scoped per-user bank override applied")
         budget = cfg.get("recall_budget") or cfg.get("budget") or banks.get("budget", "mid")
         self._budget = budget if budget in _VALID_BUDGETS else "mid"
         memory_mode = cfg.get("memory_mode", "hybrid")
