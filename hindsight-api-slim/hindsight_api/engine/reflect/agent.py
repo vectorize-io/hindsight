@@ -979,7 +979,7 @@ async def _run_reflect_agent_inner(
         if len(chunks) <= 1:
             prompt = build_final_prompt(
                 query,
-                context_history,
+                chunks[0] if chunks else context_history,
                 bank_profile,
                 context,
                 max_context_tokens=max_context_tokens,
@@ -1083,6 +1083,8 @@ async def _run_reflect_agent_inner(
     # tool_use blocks with one id back into the request. ``_unique_tool_call_ids``
     # reads and extends this set.
     emitted_wire_ids: set[str] = set()
+    compacted_for_forced_step = False
+    successful_recall = False
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
@@ -1090,29 +1092,6 @@ async def _run_reflect_agent_inner(
         # (issue #2122). Raises OperationCancelledError when fired.
         if cancel_check is not None:
             cancel_check()
-
-        is_last = iteration == max_iterations - 1
-
-        if is_last:
-            # Out of iterations: no more retrieval, just the answer.
-            return await _finish(iteration + 1)
-
-        # Proactive context-window guard: if accumulated messages would exceed the
-        # configured token budget, bail out early and synthesize from what we have.
-        estimated_tokens = _count_messages_tokens(messages)
-        if estimated_tokens >= max_context_tokens and (
-            bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
-        ):
-            logger.warning(
-                f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
-                f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
-            )
-            # Not ``_finish``: asking for ``done`` appends to a conversation that is
-            # already over the budget. The standalone prompt splits the evidence.
-            return await _forced_final_synthesis(iteration + 1)
-
-        # Call LLM with tools
-        llm_start = time.time()
 
         # Determine tool_choice for this iteration.
         # Force the full hierarchical retrieval path (only for enabled tools) before allowing auto.
@@ -1128,10 +1107,77 @@ async def _run_reflect_agent_inner(
         if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
             # A fresh mental model already short-circuited the forced path.
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
+        elif iteration < len(forced_sequence) and forced_sequence[iteration] == "recall" and successful_recall:
+            # Some providers return recall despite the preceding named choice.
+            # A successful raw-fact retrieval already satisfied this forced step.
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
         elif iteration < len(forced_sequence):
             iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
+
+        # A full result from an earlier layer must not bypass a still-required
+        # retrieval step. Compact only the model-facing tool results, keeping each
+        # assistant call paired with its tool result. The complete results remain
+        # in context_history and tool_trace for final synthesis and citations.
+        estimated_tokens = _count_messages_tokens(messages)
+        pending_forced_tool = forced_sequence[iteration] if iter_tool_choice is not LLM_TOOL_CHOICE_AUTO else None
+        if iteration == max_iterations - 1:
+            if pending_forced_tool is not None:
+                raise ReflectNoAnswerError(
+                    f"Reflect reached the iteration limit before required {pending_forced_tool} retrieval."
+                )
+            if compacted_for_forced_step:
+                return await _forced_final_synthesis(iteration + 1)
+            return await _finish(iteration + 1)
+
+        if compacted_for_forced_step and pending_forced_tool is None:
+            # The agent saw shortened evidence to make the required retrieval fit.
+            # Synthesize from complete context_history before any auto/done call.
+            return await _forced_final_synthesis(iteration + 1)
+
+        if pending_forced_tool is not None and any(message.get("role") == "tool" for message in messages):
+            # _count_messages_tokens counts text and arguments, but misses schema,
+            # role framing, and provider call overhead. Leave explicit headroom.
+            headroom = count_prompt_tokens(json.dumps(tools, ensure_ascii=False)) + max(256, 16 * len(messages))
+            if estimated_tokens + headroom >= max_context_tokens:
+                for index, message in enumerate(messages):
+                    if estimated_tokens + headroom < max_context_tokens:
+                        break
+                    if message.get("role") != "tool":
+                        continue
+                    compacted = dict(message)
+                    compacted["content"] = (
+                        "[Earlier tool result omitted from this prompt; full evidence retained for final synthesis.]"
+                    )
+                    messages[index] = compacted
+                    compacted_for_forced_step = True
+                    estimated_tokens = _count_messages_tokens(messages)
+                if estimated_tokens + headroom >= max_context_tokens:
+                    raise ReflectNoAnswerError(
+                        f"Reflect cannot fit required {pending_forced_tool} call in the context budget "
+                        f"after compacting earlier tool results (iteration {iteration + 1})."
+                    )
+                # A cached prefix may contain the old, longer tool result. Never send
+                # a compacted conversation against it; cleanup owns the old cache.
+                rolling_cache_name = None
+                rolling_cache_boundary = 0
+                pending_cache_task = None
+                pending_cache_boundary = 0
+
+        # Proactive context-window guard applies only after the forced sequence
+        # has completed (or a fresh mental model released it).
+        if estimated_tokens >= max_context_tokens and (
+            bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
+        ):
+            logger.warning(
+                f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
+                f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
+            )
+            return await _forced_final_synthesis(iteration + 1)
+
+        # Call LLM with tools
+        llm_start = time.time()
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -1216,6 +1262,11 @@ async def _run_reflect_agent_inner(
             # prompt was too big for the model, which is a budgeting problem, not a
             # broken dependency, and the evidence gathered so far is intact.
             if _is_context_overflow_error(e):
+                if pending_forced_tool is not None:
+                    raise ReflectNoAnswerError(
+                        f"Reflect could not complete required {pending_forced_tool} call because the provider "
+                        f"rejected the context on iteration {iteration + 1}."
+                    ) from e
                 logger.warning(
                     f"[REFLECT {reflect_id}] Context window exceeded on iteration {iteration + 1}, "
                     "forcing final synthesis from gathered evidence."
@@ -1232,6 +1283,17 @@ async def _run_reflect_agent_inner(
 
         finally:
             reset_queue_wait_sink(queue_token)
+
+        # A named tool choice is a request to the provider, not proof that it
+        # obeyed. Do not accept a final answer built only from observations when
+        # this turn was reserved for raw-fact recall.
+        if pending_forced_tool == "recall" and (
+            any(_is_done_tool(tc.name) for tc in result.tool_calls)
+            or not any(_normalize_tool_name(tc.name) == "recall" for tc in result.tool_calls)
+        ):
+            raise ReflectNoAnswerError(
+                f"Reflect did not receive the required recall tool call on iteration {iteration + 1}."
+            )
 
         # No tool calls this turn.
         if not result.tool_calls:
@@ -1391,7 +1453,7 @@ async def _run_reflect_agent_inner(
             # only kind that references it); the next turn's pre-call resolve then
             # adopts it. Resolve any prior in-flight create first so we don't drop
             # its handle.
-            if incremental_caching and next_is_auto:
+            if incremental_caching and next_is_auto and not compacted_for_forced_step:
                 await _resolve_pending_cache()
                 _schedule_cache(call_msg_count)
 
@@ -1452,6 +1514,17 @@ async def _run_reflect_agent_inner(
                 if isinstance(output, dict) and "error" in output:
                     logger.warning(
                         f"[REFLECT {reflect_id}] Tool {normalized_tool_name} returned error: {output['error']}"
+                    )
+                if (
+                    normalized_tool_name == "recall"
+                    and isinstance(output, dict)
+                    and isinstance(output.get("memories"), list)
+                    and "error" not in output
+                ):
+                    successful_recall = True
+                elif normalized_tool_name == "recall" and pending_forced_tool == "recall":
+                    raise ReflectNoAnswerError(
+                        f"Reflect's required recall returned no valid memories result on iteration {iteration + 1}."
                     )
 
                 # Track available IDs from tool results (only for successful responses)
