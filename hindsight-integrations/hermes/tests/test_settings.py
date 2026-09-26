@@ -2,17 +2,17 @@
 
 from hindsight_hermes.settings import (
     _normalize_observation_scopes,
-    _normalize_retain_tags,
+    _normalize_string_list,
     _parse_int_setting,
     _resolve_bank_id_template,
 )
 
 
 def test_retain_tags_accepts_csv_json_and_lists():
-    assert _normalize_retain_tags("a, b ,a") == ["a", "b"]
-    assert _normalize_retain_tags('["a", "b"]') == ["a", "b"]
-    assert _normalize_retain_tags(["a", "a", "b"]) == ["a", "b"]
-    assert _normalize_retain_tags(None) == []
+    assert _normalize_string_list("a, b ,a") == ["a", "b"]
+    assert _normalize_string_list('["a", "b"]') == ["a", "b"]
+    assert _normalize_string_list(["a", "a", "b"]) == ["a", "b"]
+    assert _normalize_string_list(None) == []
 
 
 def test_parse_int_setting_falls_back_on_garbage():

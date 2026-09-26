@@ -1,6 +1,7 @@
 """Hindsight's declared config surface — rendered by the generic desktop panel."""
 
 from plugins.memory.config_schema import (
+    KIND_BOOL,
     KIND_SECRET,
     KIND_SELECT,
     KIND_TEXT,
@@ -45,6 +46,39 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         ),
         ProviderField(
             key="bank_id", label="Bank ID", kind=KIND_TEXT, default="hermes", aliases=("bankId",), inline=True
+        ),
+        ProviderField(
+            key="mirror_to_own_bank",
+            label="Mirror to own bank",
+            kind=KIND_BOOL,
+            default=False,
+            inline=True,
+            description="When scoped to a workspace/project bank, ALSO write to this bank_id. Off = single-bank behavior.",
+        ),
+        ProviderField(
+            key="additional_banks",
+            label="Additional banks",
+            kind=KIND_TEXT,
+            default="",
+            inline=True,
+            description="Extra Hindsight banks to write to and recall from, in priority order (comma-separated). Off = single-bank behavior.",
+        ),
+        ProviderField(
+            key="recall_additional_banks",
+            label="Recall-only banks",
+            kind=KIND_TEXT,
+            default="",
+            aliases=("recallAdditionalBanks",),
+            inline=True,
+            description="Extra Hindsight banks to recall from but never write to, searched after the write banks (comma-separated). A bank also in Additional banks stays writable.",
+        ),
+        ProviderField(
+            key="trusted_project_dirs",
+            label="Trusted project folders",
+            kind=KIND_TEXT,
+            default="",
+            inline=True,
+            description="Folders whose git repositories may choose their own bank with a .hindsight/config.toml (comma-separated). Empty = repository config files are ignored.",
         ),
         ProviderField(
             key="recall_budget",
