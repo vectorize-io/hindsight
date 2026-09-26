@@ -160,6 +160,27 @@ def _outer_json_span(content: str) -> str | None:
     return candidate if _is_json(candidate) else None
 
 
+def _find_fenced_blocks(lines: list[str]) -> list[tuple[int, int]]:
+    """Return (start, end) line-index pairs for each non-overlapping fenced block.
+
+    A block's ``end`` line is a lone ``` — its own definition of a fence close,
+    matching the single-block scan this replaces. Scanning resumes right after
+    a matched close, so an unmatched opening ``` (no closing line found) is
+    simply skipped rather than swallowing the rest of the text as one block.
+    """
+    blocks = []
+    i, n = 0, len(lines)
+    while i < n:
+        if lines[i].startswith("```"):
+            end = next((j for j in range(i + 1, n) if lines[j].strip() == "```"), None)
+            if end is not None:
+                blocks.append((i, end))
+                i = end + 1
+                continue
+        i += 1
+    return blocks
+
+
 def _strip_code_fences(content: str) -> str:
     """Strip markdown code fences from LLM response if present.
 
@@ -167,24 +188,40 @@ def _strip_code_fences(content: str) -> str:
     wrap JSON responses in ```json ... ``` fences even when json_object
     response format is requested. Fences are detected by line (a closing
     ``` must sit alone on its line) so triple-backticks *inside* JSON string
-    values do not truncate the payload. When the stripped candidate is not
-    valid JSON (partial fence, prose-wrapped output, truncated response), fall
-    back to the outermost parseable JSON span. Returns the original content
-    unchanged if no better candidate is found.
+    values do not truncate the payload.
+
+    When a response contains more than one fenced block — e.g. a model that
+    echoes a schema/example before its real answer — a block whose opening
+    line is tagged ```json and that itself parses as JSON is preferred over
+    an earlier untagged or differently-tagged block; otherwise the first
+    block wins, as before (#4817's own repro only has one fence, but the
+    same silent-wrong-block failure mode applies to any multi-fence reply,
+    not just Anthropic's).
+
+    When no candidate block parses as valid JSON (partial fence, prose-wrapped
+    output, truncated response), fall back to the outermost parseable JSON
+    span. Returns the original content unchanged if no better candidate is
+    found.
     """
     candidate = content
     if "```" in content:
         lines = content.split("\n")
-        # Find first line that starts a code fence (``` optionally followed by language)
-        fence_start = next((i for i, line in enumerate(lines) if line.startswith("```")), None)
-        if fence_start is not None:
-            # Find matching closing fence (``` alone or with trailing whitespace)
-            fence_end = next(
-                (j for j in range(fence_start + 1, len(lines)) if lines[j].strip() == "```"),
-                None,
-            )
-            if fence_end is not None:
-                candidate = "\n".join(lines[fence_start + 1 : fence_end]).strip()
+        blocks = _find_fenced_blocks(lines)
+        if blocks:
+            json_tagged = [(s, e) for s, e in blocks if lines[s][3:].strip().lower() == "json"]
+            # json-tagged blocks first (in their original order), then the rest.
+            ordered = json_tagged + [b for b in blocks if b not in json_tagged]
+            for start, end in ordered:
+                block_candidate = "\n".join(lines[start + 1 : end]).strip()
+                if _is_json(block_candidate):
+                    candidate = block_candidate
+                    break
+            else:
+                # No block parses standalone — keep the first block's text so the
+                # outer-span fallback below still gets a fair shot at it, matching
+                # the pre-multi-block behavior for a single non-JSON fence.
+                start, end = blocks[0]
+                candidate = "\n".join(lines[start + 1 : end]).strip()
 
     if _is_json(candidate):
         return candidate

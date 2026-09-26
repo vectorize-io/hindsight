@@ -44,6 +44,17 @@ def _tool_use_response(args: dict):
     return resp
 
 
+def _text_response(text: str):
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    resp = MagicMock()
+    resp.content = [block]
+    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0)
+    resp.stop_reason = "end_turn"
+    return resp
+
+
 @pytest.mark.asyncio
 async def test_strict_schema_uses_forced_tool_choice():
     """strict_schema=True ⇒ a single tool is defined and tool_choice forces it (no schema text-injection)."""
@@ -91,14 +102,7 @@ async def test_strict_schema_tool_use_never_hits_json_retry_loop():
 async def test_non_strict_keeps_text_injection_fallback():
     """strict_schema=False (default) preserves the legacy schema-in-prompt behavior."""
     provider = _make_anthropic_provider()
-    block = MagicMock()
-    block.type = "text"
-    block.text = '{"action":"skip","reason":"d"}'
-    resp = MagicMock()
-    resp.content = [block]
-    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0)
-    resp.stop_reason = "end_turn"
-    provider._client.messages.create = AsyncMock(return_value=resp)
+    provider._client.messages.create = AsyncMock(return_value=_text_response('{"action":"skip","reason":"d"}'))
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
         result = (
             await provider.call(
@@ -116,3 +120,57 @@ async def test_non_strict_keeps_text_injection_fallback():
     system_text = "".join(block["text"] for block in (kwargs.get("system") or []))
     assert "valid JSON matching this schema" in system_text
     assert isinstance(result, _Decision)
+
+
+@pytest.mark.asyncio
+async def test_strict_schema_fallback_tolerates_markdown_fenced_text():
+    """#4817: a gateway that drops tool_choice and returns a plain completion may
+    still wrap its JSON in a ```json fence (some Anthropic-compatible proxies do
+    this even when explicitly asked for raw JSON). The "model ignored the forced
+    tool" fallback must tolerate that fence exactly like the non-strict path does,
+    instead of a bare json.loads() that raises JSONDecodeError on the leading
+    backticks.
+    """
+    provider = _make_anthropic_provider()
+    # no tool_use block in the response — the gateway dropped tool_choice
+    provider._client.messages.create = AsyncMock(
+        return_value=_text_response('```json\n{"action": "skip", "reason": "dup"}\n```')
+    )
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "decide"}],
+                response_format=_Decision,
+                strict_schema=True,
+                scope="test",
+                max_retries=0,
+            )
+        ).content
+    assert isinstance(result, _Decision)
+    assert result.action == "skip"
+    assert result.reason == "dup"
+
+
+@pytest.mark.asyncio
+async def test_strict_schema_fallback_ignores_fence_marker_inside_json_value():
+    """The fallback must strip fences by *line* (like the shared
+    _strip_code_fences helper), not by splitting on the first "```json"
+    substring anywhere in the text — otherwise a JSON string value that
+    happens to mention the fence marker truncates the real payload.
+    """
+    provider = _make_anthropic_provider()
+    fenced = '```json\n{"action": "skip", "reason": "note: the marker ```json starts a fenced block"}\n```'
+    provider._client.messages.create = AsyncMock(return_value=_text_response(fenced))
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        result = (
+            await provider.call(
+                messages=[{"role": "user", "content": "decide"}],
+                response_format=_Decision,
+                strict_schema=True,
+                scope="test",
+                max_retries=0,
+            )
+        ).content
+    assert isinstance(result, _Decision)
+    assert result.action == "skip"
+    assert result.reason == "note: the marker ```json starts a fenced block"

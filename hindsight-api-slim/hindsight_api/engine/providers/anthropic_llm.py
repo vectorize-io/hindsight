@@ -26,6 +26,11 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+
+# Provider-agnostic pure helper (markdown-fence stripping before json.loads).
+# Not chat/completions behavior — see openai_responses_llm.py for the same
+# cross-module import of this and its siblings.
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -371,18 +376,23 @@ class AnthropicLLM(LLMInterface):
 
                 if use_forced_tool:
                     # Forced tool_use → the validated args are already a dict; no parsing,
-                    # no markdown-strip, no JSON-decode retry possible.
+                    # no markdown-strip, no JSON-decode retry possible. (Unless the
+                    # tool_use block itself is missing — see the fallback below.)
                     tool_input = None
                     for block in response.content:
                         if block.type == "tool_use" and block.name == _tool_name:
                             tool_input = block.input or {}
                             break
                     if tool_input is None:
-                        # Model ignored the forced tool (rare, e.g. a gateway that drops
-                        # tool_choice). Fall back to text parse so we don't hard-fail; the
-                        # existing retry loop still covers genuine errors.
+                        # Model/gateway ignored the forced tool (rare, e.g. a gateway that
+                        # drops tool_choice and returns a plain completion instead — #4817).
+                        # Fall back to text parse so we don't hard-fail; the existing retry
+                        # loop still covers genuine errors. A model that ignores tool_choice
+                        # writes prose+JSON exactly like the non-strict path below, so it
+                        # gets the same markdown-fence tolerance instead of a bare json.loads
+                        # that previously broke on any fenced response.
                         content = "".join(b.text for b in response.content if b.type == "text")
-                        tool_input = json.loads(content)
+                        tool_input = json.loads(_strip_code_fences(content))
                     content = json.dumps(tool_input)
                     result = tool_input if skip_validation else response_format.model_validate(tool_input)
                 else:
@@ -393,18 +403,7 @@ class AnthropicLLM(LLMInterface):
                             content += block.text
 
                     if response_format is not None:
-                        # Models may wrap JSON in markdown code blocks
-                        clean_content = content
-                        if "```json" in content:
-                            clean_content = content.split("```json")[1].split("```")[0].strip()
-                        elif "```" in content:
-                            clean_content = content.split("```")[1].split("```")[0].strip()
-
-                        try:
-                            json_data = json.loads(clean_content)
-                        except json.JSONDecodeError:
-                            # Fallback to parsing raw content if markdown stripping failed
-                            json_data = json.loads(content)
+                        json_data = json.loads(_strip_code_fences(content))
 
                         if skip_validation:
                             result = json_data
