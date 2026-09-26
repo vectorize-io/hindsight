@@ -567,6 +567,27 @@ class TestOracleQueryRewriter:
         query2, _, _ = _rewrite_pg_to_oracle("WHERE a = $1 AND b = $2")
         assert ":2" in query2
 
+    def test_array_position_keeps_list_order(self):
+        # Oracle has no array_position(); the list param must expand into a CASE ordinal.
+        import json
+        import uuid
+
+        from hindsight_api.engine.db.oracle import OracleConnection, _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "SELECT id FROM memory_units WHERE id = ANY($1::uuid[]) ORDER BY array_position($1::uuid[], id)"
+        )
+        assert "array_position(" not in query.lower()
+        assert "/*ARRAY_POSITION:1:id*/" in query
+
+        ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        expanded, params = OracleConnection._expand_any_lists(query, {"1": json.dumps(ids)})
+        assert "ORDER BY CASE id WHEN :ap" in expanded
+        assert "THEN 1" in expanded and "THEN 2" in expanded
+        assert "1" not in params  # every reference to the list was expanded
+        ap_values = [v for k, v in params.items() if k.startswith("ap")]
+        assert ap_values == [uuid.UUID(i).bytes for i in ids]  # RAW(16) binds, list order kept
+
     def test_cast_removal(self):
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 

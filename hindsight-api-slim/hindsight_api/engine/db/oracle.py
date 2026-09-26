@@ -80,6 +80,8 @@ _NOT_ALL_RE = re.compile(r"!=\s*ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 # LIKE ANY / NOT LIKE ALL — capture the column name before the operator
 _LIKE_ANY_RE = re.compile(r"(\w+)\s+LIKE\s+ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 _NOT_LIKE_ALL_RE = re.compile(r"(\w+)\s+NOT\s+LIKE\s+ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
+# array_position(:N, col) — PostgreSQL idiom for "keep the input list order"
+_ARRAY_POSITION_RE = re.compile(r"\barray_position\s*\(\s*:(\d+)\s*,\s*([\w.]+)\s*\)", re.IGNORECASE)
 
 _JSON_ARROW_TEXT_RE = re.compile(r'("?\w+"?)\s*->>\s*\'(\w+)\'')  # handles both col and "col"
 # Reserved-word columns ("trigger") are already quoted by the time this runs, so the
@@ -596,6 +598,11 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # col NOT LIKE ALL(:N) → (col NOT LIKE :p0 AND col NOT LIKE :p1 AND ...)
     query = _NOT_LIKE_ALL_RE.sub(r"\1 /*NOT_LIKE_ALL:\2:\1*/", query)
 
+    # array_position(:N, col) → CASE col WHEN :v0 THEN 1 ... END (expanded with the list).
+    # Oracle has no array_position; left as is, the list bind arrives as a JSON string and
+    # fails with ORA-00932 (CHAR vs JSON).
+    query = _ARRAY_POSITION_RE.sub(r"/*ARRAY_POSITION:\1:\2*/", query)
+
     # CTE AS MATERIALIZED (...) → AS (...) — Oracle doesn't support MATERIALIZED CTE hint
     query = re.sub(r"\bAS\s+MATERIALIZED\s*\(", "AS (", query, flags=re.IGNORECASE)
 
@@ -934,6 +941,32 @@ class OracleConnection(DatabaseConnection):
             return f"({' AND '.join(clauses)})"
 
         query = not_like_all_re.sub(_replace_not_like_all, query)
+
+        # Expand ARRAY_POSITION: /*ARRAY_POSITION:N:col*/ → CASE col WHEN :ap_0 THEN 1 ... END
+        # (1-based like PostgreSQL; rows not in the list get NULL, which sorts last in ASC).
+        array_position_re = re.compile(r"/\*ARRAY_POSITION:(\d+):([\w.]+)\*/")
+
+        def _replace_array_position(m):
+            param_key = m.group(1)
+            col = m.group(2)
+            from_json = isinstance(params.get(param_key), str)
+            val = OracleConnection._resolve_list_param(params, param_key)
+            if not val:
+                return "NULL"
+            OracleConnection._expand_counter += 1
+            prefix = f"ap{OracleConnection._expand_counter}"
+            whens = []
+            for i, item in enumerate(val):
+                # Same UUID handling as /*EXPAND*/: JSON-serialized UUIDs bind as RAW(16).
+                if from_json and isinstance(item, str) and _UUID_STR_RE.match(item):
+                    item = _uuid_mod.UUID(item).bytes
+                k = f"{prefix}_{i}"
+                params[k] = item
+                whens.append(f"WHEN :{k} THEN {i + 1}")
+            keys_to_remove.add(param_key)
+            return f"CASE {col} {' '.join(whens)} END"
+
+        query = array_position_re.sub(_replace_array_position, query)
 
         # Remove original list params that were expanded — their placeholder
         # (:N) no longer exists in the query, and leaving them causes DPY-4008.
