@@ -147,7 +147,14 @@ def _resolve_bank_id_for_user(
 
     Unmatched, empty, or malformed entries preserve default_bank_id.
     """
-    if not user_id or not isinstance(mapping, dict):
+    if not user_id:
+        return default_bank_id
+    if isinstance(mapping, str):
+        try:
+            mapping = json.loads(mapping)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return default_bank_id
+    if not isinstance(mapping, dict):
         return default_bank_id
 
     normalized_platform = str(platform or "").strip().lower()
@@ -155,4 +162,7 @@ def _resolve_bank_id_for_user(
     routed = mapping.get(lookup_key)
     if not isinstance(routed, str) or not routed.strip():
         return default_bank_id
-    return _sanitize_bank_segment(routed) or default_bank_id
+    # Explicit bank ids are user-supplied Hindsight identifiers. Preserve them
+    # exactly: sanitizing is many-to-one (e.g. tenant:alice vs tenant-alice) and
+    # could collapse two configured users into one physical memory bank.
+    return routed

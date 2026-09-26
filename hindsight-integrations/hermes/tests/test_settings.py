@@ -61,3 +61,18 @@ def test_per_user_bank_override_malformed_or_unknown_falls_back():
     assert _resolve_bank_id_for_user("education", {"dingtalk:user-a": ""}, "dingtalk", "user-a") == "education"
     assert _resolve_bank_id_for_user("education", {"dingtalk:user-a": 7}, "dingtalk", "user-a") == "education"
     assert _resolve_bank_id_for_user("education", {"dingtalk:user-b": "other"}, "dingtalk", "user-a") == "education"
+
+
+def test_per_user_bank_override_preserves_explicit_bank_ids_without_collision():
+    mapping = {
+        "dingtalk:user-a": "tenant:alice",
+        "dingtalk:user-b": "tenant-alice",
+    }
+    assert _resolve_bank_id_for_user("education", mapping, "dingtalk", "user-a") == "tenant:alice"
+    assert _resolve_bank_id_for_user("education", mapping, "dingtalk", "user-b") == "tenant-alice"
+
+
+def test_per_user_bank_override_accepts_json_text_for_older_config_ui():
+    mapping = '{"dingtalk:user-a": "tenant:alice"}'
+    assert _resolve_bank_id_for_user("education", mapping, "dingtalk", "user-a") == "tenant:alice"
+    assert _resolve_bank_id_for_user("education", "not-json", "dingtalk", "user-a") == "education"
