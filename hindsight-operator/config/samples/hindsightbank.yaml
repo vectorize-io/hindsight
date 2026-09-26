@@ -1,0 +1,27 @@
+apiVersion: hindsight.vectorize.io/v1alpha1
+kind: HindsightBank
+metadata:
+  name: support-agent
+spec:
+  bankId: support-agent
+  connection:
+    url: http://hindsight-api.hindsight.svc.cluster.local:8888
+    apiKeySecretRef:
+      name: hindsight-api
+      key: token
+  deletionPolicy: Retain
+  template:
+    version: "1"
+    bank:
+      retain_mission: Extract customer issues, resolutions, and sentiment.
+      reflect_mission: You are helping a support agent remember customer interactions.
+    mental_models:
+      - id: sentiment-overview
+        name: Customer Sentiment Overview
+        source_query: What is the overall sentiment trend?
+        trigger:
+          refresh_after_consolidation: true
+    directives:
+      - name: Always be empathetic
+        content: Always respond with empathy and understanding.
+        priority: 10

@@ -1,0 +1,6 @@
+# Installs the CRD, RBAC, and operator Deployment:
+#   kubectl apply -k hindsight-operator/config/default
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager

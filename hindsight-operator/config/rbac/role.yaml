@@ -1,0 +1,43 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hindsight-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - hindsight.vectorize.io
+  resources:
+  - hindsightbanks
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - hindsight.vectorize.io
+  resources:
+  - hindsightbanks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - hindsight.vectorize.io
+  resources:
+  - hindsightbanks/status
+  verbs:
+  - get
+  - patch
+  - update
