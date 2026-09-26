@@ -405,6 +405,49 @@ class TestImportApply:
         assert mm["source_query"] == "Updated query"
 
     @pytest.mark.asyncio
+    async def test_reimporting_unchanged_manifest_skips_resources(self, api_client, bank_id):
+        """Re-importing an unchanged manifest neither rewrites nor regenerates anything.
+
+        Updating a mental model queues a refresh that regenerates its content with
+        an LLM call, so a repeated import (e.g. a GitOps sync) must skip models and
+        directives whose definition already matches, and still update changed ones.
+        """
+        manifest = {
+            "version": "1",
+            "mental_models": [
+                {"id": "stable-mm", "name": "Stable", "source_query": "Stable query"},
+                {
+                    "id": "edited-mm",
+                    "name": "Edited",
+                    "source_query": "Old query",
+                    "tags": ["b", "a"],
+                    "trigger": {"mode": "delta"},
+                },
+            ],
+            "directives": [{"name": "Stable directive", "content": "Stay the same.", "priority": 3}],
+        }
+        first = await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)
+        assert first.status_code == 200, first.text
+
+        repeat = await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)
+        assert repeat.status_code == 200, repeat.text
+        data = repeat.json()
+        assert data["mental_models_created"] == []
+        assert data["mental_models_updated"] == []
+        assert data["directives_created"] == []
+        assert data["directives_updated"] == []
+        assert data["operation_ids"] == []
+
+        manifest["mental_models"][1]["source_query"] = "New query"
+        manifest["directives"][0]["priority"] = 4
+        changed = await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)
+        assert changed.status_code == 200, changed.text
+        data = changed.json()
+        assert data["mental_models_updated"] == ["edited-mm"]
+        assert len(data["operation_ids"]) == 1
+        assert data["directives_updated"] == ["Stable directive"]
+
+    @pytest.mark.asyncio
     async def test_import_creates_directives(self, api_client, bank_id):
         """Import creates directives."""
         resp = await api_client.post(
