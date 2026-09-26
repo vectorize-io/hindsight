@@ -77,18 +77,45 @@ def _redirect_stdio_to_log() -> None:
     """Redirect stdin/stdout/stderr to the daemon log file.
 
     Called in the daemon child process after re-exec.
+
+    The child must not depend on the spawner's fd 0: when the parent
+    spawns us with fd 0 closed, CPython sets sys.stdin to None and an
+    unguarded sys.stdin.fileno() raises AttributeError (see #4580).
     """
     daemon_log_path().parent.mkdir(parents=True, exist_ok=True)
 
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            try:
+                stream.flush()
+            except (AttributeError, ValueError, OSError):
+                pass
 
-    with open(os.devnull, "r") as devnull:
-        os.dup2(devnull.fileno(), sys.stdin.fileno())
+    stdin = sys.stdin
+    if stdin is not None:
+        try:
+            stdin_fileno = stdin.fileno()
+        except (AttributeError, ValueError, OSError):
+            stdin_fileno = None
+        if stdin_fileno is not None:
+            try:
+                with open(os.devnull, "r") as devnull:
+                    os.dup2(devnull.fileno(), stdin_fileno)
+            except (OSError, ValueError):
+                pass
 
     log_fd = open(daemon_log_path(), "a")
-    os.dup2(log_fd.fileno(), sys.stdout.fileno())
-    os.dup2(log_fd.fileno(), sys.stderr.fileno())
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        try:
+            stream_fileno = stream.fileno()
+        except (AttributeError, ValueError, OSError):
+            continue
+        try:
+            os.dup2(log_fd.fileno(), stream_fileno)
+        except (OSError, ValueError):
+            continue
 
 
 def daemonize():
