@@ -17,6 +17,11 @@
  *                        NOT Claude Code compaction, which this used to cite: that appends a
  *                        summary record and leaves every earlier record in place (#3379), so the
  *                        prefix stays intact and the append path keeps working.
+ *                        NOR a session that moved to a NEW transcript FILE (Codex writes a
+ *                        continuation rollout under the same session id, #4493): nothing was
+ *                        rewritten there, the earlier turns simply live in the earlier file, so
+ *                        that case appends the new file whole instead of replacing the document
+ *                        with it — see `path` below.
  *   - dirty              a REPLACE was started and not confirmed. There is nothing worth replaying
  *                        (another replace re-establishes the same truth from the same transcript),
  *                        so the next write-back simply replaces again.
@@ -74,6 +79,14 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
+  /** The transcript FILE those turns were read from, when there is one (the persistent-plugin
+   *  runtime holds its turns in memory and leaves this unset). One session can move between files
+   *  — Codex writes a continuation rollout under the same `session_meta.id` (#4493) — and the new
+   *  file starts at that segment rather than repeating the earlier one. Without this the differing
+   *  prefix reads as a rewritten transcript and the replace drops everything already retained.
+   *  A cursor written before this field existed also has none, so a session already in flight when
+   *  the plugin was upgraded keeps the old replace behaviour until its next write-back sets it. */
+  path?: string;
   /** The server answered that it can take appends. Cached so later write-backs skip the probe. */
   appendSupported?: boolean;
   /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
@@ -110,7 +123,7 @@ export type RetainPlan =
 export function planRetain(
   turns: TransportTurn[],
   cursor: RetainCursor | undefined,
-  opts: { appendSupported: boolean; bank: string; now?: number }
+  opts: { appendSupported: boolean; bank: string; path?: string; now?: number }
 ): RetainPlan {
   if (!turns.length) return { mode: "skip" };
   if (!opts.appendSupported || !cursor || cursor.dirty) return { mode: "replace" };
@@ -119,9 +132,17 @@ export function planRetain(
   if (!pendingReplayable(cursor, opts.now ?? Date.now())) return { mode: "replace" };
   // A different bank holds no document for this session: appending would store the tail alone.
   if (cursor.bank !== opts.bank) return { mode: "replace" };
-  // Fewer turns than we wrote: the transcript shrank, so it was rewritten, not extended.
-  if (cursor.turns > turns.length) return { mode: "replace" };
-  if (fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint) return { mode: "replace" };
+  // A NEW FILE for the same session whose turns do not continue what we wrote is a continuation
+  // segment, not a rewrite (#4493): the earlier turns still exist, in the earlier file, and only
+  // this file's turns are missing from the document. Append them all rather than replacing the
+  // document with this segment alone. A resumed transcript that COPIES the earlier turns keeps a
+  // matching prefix and falls through to the ordinary append below, so it is not duplicated.
+  const newFile = Boolean(opts.path && cursor.path && cursor.path !== opts.path);
+  const continues =
+    cursor.turns <= turns.length && fingerprintTurns(turns, cursor.turns) === cursor.fingerprint;
+  // Not a continuation of what we wrote — a shorter transcript, or a differing prefix — means the
+  // file was rewritten (an edited or redacted turn, a truncated rollout), so replace.
+  if (!continues) return newFile ? { mode: "append", fromTurn: 0 } : { mode: "replace" };
   if (cursor.turns === turns.length) return { mode: "skip" }; // nothing new since the last write
   return { mode: "append", fromTurn: cursor.turns };
 }

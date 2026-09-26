@@ -44,6 +44,28 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** One Codex rollout `response_item` message line. */
+const message = (role: string, text: string, phase?: string) =>
+  JSON.stringify({
+    type: "response_item",
+    payload: {
+      type: "message",
+      role,
+      phase,
+      content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+    },
+  });
+
+/** The `item_completed` event that marks a user line as a genuine prompt rather than injected text. */
+const userEvent = (text: string) =>
+  JSON.stringify({
+    type: "event_msg",
+    payload: {
+      type: "item_completed",
+      item: { type: "UserMessage", content: [{ type: "text", text }] },
+    },
+  });
+
 describe("buildRetain usage stats", () => {
   it("records the Hindsight calls and credit of a real Claude Code transcript", async () => {
     // The raw host format end to end: tool_use blocks through readClaudeTranscript's action turns.
@@ -93,24 +115,6 @@ describe("buildRetain usage stats", () => {
 describe("buildRetain", () => {
   it("retains only UserMessage-event user turns and advances its cursor normally", async () => {
     const genuine = "# AGENTS.md instructions for /example\nExplain this heading.";
-    const message = (role: string, text: string, phase?: string) =>
-      JSON.stringify({
-        type: "response_item",
-        payload: {
-          type: "message",
-          role,
-          phase,
-          content: [{ type: role === "user" ? "input_text" : "output_text", text }],
-        },
-      });
-    const userEvent = (text: string) =>
-      JSON.stringify({
-        type: "event_msg",
-        payload: {
-          type: "item_completed",
-          item: { type: "UserMessage", content: [{ type: "text", text }] },
-        },
-      });
     const lines = [
       message("user", "<recommended_plugins>guidance</recommended_plugins>"),
       message("user", genuine),
@@ -168,29 +172,59 @@ describe("buildRetain", () => {
     ]);
   });
 
+  it("appends a Codex continuation rollout instead of replacing the session document", async () => {
+    // Same session_meta id, a NEW rollout file holding only the turns that come next (#4493): the
+    // earlier turns live in the earlier file, so replacing would drop them from the document.
+    const segment = (user: string, reply: string) =>
+      [message("user", user), userEvent(user), message("assistant", reply, "final_answer")].join(
+        "\n"
+      );
+
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const cursors = memoryCursorStore();
+    const args = {
+      harness: "codex",
+      sessionId: "same-session",
+      readTranscript: readCodexTranscript,
+      cursors,
+      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+    };
+    const fileB = join(root, "rollout-b.jsonl");
+    writeFileSync(file, segment("The Atlas connector is amber.", "Noted."));
+    await buildRetain({ ...args, transcriptPath: file });
+    writeFileSync(fileB, segment("The Birch connector is violet.", "Noted too."));
+    await buildRetain({ ...args, transcriptPath: fileB });
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][5].updateMode).toBe("append");
+    expect(retain.mock.calls[1][0].split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      { role: "user", content: "The Birch connector is violet." },
+      { role: "assistant", content: "Noted too." },
+    ]);
+    // Retrying the same continuation adds nothing; its own next turns append from where it left off.
+    await buildRetain({ ...args, transcriptPath: fileB });
+    expect(retain).toHaveBeenCalledTimes(2);
+    writeFileSync(
+      fileB,
+      [
+        segment("The Birch connector is violet.", "Noted too."),
+        segment("And?", "That is all."),
+      ].join("\n")
+    );
+    await buildRetain({ ...args, transcriptPath: fileB });
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(retain.mock.calls[2][5].updateMode).toBe("append");
+    expect(retain.mock.calls[2][0].split("\n").map((line: string) => JSON.parse(line))).toEqual([
+      { role: "user", content: "And?" },
+      { role: "assistant", content: "That is all." },
+    ]);
+  });
+
   it("removes Desktop startup from the retained document, preserves conversation, then appends normally", async () => {
     const startup =
       "<recommended_plugins>Use available tools.</recommended_plugins>\n" +
       "# AGENTS.md instructions\n<INSTRUCTIONS>Follow project conventions.</INSTRUCTIONS>\n" +
       "<environment_context><cwd>/example</cwd></environment_context>";
-    const message = (role: string, text: string, phase?: string) =>
-      JSON.stringify({
-        type: "response_item",
-        payload: {
-          type: "message",
-          role,
-          phase,
-          content: [{ type: role === "user" ? "input_text" : "output_text", text }],
-        },
-      });
-    const userEvent = (text: string) =>
-      JSON.stringify({
-        type: "event_msg",
-        payload: {
-          type: "item_completed",
-          item: { type: "UserMessage", content: [{ type: "text", text }] },
-        },
-      });
     const lines = [
       message("user", startup),
       message("user", "What is 2 + 2?"),

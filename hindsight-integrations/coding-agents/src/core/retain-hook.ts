@@ -159,6 +159,7 @@ export async function buildRetain(args: {
       cursors: args.cursors ?? fileCursorStore(harness),
       stamp: args.stamp,
       retryUntil: args.retryUntil,
+      transcriptPath,
     });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {

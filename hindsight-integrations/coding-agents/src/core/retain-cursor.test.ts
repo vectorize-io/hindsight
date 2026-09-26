@@ -96,6 +96,47 @@ describe("planRetain", () => {
     });
   });
 
+  it("appends a continuation FILE whole instead of replacing the document with it", () => {
+    // Codex writes a later segment of the same task into a new rollout under the same session id
+    // (#4493). Its turns are not a continuation of the prefix we wrote — they are the turns that
+    // come AFTER it — so a replace would drop everything the earlier file contributed.
+    const fileA = turns(4);
+    const cursor = { ...cursorFor(fileA, 4), path: "/rollouts/a.jsonl" };
+    const fileB = turns(2, 100);
+    expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 0,
+    });
+    // Equal-or-larger continuation with a different prefix: same answer, it is still a segment.
+    expect(planRetain(turns(6, 100), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 0,
+    });
+  });
+
+  it("does not re-append a continuation file that was already written", () => {
+    const fileB = turns(2, 100);
+    const cursor = { ...cursorFor(fileB, 2), path: "/rollouts/b.jsonl" };
+    expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "skip",
+    });
+    // And the next turns in that same file append from where it left off, not from zero.
+    expect(planRetain(turns(4, 100), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 2,
+    });
+  });
+
+  it("does not duplicate a resumed transcript that copies the earlier turns", () => {
+    // A new file that REPEATS the retained prefix is an ordinary extension, not a new segment.
+    const fileA = turns(4);
+    const cursor = { ...cursorFor(fileA, 4), path: "/rollouts/a.jsonl" };
+    expect(planRetain(turns(6), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 4,
+    });
+  });
+
   it("skips when nothing was added since the last write", () => {
     const all = turns(4);
     expect(planRetain(all, cursorFor(all, 4), SUPPORTED)).toEqual({ mode: "skip" });
