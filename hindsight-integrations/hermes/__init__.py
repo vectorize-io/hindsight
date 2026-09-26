@@ -1399,8 +1399,13 @@ class HindsightMemoryProvider(MemoryProvider):
         if session_id:
             self._session_id = str(session_id).strip()
 
+        # One turn is stored as comma-joined message objects (not a JSON array), so the
+        # retain job's "[" + ",".join(turns) + "]" yields a flat list of message dicts,
+        # which Hindsight's conversation chunker requires.
         self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
+            ",".join(
+                json.dumps(m, ensure_ascii=False) for m in self._build_turn_messages(user_content, assistant_content)
+            )
         )
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:

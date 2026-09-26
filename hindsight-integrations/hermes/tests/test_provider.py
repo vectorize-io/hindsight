@@ -11,10 +11,12 @@ def _retain_item(fake: FakeClient, index: int = 0) -> dict:
     return fake.retains[index]["items"][0]
 
 
-def _turns_of(fake: FakeClient, index: int = 0) -> list[list[str]]:
-    """Message texts per turn in one retain. Content is ``"[" + ",".join(turns) + "]"``
-    where each turn is itself a JSON array, so the whole payload is a list of turns."""
-    return [[m["content"] for m in turn] for turn in json.loads(_retain_item(fake, index)["content"])]
+def _messages_of(fake: FakeClient, index: int = 0) -> list[str]:
+    """Message texts in one retain. Content is a flat JSON array of message dicts,
+    which is the shape Hindsight's conversation chunker requires."""
+    messages = json.loads(_retain_item(fake, index)["content"])
+    assert all(isinstance(m, dict) for m in messages)
+    return [m["content"] for m in messages]
 
 
 def test_sync_turn_retains_the_turn(provider):
@@ -29,7 +31,7 @@ def test_sync_turn_retains_the_turn(provider):
     item = _retain_item(fake)
     assert item["update_mode"] == "append"
     assert "hermes" in item["tags"] and "session:session-1" in item["tags"]
-    messages = json.loads(item["content"][1:-1])
+    messages = json.loads(item["content"])
     assert [m["content"] for m in messages] == ["User: what is my name?", "Assistant: Ada."]
 
 
@@ -42,6 +44,27 @@ def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
 
     assert len(fake.retains) == 1
     assert _retain_item(fake)["metadata"]["message_count"] == "4"
+
+
+def test_batched_turns_retain_as_one_flat_message_list(provider):
+    """Several buffered turns must ship as one flat, ordered list of message dicts,
+    never a list of per-turn arrays, or Hindsight falls back to plain-text chunking."""
+    instance, fake = provider({"retain_every_n_turns": 3})
+    for n in ("one", "two", "three"):
+        instance.sync_turn(n, n.upper())
+    instance.shutdown()
+
+    messages = json.loads(_retain_item(fake)["content"])
+    assert [m["role"] for m in messages] == ["user", "assistant"] * 3
+    assert _messages_of(fake) == [
+        "User: one",
+        "Assistant: ONE",
+        "User: two",
+        "Assistant: TWO",
+        "User: three",
+        "Assistant: THREE",
+    ]
+    assert _retain_item(fake)["metadata"]["message_count"] == str(len(messages))
 
 
 def test_auto_retain_off_stores_nothing(provider):
@@ -151,8 +174,8 @@ def test_append_mode_drops_retained_turns_from_the_buffer(provider):
     instance.shutdown()
 
     # Each retain still carries only its own un-retained tail, never a replay.
-    assert _turns_of(fake, 0) == [["User: one", "Assistant: 1"]]
-    assert _turns_of(fake, 1) == [["User: two", "Assistant: 2"]]
+    assert _messages_of(fake, 0) == ["User: one", "Assistant: 1"]
+    assert _messages_of(fake, 1) == ["User: two", "Assistant: 2"]
 
 
 def test_overwrite_mode_keeps_every_turn(provider, monkeypatch):
@@ -169,7 +192,7 @@ def test_overwrite_mode_keeps_every_turn(provider, monkeypatch):
     instance.shutdown()
 
     # The second retain resends the whole session, which is what overwrite means.
-    assert _turns_of(fake, 1) == [["User: one", "Assistant: 1"], ["User: two", "Assistant: 2"]]
+    assert _messages_of(fake, 1) == ["User: one", "Assistant: 1", "User: two", "Assistant: 2"]
 
 
 def test_root_warning_goes_through_the_hosts_warning_callback(provider, monkeypatch):
