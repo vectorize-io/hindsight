@@ -252,6 +252,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/kubernetes-operator',
+          label: 'Kubernetes Operator',
+          customProps: { icon: 'si-kubernetes' },
+        },
+        {
+          type: 'doc',
           id: 'developer/oracle',
           label: 'Oracle Database',
           customProps: { icon: 'lu-database' },

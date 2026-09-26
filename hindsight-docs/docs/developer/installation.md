@@ -201,6 +201,8 @@ helm upgrade hindsight oci://ghcr.io/vectorize-io/charts/hindsight
 - Kubernetes cluster (GKE, EKS, AKS, or self-hosted)
 - Helm 3.8+
 
+To manage bank configuration from Kubernetes resources, see the [Kubernetes Operator](./kubernetes-operator).
+
 ### Distributed Workers
 
 For high-throughput deployments, enable dedicated worker pods to scale task processing independently:

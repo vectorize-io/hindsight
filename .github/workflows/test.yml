@@ -21,6 +21,7 @@ jobs:
       clients-python: ${{ steps.filter.outputs.clients-python }}
       clients-rust: ${{ steps.filter.outputs.clients-rust }}
       clients-go: ${{ steps.filter.outputs.clients-go }}
+      operator: ${{ steps.filter.outputs.operator }}
       control-plane: ${{ steps.filter.outputs.control-plane }}
       interfig: ${{ steps.filter.outputs.interfig }}
       cli: ${{ steps.filter.outputs.cli }}
@@ -130,6 +131,8 @@ jobs:
             - 'hindsight-docs/static/openapi.json'
           clients-go:
             - 'hindsight-clients/go/**'
+          operator:
+            - 'hindsight-operator/**'
           control-plane:
             - 'hindsight-control-plane/**'
             - 'package.json'
@@ -3160,6 +3163,38 @@ jobs:
       run: |
         echo "=== API Server Logs ==="
         cat /tmp/api-server.log || echo "No API server log found"
+
+  test-operator:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.operator == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: hindsight-operator/go.mod
+        cache-dependency-path: hindsight-operator/go.sum
+
+    - name: Check generated CRD, RBAC, and deepcopy code
+      working-directory: ./hindsight-operator
+      run: make check-generated
+
+    - name: Lint
+      working-directory: ./hindsight-operator
+      run: make lint
+
+    - name: Test
+      working-directory: ./hindsight-operator
+      run: make test
 
   test-go-client:
     needs: [detect-changes]

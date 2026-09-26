@@ -4122,10 +4122,12 @@ async def apply_bank_template_manifest(
         # request writes. Re-read the committed state here, inside the scope and
         # immediately before the writes, and decide against that instead.
         if manifest.mental_models:
+            # "config" rather than "metadata": the writes below compare each
+            # model's definition to skip unchanged ones.
             provisioned = await memory.list_mental_models(
                 bank_id=bank_id,
                 limit=None,
-                detail="metadata",
+                detail="config",
                 request_context=request_context,
             )
             existing_by_id = {item["id"]: item for item in provisioned.items}
@@ -4186,7 +4188,7 @@ async def apply_default_bank_template_resources(
     existing_by_id: dict[str, dict[str, Any]] = {}
     if manifest.mental_models:
         existing = await memory.list_mental_models(
-            bank_id=bank_id, limit=None, detail="metadata", request_context=request_context
+            bank_id=bank_id, limit=None, detail="config", request_context=request_context
         )
         existing_by_id = {model["id"]: model for model in existing.items}
 
@@ -4221,7 +4223,11 @@ async def _apply_bank_template_resources(
     *,
     config_applied: bool,
 ) -> "BankTemplateImportResponse":
-    """Apply template resources after the caller has handled config and access."""
+    """Apply template resources after the caller has handled config and access.
+
+    ``existing_mental_models`` must be listed with ``detail="config"`` so that
+    unchanged models can be skipped.
+    """
     created_ids: list[str] = []
     updated_ids: list[str] = []
     operation_ids: list[str] = []
@@ -4229,6 +4235,12 @@ async def _apply_bank_template_resources(
     if manifest.mental_models:
         for mm in manifest.mental_models:
             if mm.id in existing_mental_models:
+                # Skip a model whose definition already matches: an update would
+                # queue a refresh and regenerate its content with an LLM call even
+                # though nothing changed, which makes re-applying the same
+                # manifest (GitOps sync, repeated provisioning) costly.
+                if _mental_model_definition_matches(existing_mental_models[mm.id], mm):
+                    continue
                 await memory.update_mental_model(
                     bank_id=bank_id,
                     mental_model_id=mm.id,
@@ -4272,6 +4284,8 @@ async def _apply_bank_template_resources(
     if manifest.directives:
         for directive in manifest.directives:
             if directive.name in existing_directives:
+                if _directive_matches(existing_directives[directive.name], directive):
+                    continue
                 await memory.update_directive(
                     bank_id=bank_id,
                     directive_id=existing_directives[directive.name]["id"],
@@ -4304,6 +4318,33 @@ async def _apply_bank_template_resources(
         directives_updated=directives_updated,
         operation_ids=operation_ids,
         dry_run=False,
+    )
+
+
+def _mental_model_definition_matches(existing: dict[str, Any], mm: "BankTemplateMentalModel") -> bool:
+    """Whether an existing mental model already has the manifest's definition.
+
+    ``existing`` must be listed with ``detail="config"``. Its trigger is parsed
+    through ``MentalModelTrigger`` so that a stored trigger missing fields that
+    have defaults compares equal to the manifest's fully defaulted one.
+    """
+    stored_trigger = MentalModelTrigger(**(existing.get("trigger") or {}))
+    return (
+        existing["name"] == mm.name
+        and existing["source_query"] == mm.source_query
+        and existing["max_tokens"] == mm.max_tokens
+        and sorted(existing["tags"]) == sorted(mm.tags)
+        and stored_trigger == mm.trigger
+    )
+
+
+def _directive_matches(existing: dict[str, Any], directive: "BankTemplateDirective") -> bool:
+    """Whether an existing directive already has the manifest's values."""
+    return (
+        existing["content"] == directive.content
+        and existing["priority"] == directive.priority
+        and existing["is_active"] == directive.is_active
+        and sorted(existing["tags"]) == sorted(directive.tags)
     )
 
 

@@ -1,0 +1,29 @@
+# Leader election keeps its Lease in the operator's own namespace. Keeping
+# these rights namespaced means a --watch-namespace install can replace the
+# ClusterRoleBinding with a RoleBinding without losing leader election.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hindsight-operator-leader-election
+  namespace: hindsight-operator
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hindsight-operator-leader-election
+  namespace: hindsight-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hindsight-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: hindsight-operator
+    namespace: hindsight-operator
