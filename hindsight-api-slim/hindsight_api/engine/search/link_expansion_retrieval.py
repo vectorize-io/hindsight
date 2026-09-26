@@ -413,17 +413,47 @@ class LinkExpansionRetriever(GraphRetriever):
         mu = fq_table("memory_units")
         per_entity_limit = config.link_expansion_per_entity_limit
 
-        # Delegate to DataAccessOps. Both backends now use the observation_sources
-        # junction table with standard SQL joins (previously PG used native array
-        # ops and Oracle used JSON_TABLE).
-        # $1 seeds, $2 budget — the window binds after them.
-        return await ops.expand_observations(
-            conn,
-            mu,
-            ue,
-            ml,
-            seed_ids,
-            budget,
-            per_entity_limit,
-            UpdatedWindow(after=created_after, before=created_before, first_param_index=3),
-        )
+        # Keep the observation arm under the same wall-clock bound as the regular
+        # entity expansion.  The observation query is fused with semantic/causal,
+        # so a timeout must rebuild those two cheap arms instead of returning an
+        # empty graph result (#4802).
+        try:
+            return await asyncio.wait_for(
+                ops.expand_observations(
+                    conn,
+                    mu,
+                    ue,
+                    ml,
+                    seed_ids,
+                    budget,
+                    per_entity_limit,
+                    UpdatedWindow(after=created_after, before=created_before, first_param_index=3),
+                ),
+                timeout=config.link_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[LinkExpansion] Observation entity expansion timed out after %ss, "
+                "falling back to semantic+causal only",
+                config.link_expansion_timeout,
+            )
+            window = UpdatedWindow(after=created_after, before=created_before, first_param_index=4)
+            semantic_causal_cte = ops.build_semantic_causal_cte(ml, mu, window)
+            rows = await conn.fetch(
+                f"""
+                WITH {semantic_causal_cte}
+                SELECT * FROM semantic_expanded
+                UNION ALL
+                SELECT * FROM causal_expanded
+                LIMIT $3
+                """,
+                seed_ids,
+                "observation",
+                budget,
+                *window.params,
+            )
+            return LinkExpansionRows(
+                entity=[],
+                semantic=[row for row in rows if row["source"] == "semantic"],
+                causal=[row for row in rows if row["source"] == "causal"],
+            )
