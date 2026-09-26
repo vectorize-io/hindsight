@@ -32,7 +32,7 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address the metrics endpoint binds to. Use 0 to disable it.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address the health probe endpoint binds to.")
 	flag.BoolVar(&leaderElect, "leader-elect", true, "Use leader election so that only one replica reconciles.")
-	flag.DurationVar(&resyncPeriod, "resync-period", 10*time.Minute, "How often a synced bank is compared again to correct changes made outside Kubernetes.")
+	flag.DurationVar(&resyncPeriod, "resync-period", 10*time.Minute, "How often each template is imported again, which restores settings changed outside Kubernetes.")
 	flag.DurationVar(&apiTimeout, "api-timeout", 60*time.Second, "Timeout for each Hindsight API request.")
 	flag.StringVar(&watchNamespace, "watch-namespace", "", "Only reconcile HindsightBanks in this namespace. Empty watches all namespaces.")
 	opts := zap.Options{}
@@ -64,7 +64,6 @@ func main() {
 	if err := (&controller.HindsightBankReconciler{
 		Client:       mgr.GetClient(),
 		APIReader:    mgr.GetAPIReader(),
-		Recorder:     mgr.GetEventRecorder("hindsight-operator"),
 		HTTPClient:   &http.Client{Timeout: apiTimeout},
 		ResyncPeriod: resyncPeriod,
 	}).SetupWithManager(mgr); err != nil {

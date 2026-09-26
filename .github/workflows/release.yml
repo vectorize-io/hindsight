@@ -412,13 +412,6 @@ jobs:
             build_args: |
               INCLUDE_LOCAL_MODELS=false
               PRELOAD_ML_MODELS=false
-          # The operator is a separate Go module with its own build context.
-          - target: ""
-            image_name: hindsight-operator
-            tag_suffix: ""
-            context: hindsight-operator
-            dockerfile: hindsight-operator/Dockerfile
-            build_args: ""
 
     steps:
     - uses: actions/checkout@v6
@@ -491,7 +484,7 @@ jobs:
       id: build
       uses: docker/build-push-action@v7
       with:
-        context: ${{ matrix.context || '.' }}
+        context: .
         file: ${{ matrix.dockerfile }}
         target: ${{ matrix.target }}
         build-args: ${{ matrix.build_args }}

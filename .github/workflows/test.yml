@@ -3196,9 +3196,6 @@ jobs:
       working-directory: ./hindsight-operator
       run: make test
 
-    - name: Build image
-      run: docker build hindsight-operator
-
   test-go-client:
     needs: [detect-changes]
     if: >-

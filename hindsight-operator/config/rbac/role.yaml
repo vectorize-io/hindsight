@@ -11,28 +11,13 @@ rules:
   verbs:
   - get
 - apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
   - hindsight.vectorize.io
   resources:
   - hindsightbanks
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - hindsight.vectorize.io
-  resources:
-  - hindsightbanks/finalizers
-  verbs:
-  - update
 - apiGroups:
   - hindsight.vectorize.io
   resources:

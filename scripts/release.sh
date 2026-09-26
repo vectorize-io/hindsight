@@ -137,14 +137,6 @@ else
     print_warn "File $CARGO_FILE not found, skipping"
 fi
 
-# Update the operator's install manifest to the image this release publishes
-OPERATOR_MANAGER_FILE="hindsight-operator/config/manager/manager.yaml"
-if [ -f "$OPERATOR_MANAGER_FILE" ]; then
-    print_info "Updating $OPERATOR_MANAGER_FILE"
-    sed -i.bak -E "s#(image: ghcr.io/vectorize-io/hindsight-operator):.*#\1:$VERSION#" "$OPERATOR_MANAGER_FILE"
-    rm "${OPERATOR_MANAGER_FILE}.bak"
-fi
-
 # Update Helm chart
 HELM_CHART_FILE="helm/hindsight/Chart.yaml"
 if [ -f "$HELM_CHART_FILE" ]; then

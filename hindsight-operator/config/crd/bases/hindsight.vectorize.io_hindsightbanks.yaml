@@ -23,9 +23,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
-      name: Reason
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -90,23 +87,12 @@ spec:
                 required:
                 - url
                 type: object
-              deletionPolicy:
-                default: Retain
-                description: |-
-                  DeletionPolicy controls whether deleting this resource deletes the
-                  bank. Delete only removes a bank that this resource created, so
-                  adopting an existing bank never puts its memories at risk.
-                enum:
-                - Retain
-                - Delete
-                type: string
               template:
                 description: |-
-                  Template is a Hindsight bank template manifest, in the same format that
+                  Template is a Hindsight bank template manifest, the format that
                   GET /v1/default/banks/{bank_id}/export returns and
-                  POST /v1/default/banks/{bank_id}/import accepts. The Hindsight API
-                  validates it, so the operator does not depend on a particular server
-                  version's field list.
+                  POST /v1/default/banks/{bank_id}/import accepts. Deleting the resource
+                  keeps the bank.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
             required:
@@ -120,15 +106,10 @@ spec:
           status:
             description: HindsightBankStatus is the observed state of a HindsightBank.
             properties:
-              bankCreated:
-                description: |-
-                  BankCreated is true when this resource created the bank. Only such
-                  banks are deleted under DeletionPolicy Delete.
-                type: boolean
               conditions:
                 description: |-
-                  Conditions describe the current state. The Ready condition is True when
-                  the bank matches the template.
+                  Conditions describe the current state. Ready is True when the last
+                  import succeeded.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -187,31 +168,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              createdOnURL:
-                description: |-
-                  CreatedOnURL is the connection URL of the server where this resource
-                  created the bank. Delete removes the bank only while spec.connection.url
-                  still points at that server, so moving the resource to another server
-                  never deletes a bank there.
-                type: string
-              lastAppliedChanges:
-                description: |-
-                  LastAppliedChanges lists what the last import changed, for example
-                  "bank.retain_mission" or "mental_models/preferences".
-                items:
-                  type: string
-                type: array
-              lastAppliedTime:
-                description: LastAppliedTime is when the operator last imported a
-                  change.
-                format: date-time
-                type: string
-              notConvergedGeneration:
-                description: |-
-                  NotConvergedGeneration is the generation whose import did not converge.
-                  The operator does not import again until the spec changes.
-                format: int64
-                type: integer
               observedGeneration:
                 description: ObservedGeneration is the most recent generation the
                   operator acted on.

@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: ghcr.io/vectorize-io/hindsight-operator:0.10.1
+          image: hindsight-operator
           args:
             - --leader-elect
           ports:

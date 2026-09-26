@@ -5,18 +5,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DeletionPolicy controls what happens to the Hindsight bank when its
-// HindsightBank resource is deleted.
-// +kubebuilder:validation:Enum=Retain;Delete
-type DeletionPolicy string
-
-const (
-	// DeletionPolicyRetain leaves the bank and all of its memories in Hindsight.
-	DeletionPolicyRetain DeletionPolicy = "Retain"
-	// DeletionPolicyDelete deletes the bank, but only when this resource created it.
-	DeletionPolicyDelete DeletionPolicy = "Delete"
-)
-
 // SecretKeyRef selects a key of a Secret in the resource's namespace.
 type SecretKeyRef struct {
 	// Name of the Secret.
@@ -51,22 +39,14 @@ type HindsightBankSpec struct {
 	// Connection to the Hindsight API.
 	Connection Connection `json:"connection"`
 
-	// Template is a Hindsight bank template manifest, in the same format that
+	// Template is a Hindsight bank template manifest, the format that
 	// GET /v1/default/banks/{bank_id}/export returns and
-	// POST /v1/default/banks/{bank_id}/import accepts. The Hindsight API
-	// validates it, so the operator does not depend on a particular server
-	// version's field list.
+	// POST /v1/default/banks/{bank_id}/import accepts. Deleting the resource
+	// keeps the bank.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:validation:Type=object
 	Template apiextensionsv1.JSON `json:"template"`
-
-	// DeletionPolicy controls whether deleting this resource deletes the
-	// bank. Delete only removes a bank that this resource created, so
-	// adopting an existing bank never puts its memories at risk.
-	// +optional
-	// +kubebuilder:default=Retain
-	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 }
 
 // HindsightBankStatus is the observed state of a HindsightBank.
@@ -75,34 +55,8 @@ type HindsightBankStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// BankCreated is true when this resource created the bank. Only such
-	// banks are deleted under DeletionPolicy Delete.
-	// +optional
-	BankCreated bool `json:"bankCreated,omitempty"`
-
-	// CreatedOnURL is the connection URL of the server where this resource
-	// created the bank. Delete removes the bank only while spec.connection.url
-	// still points at that server, so moving the resource to another server
-	// never deletes a bank there.
-	// +optional
-	CreatedOnURL string `json:"createdOnURL,omitempty"`
-
-	// NotConvergedGeneration is the generation whose import did not converge.
-	// The operator does not import again until the spec changes.
-	// +optional
-	NotConvergedGeneration int64 `json:"notConvergedGeneration,omitempty"`
-
-	// LastAppliedTime is when the operator last imported a change.
-	// +optional
-	LastAppliedTime *metav1.Time `json:"lastAppliedTime,omitempty"`
-
-	// LastAppliedChanges lists what the last import changed, for example
-	// "bank.retain_mission" or "mental_models/preferences".
-	// +optional
-	LastAppliedChanges []string `json:"lastAppliedChanges,omitempty"`
-
-	// Conditions describe the current state. The Ready condition is True when
-	// the bank matches the template.
+	// Conditions describe the current state. Ready is True when the last
+	// import succeeded.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -116,7 +70,6 @@ type HindsightBankStatus struct {
 // +kubebuilder:resource:shortName=hsbank
 // +kubebuilder:printcolumn:name="Bank",type=string,JSONPath=`.spec.bankId`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
-// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type HindsightBank struct {
 	metav1.TypeMeta   `json:",inline"`
