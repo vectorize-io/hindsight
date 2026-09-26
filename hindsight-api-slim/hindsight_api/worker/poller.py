@@ -280,7 +280,7 @@ class PendingBuckets:
     ``payload_null``, ``retry_blocked`` and ``serialization_blocked`` are mutually
     exclusive, taken in the claim query's WHERE order, so ``claimable`` is exact
     rather than a residual that double-subtracts rows failing two filters.
-    ``assigned`` overlaps the others and is informational only: no claim query
+    ``assigned`` overlaps the others and is not subtracted: no claim query
     filters on ``worker_id``, so a pending row carrying one is still claimed.
     """
 
@@ -1868,6 +1868,12 @@ class WorkerPoller:
                     # bank_serialization_sql (engine/db/ops.py) as window
                     # functions: within each serialization group only the oldest
                     # eligible row can run, and only while no peer is processing.
+                    # The groups are the predicates' peer sets exactly: both match
+                    # peers on operation_type as well as bank_id (and key), which
+                    # matters since #4389 gave mental-model refreshes their own
+                    # serialization_key, so a refresh and a retain that share a
+                    # key never block each other. Ties on created_at break on
+                    # operation_id, as in the predicates.
                     # A first version (#4527) called those predicates directly,
                     # but they are a correlated NOT EXISTS per row: fine for the
                     # claim query's LIMIT, quadratic here, because this counts
@@ -2098,7 +2104,10 @@ class WorkerPoller:
         ``assigned`` (worker_id set on a pending row) is reported but not
         subtracted. It used to be, but no claim query filters on worker_id, so
         those rows are claimed like any other; subtracting them under-reported
-        claimable.
+        claimable. Normal operation never produces it: worker_id is only set by
+        mark_operations_processing, and every path back to 'pending' clears it.
+        A non-zero ``assigned`` is therefore a stale marker left by some path
+        that requeued a row without clearing it, not a queue condition.
         """
         if not breakdown:
             return

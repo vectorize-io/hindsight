@@ -3355,6 +3355,7 @@ async def test_pending_breakdown_claimable_matches_claim_query(pool, backend, cl
         payload: bool = True,
         retry_in_future: bool = False,
         worker_id: str | None = None,
+        created_at: datetime | None = None,
     ) -> None:
         await pool.execute(
             """
@@ -3373,14 +3374,14 @@ async def test_pending_breakdown_claimable_matches_claim_query(pool, backend, cl
             key,
             retry_in_future,
             worker_id,
-            base + timedelta(seconds=next(seq)),
+            created_at or base + timedelta(seconds=next(seq)),
         )
 
     # retain, bank A: three appends to doc-1 (only the oldest may run), one queued
     # behind a running append to doc-2, one keyless, one keyless with a stale
     # worker_id (still claimable), and one retry-blocked.
-    # Expected retain: total 9, claimable 4 (doc-1 oldest, keyless x2, doc-3 newer),
-    # retry_blocked 2, serialization_blocked 3 (doc-1 x2, doc-2).
+    # Expected retain: total 11, claimable 5 (doc-1 oldest, keyless x2, doc-3 newer,
+    # one doc-4), retry_blocked 2, serialization_blocked 4 (doc-1 x2, doc-2, doc-4).
     for _ in range(3):
         await insert(bank_a, "retain", key="doc-1")
     await insert(bank_a, "retain", key="doc-2", status="processing", worker_id="other")
@@ -3392,6 +3393,16 @@ async def test_pending_breakdown_claimable_matches_claim_query(pool, backend, cl
     # newer one behind it is claimable (the claim's peer check skips it too).
     await insert(bank_a, "retain", key="doc-3", retry_in_future=True)
     await insert(bank_a, "retain", key="doc-3")
+    # doc-4: two appends with the same created_at. The predicate breaks the tie on
+    # operation_id, so exactly one runs; a restated ORDER BY that drops the
+    # tie-break would let both through or neither.
+    tie = base + timedelta(seconds=next(seq))
+    await insert(bank_a, "retain", key="doc-4", created_at=tie)
+    await insert(bank_a, "retain", key="doc-4", created_at=tie)
+    # A mental-model refresh whose key collides with doc-1's. Peers must share
+    # operation_type (#4389), so the pending doc-1 appends ahead of it don't hold
+    # it back: dropping operation_type from the partition would.
+    await insert(bank_a, "refresh_mental_model", key="doc-1")
     # consolidation: bank A has a run in flight, so both pending ones wait; bank B
     # has two pending and nothing running, so exactly one (the oldest) may run.
     await insert(bank_a, "consolidation", status="processing", worker_id="other")
@@ -3416,13 +3427,14 @@ async def test_pending_breakdown_claimable_matches_claim_query(pool, backend, cl
     buckets = _parse_pending_breakdown(lines[0])
 
     assert buckets["retain"] == {
-        "total": 9,
-        "claimable": 4,
+        "total": 11,
+        "claimable": 5,
         "payload_null": 0,
         "retry_blocked": 2,
-        "serialization_blocked": 3,
+        "serialization_blocked": 4,
         "assigned": 1,
     }
+    assert buckets["refresh_mental_model"]["claimable"] == 1
     assert buckets["consolidation"]["claimable"] == 1
     assert buckets["consolidation"]["serialization_blocked"] == 3
     assert buckets["batch_retain"]["payload_null"] == 1
