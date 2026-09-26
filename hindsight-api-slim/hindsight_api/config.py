@@ -484,6 +484,8 @@ ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREF
 ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_ONNX_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE"
 ENV_EMBEDDINGS_ONNX_CPU_MEM_ARENA = "HINDSIGHT_API_EMBEDDINGS_ONNX_CPU_MEM_ARENA"
+ENV_EMBEDDINGS_ONNX_DEVICE = "HINDSIGHT_API_EMBEDDINGS_ONNX_DEVICE"
+ENV_EMBEDDINGS_ONNX_CUDA_DEVICE_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_TEI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
@@ -1224,6 +1226,8 @@ DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 # bounding the activation tensor a caller can trigger; 32 matches TEI and the reranker.
 DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE = 32
 DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
+DEFAULT_EMBEDDINGS_ONNX_DEVICE = "cpu"
+DEFAULT_EMBEDDINGS_ONNX_CUDA_DEVICE_ID = 0
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 # Texts per TEI /embed request, and the unit the client fans out over (see
@@ -3143,6 +3147,8 @@ class HindsightConfig:
     embeddings_onnx_output_name: str | None
     embeddings_onnx_batch_size: int
     embeddings_onnx_cpu_mem_arena: bool
+    embeddings_onnx_device: str
+    embeddings_onnx_cuda_device_id: int
     embeddings_tei_url: str | None
     embeddings_openai_api_key: str | None
     embeddings_openai_model: str
@@ -4414,6 +4420,17 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_ONNX_CPU_MEM_ARENA, str(DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA)
             ).lower()
             == "true",
+            embeddings_onnx_device=_parse_optional_choice(
+                ENV_EMBEDDINGS_ONNX_DEVICE,
+                os.getenv(ENV_EMBEDDINGS_ONNX_DEVICE),
+                frozenset({"cpu", "cuda"}),
+            )
+            or DEFAULT_EMBEDDINGS_ONNX_DEVICE,
+            embeddings_onnx_cuda_device_id=_parse_non_negative_int(
+                ENV_EMBEDDINGS_ONNX_CUDA_DEVICE_ID,
+                os.getenv(ENV_EMBEDDINGS_ONNX_CUDA_DEVICE_ID),
+                DEFAULT_EMBEDDINGS_ONNX_CUDA_DEVICE_ID,
+            ),
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             # Falls back to the shared LLM key, the way every other OpenAI-compatible
             # embeddings provider here does: one key configured once covers both.

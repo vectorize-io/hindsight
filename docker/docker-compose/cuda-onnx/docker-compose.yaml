@@ -1,0 +1,36 @@
+name: hindsight-cuda-onnx
+
+services:
+  hindsight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/vectorize-io/hindsight:latest-slim}
+        ONNXRUNTIME_GPU_VERSION: ${ONNXRUNTIME_GPU_VERSION:-1.26.0}
+    container_name: hindsight-cuda-onnx
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_API_LLM_API_KEY:-}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_API_LLM_MODEL:-gpt-4o-mini}
+      HINDSIGHT_API_RERANKER_PROVIDER: none
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: onnx
+      HINDSIGHT_API_EMBEDDINGS_ONNX_DEVICE: cuda
+      HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID: ${HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - pg_data:/home/hindsight/.pg0
+      - model_cache:/home/hindsight/.cache/huggingface
+
+volumes:
+  pg_data:
+  model_cache:

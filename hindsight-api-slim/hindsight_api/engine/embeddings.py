@@ -34,6 +34,8 @@ from ..config import (
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
     DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA,
+    DEFAULT_EMBEDDINGS_ONNX_CUDA_DEVICE_ID,
+    DEFAULT_EMBEDDINGS_ONNX_DEVICE,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
@@ -460,6 +462,8 @@ class OnnxEmbeddings(Embeddings):
         output_name: str | None = None,
         batch_size: int = DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE,
         cpu_mem_arena: bool = DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA,
+        device: str = DEFAULT_EMBEDDINGS_ONNX_DEVICE,
+        cuda_device_id: int = DEFAULT_EMBEDDINGS_ONNX_CUDA_DEVICE_ID,
     ):
         self.model_id = model_id
         self.model_path = model_path
@@ -485,6 +489,12 @@ class OnnxEmbeddings(Embeddings):
             raise ValueError("ONNX embeddings batch_size must be >= 1")
         self.batch_size = batch_size
         self.cpu_mem_arena = cpu_mem_arena
+        if device not in {"cpu", "cuda"}:
+            raise ValueError("ONNX embeddings device must be 'cpu' or 'cuda'")
+        if isinstance(cuda_device_id, bool) or not isinstance(cuda_device_id, int) or cuda_device_id < 0:
+            raise ValueError("ONNX CUDA device ID must be an integer >= 0")
+        self.device = device
+        self.cuda_device_id = cuda_device_id
         self._session = None
         self._tokenizer = None
         self._dimension: int | None = dimensions
@@ -507,10 +517,31 @@ class OnnxEmbeddings(Embeddings):
             import onnxruntime as ort
             from transformers import AutoTokenizer
         except ImportError as exc:
+            if self.device == "cuda":
+                raise ImportError(
+                    "CUDA OnnxEmbeddings requires transformers and a compatible onnxruntime-gpu installation "
+                    "with CUDA/cuDNN libraries. See docker/docker-compose/cuda-onnx/ for a custom image recipe; "
+                    "the local-onnx extra alone installs the CPU runtime."
+                ) from exc
             raise ImportError(
                 "onnxruntime and transformers are required for OnnxEmbeddings. "
                 "Install with: pip install 'hindsight-api-slim[local-onnx]'"
             ) from exc
+
+        # Reject a CPU-only runtime before downloading a potentially large graph.
+        providers: list[str | tuple[str, dict[str, str]]] = ["CPUExecutionProvider"]
+        if self.device == "cuda":
+            available_providers = ort.get_available_providers()
+            if "CUDAExecutionProvider" not in available_providers:
+                raise RuntimeError(
+                    "ONNX CUDA execution was requested, but CUDAExecutionProvider is unavailable. "
+                    "Install a compatible onnxruntime-gpu package and CUDA/cuDNN runtime. "
+                    f"Available providers: {available_providers}"
+                )
+            providers = [
+                ("CUDAExecutionProvider", {"device_id": str(self.cuda_device_id)}),
+                "CPUExecutionProvider",
+            ]
 
         model_path = self.model_path
         if not model_path:
@@ -544,7 +575,7 @@ class OnnxEmbeddings(Embeddings):
             self.batch_size,
             self.cpu_mem_arena,
         )
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
         # With the arena enabled (ORT's default) freed activation blocks are cached and
         # never returned to the OS, so RSS ratchets up to the largest batch ever run and
         # holds that plateau for the life of the process. The reranker disables it for
@@ -553,23 +584,57 @@ class OnnxEmbeddings(Embeddings):
         if not self.cpu_mem_arena:
             session_options = ort.SessionOptions()
             session_options.enable_cpu_mem_arena = False
-        self._session = ort.InferenceSession(
-            model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
-        )
-
-        detected = len(self._encode_sync(["test"])[0])
-        if self.configured_dimensions is not None and detected != self.configured_dimensions:
-            raise ValueError(
-                f"Configured ONNX embedding dimension {self.configured_dimensions} does not match model output {detected}"
+        try:
+            session = ort.InferenceSession(model_path, sess_options=session_options, providers=providers)
+        except Exception as exc:
+            if self.device != "cuda":
+                raise
+            raise RuntimeError(
+                f"ONNX CUDA session initialization failed for device {self.cuda_device_id}. "
+                "Check the model, CUDA/cuDNN libraries, driver, and visible device ID."
+            ) from exc
+        active_providers = session.get_providers()
+        # A CUDA-capable wheel can still fail to load its libraries/device and ORT
+        # may return a CPU-only session without raising. Do not accept that session.
+        if self.device == "cuda" and "CUDAExecutionProvider" not in active_providers:
+            raise RuntimeError(
+                "ONNX CUDA execution was requested, but the initialized session did not activate "
+                f"CUDAExecutionProvider for device {self.cuda_device_id}. "
+                "Check CUDA/cuDNN libraries, the driver, and GPU visibility. "
+                f"Active providers: {active_providers}"
             )
+        if self.device == "cuda":
+            # Prevent run() from rebuilding the session on CPU after an EP failure.
+            # Normal graph partitioning (e.g. shape operations on CPU) stays enabled.
+            session.disable_fallback()
+
+        self._tokenizer = tokenizer
+        self._session = session
+        try:
+            detected = len(self._encode_sync(["test"])[0])
+            if self.configured_dimensions is not None and detected != self.configured_dimensions:
+                raise ValueError(
+                    f"Configured ONNX embedding dimension {self.configured_dimensions} does not match model output {detected}"
+                )
+        except Exception:
+            # A failed warm-up must not make the next initialize() look successful.
+            self._session = None
+            self._tokenizer = None
+            raise
         self._dimension = detected
-        logger.info("Embeddings: ONNX provider initialized (dim: %s)", self._dimension)
+        logger.info(
+            "Embeddings: ONNX provider initialized (dim: %s, device: %s, cuda_device_id: %s, providers: %s)",
+            self._dimension,
+            self.device,
+            self.cuda_device_id if self.device == "cuda" else None,
+            active_providers,
+        )
 
     async def encode(self, texts: list[str]) -> list[list[float]]:
         """Embed ``texts`` on a worker thread.
 
-        The model runs in-process and is CPU-bound, not I/O, so it goes to a thread to
-        keep the event loop free; asyncio.to_thread copies the caller's contextvars.
+        Tokenization and the synchronous ORT call run in-process, so a worker thread
+        keeps the event loop free on either device; to_thread copies contextvars.
         """
         return await asyncio.to_thread(self._encode_sync, texts)
 
@@ -2148,6 +2213,8 @@ def create_embeddings_from_env() -> Embeddings:
             output_name=config.embeddings_onnx_output_name,
             batch_size=config.embeddings_onnx_batch_size,
             cpu_mem_arena=config.embeddings_onnx_cpu_mem_arena,
+            device=config.embeddings_onnx_device,
+            cuda_device_id=config.embeddings_onnx_cuda_device_id,
         )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key

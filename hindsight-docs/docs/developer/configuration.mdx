@@ -862,6 +862,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME` | Optional ONNX output name to request when an exported graph exposes a pooled embedding output. | - |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE` | Texts per ONNX forward pass. The provider runs in-process, so this is what bounds the activation tensor (and therefore peak memory) when a caller embeds a large list — an import, for example. | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. The arena caches freed blocks and never returns them, so RSS holds its high-water mark for the life of the process. | `false` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_DEVICE` | ONNX Runtime execution device. `cuda` is opt-in and requires a compatible `onnxruntime-gpu` installation in a custom image; an unavailable CUDA provider fails startup. | `cpu` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID` | NVIDIA device ID passed to `CUDAExecutionProvider` when the ONNX device is `cuda`. | `0` |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_BATCH_SIZE` | Max texts per TEI `/embed` request, and the unit the client fans out over (see `HINDSIGHT_API_EMBEDDINGS_MAX_CONCURRENT_REQUESTS`). TEI's own `--max-client-batch-size` (32 by default) is a hard validation error rather than a soft cap, so raising this above the server's value fails the request instead of being clamped | `32` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
@@ -931,6 +933,14 @@ pip install 'hindsight-api-slim[local-onnx]'
 # or, in this repository:
 uv sync --project hindsight-api-slim --extra local-onnx
 ```
+
+CUDA execution is opt-in. Set `HINDSIGHT_API_EMBEDDINGS_ONNX_DEVICE=cuda` only in an environment that has a compatible `onnxruntime-gpu` wheel and CUDA/cuDNN runtime. The official images intentionally keep the CPU runtime and do not grow when this feature is unused. For a Docker deployment, use the ready-to-build recipe at `docker/docker-compose/cuda-onnx/`, which installs the GPU wheel into a private image based on the slim image:
+
+```bash
+docker compose -f docker/docker-compose/cuda-onnx/docker-compose.yaml up --build
+```
+
+The recipe accepts `BASE_IMAGE`, `ONNXRUNTIME_GPU_VERSION`, and `HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID` for release, runtime, and device selection. Hindsight fails startup when CUDA is requested but the provider is unavailable or the initialized session does not activate it; it does not silently fall back to CPU in that mode. The recipe installs CUDA/cuDNN libraries in the private image; the host needs a compatible NVIDIA driver and GPU passthrough. Individual operators may still run on CPU through normal graph partitioning. See the recipe README for dependency isolation, unreleased-checkout builds, and real GPU tests.
 
 You can either let Hindsight download the model from Hugging Face at startup by setting `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`, or pre-download the ONNX graph and tokenizer files under the Hindsight repository root.
 
