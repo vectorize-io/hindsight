@@ -13,15 +13,17 @@ one-statement query shape for both PostgreSQL and Oracle without a live
 Oracle instance.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db.ops_oracle import OracleOps
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+from hindsight_api.engine.search.link_expansion_retrieval import LinkExpansionRetriever
 
 
 class _CountingConn:
@@ -37,6 +39,35 @@ class _CountingConn:
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
+
+
+@pytest.mark.asyncio
+async def test_observation_timeout_falls_back_to_semantic_and_causal(monkeypatch):
+    config = AsyncMock()
+    config.link_expansion_timeout = 0.001
+    config.link_expansion_per_entity_limit = 200
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.link_expansion_retrieval.get_config",
+        lambda: config,
+    )
+
+    ops = MagicMock()
+    ops.expand_observations = AsyncMock(side_effect=asyncio.TimeoutError)
+    ops.build_semantic_causal_cte.return_value = "semantic_expanded AS (SELECT 1), causal_expanded AS (SELECT 1)"
+    conn = AsyncMock()
+    conn.fetch.return_value = [
+        {"source": "semantic", "id": uuid.uuid4()},
+        {"source": "causal", "id": uuid.uuid4()},
+    ]
+
+    seed_id = uuid.uuid4()
+    rows = await LinkExpansionRetriever()._expand_observations(conn, [seed_id], 25, ops=ops)
+
+    assert rows.entity == []
+    assert len(rows.semantic) == 1
+    assert len(rows.causal) == 1
+    assert conn.fetch.await_count == 1
+    assert conn.fetch.await_args.args[1:4] == ([seed_id], "observation", 25)
 
 
 async def _ensure_bank(conn, bank_id: str) -> None:
