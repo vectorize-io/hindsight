@@ -728,6 +728,25 @@ def _scope_sort_key(scope: frozenset[str]) -> tuple[str, ...]:
     return tuple(sorted(scope))
 
 
+def _unique_source_memory_ids(ids: list[Any] | None) -> list[str]:
+    """Dedupe source memory IDs by string form, preserving first-seen order.
+
+    Create/update paths and prompt serialization share this so a repeated ID
+    cannot inflate ``proof_count`` or expand into duplicate ``source_memories``
+    entries (#4799). Normalization to ``str`` is required on the update path,
+    where recalled ``source_fact_ids`` are strings and live filter results are
+    ``uuid.UUID`` — without it, the same ID would not collapse.
+    """
+    if not ids:
+        return []
+    return list(dict.fromkeys(str(x) for x in ids))
+
+
+def _source_memory_ids_as_uuids(ids: list[str]) -> list[uuid.UUID]:
+    """Convert normalized source-id strings to UUID for SQL/Oracle array and junction writes."""
+    return [uuid.UUID(sid) for sid in ids]
+
+
 async def _filter_live_source_memories(
     conn: "Connection",
     bank_id: str,
@@ -2902,10 +2921,14 @@ async def _apply_update_action(
         previous_occurred_start=model.occurred_start,
         previous_occurred_end=model.occurred_end,
         previous_mentioned_at=model.mentioned_at,
-        new_source_memory_ids=[str(mid) for mid in live_ids],
+        new_source_memory_ids=_unique_source_memory_ids(live_ids),
     )
 
-    source_ids = list(model.source_fact_ids or []) + live_ids
+    # Old recalled IDs are str; live filter returns uuid.UUID. Normalize to str
+    # before dedupe so the same ID collapses, keeping old-then-new order (#4799).
+    source_ids = _unique_source_memory_ids(list(model.source_fact_ids or []) + list(live_ids))
+    # FactRecord / proof_count keep strings; PG UUID[] and Oracle junction need uuid.UUID.
+    source_ids_uuid = _source_memory_ids_as_uuids(source_ids)
 
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
     existing_tags = set(model.tags or [])
@@ -2940,8 +2963,8 @@ async def _apply_update_action(
             """,
             new_text,
             embedding_str,
-            source_ids,
-            len(source_ids),
+            source_ids_uuid,
+            len(source_ids) or 1,
             uuid.UUID(observation_id),
             source_bounds.event_date,
             source_bounds.occurred_start,
@@ -2989,8 +3012,8 @@ async def _apply_update_action(
                 embedding=embedding_str,
                 fact_type="observation",
                 tags=merged_tags,
-                proof_count=len(source_ids),
-                source_memory_ids=[str(s) for s in source_ids],
+                proof_count=len(source_ids) or 1,
+                source_memory_ids=list(source_ids),
                 event_date=merged_bounds.event_date,
                 occurred_start=merged_bounds.occurred_start,
                 occurred_end=merged_bounds.occurred_end,
@@ -3015,14 +3038,14 @@ async def _apply_update_action(
             f"DELETE FROM {fq_table('observation_sources')} WHERE observation_id = $1",
             obs_uuid,
         )
-        if source_ids:
+        if source_ids_uuid:
             await conn.executemany(
                 f"""
                 INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
                 VALUES ($1, $2)
                 ON CONFLICT (observation_id, source_id) DO NOTHING
                 """,
-                [(obs_uuid, sid) for sid in dict.fromkeys(source_ids)],
+                [(obs_uuid, sid) for sid in source_ids_uuid],
             )
 
     if perf:
@@ -3202,10 +3225,13 @@ def _build_observations_for_llm(
     """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
     obs_list = []
     for obs in observations:
+        # Deduplicate dirty rows that still carry repeated IDs so a single
+        # observation cannot expand into a million-token prompt (#4799).
+        unique_source_ids = _unique_source_memory_ids(obs.source_fact_ids)
         obs_data: dict[str, Any] = {
             "id": obs.id,
             "text": obs.text,
-            "proof_count": len(obs.source_fact_ids or []) or 1,
+            "proof_count": len(unique_source_ids) or 1,
         }
         if obs.occurred_start:
             obs_data["occurred_start"] = obs.occurred_start
@@ -3214,9 +3240,11 @@ def _build_observations_for_llm(
         if obs.mentioned_at:
             obs_data["mentioned_at"] = obs.mentioned_at
         source_memories = []
-        for sid in obs.source_fact_ids or []:
+        for sid in unique_source_ids:
             sf = source_facts.get(sid)
             if sf is None:
+                # Missing from the budgeted map: skip expand, but do not shrink
+                # proof_count (unique_source_ids already fixed the count above).
                 continue
             sf_data: dict[str, Any] = {"text": sf.text}
             if sf.context:
@@ -3569,7 +3597,12 @@ async def _apply_create_observation(
     if not live_source_memory_ids:
         logger.debug(f"Create skipped: all {len(source_memory_ids)} source memories were deleted concurrently")
         return {"action": "skipped", "reason": "sources_deleted"}
-    source_memory_ids = live_source_memory_ids
+    # Dedupe by ID (not text) after liveness filtering so proof_count and the
+    # stored array match the unique supporting set (#4799).
+    unique_source_ids = _unique_source_memory_ids(live_source_memory_ids)
+    proof_count = len(unique_source_ids) or 1
+    # FactRecord / proof_count keep strings; PG UUID[] and Oracle junction need uuid.UUID.
+    unique_source_ids_uuid = _source_memory_ids_as_uuids(unique_source_ids)
 
     t0 = time.time()
     if not store.store_owned_for(bank_id):
@@ -3584,7 +3617,7 @@ async def _apply_create_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
                         tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
                 RETURNING id
             """
@@ -3599,7 +3632,7 @@ async def _apply_create_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
                         to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($3, '')))
                 RETURNING id
             """
@@ -3609,7 +3642,7 @@ async def _apply_create_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10)
                 RETURNING id
             """
 
@@ -3619,24 +3652,25 @@ async def _apply_create_observation(
             bank_id,
             observation_text,
             embedding_str,
-            source_memory_ids,
+            unique_source_ids_uuid,
             obs_tags,
             obs_event_date,
             obs_occurred_start,
             obs_occurred_end,
             obs_mentioned_at,
+            proof_count,
         )
         created_id = row["id"]
 
         # Populate observation_sources junction table (Oracle only — PG uses native array ops).
-        if memory_engine._backend.ops.uses_observation_sources_table and source_memory_ids:
+        if memory_engine._backend.ops.uses_observation_sources_table and unique_source_ids_uuid:
             await conn.executemany(
                 f"""
                 INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
                 VALUES ($1, $2)
                 ON CONFLICT (observation_id, source_id) DO NOTHING
                 """,
-                [(observation_id, sid) for sid in dict.fromkeys(source_memory_ids)],
+                [(observation_id, sid) for sid in unique_source_ids_uuid],
             )
     else:
         await store.upsert_observation(
@@ -3648,8 +3682,8 @@ async def _apply_create_observation(
                 embedding=embedding_str,
                 fact_type="observation",
                 tags=list(obs_tags),
-                proof_count=1,
-                source_memory_ids=[str(s) for s in source_memory_ids],
+                proof_count=proof_count,
+                source_memory_ids=list(unique_source_ids),
                 event_date=obs_event_date,
                 occurred_start=obs_occurred_start,
                 occurred_end=obs_occurred_end,
@@ -3662,7 +3696,7 @@ async def _apply_create_observation(
     if perf:
         perf.record_timing("db_write", time.time() - t0)
 
-    logger.debug(f"Created observation {observation_id} from {len(source_memory_ids)} memories (tags: {obs_tags})")
+    logger.debug(f"Created observation {observation_id} from {len(unique_source_ids)} memories (tags: {obs_tags})")
 
     return {"action": "created", "observation_id": str(created_id), "tags": obs_tags}
 
