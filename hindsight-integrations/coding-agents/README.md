@@ -2,7 +2,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**, **WorkBuddy**, **CodeBuddy**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -268,6 +268,39 @@ published-package route, `dsh plugin --profile web add @vectorize-io/hindsight-c
 too: the package ships the profile patch layer, so nothing else needs editing. Either route gets the
 companion skill — a plugin wired by the host's own plugin manager installs it itself on the first
 session, since that route never runs our installer.
+
+#### <img src="https://hindsight.vectorize.io/img/harness/workbuddy.png" alt="" width="20" height="20" /> WorkBuddy
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install workbuddy
+```
+
+3 hooks in `~/.workbuddy/settings.json`, the stdio MCP server in `~/.workbuddy/mcp.json`, and the
+companion skill in `~/.workbuddy/skills`. WorkBuddy (Tencent's AI workbench) is built on the shared
+`@genie/agent-cli` engine, so its hook protocol is Claude Code's field for field — only the
+transcript schema differs (`type:"message"` records carrying top-level `role`/`content`), which the
+package's own reader normalizes.
+
+#### <img src="https://hindsight.vectorize.io/img/harness/codebuddy.png" alt="" width="20" height="20" /> CodeBuddy
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install codebuddy
+```
+
+3 hooks in `~/.codebuddy/settings.json`, the stdio MCP server in `~/.codebuddy/.mcp.json` — the
+recommended file: the installer follows CodeBuddy's documented fallback chain, merging into an
+existing deprecated `~/.codebuddy/mcp.json` or legacy `~/.codebuddy.json` rather than shadowing it —
+and the companion skill in `~/.codebuddy/skills`. CodeBuddy Code runs the same `@genie/agent-cli`
+engine as WorkBuddy — WorkBuddy merely ships it with `dataFolderName: ".workbuddy"` — so it reuses
+WorkBuddy's hook runtime, and differs only in the root it writes to.
+
+**Both CodeBuddy hosts are covered, and they do not store sessions alike.** CodeBuddy Code (the CLI)
+writes the WorkBuddy JSONL that the shared reader parses. The IDE hands the Stop hook its own
+per-conversation directory instead — `CodeBuddyIDE/<uid>/history/<md5(workspace)>/<conversationId>/`,
+whose `index.json` _is_ the `transcript_path` and whose prose sits one level down, in
+`messages/<messageId>.json` — so the reader dispatches on the shape it was handed
+(core/transcript-codebuddy-ide.ts). Without that, an IDE session read as an empty transcript and was
+quietly never written back.
 
 Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 

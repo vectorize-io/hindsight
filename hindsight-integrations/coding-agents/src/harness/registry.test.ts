@@ -26,9 +26,11 @@ describe("HARNESS_NAMES", () => {
         "qwen-code",
         "factory-droid",
         "zcode",
+        "workbuddy",
+        "codebuddy",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(18);
+    expect(HARNESS_NAMES).toHaveLength(20);
   });
 });
 

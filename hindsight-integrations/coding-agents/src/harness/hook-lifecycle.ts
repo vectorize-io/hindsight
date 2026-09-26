@@ -17,6 +17,8 @@ import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcod
 import { readQwenTranscript } from "../core/transcript-qwen";
 import { readDroidTranscript } from "../core/transcript-droid";
 import { zcodeAssistantText } from "../core/transcript-zcode";
+import { readWorkbuddyTranscript } from "../core/transcript-workbuddy";
+import { readCodebuddyTranscript } from "../core/transcript-codebuddy-ide";
 
 export type HookHarnessName =
   | "claude-code"
@@ -29,7 +31,9 @@ export type HookHarnessName =
   | "dcode"
   | "qwen-code"
   | "factory-droid"
-  | "zcode";
+  | "zcode"
+  | "workbuddy"
+  | "codebuddy";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
 /**
  * How the HOST spells one hook registration.
@@ -561,6 +565,66 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
             ""
           ).trim(),
       },
+    },
+  },
+  /**
+   * WorkBuddy (Tencent's AI workbench) keeps a durable transcript at
+   * ~/.workbuddy/projects/<cwd-encoded>/<uuid>.jsonl and speaks Claude's hook protocol field for
+   * field — `session_id` / `transcript_path` / `cwd` in, hookSpecificOutput + systemMessage out —
+   * so the ONLY host-specific piece is the transcript SCHEMA: `type:"message"` records carrying
+   * top-level `role`/`content`, which core/transcript-workbuddy.ts normalizes. Its Stop payload
+   * fills `transcript_path` for real (the engine's own getHookTranscriptPath), so it retains
+   * through `readTranscript` like every other file-backed host rather than the journal ZCode needs.
+   * CodeBuddy Code ships the same @genie/agent-cli engine, so it will reuse this reader when it is
+   * registered.
+   */
+  workbuddy: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "workbuddy-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "workbuddy-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "workbuddy-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("workbuddy"),
+    prompt: { ...claudePrompt, harness: "workbuddy" },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "workbuddy",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readWorkbuddyTranscript,
+    },
+  },
+  /**
+   * CodeBuddy — the same `@genie/agent-cli` engine WorkBuddy ships, running under its own product
+   * config (`~/.codebuddy`; WorkBuddy only overrides `dataFolderName`). Hook names and payload shape
+   * are identical, so this spec differs from `workbuddy` in the files the installer writes, the
+   * harness name stamped on what it retains — and ONE thing more: CodeBuddy ships in two hosts whose
+   * transcripts do NOT look alike. CodeBuddy Code (the CLI) writes the WorkBuddy JSONL, while the
+   * IDE hands the Stop hook its own `<conversation>/index.json` directory layout. So the reader is
+   * a dispatcher on the shape it was handed (core/transcript-codebuddy-ide.ts).
+   */
+  codebuddy: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "codebuddy-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "codebuddy-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "codebuddy-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("codebuddy"),
+    prompt: { ...claudePrompt, harness: "codebuddy" },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "codebuddy",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readCodebuddyTranscript,
     },
   },
 };
