@@ -301,3 +301,128 @@ describe("readCodexTranscript", () => {
     expect(readCodexTranscript(join(root, "nope.jsonl"))).toEqual([]);
   });
 });
+
+describe("Codex provenance and assistant channels", () => {
+  const content = [
+    text("startup rules"),
+    { type: "input_image", image_url: "synthetic-image" },
+    text("# AGENTS.md instructions for /example\nExplain this literal heading."),
+    text("startup environment"),
+    text("keep future content"),
+  ];
+  const kinds = [
+    "agents_md.instructions",
+    "user.image",
+    "user.text",
+    "environments.environment_context",
+    "future.kind",
+  ];
+  const annotated = (metadata: unknown, blocks: unknown = content) =>
+    item({
+      type: "message",
+      role: "user",
+      content: blocks,
+      internal_chat_message_metadata_passthrough: metadata,
+    });
+
+  it("filters startup blocks before extracting text so image positions remain aligned", () => {
+    writeFileSync(file, annotated({ content_item_kinds: kinds }));
+    expect(readCodexTranscript(file)).toEqual([
+      {
+        role: "user",
+        content:
+          "# AGENTS.md instructions for /example\nExplain this literal heading." +
+          "\nkeep future content",
+      },
+    ]);
+  });
+
+  const environment = "<environment_context>\n<cwd>/example</cwd>\n</environment_context>";
+  it.each([undefined, { content_item_kinds: ["environments.environment_context"] }])(
+    "excludes environment-only content with annotation %j",
+    (metadata) => {
+      writeFileSync(file, annotated(metadata, [text(environment)]));
+      expect(readCodexTranscript(file)).toEqual([]);
+    }
+  );
+
+  it.each(["user.text", "future.environment"])(
+    "preserves literal environment marked %s",
+    (kind) => {
+      writeFileSync(file, annotated({ content_item_kinds: [kind] }, [text(environment)]));
+      expect(readCodexTranscript(file)).toEqual([{ role: "user", content: environment }]);
+    }
+  );
+
+  it.each([
+    "environments.instructions",
+    "agents_md.instructions",
+    "environments.environment_context",
+    "plugins.recommendations",
+    "plugins.usage_instructions",
+  ])("drops known startup kind %s", (kind) => {
+    writeFileSync(file, annotated({ content_item_kinds: [kind] }, [text("injected startup")]));
+    expect(readCodexTranscript(file)).toEqual([]);
+  });
+
+  it.each([
+    undefined,
+    null,
+    "bad",
+    {},
+    { content_item_kinds: "bad" },
+    { content_item_kinds: [] },
+    { content_item_kinds: ["agents_md.instructions"] },
+    {
+      content_item_kinds: [
+        "agents_md.instructions",
+        null,
+        "user.text",
+        "environments.environment_context",
+        "future.kind",
+      ],
+    },
+  ])("falls back without trusting malformed or misaligned metadata: %j", (metadata) => {
+    writeFileSync(file, annotated(metadata));
+    expect(readCodexTranscript(file)).toEqual([
+      {
+        role: "user",
+        content:
+          "startup rules\n" +
+          "# AGENTS.md instructions for /example\nExplain this literal heading." +
+          "\nstartup environment\nkeep future content",
+      },
+    ]);
+  });
+
+  it("keeps UserMessage events authoritative even when response metadata says otherwise", () => {
+    writeFileSync(
+      file,
+      [annotated({ content_item_kinds: kinds }), userEvent(text("actual prompt"))].join("\n")
+    );
+    expect(readCodexTranscript(file)).toEqual([{ role: "user", content: "actual prompt" }]);
+  });
+
+  it.each(["analysis", "reasoning"])("drops assistant %s in either channel or phase", (marker) => {
+    const messages = [
+      { channel: marker },
+      { phase: marker },
+      { channel: marker, phase: "final_answer" },
+      { phase: marker, channel: "commentary" },
+      { phase: "commentary" },
+      { phase: "final_answer" },
+      {},
+    ].map((fields, i) =>
+      item({ type: "message", role: "assistant", ...fields, content: [text(String(i))] })
+    );
+    writeFileSync(file, messages.join("\n"));
+    expect(readCodexTranscript(file)).toEqual(
+      [4, 5, 6].map((i) => ({ role: "assistant", content: String(i) }))
+    );
+  });
+
+  it("ignores malformed content arrays and continues to later valid turns", () => {
+    writeFileSync(file, [annotated({}, {}), userItem("valid")].join("\n"));
+    expect(readCodexTranscript(file)).toEqual([{ role: "user", content: "valid" }]);
+  });
+});

@@ -10,7 +10,7 @@
  * What we keep, normalized to the SAME `TransportTurn[]` shape as readClaudeTranscript so the live
  * write-back (retainLiveSession) renders both identically:
  *   - user text (real prompts only) — see below.
- *   - assistant text (all phases: commentary + final_answer).
+ *   - assistant text (commentary, final answers, and unmarked legacy messages).
  *   - function_call → a compact `role:"action"` turn (tool name + primary target, no args);
  *     function_call_output is dropped (outputs are mechanical noise for extraction).
  *
@@ -20,7 +20,8 @@
  * an `event_msg` `item_completed` whose item is a `UserMessage`, right after the response_item and
  * before any reply. When a rollout has those events they are the only source of user turns, so no
  * text of the injected blocks has to be recognised. Rollouts without them (older Codex) fall back to
- * the response_item plus a prefix check for the startup message.
+ * position-aligned content provenance when available, then the legacy startup prefix check.
+ * The legacy heuristic is ambiguous: it can miss injected blocks or omit literal user markup.
  *
  * `developer`-role messages carry Codex's system prompt AND our hook-injected context
  * (<hindsight_knowledge>, <hindsight_memories>, <user_feedback>), so dropping them entirely is what
@@ -39,6 +40,9 @@ interface Payload {
   type?: string;
   role?: string;
   content?: ContentItem[];
+  channel?: unknown;
+  phase?: unknown;
+  internal_chat_message_metadata_passthrough?: { content_item_kinds?: unknown };
   name?: string;
   arguments?: string;
   input?: string;
@@ -72,10 +76,35 @@ function isSyntheticUserText(text: string): boolean {
 
 /** Join the text blocks of a content list (input_text/output_text/text; images have no text). */
 function contentText(content: ContentItem[] | undefined): string {
-  return (content || [])
+  return (Array.isArray(content) ? content : [])
     .filter((c) => c && typeof c.text === "string")
     .map((c) => c.text as string)
     .join("\n");
+}
+
+const startupKinds = new Set([
+  "agents_md.instructions",
+  "environments.instructions",
+  "environments.environment_context",
+  "plugins.recommendations",
+  "plugins.usage_instructions",
+]);
+
+function fallbackUserText(payload: Payload): string {
+  const content = payload.content;
+  const kinds = payload.internal_chat_message_metadata_passthrough?.content_item_kinds;
+  // Validate against ALL content positions before removing images or joining text. Unknown
+  // kinds are preserved so a future Codex annotation cannot silently discard genuine prompts.
+  if (
+    Array.isArray(content) &&
+    Array.isArray(kinds) &&
+    kinds.length === content.length &&
+    kinds.every((kind) => typeof kind === "string" && kind.length > 0)
+  ) {
+    return contentText(content.filter((_, index) => !startupKinds.has(kinds[index])));
+  }
+  const text = contentText(content);
+  return isSyntheticUserText(stripInjectedMemory(text)) ? "" : text;
 }
 
 function isUserMessageEvent(line: RolloutLine): boolean {
@@ -119,10 +148,17 @@ export function readCodexTranscript(path: string): TransportTurn[] {
 
     if (p.type === "message") {
       // `developer` messages are Codex's system prompt + OUR injected hook context → drop entirely.
-      if (p.role === "assistant") push("assistant", contentText(p.content), stampOf(line));
-      else if (p.role === "user" && !userFromEvents) {
-        const text = contentText(p.content);
-        if (!isSyntheticUserText(stripInjectedMemory(text))) push("user", text, stampOf(line));
+      if (p.role === "assistant") {
+        if (
+          p.channel === "analysis" ||
+          p.channel === "reasoning" ||
+          p.phase === "analysis" ||
+          p.phase === "reasoning"
+        )
+          continue;
+        push("assistant", contentText(p.content), stampOf(line));
+      } else if (p.role === "user" && !userFromEvents) {
+        push("user", fallbackUserText(p), stampOf(line));
       }
     } else if (
       (p.type === "function_call" || p.type === "custom_tool_call") &&
