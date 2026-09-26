@@ -75,10 +75,10 @@ def test_reflect_tool_uses_reflect(provider):
 def test_retain_tool_stores_content_with_per_call_tags(provider):
     instance, fake = provider({"retain_tags": "base"})
     instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea", "tags": ["drink"]})
+    instance.shutdown()
     item = _retain_item(fake)
     assert item["content"] == "Ada likes tea"
     assert item["tags"] == ["base", "drink"]
-    instance.shutdown()
 
 
 def test_tool_call_errors_are_reported_not_raised(provider):
