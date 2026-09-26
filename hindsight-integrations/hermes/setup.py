@@ -112,18 +112,24 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
         provider_config["llm_provider"] = llm_provider
 
     print("\n  Checking dependencies...")
-    # Environment-aware install: sealed hosted venvs redirect to the durable data volume.
-    from tools.lazy_deps import install_specs
+    # Environment-aware install when this build still exposes one (a build whose
+    # tools.lazy_deps is the relaunch shim has none — we print the command instead of exiting).
+    from .embedded import _optional_dependency_installer
 
     deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
-    outcome = install_specs(deps, timeout=120)
-    if outcome.ok:
-        print("  ✓ Dependencies up to date")
-    elif outcome.blocked:
-        print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
+    installer = _optional_dependency_installer()
+    if installer is None:
+        print(f"  ⚠ No installer available in this build. Run manually:"
+              f" uv pip install --python {sys.executable} {' '.join(deps)}")
     else:
-        print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
-        print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
+        outcome = installer(deps, timeout=120)
+        if outcome.ok:
+            print("  ✓ Dependencies up to date")
+        elif outcome.blocked:
+            print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
+        else:
+            print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
+            print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
 
     if mode == "cloud":
         print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")
