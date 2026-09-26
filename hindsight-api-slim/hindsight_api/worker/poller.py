@@ -2094,7 +2094,12 @@ class WorkerPoller:
           * serialization_blocked - queued behind a peer: an older or running
                                     op for the same document / mental model,
                                     or a running consolidation or
-                                    graph_maintenance for the same bank
+                                    graph_maintenance for the same bank.
+                                    Not necessarily stuck: when the group's
+                                    oldest retain is claimed, up to 16 of the
+                                    retains queued behind it are folded into
+                                    that execution (engine.retain.fold), so
+                                    these can drain with the next claim
 
         ``claimable`` is what *should* be picked up on the next poll. If
         ``claimable > 0`` while workers report free slots, the bug is somewhere
