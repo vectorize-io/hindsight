@@ -119,3 +119,43 @@ class TestStripCodeFences:
         parsed = json.loads(result)
         assert len(parsed["facts"]) == 1
         assert parsed["facts"][0]["who"] == "Sebastian"
+
+    def test_json_tagged_block_preferred_over_earlier_untagged_block(self):
+        """Multiple fences: a ```json-tagged block wins over an earlier untagged one.
+
+        Regression for #4817: a model/gateway that ignores a forced tool_choice
+        and replies with free text may echo an unrelated example before its real
+        JSON answer (e.g. a ```python snippet, then the ```json answer). The
+        first-fence-by-position behavior this replaces would silently return the
+        wrong block whenever it happens to also be valid JSON/parseable text.
+        """
+        content = (
+            "Here's an example of the format:\n"
+            "```python\n"
+            'foo = {"a": 1}\n'
+            "```\n"
+            "And the real answer:\n"
+            "```json\n"
+            '{"real": "answer"}\n'
+            "```"
+        )
+        result = _strip_code_fences(content)
+        assert json.loads(result) == {"real": "answer"}
+
+    def test_json_tagged_block_preferred_even_when_it_comes_second(self):
+        """Two fences, neither obviously an 'example' — json tag alone decides."""
+        content = '```text\nnot the answer\n```\n```json\n{"ok": true}\n```'
+        result = _strip_code_fences(content)
+        assert json.loads(result) == {"ok": True}
+
+    def test_first_json_tagged_block_wins_when_multiple_are_tagged(self):
+        """Two ```json blocks: the first one (in document order) is used."""
+        content = '```json\n{"first": 1}\n```\n```json\n{"second": 2}\n```'
+        result = _strip_code_fences(content)
+        assert json.loads(result) == {"first": 1}
+
+    def test_no_json_tag_falls_back_to_first_fence(self):
+        """No block is tagged json: behavior matches the pre-multi-block code (first fence)."""
+        content = '```text\n{"first": 1}\n```\n```text\n{"second": 2}\n```'
+        result = _strip_code_fences(content)
+        assert json.loads(result) == {"first": 1}
