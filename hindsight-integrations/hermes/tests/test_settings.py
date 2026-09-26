@@ -39,9 +39,10 @@ def test_observation_scopes_normalization():
 
 
 def test_per_user_bank_override_matches_exact_platform_user():
-    assert _resolve_bank_id_for_user(
-        "education", {"dingtalk:user-a": "jiayin_learning"}, "dingtalk", "user-a"
-    ) == "jiayin_learning"
+    assert (
+        _resolve_bank_id_for_user("education", {"dingtalk:user-a": "jiayin_learning"}, "dingtalk", "user-a")
+        == "jiayin_learning"
+    )
 
 
 def test_per_user_bank_override_does_not_cross_platforms():

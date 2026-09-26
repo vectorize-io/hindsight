@@ -51,7 +51,6 @@ def test_auto_retain_off_stores_nothing(provider):
     assert fake.retains == []
 
 
-
 def test_provider_applies_platform_scoped_user_bank_override(provider):
     instance, fake = provider(
         {
@@ -85,6 +84,7 @@ def test_setup_config_schema_exposes_per_user_bank_mapping(provider):
     field = next(f for f in instance.get_config_schema() if f.get("key") == "bank_id_by_user")
     assert field["default"] == {}
     instance.shutdown()
+
 
 def test_recall_tool_queries_the_bank_and_formats_results(provider):
     instance, fake = provider(
