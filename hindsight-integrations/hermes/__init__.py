@@ -1467,7 +1467,11 @@ class HindsightMemoryProvider(MemoryProvider):
             content, context=context, tags=args.get("tags"), occurred_at=args.get("occurred_at")
         )
         logger.debug("Tool hindsight_retain: bank=%s, content_len=%d, context=%s", self._bank_id, len(content), context)
-        self._retain_batch(item, bank_id=self._bank_id)
+        # Forward the configured retain_async mode: it is a call-level arg
+        # (never an item key), so omitting it here drops the async/sync choice
+        # and aretain_batch falls back to its own server default. Matches the
+        # auto-retain path.
+        self._retain_batch(item, bank_id=self._bank_id, retain_async=self._retain_async)
         logger.debug("Tool hindsight_retain: success")
         return "Memory stored successfully."
 
