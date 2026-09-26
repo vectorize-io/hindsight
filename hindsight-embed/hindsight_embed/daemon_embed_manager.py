@@ -839,6 +839,16 @@ class DaemonEmbedManager(EmbedManager):
         # service that has no authentication (issue #3253). Only None means
         # "not specified".
         env = os.environ.copy()
+        # Do not leak the parent interpreter's import path into the daemon
+        # child. The API daemon is launched through its own interpreter/tool
+        # env (e.g. a `uv run` venv or a uvx-managed tool); if the parent was
+        # started with PYTHONPATH pointing at a *different* Python's
+        # site-packages, the child imports extension modules from the wrong
+        # build (e.g. a cpython-3.14 `pydantic_core` under a 3.11 daemon) and
+        # dies at startup with `ModuleNotFoundError`. Drop both PYTHONPATH and
+        # PYTHONHOME so the daemon resolves only its own packages.
+        env.pop("PYTHONPATH", None)
+        env.pop("PYTHONHOME", None)
         for key, value in config.items():
             if key.startswith("HINDSIGHT_") and value is not None:
                 env[key] = str(value)

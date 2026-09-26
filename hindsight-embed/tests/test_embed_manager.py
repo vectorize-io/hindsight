@@ -77,6 +77,36 @@ def test_startup_keeps_polling_after_transient_stability_failure(tmp_path, monke
     assert manager.is_running.call_count == 5
 
 
+@_posix_only
+def test_daemon_child_env_uninherits_pythonpath(tmp_path, monkeypatch):
+    """The daemon child must not inherit the parent's PYTHONPATH/PYTHONHOME.
+
+    The API daemon is launched through its own interpreter/tool env. If the
+    parent process carries a PYTHONPATH that points at a *different* Python's
+    site-packages, the child imports extension modules from the wrong build
+    (e.g. a cpython-3.14 pydantic_core under a 3.11 daemon) and dies at
+    startup. Daemon-specific HINDSIGHT_* config is still forwarded.
+    """
+    # First call (pre-spawn check) must be False to proceed to spawn; the
+    # post-spawn stability poll then needs several consecutive True verdicts.
+    manager = _startup_manager(MagicMock(side_effect=[False] + [True] * 20))
+    process = _running_process()
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.time", lambda: 0)
+    monkeypatch.setenv("PYTHONPATH", "/intruder/3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/intruder")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-test")
+
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process) as popen:
+        assert manager._start_daemon_locked({"HINDSIGHT_API_LLM_API_KEY": "sk-test"}, "test", paths) is True
+
+    child_env = popen.call_args.kwargs["env"]
+    assert "PYTHONPATH" not in child_env
+    assert "PYTHONHOME" not in child_env
+    assert child_env["HINDSIGHT_API_LLM_API_KEY"] == "sk-test"
+
+
 def test_startup_fails_fast_when_daemon_exits(tmp_path, monkeypatch):
     manager = _startup_manager(MagicMock(return_value=False))
     process = _running_process()
