@@ -32,6 +32,16 @@ def _arm(ext: str) -> KnowledgeBm25Arm:
     return knowledge_bm25_arm(ext, table_alias="mm", text_param="$3")
 
 
+def test_oracle_uses_oracle_text_contains_and_score():
+    """Oracle has no tsvector: the arm must query the CTXSYS.CONTEXT index on
+    mental_models(content), whatever PG extension the config names."""
+    for ext in ("native", "pg_search", "vchord"):
+        arm = knowledge_bm25_arm(ext, table_alias="mm", text_param="$3", backend_type="oracle")
+        assert arm.match_filter == "AND CONTAINS(mm.content, REPLACE($3, ' OR ', ' ACCUM '), 1) > 0"
+        assert arm.order_by == "SCORE(1) DESC"
+        assert "ts_rank_cd" not in arm.order_by
+
+
 def test_native_uses_tsvector_operators():
     arm = _arm("native")
     # The mental_models tsvector is generated with the 'english' config, so the

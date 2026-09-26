@@ -71,6 +71,7 @@ def knowledge_bm25_arm(
     pg_search_function_schema: str = "paradedb",
     pg_search_tokenizer: str = "",
     max_query_terms: int = 0,
+    backend_type: str = "postgresql",
 ) -> KnowledgeBm25Arm:
     """BM25 clauses for ``search_knowledge_pages`` on a given text-search backend.
 
@@ -96,6 +97,19 @@ def knowledge_bm25_arm(
     """
     a = table_alias
     p = text_param
+
+    if backend_type == "oracle":
+        # Oracle Text: CONTAINS/SCORE over the CTXSYS.CONTEXT index
+        # idx_mental_models_text_search on mental_models(content), the same shape the
+        # memory-recall arm uses on memory_units(text). ``text_param`` carries the
+        # OR-joined, escaped terms from OracleDialect.prepare_bm25_text. The PG
+        # text-search extensions do not exist here, so this wins over them.
+        return KnowledgeBm25Arm(
+            order_by="SCORE(1) DESC",
+            # ACCUM instead of the OR the dialect joins terms with: pages matching more
+            # query terms rank higher, which OR (max of term scores) does not do.
+            match_filter=f"AND CONTAINS({a}.content, REPLACE({p}, ' OR ', ' ACCUM '), 1) > 0",
+        )
 
     if text_search_extension == "vchord":
         # VectorChord BM25 over the bm25vector search_vector column, identical to

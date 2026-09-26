@@ -321,6 +321,15 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # $N → :N
     query = _PG_PARAM_RE.sub(r":\1", query)
 
+    # LEFT(expr, n) does not exist in Oracle (ORA-00904). DBMS_LOB.SUBSTR takes
+    # VARCHAR2 and CLOB alike and returns VARCHAR2, so snippets stay plain strings.
+    query = re.sub(
+        r"\bLEFT\s*\(\s*([\w.]+)\s*,\s*(\d+|:\w+)\s*\)",
+        r"DBMS_LOB.SUBSTR(\1, \2, 1)",
+        query,
+        flags=re.IGNORECASE,
+    )
+
     # JSONB merge operator: col || :N::jsonb → JSON_MERGEPATCH(col, :N RETURNING CLOB)
     # Must happen BEFORE cast strip so we can detect ::jsonb
     # RETURNING CLOB is required: without it JSON_MERGEPATCH returns VARCHAR2(4000)

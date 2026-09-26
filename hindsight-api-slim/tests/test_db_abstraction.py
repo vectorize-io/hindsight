@@ -567,6 +567,16 @@ class TestOracleQueryRewriter:
         query2, _, _ = _rewrite_pg_to_oracle("WHERE a = $1 AND b = $2")
         assert ":2" in query2
 
+    def test_left_becomes_dbms_lob_substr(self):
+        # LEFT() does not exist in Oracle (ORA-00904); knowledge-page snippets use it.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT LEFT(mm.content, 280) AS snippet FROM t LEFT JOIN u ON 1=1")
+        assert "DBMS_LOB.SUBSTR(mm.content, 280, 1) AS snippet" in query
+        assert "LEFT JOIN u" in query
+        query, _, _ = _rewrite_pg_to_oracle("SELECT left(name, $2) FROM t")
+        assert "DBMS_LOB.SUBSTR(name, :2, 1)" in query
+
     def test_cast_removal(self):
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
