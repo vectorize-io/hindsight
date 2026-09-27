@@ -26,6 +26,7 @@ from hindsight_api.engine.reflect.agent import (
     _generate_structured_output,
     _is_context_overflow_error,
     _is_done_tool,
+    _MAX_FORCED_STEP_RETRIES,
     _normalize_tool_name,
     run_reflect_agent,
 )
@@ -1280,6 +1281,149 @@ class TestReflectAgentMocked:
         final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
         assert f"approximately {cap} tokens" in final_prompt
 
+    @staticmethod
+    def _search_call(call_id: str, name: str) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id=call_id, name=name, arguments={"query": "test query"})],
+            finish_reason="tool_calls",
+        )
+
+    @staticmethod
+    def _no_tool_call_turn() -> LLMToolCallResult:
+        """The vLLM 0.24.0 signature from #4564: it *says* tool_calls, and sends none."""
+        return LLMToolCallResult(tool_calls=[], content=None, finish_reason="tool_calls")
+
+    @pytest.mark.asyncio
+    async def test_pinned_step_with_no_tool_call_is_retried_not_skipped(self, mock_llm, mock_functions):
+        """A forced step that comes back with zero tool calls is re-asked, not dropped (#4564).
+
+        Observed against vLLM 0.24.0 roughly 1 turn in 5: ``finish_reason="tool_calls"``
+        with an empty tool-call list. The loop used to read that as "the model is done
+        retrieving" and jump to the answer, so a pinned ``recall`` never ran and no
+        caller could tell that evidence set from a complete one.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            # Pinned step 0: search_observations, honoured.
+            self._search_call("1", "search_observations"),
+            # Pinned step 1: recall — the provider returns no tool call at all.
+            self._no_tool_call_turn(),
+            # The retry of the SAME pinned step lands.
+            self._search_call("2", "recall"),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="done", arguments={"answer": "Complete answer.", "memory_ids": ["mem-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=False,
+            budget="low",
+            max_iterations=6,
+            **mock_functions,
+        )
+
+        assert result.text == "Complete answer."
+        # The pinned step actually ran, so the evidence set is the complete one.
+        mock_functions["recall_fn"].assert_awaited_once()
+        choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.await_args_list]
+        assert choices[:3] == [
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
+            # Re-pinned: the miss must not consume the step and slide the ladder on.
+            LLMToolChoice.named("recall"),
+        ]
+        assert choices[3] is LLM_TOOL_CHOICE_AUTO
+        # The retry re-sends the identical request: nothing is appended for a turn
+        # that produced no tool call.
+        sent = [len(c.kwargs["messages"]) for c in mock_llm.call_with_tools.await_args_list]
+        assert sent[1] == sent[2]
+        # No synthesis happened behind our back.
+        mock_llm.call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pinned_step_that_never_tool_calls_fails_loudly(self, mock_llm, mock_functions):
+        """A pinned step that keeps returning nothing fails the run instead of answering.
+
+        Bounded retries, then ``ReflectToolCallError`` naming the pinned tool. The
+        alternative — synthesizing — is the silent skip of #4564: the answer would be
+        missing a required retrieval layer and look exactly like a complete one.
+        """
+        mock_llm.provider = "vllm"
+        mock_llm.model = "qwen3-32b"
+        mock_llm.call_with_tools.side_effect = [
+            self._search_call("1", "search_observations"),
+            *[self._no_tool_call_turn() for _ in range(5)],
+        ]
+
+        with pytest.raises(ReflectToolCallError) as exc_info:
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                has_mental_models=False,
+                budget="low",
+                max_iterations=8,
+                **mock_functions,
+            )
+
+        message = str(exc_info.value)
+        assert "recall" in message
+        assert "tool_choice='recall'" in message
+        assert "finish_reason='tool_calls'" in message
+        assert "vllm/qwen3-32b" in message
+        # The honoured step, then the pinned attempt and its bounded retries, then fail.
+        assert mock_llm.call_with_tools.await_count == 1 + (1 + _MAX_FORCED_STEP_RETRIES)
+        # Never answered around the missing step.
+        mock_llm.call.assert_not_called()
+        mock_functions["recall_fn"].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prose_stop_after_the_forced_sequence_still_finishes(self, mock_llm, mock_functions):
+        """The legitimate stop is untouched: once the ladder is exhausted, prose ends the run.
+
+        This is the case the retry above must not swallow — the turn runs under ``auto``
+        tool choice, so a text-only response is the model choosing to stop, not a
+        provider dropping a pinned call.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            self._search_call("1", "search_observations"),
+            self._search_call("2", "recall"),
+            # Forced sequence exhausted: this turn is ``auto``, and the model stops.
+            LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
+            # ``_finish`` asks for the answer through done() on the same conversation.
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="done", arguments={"answer": "Legitimate stop.", "memory_ids": ["mem-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=False,
+            budget="low",
+            max_iterations=6,
+            **mock_functions,
+        )
+
+        assert result.text == "Legitimate stop."
+        choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.await_args_list]
+        assert choices[2] is LLM_TOOL_CHOICE_AUTO, "the ladder was exhausted, so this turn is auto"
+        # No retry was spent on the stop: the closing done() call is the 4th and last.
+        assert mock_llm.call_with_tools.await_count == 4
+        assert choices[3].function_name == "done"
+
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):
         """Test that agent stops after max iterations even with errors."""
@@ -1794,11 +1938,17 @@ class TestNoAnswerFailsHard:
             content="   ",
             usage=TokenUsage(input_tokens=10, output_tokens=0, total_tokens=10),
         )
-        # Gather evidence, then stop tool-calling: the agent falls through to the
-        # forced synthesis, which is where the empty text comes from.
+        # Walk the whole forced ladder first, then stop tool-calling: the agent falls
+        # through to the forced synthesis, which is where the empty text comes from.
+        # (The stop has to land *after* the ladder — a pinned step answered with no
+        # tool call is retried and then fails now, rather than finishing here, #4564.)
         mock_llm.call_with_tools.side_effect = [
             LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
+                tool_calls=[LLMToolCall(id="1", name="search_observations", arguments={"query": "test query"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="recall", arguments={"query": "test query"})],
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(content="", tool_calls=[], finish_reason="stop"),
