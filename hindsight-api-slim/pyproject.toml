@@ -75,17 +75,13 @@ dependencies = [
     # cp314 wheel and their sdist fails to build because PyO3 0.23.5 rejects
     # any interpreter newer than 3.13. 1.93.0 adds cp314 wheels and a PyO3 that
     # builds on 3.14.
-    "litellm>=1.93.0; sys_platform != 'darwin'",
-    # macOS: litellm publishes NO macOS wheels for any release >= 1.92.0 (only
-    # manylinux + win_amd64), so every install compiles the sdist's Rust/PyO3
-    # bridge — which requires a Rust toolchain most users don't have, and as of
-    # 1.95.0 (vendored aws-smithy crates) rustc >= 1.94.1 on top. Pin to the
-    # 1.91.x line, the last releases shipping pure-python py3-none-any wheels,
-    # so a plain `uvx hindsight-api` works on a stock Mac. The 1.93.0 floor's
-    # Python 3.14 rationale doesn't apply here: pure wheels install on any
-    # interpreter without building anything. Revisit when litellm ships macOS
-    # wheels (tracked upstream in BerriAI/litellm#31261).
-    "litellm>=1.91.3,<1.92; sys_platform == 'darwin'",
+    # macOS: litellm has published macOS wheels (arm64 and x86_64, abi3) since
+    # 2026-08-09, and every release from 1.95.1 on carries them; 1.94.0, 1.94.1
+    # and 1.95.0 do not, hence the 1.95.1 floor on every platform. The earlier
+    # darwin carve-out to the pure-python 1.91.x line can go: 1.91.x declares
+    # requires-python <3.14, so it made hindsight-api-slim uninstallable on
+    # macOS under Python 3.14.
+    "litellm>=1.95.1",
     "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4", # File to markdown conversion
     "obstore>=0.4.0", # S3/GCS/Azure object storage client (Rust-backed)
     "winloop>=0.1.0; sys_platform == 'win32'",
