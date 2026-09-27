@@ -687,3 +687,92 @@ def test_final_prompt_output_language_override_replaces_the_language_rule():
     assert "## LANGUAGE" not in prompt
     assert "SAME language as the user's question" not in prompt
     assert "Respond exclusively in Spanish" not in prompt, "the directive belongs on the user prompt"
+
+
+# =========================================================================
+# build_final_prompt: an over-budget newest block is trimmed, not dropped
+#
+# On a small context window a single tool result can exceed the whole
+# per-block budget. The budget walk used to drop it whole — and every older
+# block behind it — so the final call reached the model with no retrieved
+# data and small-window models answered "I don't have information" (#4561).
+# The newest (usually most relevant) block is now trimmed to the remaining
+# budget instead.
+# =========================================================================
+
+from hindsight_api.engine.reflect.prompts import _render_history_block, build_final_prompt
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
+
+
+def _recall_entry(n_items=103, big_first_item=True, prefix="m"):
+    items = [
+        {
+            "id": f"{prefix}{i}",
+            "text": "t" * 90,
+            "fact_type": "observation",
+            "entities": [{"canonical": "X", "type": "product", "mentions": ["x"]}],
+            "mentioned_at": "2026-09-17T00:00:00+00:00",
+            "tags": ["a", "b"],
+            "source_fact_ids": [f"s{i}"],
+        }
+        for i in range(n_items)
+    ]
+    if big_first_item:
+        items[0]["text"] *= 40  # one item alone exceeds the budget
+    return {"tool": "recall", "input": {}, "output": {"query": "q", "memories": items}}
+
+
+def _max_tokens_for_budget_below(block_tokens):
+    # token_budget = max_context_tokens * 0.8 — pick max_context_tokens so the
+    # budget lands just under the block size.
+    return int(block_tokens / 0.8) - 500
+
+
+def test_oversized_newest_block_is_trimmed_not_dropped():
+    """The newest over-budget tool result lands trimmed instead of vanishing.
+
+    Regression test for #4561: with a single over-budget entry, the old code
+    dropped it whole and the final prompt carried no retrieved data.
+    """
+    entry = _recall_entry()
+    block_tokens = count_prompt_tokens(_render_history_block(entry))
+    max_context_tokens = _max_tokens_for_budget_below(block_tokens)
+    assert block_tokens > int(max_context_tokens * 0.8)  # the bug's precondition
+
+    prompt = build_final_prompt(
+        query="what did we conclude?",
+        context_history=[entry],
+        bank_profile=BANK,
+        max_context_tokens=max_context_tokens,
+    )
+
+    assert "(cut to fit the context window)" in prompt
+    # The newest entry's content survives the trim …
+    assert '"m0"' in prompt
+    # … and the prompt stays near the budget instead of ballooning.
+    assert count_prompt_tokens(prompt) < max_context_tokens
+
+
+def test_oversized_older_block_still_dropped_once_newest_fits():
+    """Only the leading (newest) block is trimmed; older over-budget blocks
+    are still dropped once retrieved data is already present."""
+    small = _recall_entry(n_items=2, big_first_item=False, prefix="new")
+    big = _recall_entry(prefix="old")
+    small_tokens = count_prompt_tokens(_render_history_block(small))
+    big_tokens = count_prompt_tokens(_render_history_block(big))
+    # Budget fits the small newest block but not the big older one.
+    max_context_tokens = int(((small_tokens + big_tokens) / 2) / 0.8)
+    budget = int(max_context_tokens * 0.8)
+    assert small_tokens < budget < big_tokens
+
+    prompt = build_final_prompt(
+        query="what did we conclude?",
+        context_history=[big, small],  # chronological: big is older
+        bank_profile=BANK,
+        max_context_tokens=max_context_tokens,
+    )
+
+    assert "(cut to fit the context window)" not in prompt
+    assert '"old0"' not in prompt  # the older block's marker item is gone
+    assert '"new0"' in prompt  # the fitting newest block is kept whole
+    assert "omitted to stay within the context window" in prompt

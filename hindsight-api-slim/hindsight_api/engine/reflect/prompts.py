@@ -643,16 +643,20 @@ _FINAL_INSTRUCTIONS = (
 )
 
 
+def _output_json(output: object) -> str:
+    """Compact-serialize a tool output for prompt rendering."""
+    try:
+        return json.dumps(output, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(output)
+
+
 def _render_history_block(entry: dict) -> str:
     """Render one context-history entry as a fenced JSON block."""
     tool = entry["tool"]
-    output = entry["output"]
     # Compact, like the tool messages the loop sends: indentation was 7% of the
     # synthesis prompt and tells the model nothing.
-    try:
-        output_str = json.dumps(output, default=str, ensure_ascii=False)
-    except (TypeError, ValueError):
-        output_str = str(output)
+    output_str = _output_json(entry["output"])
     return f"\n### From {tool}:\n```json\n{output_str}\n```"
 
 
@@ -869,6 +873,19 @@ def build_final_prompt(
             block_tokens = count_prompt_tokens(block)
             if block_tokens > token_budget:
                 truncated = True
+                # A single over-budget block used to be dropped whole — and every
+                # older block with it — so the final call reached the model with
+                # no retrieved data at all (#4561). Trim the newest block to the
+                # remaining budget instead; the 0.9 margin absorbs tokenizer
+                # drift between the cut estimate and the final render. Older
+                # blocks are still dropped once data is already present.
+                if token_budget > 200 and not rendered:
+                    output_str = _output_json(entry["output"])
+                    keep = max(200, int(len(output_str) * (token_budget / block_tokens) * 0.9))
+                    tool = entry["tool"]
+                    rendered.append(
+                        f"\n### From {tool} (cut to fit the context window):\n```json\n{output_str[:keep]}\n...\n```"
+                    )
                 break
             rendered.append(block)
             token_budget -= block_tokens
