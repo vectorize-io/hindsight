@@ -24,6 +24,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -311,11 +312,7 @@ class ClaudeCodeLLM(LLMInterface):
                 # Handle structured output
                 if response_format is not None:
                     # Models may wrap JSON in markdown
-                    clean_text = full_text
-                    if "```json" in full_text:
-                        clean_text = full_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in full_text:
-                        clean_text = full_text.split("```")[1].split("```")[0].strip()
+                    clean_text = _strip_code_fences(full_text)
 
                     try:
                         json_data = json.loads(clean_text)

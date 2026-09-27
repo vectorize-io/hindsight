@@ -31,7 +31,10 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
-from hindsight_api.engine.providers.openai_compatible_llm import visible_token_usage
+from hindsight_api.engine.providers.openai_compatible_llm import (
+    _strip_code_fences,
+    visible_token_usage,
+)
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -367,11 +370,7 @@ class LiteLLMLLM(LLMInterface):
 
                 if response_format is not None:
                     # Strip markdown code fences if present
-                    clean_content = content
-                    if "```json" in content:
-                        clean_content = content.split("```json")[1].split("```")[0].strip()
-                    elif "```" in content:
-                        clean_content = content.split("```")[1].split("```")[0].strip()
+                    clean_content = _strip_code_fences(content)
 
                     try:
                         json_data = json.loads(clean_content)

@@ -62,6 +62,7 @@ from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affini
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.providers.xai_oauth_auth import (
     DEFAULT_REFRESH_SKEW_SECONDS,
     LOGIN_COMMAND,
@@ -293,15 +294,6 @@ def _token_counts(usage: _ChatUsage | None) -> _TokenCounts:
         cached_tokens=cached,
         thoughts_tokens=thoughts,
     )
-
-
-def _strip_code_fence(content: str) -> str:
-    """Unwrap a markdown-fenced JSON payload, if the model produced one."""
-    if "```json" in content:
-        return content.split("```json")[1].split("```")[0].strip()
-    if "```" in content:
-        return content.split("```")[1].split("```")[0].strip()
-    return content
 
 
 def _retry_after_seconds(headers: Mapping[str, str]) -> float | None:
@@ -773,7 +765,7 @@ class XaiOAuthLLM(LLMInterface):
 
                 if response_format is not None:
                     try:
-                        json_data = json.loads(_strip_code_fence(content))
+                        json_data = json.loads(_strip_code_fences(content))
                     except json.JSONDecodeError as json_err:
                         logger.warning(
                             "xai-oauth JSON parse error (attempt %d/%d, scope=%s, %d chars): %s",
