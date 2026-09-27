@@ -128,6 +128,20 @@ def test_session_switch_starts_a_new_document(provider):
     assert [call["document_id"] for call in fake.retains] == ["session-1", "session-2"]
 
 
+def test_session_switch_rotates_a_session_templated_bank(provider):
+    instance, fake = provider({"bank_id_template": "bank-{session}"})
+    instance.sync_turn("one", "1")
+    instance.on_session_switch("session-2")
+    instance.sync_turn("two", "2")
+    instance.handle_tool_call("hindsight_recall", {"query": "where?"})
+    instance.handle_tool_call("hindsight_reflect", {"query": "why?"})
+    instance.shutdown()
+
+    assert [call["bank_id"] for call in fake.retains] == ["bank-session-1", "bank-session-2"]
+    assert fake.recalls[0]["bank_id"] == "bank-session-2"
+    assert fake.reflects[0]["bank_id"] == "bank-session-2"
+
+
 def test_register_exposes_the_provider_to_hermes():
     registered = []
     plugin.register(type("Ctx", (), {"register_memory_provider": lambda _self, p: registered.append(p)})())

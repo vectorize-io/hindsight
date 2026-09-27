@@ -1563,14 +1563,29 @@ class HindsightMemoryProvider(MemoryProvider):
         if parent_session_id:
             self._parent_session_id = str(parent_session_id).strip()
         self._session_id, self._document_id = new_id, _mint_document_id(new_id)
+        # The old-session retain jobs capture their bank when they are queued, so
+        # rotate only after flushing and draining prefetch. Previously the bank was
+        # resolved once at initialize(), causing a {session} template to keep routing
+        # later sessions into the first session's bank.
+        if self._bank_id_template:
+            self._bank_id = _resolve_bank_id_template(
+                self._bank_id_template,
+                fallback=self._bank_id,
+                profile=self._agent_identity,
+                workspace=self._agent_workspace,
+                platform=self._platform,
+                user=self._user_id,
+                session=self._session_id,
+            )
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
         logger.debug(
-            "Hindsight on_session_switch: new_session=%s parent=%s reset=%s doc=%s",
+            "Hindsight on_session_switch: new_session=%s parent=%s reset=%s doc=%s bank=%s",
             self._session_id,
             self._parent_session_id,
             reset,
             self._document_id,
+            self._bank_id,
         )
 
     def _close_client(self) -> None:
