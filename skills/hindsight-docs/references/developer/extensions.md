@@ -288,6 +288,23 @@ chunked transfer encoding). Use it for cheap size-aware quota or cost guards;
 the full `validate_*` hooks still run after parsing and should enforce precise
 per-operation limits.
 
+#### Memory curation hooks
+
+Curating a memory (`PATCH /v1/default/banks/{bank_id}/memories/{memory_id}`:
+edit, invalidate, or revert) has its own pair of hooks, in addition to the
+`validate_bank_write` access check that runs first:
+
+- `validate_memory_update(ctx: MemoryUpdateContext)` runs before any work. The
+  context carries the requested `text` (when editing it), the requested `state`,
+  and `edits_fields`. Reject here to refuse the curation; the returned
+  `status_code` is passed through to the HTTP response.
+- `on_memory_update_complete(result: MemoryUpdateResult)` runs once the change
+  has committed. `result.action` is `edit`, `invalidate`, `revert`, or `reason`,
+  and `result.reembedded_tokens` is the size of the text the engine embedded
+  again (0 for an invalidation or a reason-only update). An edit or revert
+  re-embeds the memory and re-consolidates the bank, so this is the figure to
+  meter if curation should cost the same as ingesting that text.
+
 #### Deferring an operation
 
 In addition to `accept` and `reject`, a `validate_*` hook can ask the
