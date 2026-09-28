@@ -312,6 +312,43 @@ class TestWorkerMarkCompleted:
         poller._maybe_update_parent_operation.assert_awaited_once_with("op-1", None, conn)
 
     @pytest.mark.asyncio
+    async def test_retry_then_success_clears_stale_error(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        operation_id = uuid.uuid4()
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'retain', 'processing')""",
+            operation_id,
+            bank_id,
+        )
+
+        poller = WorkerPoller(backend=backend, worker_id="w-test", executor=AsyncMock())
+        await poller._schedule_retry(str(operation_id), datetime.now(UTC), "transient error", None)
+        failed_attempt = await pool.fetchrow(
+            "SELECT status, retry_count, error_message FROM async_operations WHERE operation_id = $1",
+            operation_id,
+        )
+        assert failed_attempt["status"] == "pending"
+        assert failed_attempt["retry_count"] == 1
+        assert failed_attempt["error_message"] == "transient error"
+
+        await pool.execute(
+            "UPDATE async_operations SET status = 'processing' WHERE operation_id = $1",
+            operation_id,
+        )
+        await poller._mark_completed(str(operation_id), None)
+        completed = await pool.fetchrow(
+            "SELECT status, retry_count, error_message FROM async_operations WHERE operation_id = $1",
+            operation_id,
+        )
+        assert completed["status"] == "completed"
+        assert completed["retry_count"] == 1
+        assert completed["error_message"] is None
+
+    @pytest.mark.asyncio
     async def test_mark_completed_does_not_overwrite_terminal_rows(self):
         poller, conn = self._make_poller("UPDATE 0")
 

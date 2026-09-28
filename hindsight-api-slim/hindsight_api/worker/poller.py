@@ -867,7 +867,7 @@ class WorkerPoller:
                 result = await conn.execute(
                     f"""
                     UPDATE {table}
-                    SET status = 'completed', completed_at = now(), updated_at = now()
+                    SET status = 'completed', error_message = NULL, completed_at = now(), updated_at = now()
                     WHERE operation_id = $1 AND status = 'processing'
                     """,
                     operation_id,
@@ -996,7 +996,7 @@ class WorkerPoller:
                 await conn.execute(
                     f"""
                     UPDATE {table}
-                    SET status = 'completed', updated_at = now(), completed_at = now()
+                    SET status = 'completed', error_message = NULL, updated_at = now(), completed_at = now()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
@@ -1605,7 +1605,7 @@ class WorkerPoller:
                             await conn.execute(
                                 f"""
                                 UPDATE {table}
-                                SET status = 'completed', completed_at = now(), updated_at = now()
+                                SET status = 'completed', error_message = NULL, completed_at = now(), updated_at = now()
                                 WHERE operation_id = $1
                                 """,
                                 parent_id,
