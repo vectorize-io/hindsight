@@ -212,6 +212,13 @@ def _knowledge_snippet(content: str | None) -> str:
 # absent means version — no backfill needed.
 _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 
+#: Consecutive ``delta_ops_all_skipped`` failures after which a delta-mode refresh
+#: escalates to a full regeneration. Two, not one: the first failure already pauses
+#: the automatic triggers (#4532), and a single skipped delta can be a transient
+#: model slip; a second identical failure against the same baseline means the delta
+#: path is wedged, and only a rebuilt baseline unwedges it (#4875).
+_DELTA_SKIP_ESCALATION_THRESHOLD = 2
+
 #: Marks a queued ``refresh_mental_model`` operation as *automatically* triggered — by
 #: consolidation or by the cron scan — and therefore subject to the minimum-interval
 #: floor. Explicit refreshes omit it and always run at once.
@@ -17712,6 +17719,7 @@ class MemoryEngine(MemoryEngineInterface):
         use_delta = False
         mode_fallback_reason: ModeFallbackReason | None = None
         stored_structured_content: dict[str, Any] | None = None
+        consecutive_skips = 0
         # The legacy placeholder is not a baseline. Pages are created empty now, but a
         # page created before that change still holds the literal string and has never
         # refreshed — and a never-refreshed page has no last_refreshed_source_query, so
@@ -17733,6 +17741,8 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     mental_model_id,
                 )
+                if get_config().enable_mental_model_history:
+                    consecutive_skips = await self._consecutive_delta_all_skip_failures(conn, bank_id, mental_model_id)
             last_refreshed_source_query: str | None = (
                 tracking_row["last_refreshed_source_query"] if tracking_row else None
             )
@@ -17744,6 +17754,19 @@ class MemoryEngine(MemoryEngineInterface):
             use_delta = last_refreshed_source_query is None or last_refreshed_source_query == source_query
             if not use_delta:
                 mode_fallback_reason = "source_query_changed"
+            elif consecutive_skips >= _DELTA_SKIP_ESCALATION_THRESHOLD:
+                # A preserved document never unwedges itself: every recent delta
+                # produced ops that did not apply, and the next one is run against
+                # the same baseline. Rebuild the baseline with one full
+                # regeneration instead of failing forever; the streak resets on
+                # the next success by construction, when a version row leads the
+                # history again.
+                logger.warning(
+                    f"[MENTAL_MODELS] Delta refresh for {mental_model_id} skipped all ops "
+                    f"{consecutive_skips} time(s) in a row; escalating to a full regeneration"
+                )
+                use_delta = False
+                mode_fallback_reason = "delta_ops_all_skipped"
             if tracking_row is not None:
                 raw_struct = tracking_row["structured_content"]
                 if isinstance(raw_struct, str):
@@ -19276,6 +19299,43 @@ class MemoryEngine(MemoryEngineInterface):
                     )
         except Exception as e:
             logger.warning(f"Failed to record refresh failure for mental model {mental_model_id}: {e}")
+
+    async def _consecutive_delta_all_skip_failures(self, conn: Any, bank_id: str, mental_model_id: str) -> int:
+        """Count the all-skipped delta failures leading the model's history.
+
+        Only the streak matters: a version snapshot (a success) or a different
+        failure reason breaks it, so the result reads directly as "the last N
+        refreshes all failed with ``delta_ops_all_skipped``". Bounded to the
+        escalation threshold — anything past it changes no decision, and a wedged
+        model's history holds one failure row per attempt. Parsed in Python
+        rather than filtered with ``content->>`` so the statement stays plain SQL
+        every backend accepts as-is.
+        """
+        rows = await conn.fetch(
+            f"SELECT content FROM {fq_table('mental_model_history')} "
+            "WHERE mental_model_id = $1 AND bank_id = $2 "
+            "ORDER BY changed_at DESC, id DESC LIMIT $3",
+            mental_model_id,
+            bank_id,
+            _DELTA_SKIP_ESCALATION_THRESHOLD,
+        )
+        streak = 0
+        for row in rows:
+            content = row["content"]
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content) if content else {}
+                except json.JSONDecodeError:
+                    break
+            content = content or {}
+            if (
+                content.get("kind") == _MM_HISTORY_KIND_FAILURE
+                and content.get("failure_reason") == "delta_ops_all_skipped"
+            ):
+                streak += 1
+            else:
+                break
+        return streak
 
     async def clear_mental_model(
         self,

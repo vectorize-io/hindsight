@@ -1443,6 +1443,82 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_delta_skip_loop_escalates_to_full_regeneration(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """A wedged delta unwedges itself after the escalation threshold (#4875).
+
+        Without escalation every refresh fails the same way against the same
+        baseline: the document is preserved, the automatic triggers pause, and
+        only a manual mode flip recovers. After two consecutive all-skipped
+        failures the next refresh rebuilds the baseline with a full
+        regeneration instead of attempting a third doomed delta.
+        """
+        bank_id = f"test-delta-escalation-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        existing = "# Team\n\nAlice is the lead.\n"
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content=existing,
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        patch_reflect(
+            memory,
+            text="# Team\n\nFull regeneration.\n",
+            facts=[{"id": "obs-new", "text": "Bob joined", "type": "observation", "context": None}],
+        )
+        # Every op targets a section that does not exist, so a delta attempt
+        # rejects all of them; a full regeneration never reads these.
+        patch_llm_call(
+            memory,
+            returns=[
+                {
+                    "op": "append_block",
+                    "section_id": "does-not-exist",
+                    "text": "Bob joined the team.",
+                },
+            ],
+        )
+
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        for _ in range(2):
+            with pytest.raises(MentalModelRefreshError):
+                await memory.refresh_mental_model(
+                    bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+                )
+            preserved = await memory.get_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+            assert preserved["content"] == existing
+
+        # The streak is at the threshold, so this refresh escalates instead of
+        # attempting a third delta against the wedged baseline: it writes the
+        # full-regeneration candidate outright and the model unwedges.
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert refreshed is not None
+        assert "Full regeneration." in refreshed["content"]
+
+        # The streak broke with the success, so the refresh after it is free to
+        # run as a delta again — and still fails cleanly, not silently.
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_partial_skip_applies_the_rest_and_records_it(
         self,
         memory: MemoryEngine,
