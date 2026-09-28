@@ -7,6 +7,7 @@ These tests use mocked models — they do not load real SentenceTransformers or
 FlashRank weights, so they run fast in CI without network access.
 """
 
+import inspect
 import time
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from hindsight_api.config import DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
 from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
+    JinaMLXCrossEncoder,
     LocalSTCrossEncoder,
     RerankTimeoutError,
 )
@@ -354,3 +356,55 @@ class TestFlashRankCrossEncoder:
 
     def test_default_batch_size_matches_config(self):
         assert FlashRankCrossEncoder().batch_size == DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
+
+
+class TestInProcessRerankerTimeoutCoverage:
+    """Family guard: which in-process rerankers carry a wall-clock budget.
+
+    Only these backends score in this process, so only these can wedge a worker on
+    compute (#4696) — a remote one is already bounded by its HTTP timeout. A new
+    in-process backend must therefore either take a `timeout`, or be given a reason
+    here; this test fails until someone decides, because the sibling that forgot is
+    by definition the one nobody wrote a test for.
+    """
+
+    # provider id (as create_cross_encoder dispatches on) -> backend class
+    BACKENDS = {
+        "local": LocalSTCrossEncoder,
+        "flashrank": FlashRankCrossEncoder,
+        "jina-mlx": JinaMLXCrossEncoder,
+    }
+
+    # Deliberately unbounded, and why. Not a permanent exemption — if a report lands
+    # on one of these, it gets the same treatment `local` got.
+    NO_TIMEOUT = {
+        "flashrank": (
+            "Already splits into bounded batches for the OOM fix (#3355), and its "
+            "ONNX MiniLM-class models score in milliseconds per pair."
+        ),
+        "jina-mlx": (
+            "rerank() scores a whole query group in one opaque MLX call, so there is "
+            "no point between batches at which a deadline could be observed."
+        ),
+    }
+
+    def test_family_matches_the_in_process_providers(self):
+        """The enumeration above must stay in step with the providers the module
+        itself calls in-process, or this guard silently stops covering one."""
+        declared = {
+            provider
+            for provider, reason in ce_module._RERANKER_PROVIDERS_WITHOUT_RETRY.items()
+            if reason == "in-process model"
+        }
+        assert declared == set(self.BACKENDS)
+
+    @pytest.mark.parametrize("provider", sorted(BACKENDS))
+    def test_backend_takes_a_timeout_or_says_why_not(self, provider: str):
+        params = inspect.signature(self.BACKENDS[provider].__init__).parameters
+        if provider in self.NO_TIMEOUT:
+            assert "timeout" not in params, (
+                f"{provider} now takes a timeout — drop its NO_TIMEOUT entry and test the budget"
+            )
+            assert self.NO_TIMEOUT[provider].strip()
+        else:
+            assert "timeout" in params, f"in-process backend {provider} has no wall-clock budget"

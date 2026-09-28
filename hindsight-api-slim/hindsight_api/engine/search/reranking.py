@@ -460,6 +460,11 @@ class CrossEncoderReranker:
                 raw = 0.0
             if math.isnan(norm):
                 norm = 0.0
+            if index in unscored:
+                # Score 0.0, not sigmoid(0.0)=0.5: an unscored candidate has earned no
+                # confidence, and 0.5 would sail past a min_reranker_score threshold
+                # that a genuinely weak but *scored* candidate fails.
+                raw = norm = 0.0
             scored_result = ScoredResult(
                 candidate=candidate,
                 cross_encoder_score=raw,
@@ -467,17 +472,7 @@ class CrossEncoderReranker:
                 weight=norm,  # Initial weight is just cross-encoder score
             )
             if index in unscored:
-                # Score 0.0, not sigmoid(0.0)=0.5: an unscored candidate has earned no
-                # confidence, and 0.5 would sail past a min_reranker_score threshold
-                # that a genuinely weak but *scored* candidate fails.
-                unscored_results.append(
-                    ScoredResult(
-                        candidate=candidate,
-                        cross_encoder_score=0.0,
-                        cross_encoder_score_normalized=0.0,
-                        weight=0.0,
-                    )
-                )
+                unscored_results.append(scored_result)
             else:
                 scored_results.append(scored_result)
 
