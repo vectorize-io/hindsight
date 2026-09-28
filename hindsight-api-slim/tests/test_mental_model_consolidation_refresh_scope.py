@@ -4,8 +4,9 @@
 one on ``compute_mental_model_is_stale``. The prefilter must key off the model's
 *resolved* refresh scope (``_resolve_refresh_tag_filtering``), not its ``tags``
 column: ``tags_match`` "any"/"all" and ``trigger.tag_groups`` both let a tagged model
-see untagged memories, and gating on the column starved them (#3053). The staleness
-gate then counts only writes carrying the model's tags, never untagged ones (#4857).
+see untagged memories, and gating on the column starved them (#3053). Since #4857 a
+tagged model's staleness counts only writes carrying its tags, so tagged "any"/"all"
+models are no longer candidates for an untagged-only run; tag_groups still are.
 
 Deterministic — no LLM, no consolidation run: the trigger function is called directly
 and refresh submission is monkeypatched.
@@ -102,9 +103,9 @@ async def test_tagged_strict_model_skipped_when_only_untagged_consolidated(
 async def test_tagged_non_strict_model_skipped_when_only_untagged_consolidated(
     memory: MemoryEngine, request_context, monkeypatch
 ):
-    """A tagged model with tags_match="any" stays a prefilter candidate (#3053), but the
-    staleness gate does not count untagged writes toward a tagged model (#4857), so an
-    untagged-only consolidation does not refresh it."""
+    """A tagged model with tags_match="any" reads untagged memories on refresh, but an
+    untagged write does not make it stale (#4857), so an untagged-only consolidation
+    does not refresh it."""
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
         mm_id = await _insert_mm(conn, bank, tags=["alpha"], trigger_extra={"tags_match": "any"})

@@ -2249,21 +2249,20 @@ async def _run_consolidation_job(
     return {"status": "completed", "bank_id": bank_id, **stats}
 
 
-# SQL predicate: "this mental model's refresh scope can contain untagged memories".
+# SQL predicate: "an untagged write can make this mental model stale".
 #
 # A model's scope is NOT its ``tags`` column — it is whatever
-# ``_resolve_refresh_tag_filtering`` resolves, and both the refresh and the staleness
-# check use that. Three cases reach untagged memories:
+# ``_mental_model_stale_scope`` resolves from it and the trigger. Two cases reach
+# untagged memories:
 #   - no tags at all             -> no tag constraint, every bank memory is in scope
-#   - tags_match "any" / "all"   -> non-strict, the clause ORs in untagged rows
-#   - trigger.tag_groups         -> overrides the tags column entirely, so the column
-#                                   says nothing about what the model can see
-# A tagged model left on the default (``all_strict``) is correctly excluded: strict
-# matching drops untagged rows, so an untagged-only consolidation cannot make it stale.
-# Gating on the tags column alone starved the first two cases (#3053).
-_MM_SCOPE_REACHES_UNTAGGED = (
-    "((tags IS NULL OR tags = '{}') OR (trigger->>'tags_match') IN ('any', 'all') OR trigger ? 'tag_groups')"
-)
+#   - trigger.tag_groups         -> overrides the tags column entirely, and a group can
+#                                   select untagged rows on purpose (``not``, an empty
+#                                   ``exact`` leaf)
+# Gating on the tags column alone starved both, plus tagged "any"/"all" models (#3053).
+# Those tagged models are excluded again since #4857: their refresh still *reads*
+# untagged memories, but staleness counts only writes carrying their tags, so an
+# untagged-only consolidation can never make them stale and asking would be wasted.
+_MM_SCOPE_REACHES_UNTAGGED = "((tags IS NULL OR tags = '{}') OR trigger ? 'tag_groups')"
 
 
 async def _trigger_mental_model_refreshes(

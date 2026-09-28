@@ -122,3 +122,51 @@ async def test_the_previous_answer_is_kept_in_history(client, llm, bank_id, mode
 
     history = await client.mental_models.get_mental_model_history(bank_id, model)
     assert any(entry["previous_content"].strip() == FIRST_ANSWER for entry in history)
+
+
+@pytest.fixture
+async def scoped_model(client, llm, bank_id, settled):
+    """A model scoped to one tag, reading untagged memories too (`tags_match: "any"`)."""
+    llm.on_step("extract_facts", contains="Berlin").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("extract_facts", contains="cello").returns(
+        extracted(fact("Alice plays cello", who="Alice", entities=["Alice", "cello"]))
+    )
+    llm.on_step("extract_facts", contains="Munich").returns(
+        extracted(fact("Alice moved to Munich", who="Alice", entities=["Alice", "Munich"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    reflect_loop(llm, answer=FIRST_ANSWER)
+
+    await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.", tags=["housing"])
+    await settled(bank_id)
+
+    created = await client.mental_models.create_mental_model(
+        bank_id,
+        {
+            "name": "Housing",
+            "source_query": "Where does Alice live?",
+            "tags": ["housing"],
+            "trigger": {"tags_match": "any"},
+        },
+    )
+    await settled(bank_id)
+    return created.mental_model_id
+
+
+async def test_an_untagged_write_does_not_make_a_tagged_model_stale(client, bank_id, scoped_model, settled):
+    """`tags_match: "any"` lets the refresh read untagged memories, but an untagged
+    write is not about this model. Counting it flagged every tagged model stale
+    after nearly every write to a bank that mixes the two (#4857)."""
+    await client.aretain(bank_id=bank_id, content="Alice plays cello.")
+    await settled(bank_id)
+
+    assert (await _read(client, bank_id, scoped_model)).is_stale is False
+
+
+async def test_a_write_in_its_tag_still_makes_a_tagged_model_stale(client, bank_id, scoped_model, settled):
+    await client.aretain(bank_id=bank_id, content="Alice moved to Munich.", tags=["housing"])
+    await settled(bank_id)
+
+    assert (await _read(client, bank_id, scoped_model)).is_stale is True

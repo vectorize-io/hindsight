@@ -28,6 +28,8 @@ from hindsight_api.engine.search.tags import (
     build_tags_where_clause_simple,
     filter_results_by_tag_groups,
     filter_results_by_tags,
+    strict_tag_group,
+    strict_tags_match,
 )
 
 # ============================================================================
@@ -770,6 +772,44 @@ class TestFilterResultsByTagGroups:
 # ============================================================================
 # Integration Tests for tags in retain/recall/reflect
 # ============================================================================
+
+
+class TestStrictTagsMatch:
+    """The staleness scope of a tagged mental model drops untagged rows (#4857)."""
+
+    @pytest.mark.parametrize(
+        "match,expected",
+        [
+            ("any", "any_strict"),
+            ("all", "all_strict"),
+            ("any_strict", "any_strict"),
+            ("all_strict", "all_strict"),
+            ("exact", "exact"),
+        ],
+    )
+    def test_strict_tags_match(self, match, expected):
+        assert strict_tags_match(match) == expected
+
+    def test_strict_tag_group_rewrites_every_leaf(self):
+        group = TagGroupAnd(
+            filters=[
+                TagGroupLeaf(tags=["a"], match="any", resolve="fuzzy"),
+                TagGroupOr(filters=[TagGroupLeaf(tags=["b"], match="all"), TagGroupLeaf(tags=[], match="exact")]),
+                TagGroupNot(filter=TagGroupLeaf(tags=["c"], match="any")),
+            ]
+        )
+
+        assert strict_tag_group(group) == TagGroupAnd(
+            filters=[
+                TagGroupLeaf(tags=["a"], match="any_strict", resolve="fuzzy"),
+                TagGroupOr(
+                    filters=[TagGroupLeaf(tags=["b"], match="all_strict"), TagGroupLeaf(tags=[], match="exact")]
+                ),
+                TagGroupNot(filter=TagGroupLeaf(tags=["c"], match="any_strict")),
+            ]
+        )
+        # The input is left alone: the refresh still reads through the original.
+        assert group.filters[0].match == "any"
 
 
 @pytest_asyncio.fixture
