@@ -186,6 +186,13 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str, ops=Non
             chunk_ids,
             bank_id,
         )
+        # Oracle's memory_units.chunk_id FK is still ON DELETE SET NULL (PG moved it to
+        # CASCADE in f6g7h8i9j0k1), so the facts would outlive their chunk as duplicates.
+        await conn.execute(
+            f"DELETE FROM {fq_table('memory_units')} WHERE chunk_id = ANY($1::text[]) AND bank_id = $2",
+            chunk_ids,
+            bank_id,
+        )
         await conn.execute(
             f"DELETE FROM {fq_table('chunks')} WHERE chunk_id = ANY($1::text[]) AND bank_id = $2",
             chunk_ids,
