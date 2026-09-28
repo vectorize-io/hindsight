@@ -762,6 +762,35 @@ async def _filter_live_source_memories(
     return [mid for mid in source_memory_ids if str(mid) in live]
 
 
+async def _sources_changed_since_read(
+    conn: "Connection",
+    bank_id: str,
+    memories: list[dict[str, Any]],
+) -> list[str]:
+    """Ids of the batch's source facts edited since the batch read them (#4831).
+
+    The LLM decided on the facts as they were read; a fact edited meanwhile (a retag,
+    a curation) was already requeued by that edit, and its observations dropped. Writing
+    this response would rebuild them from the stale copy — under the old tags — and the
+    ``consolidated_at`` stamp would then undo the requeue. ``updated_at`` is the signal:
+    every edit stamps it and consolidation's own bookkeeping never does (META_UPDATED_AT).
+
+    Takes ``FOR SHARE`` on the rows, so an edit cannot land between this check and the
+    writes in the same transaction. A deleted fact is not "changed" — the per-action
+    liveness checks handle that. A store that keeps memories outside SQL reports no
+    ``updated_at`` on its reads, so it is not checked.
+    """
+    read_at = {str(m["id"]): m.get("updated_at") for m in memories if m.get("updated_at") is not None}
+    if not read_at or get_memories().store_owned_for(bank_id):
+        return []
+    rows = await conn.fetch(
+        f"SELECT id, updated_at FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 FOR SHARE",
+        [uuid.UUID(mid) for mid in read_at],
+        bank_id,
+    )
+    return [str(r["id"]) for r in rows if r["updated_at"] != read_at[str(r["id"])]]
+
+
 async def _any_live_source_memory(
     conn: "Connection",
     bank_id: str,
@@ -1463,6 +1492,8 @@ async def _fetch_unconsolidated_rows(
             "tags": list(m.tags or []),
             "mentioned_at": m.mentioned_at,
             "observation_scopes": m.observation_scopes,
+            # Read-time version: the write re-checks it (see _sources_changed_since_read).
+            "updated_at": m.updated_at,
         }
         for m in ordered
     ]
@@ -2684,6 +2715,16 @@ async def _process_memory_batch(
     if prepared_deletes or prepared_updates or prepared_creates or stamp_ids:
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
+                changed_ids = await _sources_changed_since_read(conn, bank_id, memories)
+                if changed_ids:
+                    # Drop the whole response, stamps included: the facts stay pending and the
+                    # job's next fetch re-reads them as they are now (#4831).
+                    logger.info(
+                        f"[CONSOLIDATION] bank={bank_id} discarding batch of {len(memories)}: "
+                        f"{len(changed_ids)} source fact(s) edited since read, e.g. {changed_ids[0]}"
+                    )
+                    prepared_deletes, prepared_updates, prepared_creates, stamp_ids = [], [], [], []
+
                 for observation_id in prepared_deletes:
                     await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id)
                     deleted_count += 1
