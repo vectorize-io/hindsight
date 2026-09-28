@@ -748,6 +748,10 @@ export class HindsightClient {
    * (YAML frontmatter + markdown body). The endpoint omits the internal reflect trace that built
    * the page — that is 70-95% of the raw bytes and can blow past an MCP host's per-tool-result
    * token cap.
+   *
+   * The page payload also carries the content twice (`body` plus `markdown` with the same body
+   * plus frontmatter that duplicates the top-level keys). Drop `markdown` here so a single
+   * read_knowledge_page call costs ~half the tokens — `body` holds the full content (see #4836).
    */
   async getPage(pageId: string): Promise<unknown> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
@@ -756,7 +760,9 @@ export class HindsightClient {
       this.bankUrl(`/knowledge-base/pages/${encodeURIComponent(pageId)}`)
     );
     if (r.status === 404) throw new Error(`knowledge page not found: ${pageId}`);
-    return await r.json();
+    const page = (await r.json()) as { body?: unknown; markdown?: unknown } & Record<string, unknown>;
+    if (typeof page?.body === "string" && typeof page?.markdown === "string") delete page.markdown;
+    return page;
   }
 
   /** Hybrid (BM25 + vector, RRF-fused) server-side search over the bank's knowledge pages.

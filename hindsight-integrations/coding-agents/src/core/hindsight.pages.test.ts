@@ -236,6 +236,19 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(calls[0].url).toContain("/knowledge-base/pages/kp-1");
   });
 
+  it("getPage drops the duplicate markdown copy, keeping body (#4836)", async () => {
+    const calls: any[] = [];
+    stubFetch(calls, async () => ({
+      id: "kp-1",
+      title: "Component map",
+      body: "content",
+      markdown: "---\nid: kp-1\ntitle: Component map\n---\ncontent",
+    }));
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const result = await c.getPage("kp-1");
+    expect(result).toEqual({ id: "kp-1", title: "Component map", body: "content" });
+  });
+
   it("searchKnowledgePages sends the client's pageSearchLimit — the tool and the hook share it", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
