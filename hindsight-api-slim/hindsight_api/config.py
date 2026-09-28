@@ -854,6 +854,7 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+ENV_CONSOLIDATION_FAIR_GROUP_SELECTION = "HINDSIGHT_API_CONSOLIDATION_FAIR_GROUP_SELECTION"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
@@ -1727,6 +1728,10 @@ DEFAULT_REFLECT_DEFAULT_OPTIONS: dict | None = None
 DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
 DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
+# Off by default: pick each consolidation round's facts fairly across scope
+# groups instead of strictly oldest-first, so one huge group cannot starve
+# every parallel slot while its backlog drains (#4823).
+DEFAULT_CONSOLIDATION_FAIR_GROUP_SELECTION = False
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
@@ -3372,6 +3377,7 @@ class HindsightConfig:
     consolidation_batch_size: int
     consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
+    consolidation_fair_group_selection: bool
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
     consolidation_max_tokens: int
@@ -3730,6 +3736,7 @@ class HindsightConfig:
         "consolidation_llm_batch_size",
         "consolidation_llm_parallelism",
         "consolidation_max_memories_per_round",
+        "consolidation_fair_group_selection",
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
@@ -5002,6 +5009,10 @@ class HindsightConfig:
                     ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND,
                     str(DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND),
                 )
+            ),
+            consolidation_fair_group_selection=_parse_boolean_env(
+                ENV_CONSOLIDATION_FAIR_GROUP_SELECTION,
+                DEFAULT_CONSOLIDATION_FAIR_GROUP_SELECTION,
             ),
             consolidation_dedup_threshold=float(
                 os.getenv(ENV_CONSOLIDATION_DEDUP_THRESHOLD, str(DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD))

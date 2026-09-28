@@ -728,6 +728,58 @@ def _scope_sort_key(scope: frozenset[str]) -> tuple[str, ...]:
     return tuple(sorted(scope))
 
 
+#: Cap on the cheap scan feeding fair group selection (#4823). The fetch path
+#: keys each candidate with ``_consolidation_batch_key`` and takes a per-group
+#: share, so one huge scope group cannot starve every parallel slot while its
+#: backlog drains. Full rows are loaded only for the selected subset.
+_FAIR_SCAN_CAP = 100_000
+
+
+def _select_fair_subset(
+    candidates: list[dict[str, Any]],
+    *,
+    limit: int,
+    per_group: int,
+) -> list[dict[str, Any]]:
+    """Pick up to ``limit`` candidates fairly across ``_consolidation_batch_key`` groups.
+
+    Groups are visited in order of their oldest candidate (``candidates`` must be
+    oldest-first), taking up to ``per_group`` rows from each per pass, until the
+    round is full. Within a group, oldest-first order is preserved, so the
+    per-scope serial ordering guarantees (#4063, #1604) are unchanged — only
+    *which groups* share a round changes, letting parallel slots drain small
+    groups instead of idling behind one huge one (#4823).
+    """
+    if limit <= 0 or not candidates:
+        return []
+    per_group = max(1, per_group)
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for memory in candidates:
+        groups.setdefault(_consolidation_batch_key(memory), []).append(memory)
+    # Order groups by the position of their oldest member in the oldest-first input.
+    pos = {id(m): i for i, m in enumerate(candidates)}
+    ordered_keys = sorted(groups, key=lambda k: pos[id(groups[k][0])])
+    selected: list[dict[str, Any]] = []
+    indices = {k: 0 for k in groups}
+    while len(selected) < limit:
+        progressed = False
+        for key in ordered_keys:
+            group = groups[key]
+            start = indices[key]
+            take = group[start : start + per_group]
+            if take:
+                selected.extend(take[: max(0, limit - len(selected))])
+                indices[key] = start + len(take)
+                progressed = True
+                if len(selected) >= limit:
+                    break
+        if not progressed:
+            break
+    # Keep global oldest-first order for the rows handed to the dispatcher.
+    selected_ids = {id(m) for m in selected}
+    return [m for m in candidates if id(m) in selected_ids]
+
+
 async def _filter_live_source_memories(
     conn: "Connection",
     bank_id: str,
@@ -1430,6 +1482,9 @@ async def _fetch_unconsolidated_rows(
     fact_types: list[str],
     limit: int,
     observation_scopes: list[list[str]] | None,
+    *,
+    fair_group_selection: bool = False,
+    llm_parallelism: int = 1,
 ) -> list[dict[str, Any]]:
     """Unconsolidated candidate facts, read through the memories store.
 
@@ -1438,17 +1493,31 @@ async def _fetch_unconsolidated_rows(
     consolidation silently produces no observations. Returns the same row-dict shape the
     consolidation loop consumes. Mirrors the job's scope filter: with scopes, OR each
     "tags ⊇ scope" and merge oldest-first; without, one unscoped read.
+
+    When ``fair_group_selection`` is set (and the job has no scope filter), the
+    store is scanned up to ``_FAIR_SCAN_CAP`` candidates and each round's rows
+    are picked fairly across ``_consolidation_batch_key`` groups — up to
+    ``ceil(limit / llm_parallelism)`` per group, visiting groups in order of
+    their oldest fact — so one huge scope group cannot keep every parallel
+    slot idle while its backlog drains (#4823). Scope-filtered jobs keep the
+    current oldest-first fetch.
     """
     store = get_memories()
     scopes: list[list[str] | None] = list(observation_scopes) if observation_scopes else [None]
+    scan_limit = _FAIR_SCAN_CAP if (fair_group_selection and not observation_scopes) else limit
     by_id: dict[str, Any] = {}
     for scope in scopes:
         for m in await store.find_unconsolidated(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=fact_types, limit=limit, scope_tags=scope
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            fact_types=fact_types,
+            limit=scan_limit,
+            scope_tags=scope,
         ):
             by_id.setdefault(m.unit_id, m)
-    ordered = sorted(by_id.values(), key=lambda m: (m.created_at is None, m.created_at))[:limit]
-    return [
+    ordered = sorted(by_id.values(), key=lambda m: (m.created_at is None, m.created_at))
+    rows = [
         {
             "id": uuid.UUID(m.unit_id),
             "text": m.text,
@@ -1462,6 +1531,10 @@ async def _fetch_unconsolidated_rows(
         }
         for m in ordered
     ]
+    if fair_group_selection and not observation_scopes and len(rows) > limit:
+        per_group = max(1, -(-limit // max(1, llm_parallelism)))
+        return _select_fair_subset(rows, limit=limit, per_group=per_group)
+    return rows[:limit]
 
 
 #: Cap on the store-side count of unconsolidated facts. Used only for the "is there work?"
@@ -1724,7 +1797,13 @@ async def _run_consolidation_job(
         async with acquire_with_retry(pool) as conn:
             t0 = time.time()
             memories = await _fetch_unconsolidated_rows(
-                conn, bank_id, ["experience", "world"], fetch_limit, observation_scopes
+                conn,
+                bank_id,
+                ["experience", "world"],
+                fetch_limit,
+                observation_scopes,
+                fair_group_selection=config.consolidation_fair_group_selection,
+                llm_parallelism=max(1, config.consolidation_llm_parallelism),
             )
             perf.record_timing("fetch_memories", time.time() - t0)
 

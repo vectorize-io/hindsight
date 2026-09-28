@@ -310,6 +310,8 @@ The request body is optional. When omitted (or sent as an empty body), all uncon
 
 Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](/developer/configuration#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations).
 
+Each round fetches the oldest unconsolidated facts first. When one scope group holds the oldest facts, every round contains only that group, so it runs serially while the other parallel slots sit idle. If the bank has one huge group plus many smaller ones, enable **fair group selection** (`consolidation_fair_group_selection` via the [bank config API](/developer/api/memory-banks#observations-configuration), or `HINDSIGHT_API_CONSOLIDATION_FAIR_GROUP_SELECTION`): each round picks facts fairly across scope groups — up to `ceil(round_size / consolidation_llm_parallelism)` per group, visiting groups in order of their oldest fact — so small groups drain instead of waiting behind the huge one. Within a group, oldest-first order is preserved. Off by default; scope-filtered jobs keep the oldest-first fetch.
+
 ---
 
 ## Next Steps
