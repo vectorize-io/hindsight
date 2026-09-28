@@ -1,4 +1,5 @@
-"""Tests for cooperative recall/reflect cancellation on client disconnect (#2122).
+"""Tests for cooperative recall/reflect/retain cancellation on client disconnect
+(#2122, extended to retain by #4526).
 
 Layers covered:
 - the ``CancellationToken`` primitive,
@@ -86,12 +87,17 @@ def test_request_context_raises_when_token_fired():
 # --- _should_monitor path gating ------------------------------------------------
 
 
-def test_should_monitor_only_recall_and_reflect():
+def test_should_monitor_recall_reflect_and_retain():
     assert _should_monitor("/v1/default/banks/b/memories/recall") is True
     assert _should_monitor("/v1/default/banks/b/reflect") is True
-    assert _should_monitor("/v1/default/banks/b/memories") is False
+    # Retain (POST) and clear (DELETE) share this exact path (issue #4526): a
+    # synchronous retain has no async_operations row, so this token is the only
+    # way it ever learns the client disconnected.
+    assert _should_monitor("/v1/default/banks/b/memories") is True
     assert _should_monitor("/health") is False
     assert _should_monitor("/v1/default/banks/b/memories/recall/extra") is False
+    # Multipart file uploads stay unmonitored — no buffering cost for large bodies.
+    assert _should_monitor("/v1/default/banks/b/files/retain") is False
 
 
 # --- run_cancellable_on_disconnect ----------------------------------------------

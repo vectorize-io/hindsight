@@ -5306,8 +5306,8 @@ def _register_routes(app: FastAPI):
             if controller is None:
                 yield
                 return
-            # Recall and reflect carry a disconnect token (see api/disconnect.py). A
-            # queued request whose client has gone gives up its place immediately,
+            # Recall, reflect and retain carry a disconnect token (see api/disconnect.py).
+            # A queued request whose client has gone gives up its place immediately,
             # which is what makes a patient deadline affordable.
             abandoned = get_scope_cancellation_token(request.scope)
             try:
@@ -9798,6 +9798,7 @@ def _register_routes(app: FastAPI):
     async def api_retain(
         bank_id: str,
         request: RetainRequest,
+        http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.RETAIN)),
         _admit: None = Depends(admit_for(PrecheckOperation.RETAIN)),
@@ -9966,7 +9967,9 @@ def _register_routes(app: FastAPI):
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
-                with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+
+                async def _run_sync_retain() -> None:
+                    nonlocal total_items_count, total_usage
                     for group_strategy, contents in strategy_groups.items():
                         result, usage = await app.state.memory.retain_batch_async(
                             bank_id=bank_id,
@@ -9989,6 +9992,20 @@ def _register_routes(app: FastAPI):
                                 output_tokens=total_usage.output_tokens + usage.output_tokens,
                                 total_tokens=total_usage.total_tokens + usage.total_tokens,
                             )
+
+                with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+                    # Cancel the sync retain if the client disconnects: same
+                    # cooperative checkpoint mechanism as recall/reflect
+                    # (issue #4526) — the engine checks request_context between
+                    # sub-batches/documents and aborts abandoned work instead of
+                    # running it to completion.
+                    await run_cancellable_on_disconnect(
+                        http_request,
+                        request_context,
+                        _run_sync_retain(),
+                        operation="retain",
+                        bank_id=bank_id,
+                    )
 
                 return RetainResponse.model_validate(
                     {

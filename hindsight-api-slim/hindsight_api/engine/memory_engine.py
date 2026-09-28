@@ -6042,6 +6042,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
 
+        # Cooperative cancellation checkpoint: if the client already disconnected
+        # while this request waited to be admitted, abort before doing any work
+        # (issue #4526, the retain analogue of #2122). Further checkpoints sit at
+        # each sub-batch/document boundary below.
+        request_context.raise_if_cancelled()
+
         # Validate operation if validator is configured
         contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
         if self._operation_validator:
@@ -6201,10 +6207,12 @@ class MemoryEngine(MemoryEngineInterface):
             for group_idx, group in enumerate(groups):
                 # Checkpoint: abort if the operation was cancelled or deleted (bank
                 # deleted) between documents, mirroring the sub-batch loop's checkpoint.
-                if operation_id and not await self._check_op_alive(operation_id):
+                # The client-disconnect half covers the synchronous path, which has
+                # no operation_id to check liveness through (issue #4526).
+                if (operation_id and not await self._check_op_alive(operation_id)) or request_context.cancelled:
                     logger.info(
-                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled, "
-                        f"stopping after {group_idx}/{len(groups)} documents"
+                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled or client "
+                        f"disconnected, stopping after {group_idx}/{len(groups)} documents"
                     )
                     cancelled = True
                     break
@@ -6714,11 +6722,13 @@ class MemoryEngine(MemoryEngineInterface):
                     sub_batch = sub.contents
                     sub_origins = sub.origins
                     # Checkpoint: abort if the operation was cancelled, or deleted because
-                    # the bank was deleted, between sub-batches.
-                    if operation_id and not await self._check_op_alive(operation_id):
+                    # the bank was deleted, between sub-batches. The client-disconnect half
+                    # covers the synchronous path, which has no operation_id to check
+                    # liveness through (issue #4526).
+                    if (operation_id and not await self._check_op_alive(operation_id)) or request_context.cancelled:
                         logger.info(
-                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled, "
-                            f"stopping after {i - 1} sub-batches"
+                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled or client "
+                            f"disconnected, stopping after {i - 1} sub-batches"
                         )
                         cancelled = True
                         # Cancel what is already in flight. Without this the gather below would run

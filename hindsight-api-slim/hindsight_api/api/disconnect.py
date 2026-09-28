@@ -9,15 +9,16 @@ the recall/reflect cancellation in #2122/#2127 never actually fired in
 production — the disconnect was never observed.
 
 This pure-ASGI middleware sits *outside* the ``BaseHTTPMiddleware`` layer, where
-it still owns the real ``receive`` channel. For the recall and reflect routes it
-drains ``receive`` in a background task and trips a :class:`CancellationToken`
-the moment ``http.disconnect`` arrives, stashing the token on the ASGI ``scope``.
-The route copies that token onto its ``RequestContext`` and the engine checks it
-at stage boundaries — so abandoned work stops instead of running to completion.
+it still owns the real ``receive`` channel. For the recall, reflect and retain
+routes it drains ``receive`` in a background task and trips a
+:class:`CancellationToken` the moment ``http.disconnect`` arrives, stashing the
+token on the ASGI ``scope``. The route copies that token onto its
+``RequestContext`` and the engine checks it at stage boundaries — so abandoned
+work stops instead of running to completion (retain: issue #4526).
 
-It only wraps recall/reflect (small JSON bodies); every other request — uploads,
-MCP streams, etc. — passes straight through untouched, so there is no buffering
-or latency cost elsewhere.
+It only wraps recall/reflect/retain (small-to-moderate JSON bodies); every other
+request — multipart file uploads, MCP streams, etc. — passes straight through
+untouched, so there is no buffering or latency cost elsewhere.
 """
 
 from __future__ import annotations
@@ -42,8 +43,14 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 
 
 def _should_monitor(path: str) -> bool:
-    """Only the two long-running, abandon-prone read endpoints need monitoring."""
-    return path.endswith("/memories/recall") or path.endswith("/reflect")
+    """The long-running, abandon-prone endpoints that need monitoring.
+
+    ``/memories`` covers both the retain route (POST, issue #4526) and the clear
+    route (DELETE) — a synchronous retain has no ``async_operations`` row to
+    cancel through, so it depended on this token to notice a disconnected client
+    at all; wrapping the DELETE alongside it is harmless (no body worth buffering).
+    """
+    return path.endswith("/memories/recall") or path.endswith("/reflect") or path.endswith("/memories")
 
 
 class ClientDisconnectCancellationMiddleware:
