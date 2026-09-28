@@ -789,6 +789,14 @@ async def _any_live_source_memory(
     return bool(present)
 
 
+def _unique_source_ids(v: str | list[str]) -> list[str]:
+    """Drop repeated ids, keeping order. A looping model can repeat one id thousands of
+    times, and every copy would be stored and re-sent to the next prompt (#4799)."""
+    if isinstance(v, str):
+        return [v]
+    return list(dict.fromkeys(v))
+
+
 class _CreateAction(BaseModel):
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
@@ -804,9 +812,7 @@ class _CreateAction(BaseModel):
     @field_validator("source_fact_ids", mode="before")
     @classmethod
     def ensure_list(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [v]
-        return v
+        return _unique_source_ids(v)
 
 
 class _UpdateAction(BaseModel):
@@ -823,9 +829,7 @@ class _UpdateAction(BaseModel):
     @field_validator("source_fact_ids", mode="before")
     @classmethod
     def ensure_list(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [v]
-        return v
+        return _unique_source_ids(v)
 
 
 class _DeleteAction(BaseModel):
@@ -2905,7 +2909,9 @@ async def _apply_update_action(
         new_source_memory_ids=[str(mid) for mid in live_ids],
     )
 
-    source_ids = list(model.source_fact_ids or []) + live_ids
+    # Stored ids are strings, fresh ones are UUIDs: normalise before dropping repeats.
+    merged = dict.fromkeys(str(s) for s in [*(model.source_fact_ids or []), *live_ids])
+    source_ids = [uuid.UUID(s) for s in merged]
 
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
     existing_tags = set(model.tags or [])
@@ -3202,10 +3208,12 @@ def _build_observations_for_llm(
     """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
     obs_list = []
     for obs in observations:
+        # Rows written before #4799 may repeat an id thousands of times; show each source once.
+        unique_ids = list(dict.fromkeys(obs.source_fact_ids or []))
         obs_data: dict[str, Any] = {
             "id": obs.id,
             "text": obs.text,
-            "proof_count": len(obs.source_fact_ids or []) or 1,
+            "proof_count": len(unique_ids) or 1,
         }
         if obs.occurred_start:
             obs_data["occurred_start"] = obs.occurred_start
@@ -3214,7 +3222,7 @@ def _build_observations_for_llm(
         if obs.mentioned_at:
             obs_data["mentioned_at"] = obs.mentioned_at
         source_memories = []
-        for sid in obs.source_fact_ids or []:
+        for sid in unique_ids:
             sf = source_facts.get(sid)
             if sf is None:
                 continue

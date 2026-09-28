@@ -3309,3 +3309,107 @@ async def test_consolidation_strategy_source_facts_limits_reach_the_scope_recall
         ), "a scope no strategy claims keeps the bank-wide limits"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_action_source_fact_ids_drop_repeats():
+    """A looping model can repeat one fact id thousands of times (#4799); keep each once, in order."""
+    from hindsight_api.engine.consolidation.consolidator import _CreateAction, _UpdateAction
+
+    ids = ["a"] * 1000 + ["b", "a", "c"]
+    assert _CreateAction(text="t", source_fact_ids=ids).source_fact_ids == ["a", "b", "c"]
+    assert _UpdateAction(text="t", observation_id="o", source_fact_ids=ids).source_fact_ids == ["a", "b", "c"]
+    assert _CreateAction(text="t", source_fact_ids="a").source_fact_ids == ["a"]
+
+
+def test_build_observations_for_llm_shows_each_source_once():
+    """Rows written before #4799 may repeat ids; the prompt must not repeat the fact text per copy."""
+    from hindsight_api.engine.consolidation.consolidator import _build_observations_for_llm
+    from hindsight_api.engine.response_models import MemoryFact
+
+    obs = MemoryFact(id="obs", text="Alice hikes.", fact_type="observation", source_fact_ids=["f1"] * 3000 + ["f2"])
+    facts = {fid: MemoryFact(id=fid, text=f"fact {fid}", fact_type="experience") for fid in ("f1", "f2")}
+
+    [serialized] = _build_observations_for_llm([obs], facts)
+
+    assert serialized["proof_count"] == 2
+    assert [m["text"] for m in serialized["source_memories"]] == ["fact f1", "fact f2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_repeated_source_ids_are_stored_once(memory: MemoryEngine, request_context):
+    """Repeated ids in an LLM create/update, and duplicates already on the row, are stored once (#4799)."""
+    import re
+
+    from hindsight_api.engine.consolidation.consolidator import (
+        _ConsolidationBatchResponse,
+        _CreateAction,
+        _UpdateAction,
+    )
+    from hindsight_api.engine.providers.mock_llm import MockLLM
+
+    bank_id = f"test-dup-src-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    obs_id = None
+
+    def callback(messages, scope):
+        if scope != "consolidation":
+            return _ConsolidationBatchResponse()
+        prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
+        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+        if not fact_ids:
+            return _ConsolidationBatchResponse()
+        if obs_id is None:
+            return _ConsolidationBatchResponse(
+                creates=[_CreateAction(text="Alice hikes.", source_fact_ids=[fact_ids[0]] * 50)]
+            )
+        return _ConsolidationBatchResponse(
+            updates=[
+                _UpdateAction(
+                    text="Alice hikes and runs trails.",
+                    observation_id=str(obs_id),
+                    source_fact_ids=[fact_ids[0]] * 50,
+                )
+            ]
+        )
+
+    mock_llm = MockLLM(provider="mock", api_key="", base_url="", model="mock-model")
+    mock_llm.set_response_callback(callback)
+    wrapper = MagicMock()
+    wrapper.with_config.return_value = mock_llm
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            [first] = await _insert_memories_with_tags(conn, bank_id, ["Alice loves hiking."])
+        await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+        async with memory._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, source_memory_ids, proof_count FROM memory_units "
+                "WHERE bank_id = $1 AND fact_type = 'observation'",
+                bank_id,
+            )
+            assert list(row["source_memory_ids"]) == [first]
+            assert row["proof_count"] == 1
+            obs_id = row["id"]
+            # Simulate a row corrupted before the fix: the same source repeated many times.
+            await conn.execute(
+                "UPDATE memory_units SET source_memory_ids = $1, proof_count = 200 WHERE id = $2",
+                [first] * 200,
+                obs_id,
+            )
+            [second] = await _insert_memories_with_tags(conn, bank_id, ["Alice runs on trails."])
+        await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+        async with memory._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT text, source_memory_ids, proof_count FROM memory_units WHERE id = $1", obs_id
+            )
+        assert "trails" in row["text"]
+        assert list(row["source_memory_ids"]) == [first, second]
+        assert row["proof_count"] == 2
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
