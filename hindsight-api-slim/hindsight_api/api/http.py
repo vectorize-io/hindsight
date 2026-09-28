@@ -4350,6 +4350,10 @@ class OperationResponse(BaseModel):
 
     id: str
     task_type: str
+    operation_id: str | None = Field(default=None, description="Same as `id`; the name the single-operation read uses.")
+    operation_type: str | None = Field(
+        default=None, description="Same as `task_type`; the name the single-operation read uses."
+    )
     items_count: int
     document_id: str | None = None
     filename: str | None = Field(
@@ -4361,8 +4365,7 @@ class OperationResponse(BaseModel):
         description=(
             "Mental model this operation acted on (refresh_mental_model); null for other task types. "
             "Without it the list cannot say which model an operation refreshed — `document_id` is null "
-            "for these, and the list carries no result_metadata. The single-operation read exposes the "
-            "same value under `result_metadata`."
+            "for these, and the list carries no result_metadata."
         ),
     )
     details: RefreshMentalModelOperationDetails | None = Field(
@@ -4540,6 +4543,14 @@ class OperationStatusResponse(BaseModel):
     operation_id: str
     status: Literal["pending", "processing", "completed", "failed", "cancelled", "not_found"]
     operation_type: str | None = None
+    id: str | None = Field(default=None, description="Same as `operation_id`; the name the operations list uses.")
+    task_type: str | None = Field(
+        default=None, description="Same as `operation_type`; the name the operations list uses."
+    )
+    mental_model_id: str | None = Field(
+        default=None,
+        description="Mental model this operation acted on (refresh_mental_model); null for other task types.",
+    )
     created_at: str | None = None
     updated_at: str | None = None
     completed_at: str | None = None

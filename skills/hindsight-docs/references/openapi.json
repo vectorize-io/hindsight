@@ -15977,6 +15977,30 @@
             "type": "string",
             "title": "Task Type"
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "Same as `id`; the name the single-operation read uses."
+          },
+          "operation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Type",
+            "description": "Same as `task_type`; the name the single-operation read uses."
+          },
           "items_count": {
             "type": "integer",
             "title": "Items Count"
@@ -16014,7 +16038,7 @@
               }
             ],
             "title": "Mental Model Id",
-            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`."
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata."
           },
           "details": {
             "anyOf": [
@@ -16142,6 +16166,42 @@
               }
             ],
             "title": "Operation Type"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Same as `operation_id`; the name the operations list uses."
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Same as `operation_type`; the name the operations list uses."
+          },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types."
           },
           "created_at": {
             "anyOf": [

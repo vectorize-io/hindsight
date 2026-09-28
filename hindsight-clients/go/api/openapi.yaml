@@ -11032,6 +11032,12 @@ components:
         task_type:
           title: Task Type
           type: string
+        operation_id:
+          nullable: true
+          type: string
+        operation_type:
+          nullable: true
+          type: string
         items_count:
           title: Items Count
           type: integer
@@ -11098,6 +11104,15 @@ components:
           title: Status
           type: string
         operation_type:
+          nullable: true
+          type: string
+        id:
+          nullable: true
+          type: string
+        task_type:
+          nullable: true
+          type: string
+        mental_model_id:
           nullable: true
           type: string
         created_at:

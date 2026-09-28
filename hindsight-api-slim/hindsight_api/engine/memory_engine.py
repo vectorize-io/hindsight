@@ -3817,7 +3817,7 @@ class MemoryEngine(MemoryEngineInterface):
                     await conn.execute(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed', error_message = NULL, updated_at = NOW(), completed_at = NOW()
                         WHERE operation_id = $1
                         """,
                         uuid.UUID(operation_id),
@@ -4858,7 +4858,7 @@ class MemoryEngine(MemoryEngineInterface):
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed', error_message = NULL, updated_at = NOW(), completed_at = NOW()
                         WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
@@ -5030,7 +5030,7 @@ class MemoryEngine(MemoryEngineInterface):
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed', error_message = NULL, updated_at = NOW(), completed_at = NOW()
                         WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
@@ -5081,7 +5081,7 @@ class MemoryEngine(MemoryEngineInterface):
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed', error_message = NULL, updated_at = NOW(), completed_at = NOW()
                         WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
@@ -21366,6 +21366,9 @@ class MemoryEngine(MemoryEngineInterface):
                     {
                         "id": str(row["operation_id"]),
                         "task_type": row["operation_type"],
+                        # Same names the single-operation read uses (#4858).
+                        "operation_id": str(row["operation_id"]),
+                        "operation_type": row["operation_type"],
                         "items_count": result_metadata.get("items_count", 0),
                         "document_id": result_metadata.get("document_id"),
                         "filename": result_metadata.get("original_filename"),
@@ -21505,6 +21508,10 @@ class MemoryEngine(MemoryEngineInterface):
                         "operation_id": operation_id,
                         "status": api_status,
                         "operation_type": row["operation_type"],
+                        # Same names the list uses, so one client model reads both (#4858).
+                        "id": operation_id,
+                        "task_type": row["operation_type"],
+                        "mental_model_id": result_metadata.get("mental_model_id"),
                         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
@@ -21523,6 +21530,10 @@ class MemoryEngine(MemoryEngineInterface):
                         "operation_id": operation_id,
                         "status": api_status,
                         "operation_type": row["operation_type"],
+                        # Same names the list uses, so one client model reads both (#4858).
+                        "id": operation_id,
+                        "task_type": row["operation_type"],
+                        "mental_model_id": result_metadata.get("mental_model_id"),
                         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
@@ -21540,6 +21551,8 @@ class MemoryEngine(MemoryEngineInterface):
                     "operation_id": operation_id,
                     "status": "not_found",
                     "operation_type": None,
+                    "id": operation_id,
+                    "task_type": None,
                     "created_at": None,
                     "updated_at": None,
                     "completed_at": None,

@@ -867,7 +867,7 @@ class WorkerPoller:
                 result = await conn.execute(
                     f"""
                     UPDATE {table}
-                    SET status = 'completed', completed_at = now(), updated_at = now()
+                    SET status = 'completed', error_message = NULL, completed_at = now(), updated_at = now()
                     WHERE operation_id = $1 AND status = 'processing'
                     """,
                     operation_id,
@@ -996,7 +996,7 @@ class WorkerPoller:
                 await conn.execute(
                     f"""
                     UPDATE {table}
-                    SET status = 'completed', updated_at = now(), completed_at = now()
+                    SET status = 'completed', error_message = NULL, updated_at = now(), completed_at = now()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
@@ -1022,12 +1022,15 @@ class WorkerPoller:
                 f"""
                 UPDATE {table}
                 SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
-                    retry_count = retry_count + 1, error_message = $3, updated_at = now()
+                    retry_count = retry_count + 1, error_message = $3, updated_at = now(),
+                    result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $4::jsonb
                 WHERE operation_id = $1 AND status <> 'cancelled'
                 """,
                 operation_id,
                 retry_at,
                 error_message,
+                # Kept here because completion clears error_message (#4858).
+                json.dumps({"last_retry_error": error_message}),
             )
         if not _updated_row_count(result):
             logger.info(f"Task {operation_id} was cancelled or deleted, not scheduling a retry")
@@ -1605,7 +1608,7 @@ class WorkerPoller:
                             await conn.execute(
                                 f"""
                                 UPDATE {table}
-                                SET status = 'completed', completed_at = now(), updated_at = now()
+                                SET status = 'completed', error_message = NULL, completed_at = now(), updated_at = now()
                                 WHERE operation_id = $1
                                 """,
                                 parent_id,

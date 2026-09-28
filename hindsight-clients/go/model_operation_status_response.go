@@ -24,6 +24,9 @@ type OperationStatusResponse struct {
 	OperationId string `json:"operation_id"`
 	Status string `json:"status"`
 	OperationType NullableString `json:"operation_type,omitempty"`
+	Id NullableString `json:"id,omitempty"`
+	TaskType NullableString `json:"task_type,omitempty"`
+	MentalModelId NullableString `json:"mental_model_id,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	CompletedAt NullableString `json:"completed_at,omitempty"`
@@ -146,6 +149,132 @@ func (o *OperationStatusResponse) SetOperationTypeNil() {
 // UnsetOperationType ensures that no value is present for OperationType, not even an explicit nil
 func (o *OperationStatusResponse) UnsetOperationType() {
 	o.OperationType.Unset()
+}
+
+// GetId returns the Id field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetId() string {
+	if o == nil || IsNil(o.Id.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Id.Get()
+}
+
+// GetIdOk returns a tuple with the Id field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Id.Get(), o.Id.IsSet()
+}
+
+// HasId returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasId() bool {
+	if o != nil && o.Id.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetId gets a reference to the given NullableString and assigns it to the Id field.
+func (o *OperationStatusResponse) SetId(v string) {
+	o.Id.Set(&v)
+}
+// SetIdNil sets the value for Id to be an explicit nil
+func (o *OperationStatusResponse) SetIdNil() {
+	o.Id.Set(nil)
+}
+
+// UnsetId ensures that no value is present for Id, not even an explicit nil
+func (o *OperationStatusResponse) UnsetId() {
+	o.Id.Unset()
+}
+
+// GetTaskType returns the TaskType field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetTaskType() string {
+	if o == nil || IsNil(o.TaskType.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.TaskType.Get()
+}
+
+// GetTaskTypeOk returns a tuple with the TaskType field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetTaskTypeOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.TaskType.Get(), o.TaskType.IsSet()
+}
+
+// HasTaskType returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasTaskType() bool {
+	if o != nil && o.TaskType.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetTaskType gets a reference to the given NullableString and assigns it to the TaskType field.
+func (o *OperationStatusResponse) SetTaskType(v string) {
+	o.TaskType.Set(&v)
+}
+// SetTaskTypeNil sets the value for TaskType to be an explicit nil
+func (o *OperationStatusResponse) SetTaskTypeNil() {
+	o.TaskType.Set(nil)
+}
+
+// UnsetTaskType ensures that no value is present for TaskType, not even an explicit nil
+func (o *OperationStatusResponse) UnsetTaskType() {
+	o.TaskType.Unset()
+}
+
+// GetMentalModelId returns the MentalModelId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetMentalModelId() string {
+	if o == nil || IsNil(o.MentalModelId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.MentalModelId.Get()
+}
+
+// GetMentalModelIdOk returns a tuple with the MentalModelId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetMentalModelIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MentalModelId.Get(), o.MentalModelId.IsSet()
+}
+
+// HasMentalModelId returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasMentalModelId() bool {
+	if o != nil && o.MentalModelId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMentalModelId gets a reference to the given NullableString and assigns it to the MentalModelId field.
+func (o *OperationStatusResponse) SetMentalModelId(v string) {
+	o.MentalModelId.Set(&v)
+}
+// SetMentalModelIdNil sets the value for MentalModelId to be an explicit nil
+func (o *OperationStatusResponse) SetMentalModelIdNil() {
+	o.MentalModelId.Set(nil)
+}
+
+// UnsetMentalModelId ensures that no value is present for MentalModelId, not even an explicit nil
+func (o *OperationStatusResponse) UnsetMentalModelId() {
+	o.MentalModelId.Unset()
 }
 
 // GetCreatedAt returns the CreatedAt field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -597,6 +726,15 @@ func (o OperationStatusResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["status"] = o.Status
 	if o.OperationType.IsSet() {
 		toSerialize["operation_type"] = o.OperationType.Get()
+	}
+	if o.Id.IsSet() {
+		toSerialize["id"] = o.Id.Get()
+	}
+	if o.TaskType.IsSet() {
+		toSerialize["task_type"] = o.TaskType.Get()
+	}
+	if o.MentalModelId.IsSet() {
+		toSerialize["mental_model_id"] = o.MentalModelId.Get()
 	}
 	if o.CreatedAt.IsSet() {
 		toSerialize["created_at"] = o.CreatedAt.Get()

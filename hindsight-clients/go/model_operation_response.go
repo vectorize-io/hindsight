@@ -23,6 +23,8 @@ var _ MappedNullable = &OperationResponse{}
 type OperationResponse struct {
 	Id string `json:"id"`
 	TaskType string `json:"task_type"`
+	OperationId NullableString `json:"operation_id,omitempty"`
+	OperationType NullableString `json:"operation_type,omitempty"`
 	ItemsCount int32 `json:"items_count"`
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Filename NullableString `json:"filename,omitempty"`
@@ -108,6 +110,90 @@ func (o *OperationResponse) GetTaskTypeOk() (*string, bool) {
 // SetTaskType sets field value
 func (o *OperationResponse) SetTaskType(v string) {
 	o.TaskType = v
+}
+
+// GetOperationId returns the OperationId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetOperationId() string {
+	if o == nil || IsNil(o.OperationId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.OperationId.Get()
+}
+
+// GetOperationIdOk returns a tuple with the OperationId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetOperationIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.OperationId.Get(), o.OperationId.IsSet()
+}
+
+// HasOperationId returns a boolean if a field has been set.
+func (o *OperationResponse) HasOperationId() bool {
+	if o != nil && o.OperationId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationId gets a reference to the given NullableString and assigns it to the OperationId field.
+func (o *OperationResponse) SetOperationId(v string) {
+	o.OperationId.Set(&v)
+}
+// SetOperationIdNil sets the value for OperationId to be an explicit nil
+func (o *OperationResponse) SetOperationIdNil() {
+	o.OperationId.Set(nil)
+}
+
+// UnsetOperationId ensures that no value is present for OperationId, not even an explicit nil
+func (o *OperationResponse) UnsetOperationId() {
+	o.OperationId.Unset()
+}
+
+// GetOperationType returns the OperationType field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetOperationType() string {
+	if o == nil || IsNil(o.OperationType.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.OperationType.Get()
+}
+
+// GetOperationTypeOk returns a tuple with the OperationType field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetOperationTypeOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.OperationType.Get(), o.OperationType.IsSet()
+}
+
+// HasOperationType returns a boolean if a field has been set.
+func (o *OperationResponse) HasOperationType() bool {
+	if o != nil && o.OperationType.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationType gets a reference to the given NullableString and assigns it to the OperationType field.
+func (o *OperationResponse) SetOperationType(v string) {
+	o.OperationType.Set(&v)
+}
+// SetOperationTypeNil sets the value for OperationType to be an explicit nil
+func (o *OperationResponse) SetOperationTypeNil() {
+	o.OperationType.Set(nil)
+}
+
+// UnsetOperationType ensures that no value is present for OperationType, not even an explicit nil
+func (o *OperationResponse) UnsetOperationType() {
+	o.OperationType.Unset()
 }
 
 // GetItemsCount returns the ItemsCount field value
@@ -556,6 +642,12 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["id"] = o.Id
 	toSerialize["task_type"] = o.TaskType
+	if o.OperationId.IsSet() {
+		toSerialize["operation_id"] = o.OperationId.Get()
+	}
+	if o.OperationType.IsSet() {
+		toSerialize["operation_type"] = o.OperationType.Get()
+	}
 	toSerialize["items_count"] = o.ItemsCount
 	if o.DocumentId.IsSet() {
 		toSerialize["document_id"] = o.DocumentId.Get()

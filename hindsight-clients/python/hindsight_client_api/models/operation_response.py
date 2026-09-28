@@ -30,6 +30,8 @@ class OperationResponse(BaseModel):
     """ # noqa: E501
     id: StrictStr
     task_type: StrictStr
+    operation_id: Optional[StrictStr] = None
+    operation_type: Optional[StrictStr] = None
     items_count: StrictInt
     document_id: Optional[StrictStr] = None
     filename: Optional[StrictStr] = None
@@ -42,7 +44,7 @@ class OperationResponse(BaseModel):
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
-    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "filename", "mental_model_id", "details", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
+    __properties: ClassVar[List[str]] = ["id", "task_type", "operation_id", "operation_type", "items_count", "document_id", "filename", "mental_model_id", "details", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -89,6 +91,16 @@ class OperationResponse(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of progress
         if self.progress:
             _dict['progress'] = self.progress.to_dict()
+        # set to None if operation_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.operation_id is None and "operation_id" in self.model_fields_set:
+            _dict['operation_id'] = None
+
+        # set to None if operation_type (nullable) is None
+        # and model_fields_set contains the field
+        if self.operation_type is None and "operation_type" in self.model_fields_set:
+            _dict['operation_type'] = None
+
         # set to None if document_id (nullable) is None
         # and model_fields_set contains the field
         if self.document_id is None and "document_id" in self.model_fields_set:
@@ -148,6 +160,8 @@ class OperationResponse(BaseModel):
         _obj = cls.model_validate({
             "id": obj.get("id"),
             "task_type": obj.get("task_type"),
+            "operation_id": obj.get("operation_id"),
+            "operation_type": obj.get("operation_type"),
             "items_count": obj.get("items_count"),
             "document_id": obj.get("document_id"),
             "filename": obj.get("filename"),

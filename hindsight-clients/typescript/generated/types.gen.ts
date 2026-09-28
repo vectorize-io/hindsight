@@ -5101,6 +5101,18 @@ export type OperationResponse = {
    */
   task_type: string;
   /**
+   * Operation Id
+   *
+   * Same as `id`; the name the single-operation read uses.
+   */
+  operation_id?: string | null;
+  /**
+   * Operation Type
+   *
+   * Same as `task_type`; the name the single-operation read uses.
+   */
+  operation_type?: string | null;
+  /**
    * Items Count
    */
   items_count: number;
@@ -5117,7 +5129,7 @@ export type OperationResponse = {
   /**
    * Mental Model Id
    *
-   * Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`.
+   * Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata.
    */
   mental_model_id?: string | null;
   /**
@@ -5178,6 +5190,24 @@ export type OperationStatusResponse = {
    * Operation Type
    */
   operation_type?: string | null;
+  /**
+   * Id
+   *
+   * Same as `operation_id`; the name the operations list uses.
+   */
+  id?: string | null;
+  /**
+   * Task Type
+   *
+   * Same as `operation_type`; the name the operations list uses.
+   */
+  task_type?: string | null;
+  /**
+   * Mental Model Id
+   *
+   * Mental model this operation acted on (refresh_mental_model); null for other task types.
+   */
+  mental_model_id?: string | null;
   /**
    * Created At
    */
