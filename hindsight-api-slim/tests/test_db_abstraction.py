@@ -1417,3 +1417,48 @@ class TestOracleSetSessionSchema:
 
         assert closed["count"] == 1
         assert any('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"' in s for s in executed)
+
+
+# ---------------------------------------------------------------------------
+# Oracle session setup and CLOB binding (#4630, #4632)
+# ---------------------------------------------------------------------------
+
+
+class TestOracleSessionAndClobBinding:
+    """No live Oracle required."""
+
+    @pytest.mark.asyncio
+    async def test_new_session_disables_parallel_dml(self):
+        from hindsight_api.engine.db.oracle import _disable_parallel_dml
+
+        executed: list[str] = []
+        closed: list[bool] = []
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed.append(True)
+
+        class _FakeConn:
+            def cursor(self) -> _FakeAsyncCursor:
+                return _FakeAsyncCursor()
+
+        await _disable_parallel_dml(_FakeConn(), None)
+        assert executed == ["ALTER SESSION DISABLE PARALLEL DML"]
+        assert closed == [True]
+
+    def test_clob_bind_covers_json_and_values_past_4000_bytes(self):
+        from hindsight_api.engine.db.oracle import _needs_clob_bind
+
+        assert _needs_clob_bind("[]")
+        assert _needs_clob_bind('{"a": 1}')
+        assert _needs_clob_bind("x" * 4001)
+        # 1500 characters, but 4500 bytes in UTF-8.
+        assert _needs_clob_bind("é" * 1500 + "x" * 1500)
+        assert not _needs_clob_bind("x" * 4000)
+        assert not _needs_clob_bind("é" * 2000)  # exactly 4000 bytes
+        assert not _needs_clob_bind("")
+        assert not _needs_clob_bind(None)
+        assert not _needs_clob_bind(42)
