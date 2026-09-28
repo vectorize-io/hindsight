@@ -108,7 +108,6 @@ async def test_edit_reports_the_reembedded_text(validated_memory):
     assert post.action == "edit"
     assert post.reembedded_text == new_text
     assert post.reembedded_tokens == count_tokens(new_text) > 0
-    assert post.success is True
 
     memory._operation_validator = None
     await memory.delete_bank(bank_id, request_context=ctx)
@@ -134,6 +133,32 @@ async def test_invalidate_reembeds_nothing_and_revert_reembeds_the_restored_text
     assert revert.action == "revert"
     assert revert.reembedded_text == original_text
     assert revert.reembedded_tokens == count_tokens(original_text) > 0
+
+    memory._operation_validator = None
+    await memory.delete_bank(bank_id, request_context=ctx)
+
+
+@pytest.mark.asyncio
+async def test_edit_and_invalidate_reports_the_state_change_and_the_edited_text(validated_memory):
+    memory = validated_memory
+    bank_id = f"curation-hooks-{uuid.uuid4().hex[:8]}"
+    mem_id = await _insert_fact(memory, bank_id, "The cache TTL is 5 minutes.")
+    validator = RecordingValidator()
+    memory._operation_validator = validator
+    ctx = RequestContext()
+
+    new_text = "The cache TTL is 10 minutes."
+    await memory.update_memory_unit(
+        bank_id, mem_id, text=new_text, state="invalidated", reason="obsolete", request_context=ctx
+    )
+
+    (post,) = validator.completed
+    # The edit was embedded before the row was archived, so its text is still metered.
+    assert (post.action, post.reembedded_text, post.reembedded_tokens) == (
+        "invalidate",
+        new_text,
+        count_tokens(new_text),
+    )
 
     memory._operation_validator = None
     await memory.delete_bank(bank_id, request_context=ctx)

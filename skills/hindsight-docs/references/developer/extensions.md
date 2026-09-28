@@ -301,7 +301,7 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
 - `on_memory_update_complete(result: MemoryUpdateResult)` runs once the change
   has committed. `result.action` is `edit`, `invalidate`, `revert`, or `reason`,
   and `result.reembedded_tokens` is the size of the text the engine embedded
-  again (0 for an invalidation or a reason-only update). An edit or revert
+  again (0 for a plain invalidation or a reason-only update). An edit or revert
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 

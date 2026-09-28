@@ -51,6 +51,7 @@ from hindsight_api.extensions.operation_validator import (
     # File Conversion
     FileConvertResult,
     # Memory curation
+    MemoryCurationAction,
     MemoryUpdateContext,
     MemoryUpdateResult,
     # Mental Model operations
@@ -120,11 +121,13 @@ __all__ = [
     "ConsolidateResult",
     # Operation Validator - File Conversion
     "FileConvertResult",
+    # Operation Validator - Memory curation
+    "MemoryCurationAction",
+    "MemoryUpdateContext",
+    "MemoryUpdateResult",
     # Operation Validator - Mental Model
     "MentalModelGetContext",
     "MentalModelGetResult",
-    "MemoryUpdateContext",
-    "MemoryUpdateResult",
     "MentalModelRefreshContext",
     "MentalModelRefreshResult",
     # Tenant/Auth

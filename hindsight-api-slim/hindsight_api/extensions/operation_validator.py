@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from hindsight_api.extensions.base import Extension
 
@@ -536,6 +536,9 @@ class MentalModelRefreshResult:
 # =============================================================================
 
 
+MemoryCurationAction = Literal["edit", "invalidate", "revert", "reason"]
+
+
 @dataclass
 class MemoryUpdateContext:
     """Context for curating a single memory unit (pre-operation).
@@ -564,7 +567,7 @@ class MemoryUpdateResult:
 
     Fired once the curation has committed. ``reembedded_tokens`` is the size of
     the text the engine embedded again (an edit's new text, or a reverted
-    memory's restored text) and is 0 when nothing was re-embedded, e.g. an
+    memory's restored text) and is 0 when nothing was re-embedded, e.g. a plain
     invalidation or a reason-only update.
     """
 
@@ -574,14 +577,12 @@ class MemoryUpdateResult:
     #: "edit", "invalidate", "revert", or "reason" (reason-only update of an
     #: already invalidated memory). An edit that also changes state reports the
     #: state change.
-    action: str
+    action: MemoryCurationAction
     #: Text that was re-embedded, or None when nothing was.
     reembedded_text: str | None = None
     reembedded_tokens: int = 0
     #: Whether the curation queued a consolidation pass for the bank.
     consolidation_submitted: bool = False
-    success: bool = True
-    error: str | None = None
 
 
 # =============================================================================
@@ -1007,7 +1008,6 @@ class OperationValidatorExtension(Extension, ABC):
                 - reembedded_text: Text that was re-embedded (else None)
                 - reembedded_tokens: Token count of reembedded_text (0 if none)
                 - consolidation_submitted: Whether consolidation was queued
-                - success / error
         """
         pass
 

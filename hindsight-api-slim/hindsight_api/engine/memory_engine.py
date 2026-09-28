@@ -580,6 +580,7 @@ if TYPE_CHECKING:
     from hindsight_api.config_resolver import ValidatedBankConfigUpdate
     from hindsight_api.extensions import (
         BankWriteOperation,
+        MemoryCurationAction,
         OperationValidatorExtension,
         TenantExtension,
         ValidationResult,
@@ -12185,6 +12186,10 @@ class MemoryEngine(MemoryEngineInterface):
             dt = datetime.fromisoformat(value)
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
+        doing_edit = any(
+            v is not None for v in (text, context, occurred_start, occurred_end, new_fact_type, new_entities)
+        )
+
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
@@ -12196,16 +12201,13 @@ class MemoryEngine(MemoryEngineInterface):
 
             from hindsight_api.extensions import MemoryUpdateContext
 
-            edits_fields = any(
-                v is not None for v in (text, context, occurred_start, occurred_end, new_fact_type, new_entities)
-            )
             update_ctx = MemoryUpdateContext(
                 bank_id=bank_id,
                 memory_id=memory_id,
                 request_context=request_context,
                 text=text,
                 state=state,
-                edits_fields=edits_fields,
+                edits_fields=doing_edit,
             )
             await self._validate_operation(self._operation_validator.validate_memory_update(update_ctx))
 
@@ -12269,9 +12271,6 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
-            doing_edit = any(v is not None for v in (text, context, occurred_start, occurred_end, new_fact_type)) or (
-                new_entities is not None
-            )
             if doing_edit:
                 if not live:
                     raise ValueError("Cannot edit an invalidated memory; revert it to 'valid' first.")
@@ -12420,7 +12419,7 @@ class MemoryEngine(MemoryEngineInterface):
         edit_applied = False
         # What the curation actually did, for the post-operation hook: the committed
         # action and the text it re-embedded (None when nothing was re-embedded).
-        curation_action: str | None = None
+        curation_action: MemoryCurationAction | None = None
         reembedded_text: str | None = None
         try:
             async with acquire_with_retry(backend) as conn:
