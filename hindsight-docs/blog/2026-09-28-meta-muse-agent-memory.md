@@ -49,9 +49,11 @@ Muse writes to its own bank by default and reads the others when the question ca
 
 That is the whole pitch for a memory layer that lives outside any one tool, and a consumer assistant is where it gets obvious. The assistant that manages your calendar is not the tool you were using when you decided the thing it needs to know.
 
-A concrete version. You are pairing with Claude Code on a Tuesday and you decide to drop a vendor because their rate limits will not survive your launch. Claude Code retains that to the `coding` bank, tagged and dated, and you forget about it. Three weeks later you ask Muse to put together the agenda for a call with that vendor. It calls `recall`, finds the decision and the reason, and writes an agenda that opens with the rate limits rather than one that politely asks how things are going.
+We connected it to a real account to check. Asked "what do you know about me", Muse came back with three things and named the bank each one came from: a work bank it had never written to, supplying a job title, a team roster and a recurring meeting; the `hermes` bank, where it noticed that another assistant had been running type-checks and opening pull requests; and a notes bank holding a months-old personal decision and two client contacts.
 
-Nothing was synced. Muse never saw the terminal session. It read a bank it had never written to, because you gave it the whole account rather than a sandbox of its own.
+Nothing was synced. Muse never saw those sessions. It read banks it had never written to, because the connection covers the account rather than a sandbox of its own.
+
+The observation it volunteered is the one worth keeping: *"Your other AI tools are heavy Hindsight users."* That is the whole idea working, noticed by the newest tool in the set.
 
 ## How it works without a plugin host
 
@@ -63,7 +65,9 @@ What Muse does have is a Linux VM in Meta's cloud that it can write and run code
 
 The practical consequence: **remote endpoints only.** A Hindsight instance on your laptop is not reachable from Meta's cloud.
 
-Once connected, Muse calls the memory tools on its own judgement:
+Once connected, Muse calls the memory tools on its own judgement, with one caveat worth knowing before you form expectations. **By default every call stops for an approval.** Connecting and running the setup took six separate "Allow Cosmo to share information with api.hindsight.vectorize.io?" prompts, each naming the specific operation. You can pick "Always allow this site" and they stop, but out of the box this is memory with a confirmation dialog in front of it rather than memory that happens quietly.
+
+The tools it has:
 
 | Tool | When Muse calls it |
 |---|---|
@@ -85,7 +89,13 @@ Worth knowing rather than discovering later: what gets remembered is what Muse j
 
 This deserves more attention than integration posts usually give it.
 
-Meta does not review custom connectors. Their own help documentation says to grant access with caution and check the provider's privacy policy. Nothing sits between Muse and an endpoint you point it at.
+Meta does not review custom connectors. The consent dialog says so at the moment you connect, in plainer language than their help pages:
+
+> Meta doesn't review custom connectors or how they use your information. The agent may take unexpected actions. Grant access with caution and review their privacy policies.
+
+The same dialog notes that what you do with a connector is part of your interactions with AI, "including to improve AI at Meta." Nothing sits between Muse and an endpoint you point it at, and the traffic is not private to the connection.
+
+Hindsight's own approval page is blunter still. It asks which organization you are authorizing and warns: *"Treat this with the same care as creating an API key."* That is the right mental model. The grant requests `openid`, `profile`, `email` and `offline_access`, and offline access means it keeps working when you are not there — which is the point of the nightly task, and also the reason to think about it.
 
 The root MCP endpoint reaches every bank and also exposes bank management, so the connect prompt forbids the destructive tools outright:
 
@@ -118,7 +128,19 @@ You also lose the cross-bank reading, which is the main reason to connect Muse a
 
 That last step is the one to watch. If Muse can tell you three true things it learned from banks it has never written to, the connection is working and the cross-tool part is real.
 
-If it comes back with nothing, the usual cause is that it connected but has not called `list_banks` yet, so ask it directly what banks it can see. If it never showed a Connect button at all, it did not treat the prompt as a connector request: paste it again on its own, in a fresh conversation, rather than appended to something else.
+**Step 4 is four operations, not one.** This is the thing we got wrong in our own docs until we ran it. Listing banks and creating the `muse` bank are free; `recall` and the mental model are billed. On an account with no credits the first two succeed and the last two fail, and you are left with an empty `muse` bank and a live nightly task pointed at it.
+
+Muse is good about saying so rather than papering over it. Ours reported:
+
+> **"About me" mental model — blocked.** Hindsight rejected the creation: the account is out of credits.
+>
+> **"what do you know about me" — blocked for the same reason.** I can't honestly give you three findings yet — the query returned nothing.
+
+Asked for three insights it could not produce, it said it could not produce them. Worth noting if you were wondering whether a memory-connected agent will quietly invent things when the memory is unreachable.
+
+The recovery is to top up and ask it to retry the blocked steps. Do not paste the connect prompt again: the version of the prompt at the time said "create a mental model named About me" rather than "create one if it does not exist", so each re-run made another. We fixed that, but if you are running an older copy it is worth checking what is in your bank before you re-paste.
+
+If Muse never shows a Connect button at all, it did not treat the prompt as a connector request. Paste it on its own, in a fresh conversation, rather than appended to something else.
 
 ## If you self-host
 
