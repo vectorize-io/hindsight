@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 
+from hindsight_api.engine.cross_encoder import RerankTimeoutError
 from hindsight_api.engine.search.reranking import CrossEncoderReranker, RerankResult
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
@@ -224,3 +225,34 @@ async def test_concurrent_reranks_capture_the_serving_member(first_query: str) -
     ]
     assert chain.provider_name == results[1].provider_name
     assert chain.provider_name != results[0].provider_name
+
+
+@pytest.mark.asyncio
+async def test_rerank_timeout_keeps_unscored_candidates_in_rrf_order():
+    """When the local model runs out of wall-clock (#4696), recall still returns:
+    the scored candidates rank normally and the unscored tail keeps RRF order."""
+    # Candidates arrive in RRF order (index 0 is the strongest). The model scored
+    # only indices 0 and 1 — and scored them in the opposite order — before expiring.
+    ce = _make_cross_encoder([])
+    ce.predict = AsyncMock(
+        side_effect=RerankTimeoutError([1.0, 5.0, None, None, None], timeout=300.0, model_name="big-reranker")
+    )
+    reranker = CrossEncoderReranker(cross_encoder=ce)
+    reranker._initialized = True
+
+    results = (await reranker.rerank("test query", _make_candidates(5))).results
+
+    # Nothing is dropped.
+    assert len(results) == 5
+    # Scored pair first, reordered by score (5.0 > 1.0); unscored tail in RRF order.
+    assert [r.candidate.retrieval.text for r in results] == [
+        "Document 1",
+        "Document 0",
+        "Document 2",
+        "Document 3",
+        "Document 4",
+    ]
+    # The unscored tail carries no invented confidence: 0.0, not sigmoid(0)=0.5, so a
+    # min_reranker_score threshold excludes them instead of ranking them mid-field.
+    assert [r.weight for r in results[2:]] == [0.0, 0.0, 0.0]
+    assert [r.cross_encoder_score_normalized for r in results[2:]] == [0.0, 0.0, 0.0]

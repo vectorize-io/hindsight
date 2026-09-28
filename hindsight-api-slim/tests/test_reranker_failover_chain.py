@@ -18,6 +18,7 @@ from hindsight_api.engine.cross_encoder import (
     CrossEncoderModel,
     MultiCrossEncoder,
     RemoteTEICrossEncoder,
+    RerankTimeoutError,
     RRFPassthroughCrossEncoder,
     create_cross_encoder,
     create_cross_encoder_from_env,
@@ -287,3 +288,35 @@ async def test_chain_handles_its_own_blocking_member_init():
     """MultiCrossEncoder offloads local members itself, so callers never thread it."""
     chain = MultiCrossEncoder([RRFPassthroughCrossEncoder(), RRFPassthroughCrossEncoder()])
     assert chain.blocking_init is False
+
+
+@pytest.mark.asyncio
+async def test_local_rerank_timeout_falls_over_to_the_next_member():
+    """A local member that exhausts its wall-clock budget (#4696) is a member
+    failure like any other: the chain tries the next one rather than returning
+    the partial scores."""
+    slow_local = _FakeCrossEncoder(
+        "local",
+        predict_error=RerankTimeoutError([0.9, None], timeout=300.0, model_name="big-reranker"),
+    )
+    backup = _FakeCrossEncoder("cohere", scores=[0.2, 0.8])
+    chain = MultiCrossEncoder([slow_local, backup])
+    await chain.initialize()
+
+    assert await chain.predict(PAIRS) == [0.2, 0.8]
+    assert backup.predict_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rerank_timeout_surfaces_when_it_is_the_last_member():
+    """With no member left to try, the timeout reaches the caller with its partial
+    scores intact — that is what lets rerank() keep the unscored tail in RRF order."""
+    exc = RerankTimeoutError([0.9, None], timeout=300.0, model_name="big-reranker")
+    chain = MultiCrossEncoder(
+        [_FakeCrossEncoder("cohere", predict_error=RuntimeError("down")), _FakeCrossEncoder("local", predict_error=exc)]
+    )
+    await chain.initialize()
+
+    with pytest.raises(RerankTimeoutError) as excinfo:
+        await chain.predict(PAIRS)
+    assert excinfo.value.scores == [0.9, None]

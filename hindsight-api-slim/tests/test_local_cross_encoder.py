@@ -7,6 +7,7 @@ These tests use mocked models — they do not load real SentenceTransformers or
 FlashRank weights, so they run fast in CI without network access.
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,17 +17,19 @@ from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
     LocalSTCrossEncoder,
+    RerankTimeoutError,
 )
 
 
 class TestLocalSTCrossEncoder:
     """Unit tests for the SentenceTransformers-backed local reranker."""
 
-    def _make_encoder(self, *, bucket_batching: bool = False, batch_size: int = 32):
+    def _make_encoder(self, *, bucket_batching: bool = False, batch_size: int = 32, timeout: float = 300.0):
         encoder = LocalSTCrossEncoder(
             model_name="test-model",
             bucket_batching=bucket_batching,
             batch_size=batch_size,
+            timeout=timeout,
         )
         # Bypass initialize() — we don't want to download or load real weights.
         encoder._model = MagicMock()
@@ -96,6 +99,48 @@ class TestLocalSTCrossEncoder:
         # so fake_predict assigned: short=1.0, medium=2.0, long=3.0
         # In original order: [long=3.0, short=1.0, medium=2.0]
         assert scores == [3.0, 1.0, 2.0]
+
+    async def test_predict_scores_in_batches_of_batch_size(self):
+        """The wall-clock budget is only checkable between batches, so a large
+        candidate set must arrive as several predict() calls, not one."""
+        encoder = self._make_encoder(batch_size=2)
+        encoder._model.predict.side_effect = lambda batch, **kw: [0.5] * len(batch)
+
+        scores = await encoder.predict([("q", f"doc-{i}") for i in range(5)])
+
+        assert scores == [0.5] * 5
+        assert encoder._model.predict.call_count == 3  # 2 + 2 + 1
+
+    async def test_predict_raises_budget_exceeded_with_partial_scores(self):
+        """On expiry the scored pairs survive and the rest come back as None."""
+        encoder = self._make_encoder(batch_size=2, timeout=0.05)
+
+        def slow_predict(batch, **kwargs):
+            time.sleep(0.06)  # every batch overruns the whole budget
+            return [0.9] * len(batch)
+
+        encoder._model.predict.side_effect = slow_predict
+
+        with pytest.raises(RerankTimeoutError) as excinfo:
+            await encoder.predict([("q", f"doc-{i}") for i in range(6)])
+
+        exc = excinfo.value
+        # First batch always runs (the deadline is checked before each batch), the
+        # second finds the budget gone.
+        assert exc.scores == [0.9, 0.9, None, None, None, None]
+        assert exc.timeout == 0.05
+        assert "test-model" in str(exc)
+
+    async def test_predict_timeout_zero_disables_the_budget(self):
+        encoder = self._make_encoder(batch_size=1, timeout=0.0)
+
+        def slow_predict(batch, **kwargs):
+            time.sleep(0.02)
+            return [0.4] * len(batch)
+
+        encoder._model.predict.side_effect = slow_predict
+
+        assert await encoder.predict([("q", "a"), ("q", "b"), ("q", "c")]) == [0.4, 0.4, 0.4]
 
     async def test_predict_not_initialized_raises(self):
         encoder = LocalSTCrossEncoder()

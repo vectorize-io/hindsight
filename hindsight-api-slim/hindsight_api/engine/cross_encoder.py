@@ -9,6 +9,7 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import contextvars
 import logging
+import time
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -30,6 +31,7 @@ from ..config import (
     DEFAULT_RERANKER_LITELLM_SDK_MODEL,
     DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
     DEFAULT_RERANKER_LOCAL_MODEL,
+    DEFAULT_RERANKER_LOCAL_TIMEOUT,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
@@ -66,6 +68,26 @@ logger = logging.getLogger(__name__)
 _served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "hindsight_rerank_served_provider", default=None
 )
+
+
+class RerankTimeoutError(Exception):
+    """An in-process reranker ran out of wall-clock before scoring every pair.
+
+    Carries the partial result: ``scores[i]`` is the score for ``pairs[i]``, or
+    ``None`` where the budget ran out first. Callers decide what to do with the
+    unscored tail — :class:`~hindsight_api.engine.search.reranking.Reranker`
+    keeps those candidates in their pre-rerank (RRF) order behind the scored ones,
+    so a mis-sized local model degrades the ordering instead of never returning.
+    """
+
+    def __init__(self, scores: list[float | None], timeout: float, model_name: str):
+        self.scores = scores
+        self.timeout = timeout
+        self.model_name = model_name
+        scored = sum(1 for score in scores if score is not None)
+        super().__init__(
+            f"Reranker {model_name!r} exhausted its {timeout:g}s budget after scoring {scored}/{len(scores)} candidates"
+        )
 
 
 class CrossEncoderModel(ABC):
@@ -180,6 +202,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         fp16: bool = False,
         bucket_batching: bool = False,
         batch_size: int = DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
+        timeout: float = DEFAULT_RERANKER_LOCAL_TIMEOUT,
     ):
         """
         Initialize local SentenceTransformers cross-encoder.
@@ -201,6 +224,9 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                             Default: False (opt-in via env var).
             batch_size: Batch size for predict() calls. Optimal values vary by
                        hardware and model (CPU: 32, CUDA: 128+). Default: 32.
+            timeout: Wall-clock ceiling for scoring one call's pairs. On expiry
+                    predict() raises RerankTimeoutError with the partial scores
+                    instead of running to completion. 0 disables. Default: 300.
         """
         self.model_name = model_name or DEFAULT_RERANKER_LOCAL_MODEL
         self.force_cpu = force_cpu
@@ -208,6 +234,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         self.fp16 = fp16
         self.bucket_batching = bucket_batching
         self.batch_size = batch_size
+        self.timeout = timeout
         self._model = None
         self._device_type: str = "cpu"
         LocalSTCrossEncoder._max_concurrent = max_concurrent
@@ -323,31 +350,41 @@ class LocalSTCrossEncoder(CrossEncoderModel):
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Synchronous prediction wrapper for thread pool execution.
 
+        Scores in explicit batches rather than one `predict()` call so the wall-clock
+        budget can be enforced between them — a blocking call already inside torch
+        cannot be cancelled from the event loop, and abandoning it with `wait_for`
+        would leave it burning the executor's only worker (#4696).
+
         Supports two optimizations (controlled via .env):
         - bucket_batching: sort pairs by token length to reduce padding waste (36-54% speedup)
         - batch_size: explicit batch size for predict() calls (MPS optimal: 32)
         """
 
         try:
+            order = list(range(len(pairs)))
             if self.bucket_batching and len(pairs) > 1:
                 # Sort pairs by approximate token length to create homogeneous batches.
                 # This eliminates padding waste — short pairs aren't padded to the length
                 # of the longest pair in the batch. Quality-identical by construction.
-                lengths = [len(pairs[i][0]) + len(pairs[i][1]) for i in range(len(pairs))]
-                sorted_indices = sorted(range(len(pairs)), key=lambda i: lengths[i])
-                sorted_pairs = [pairs[i] for i in sorted_indices]
+                order.sort(key=lambda i: len(pairs[i][0]) + len(pairs[i][1]))
 
-                sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
-                sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
+            scores: list[float | None] = [None] * len(pairs)
+            # ponytail: the deadline is checked between batches, so one pathological
+            # batch can overshoot it. Bounded by a single batch, which is the point —
+            # cutting mid-batch would mean reaching inside the model's forward pass.
+            deadline = time.monotonic() + self.timeout if self.timeout > 0 else None
 
-                # Restore original order
-                scores = [0.0] * len(pairs)
-                for new_pos, orig_idx in enumerate(sorted_indices):
-                    scores[orig_idx] = sorted_scores[new_pos]
-                return scores
+            for start in range(0, len(order), self.batch_size):
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise RerankTimeoutError(scores, self.timeout, self.model_name)
+                batch = order[start : start + self.batch_size]
+                batch_pairs = [pairs[i] for i in batch]
+                batch_scores = self._model.predict(batch_pairs, batch_size=self.batch_size, show_progress_bar=False)
+                batch_scores = batch_scores.tolist() if hasattr(batch_scores, "tolist") else list(batch_scores)
+                for i, score in zip(batch, batch_scores):
+                    scores[i] = float(score)
 
-            scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
-            return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+            return [0.0 if score is None else score for score in scores]
         finally:
             release_local_inference_memory(self._device_type)
 
@@ -2204,6 +2241,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             fp16=member.local_fp16,
             bucket_batching=member.local_bucket_batching,
             batch_size=member.local_batch_size,
+            timeout=member.local_timeout,
         )
     elif provider == "cohere":
         api_key = member.cohere_api_key
