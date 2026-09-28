@@ -28,26 +28,21 @@ OWN_LABEL = {
 }
 ALL_LABELS = [CORE, INTEGRATION, *OWN_LABEL.values()]
 
-# Jev option key -> (label, what the option means to the model).
+# Label -> what it means to the model. The labels are the Jev option keys, so
+# its answer is already the label to apply.
 ISSUE_OPTIONS = {
-    "core": (
-        CORE,
-        "The core Hindsight service: API server, memory engine (retain, recall, reflect, "
-        "consolidation, mental models), database, LLM/embedding/reranker providers, SDK clients, "
-        "CLI, Docker images, deployment, control plane UI, docs",
-    ),
-    "hermes": (OWN_LABEL["hermes"], "The Hermes Agent memory plugin/integration"),
-    "openclaw": (OWN_LABEL["openclaw"], "The OpenClaw (or NemoClaw) memory plugin/integration"),
-    "coding_agents": (
-        OWN_LABEL["coding-agents"],
-        "The coding-agents integration: one package of hooks and memory for coding agent harnesses "
-        "(Claude Code, Codex, Cursor, OpenCode, Copilot CLI, Cline, Pi, ...)",
-    ),
-    "integration": (
-        INTEGRATION,
-        "Another framework integration (CrewAI, LangGraph, LiteLLM, Pydantic AI, n8n, Obsidian, MCP clients, ...)",
-    ),
+    CORE: "The core Hindsight service: API server, memory engine (retain, recall, reflect, "
+    "consolidation, mental models), database, LLM/embedding/reranker providers, SDK clients, "
+    "CLI, Docker images, deployment, control plane UI, docs",
+    OWN_LABEL["hermes"]: "The Hermes Agent memory plugin/integration",
+    OWN_LABEL["openclaw"]: "The OpenClaw (or NemoClaw) memory plugin/integration",
+    OWN_LABEL["coding-agents"]: "The coding-agents integration: one package of hooks and memory for coding agent "
+    "harnesses (Claude Code, Codex, Cursor, OpenCode, Copilot CLI, Cline, Pi, ...)",
+    INTEGRATION: "Another framework integration (CrewAI, LangGraph, LiteLLM, Pydantic AI, n8n, Obsidian, "
+    "MCP clients, ...)",
 }
+# An integration's docs page lives here, named after it.
+INTEGRATION_DOC_DIRS = ("hindsight-docs/docs-integrations/", "skills/hindsight-docs/references/sdks/integrations/")
 
 
 def gh(*args: str) -> str:
@@ -56,23 +51,17 @@ def gh(*args: str) -> str:
 
 def pr_labels(number: int) -> set[str]:
     files = gh("api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--jq", ".[].filename")
-    labels = set()
-    for path in files.split():
-        labels.add(path_label(path))
-    return labels
+    return {path_label(path) for path in files.split()}
 
 
 def path_label(path: str) -> str:
     parts = path.split("/")
     if parts[0] == "hindsight-integrations" and len(parts) > 2:
         return OWN_LABEL.get(parts[1], INTEGRATION)
-    # An integration's docs page, named after it.
     if path.startswith(INTEGRATION_DOC_DIRS):
         return OWN_LABEL.get(parts[-1].split(".")[0], INTEGRATION)
     return CORE
 
-
-INTEGRATION_DOC_DIRS = ("hindsight-docs/docs-integrations/", "skills/hindsight-docs/references/sdks/integrations/")
 
 assert path_label("hindsight-integrations/hermes/a.py") == "integration:hermes"
 assert path_label("hindsight-integrations/crewai/a.py") == INTEGRATION
@@ -95,15 +84,14 @@ def issue_label(title: str, body: str) -> str:
                     "area": {
                         "type": "choice",
                         "instructions": "Which part of the Hindsight project is this GitHub issue about?",
-                        "criteria": {key: meaning for key, (_, meaning) in ISSUE_OPTIONS.items()},
+                        "criteria": ISSUE_OPTIONS,
                     }
                 },
             }
         ).encode(),
     )
     with urllib.request.urlopen(request, timeout=60) as response:
-        choice = json.load(response)["answers"]["area"]["choice"]
-    return ISSUE_OPTIONS[choice][0]
+        return json.load(response)["answers"]["area"]["choice"]
 
 
 def add_labels(number: int, labels: set[str]) -> None:
