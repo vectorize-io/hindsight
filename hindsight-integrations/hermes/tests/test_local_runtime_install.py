@@ -106,16 +106,14 @@ def test_relaunch_shim_is_never_called(monkeypatch):
 
     calls = []
 
-    def shim(specs, **kwargs) -> NoReturn:          # the exact shape Hermes 0.21.5 ships
+    def shim(specs, **kwargs) -> NoReturn:  # the exact shape Hermes 0.21.5 ships
         calls.append(list(specs))
         raise SystemExit(1)
 
-    monkeypatch.setitem(sys.modules, "tools.lazy_deps",
-                        SimpleNamespace(install_specs=shim))
+    monkeypatch.setitem(sys.modules, "tools.lazy_deps", SimpleNamespace(install_specs=shim))
     reason = "No module named 'hindsight'"
     monkeypatch.setattr(embedded, "_check_local_runtime", lambda: (False, reason))
-    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider",
-                        lambda: "hindsight")
+    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider", lambda: "hindsight")
 
     assert embedded._ensure_local_runtime() == (False, reason)
     assert calls == [], "the relaunch shim must never be invoked"
@@ -124,10 +122,9 @@ def test_relaunch_shim_is_never_called(monkeypatch):
 def test_missing_installer_degrades_with_the_manual_hint(monkeypatch):
     """No importable installer (module removed/renamed) → stay a degraded provider, never exit."""
     reason = "No module named 'hindsight'"
-    monkeypatch.setitem(sys.modules, "tools.lazy_deps", None)   # import raises ImportError
+    monkeypatch.setitem(sys.modules, "tools.lazy_deps", None)  # import raises ImportError
     monkeypatch.setattr(embedded, "_check_local_runtime", lambda: (False, reason))
-    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider",
-                        lambda: "hindsight")
+    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider", lambda: "hindsight")
 
     assert embedded._ensure_local_runtime() == (False, reason)
     assert "hindsight-all" in embedded._local_runtime_hint(reason)
@@ -136,12 +133,10 @@ def test_missing_installer_degrades_with_the_manual_hint(monkeypatch):
 def test_installer_without_a_no_return_annotation_is_used(monkeypatch):
     """The guard keys on the DECLARATION, not on the module name — a real installer still installs."""
     recorder = _Recorder()
-    monkeypatch.setitem(sys.modules, "tools.lazy_deps",
-                        SimpleNamespace(install_specs=recorder))
+    monkeypatch.setitem(sys.modules, "tools.lazy_deps", SimpleNamespace(install_specs=recorder))
     results = iter([(False, "No module named 'hindsight'"), (True, None)])
     monkeypatch.setattr(embedded, "_check_local_runtime", lambda: next(results))
-    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider",
-                        lambda: "hindsight")
+    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider", lambda: "hindsight")
 
     assert embedded._ensure_local_runtime() == (True, None)
     assert recorder.calls == [["hindsight-all"]]
@@ -151,16 +146,18 @@ def test_shim_is_detected_by_its_structural_fingerprint(monkeypatch):
     """Annotations can be stripped; the shim also imports the relaunch helper — either mark is enough."""
     calls = []
 
-    def unannotated(specs, **kwargs):           # no NoReturn annotation at all
+    def unannotated(specs, **kwargs):  # no NoReturn annotation at all
         calls.append(list(specs))
         return SimpleNamespace(ok=True, reason="", stderr="")
 
-    monkeypatch.setitem(sys.modules, "tools.lazy_deps", SimpleNamespace(
-        install_specs=unannotated, stop_for_relaunch=lambda **kwargs: None))
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.lazy_deps",
+        SimpleNamespace(install_specs=unannotated, stop_for_relaunch=lambda **kwargs: None),
+    )
     reason = "No module named 'hindsight'"
     monkeypatch.setattr(embedded, "_check_local_runtime", lambda: (False, reason))
-    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider",
-                        lambda: "hindsight")
+    monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider", lambda: "hindsight")
 
     assert embedded._ensure_local_runtime() == (False, reason)
     assert calls == []

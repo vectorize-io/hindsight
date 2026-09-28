@@ -174,7 +174,8 @@ def _ensure_local_runtime() -> tuple[bool, str | None]:
             "Hindsight local_embedded runtime is missing (%s) and this Hermes build exposes no "
             "usable optional-dependency installer. Install it with: "
             "uv pip install --python %s hindsight-all",
-            reason, sys.executable,
+            reason,
+            sys.executable,
         )
         return available, reason
 

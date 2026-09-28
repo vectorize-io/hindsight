@@ -119,8 +119,10 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
     deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
     installer = _optional_dependency_installer()
     if installer is None:
-        print(f"  ⚠ No installer available in this build. Run manually:"
-              f" uv pip install --python {sys.executable} {' '.join(deps)}")
+        print(
+            f"  ⚠ No installer available in this build. Run manually:"
+            f" uv pip install --python {sys.executable} {' '.join(deps)}"
+        )
     else:
         outcome = installer(deps, timeout=120)
         if outcome.ok:
