@@ -106,6 +106,10 @@ export interface RawConfig {
    *  it, fits the 30s prompt-hook timeout the installer registers on hook harnesses; going higher
    *  there needs that host timeout raised too, or the host kills the hook mid-reflect. */
   reflectTimeoutMs?: number;
+  /** Timeout for automatic page-search and recall auto-injections (and the reflect fallback chain),
+   *  in milliseconds (default 7000). On hook harnesses, values above the host's prompt-hook
+   *  timeout (30s) need that host timeout raised too, or the host kills the hook mid-inject. */
+  injectTimeoutMs?: number;
   /** Timeout for the agent-invoked `hindsight_reflect` tool (default 330000). Deliberately its own
    *  knob and much larger than `reflectTimeoutMs`: that one bounds an automatic hook that must fit
    *  the host's hook window, whereas this one bounds a call the agent made on purpose and waits on,
@@ -294,6 +298,7 @@ export interface Config {
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
   reflectBudget: "low" | "mid" | "high";
+  injectTimeoutMs: number;
   autoInject: AutoInject;
   pageSearchLimit: number;
   recallOptions: Record<string, unknown>;
@@ -452,6 +457,8 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
 export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
 /** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
+/** Default timeout for automatic page-search and recall auto-injections — see RawConfig.injectTimeoutMs. */
+export const DEFAULT_INJECT_TIMEOUT_MS = 7_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
 
@@ -568,6 +575,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       raw.reflectToolTimeoutMs ||
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
     reflectBudget: resolveReflectBudget(raw),
+    injectTimeoutMs: raw.injectTimeoutMs || DEFAULT_INJECT_TIMEOUT_MS,
     autoInject: resolveAutoInject(raw),
     pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
     // Same shape as retainMetadata: an object, or nothing. An array would spread into numeric
@@ -698,6 +706,7 @@ const ENV_KEYS = {
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
+  injectTimeoutMs: "HINDSIGHT_INJECT_TIMEOUT_MS",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
@@ -743,6 +752,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "maxParallelRetains",
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
+  "injectTimeoutMs",
   "pageSearchLimit",
   "pageRefreshEveryTurns",
   "seedLimit",

@@ -23,7 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { deriveBankIdOrSkip } from "./bank";
 import type { Config } from "./config";
-import { applyBankConfig, loadConfig } from "./config";
+import { applyBankConfig, DEFAULT_INJECT_TIMEOUT_MS, loadConfig } from "./config";
 import { diag, diagFilePath } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
@@ -85,10 +85,6 @@ interface HookClient {
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
 }
-
-/** Shared deadline for the whole fallback chain (page search, then observation recall) that runs
- *  after a reflect timeout/5xx. Both are retrieval-only endpoints — no LLM — so seconds suffice. */
-const HOOK_FALLBACK_BUDGET_MS = 7_000;
 
 /** How many turns auto-inject may FAIL on before a session gives up on memory. The budget is
  *  turns, not time: each retry costs another full attempt (up to `reflectTimeoutMs` on the
@@ -165,9 +161,10 @@ async function injectRecall(
 async function reflectFallback(
   harness: string,
   prompt: string,
-  client: HookClient
+  client: HookClient,
+  timeoutMs: number = DEFAULT_INJECT_TIMEOUT_MS
 ): Promise<string | null | undefined> {
-  const deadline = Date.now() + HOOK_FALLBACK_BUDGET_MS;
+  const deadline = Date.now() + timeoutMs;
   const remaining = () => Math.max(deadline - Date.now(), 1);
   return (
     (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
@@ -232,7 +229,7 @@ export async function buildHookOutput(args: {
       harness,
       prompt,
       client,
-      HOOK_FALLBACK_BUDGET_MS,
+      cfg.injectTimeoutMs,
       "inject_pages",
       PAGE_INJECT_LEAD
     );
@@ -248,7 +245,7 @@ export async function buildHookOutput(args: {
       harness,
       prompt,
       client,
-      HOOK_FALLBACK_BUDGET_MS,
+      cfg.injectTimeoutMs,
       "inject_recall",
       RECALL_INJECT_LEAD
     );
@@ -297,7 +294,7 @@ export async function buildHookOutput(args: {
         query: prompt.slice(0, 80),
       });
       if (e instanceof ReflectError && e.fallbackEligible) {
-        fallback = await reflectFallback(harness, prompt, client);
+        fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
         // The fallback body is cached exactly like a reflect answer: injected once, not retried.
         if (fallback) reflectAnswer = fallback;
       }

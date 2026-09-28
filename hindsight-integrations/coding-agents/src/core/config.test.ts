@@ -2,7 +2,13 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadConfig, applyBankConfig, readEnvConfig, resolveConfig } from "./config";
+import {
+  loadConfig,
+  applyBankConfig,
+  readEnvConfig,
+  resolveConfig,
+  DEFAULT_INJECT_TIMEOUT_MS,
+} from "./config";
 import { log } from "./log";
 
 let root: string;
@@ -107,6 +113,37 @@ describe("maxParallelRetains", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     process.env.HINDSIGHT_MAX_PARALLEL_RETAINS = "lots";
     expect(loadConfig({ path: globalCfg }).maxParallelRetains).toBe(10);
+  });
+});
+
+describe("injectTimeoutMs", () => {
+  it("defaults to 7000 when unset", () => {
+    expect(DEFAULT_INJECT_TIMEOUT_MS).toBe(7000);
+    expect(loadConfig({ harness: "claude-code" }).injectTimeoutMs).toBe(7000);
+    expect(resolveConfig({}).injectTimeoutMs).toBe(7000);
+  });
+
+  it("config file value wins over the default", () => {
+    writeJson(globalCfg, { injectTimeoutMs: 15000 });
+    expect(loadConfig({ path: globalCfg }).injectTimeoutMs).toBe(15000);
+  });
+
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("reads HINDSIGHT_INJECT_TIMEOUT_MS as a number", () => {
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_INJECT_TIMEOUT_MS = "12000";
+    expect(loadConfig({ path: globalCfg }).injectTimeoutMs).toBe(12000);
+  });
+
+  it("ignores a malformed env value and falls back to the default", () => {
+    writeJson(globalCfg, {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_INJECT_TIMEOUT_MS = "fast";
+    expect(loadConfig({ path: globalCfg }).injectTimeoutMs).toBe(7000);
   });
 });
 

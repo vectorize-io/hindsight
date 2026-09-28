@@ -420,6 +420,30 @@ describe("buildHookOutput", () => {
       expect(events.find((e) => e.event === "reflect_fallback_pages")?.count).toBe(0);
       expect(events.find((e) => e.event === "reflect_fallback_observations")?.count).toBe(1);
     });
+
+    it("propagates configured injectTimeoutMs as fallback deadline", async () => {
+      let observedTimeout: number | undefined;
+      const client = makeClient({
+        reflect: vi.fn(async () => {
+          throw timedOut();
+        }),
+        searchKnowledgePages: vi.fn(async (_q, opts) => {
+          observedTimeout = opts?.timeoutMs;
+          return [];
+        }),
+        recallObservations: vi.fn(async () => ["An observation."]),
+      });
+      const cfg = resolveConfig({ injectTimeoutMs: 15_000 });
+      await buildHookOutput({
+        harness: "claude-code",
+        prompt: MATCHING_PROMPT,
+        cfg,
+        client,
+        cacheFile,
+      });
+      expect(observedTimeout).toBeGreaterThan(14_000);
+      expect(observedTimeout).toBeLessThanOrEqual(15_000);
+    });
   });
 
   it("autoInject pages: injects page-search hits once, never reflects or recalls", async () => {
@@ -482,6 +506,25 @@ describe("buildHookOutput", () => {
     expect(empty.searchKnowledgePages).toHaveBeenCalledTimes(1);
   });
 
+  it("autoInject pages: uses configured injectTimeoutMs", async () => {
+    const client = makeClient({
+      searchKnowledgePages: vi.fn(async () => [
+        { id: "p1", name: "Uploader guide", snippet: "retry backoff" },
+      ]),
+    });
+    const cfg = resolveConfig({ autoInject: "pages", injectTimeoutMs: 15_000 });
+    await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(client.searchKnowledgePages).toHaveBeenCalledWith(MATCHING_PROMPT.slice(0, 500), {
+      timeoutMs: 15_000,
+    });
+  });
+
   it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {
     const client = makeClient({
       recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
@@ -530,6 +573,23 @@ describe("buildHookOutput", () => {
     expect(out.context ?? "").not.toContain("<hindsight_memory>");
     // These modes used to stay silent, so a memory-less turn looked identical to a healthy one.
     expect(out.notice).toContain("no memory this turn");
+  });
+
+  it("autoInject recall: uses configured injectTimeoutMs", async () => {
+    const client = makeClient({
+      recallObservations: vi.fn(async () => ["Uploads retry 3 times."]),
+    });
+    const cfg = resolveConfig({ autoInject: "recall", injectTimeoutMs: 12_000 });
+    await buildHookOutput({
+      harness: "claude-code",
+      prompt: MATCHING_PROMPT,
+      cfg,
+      client,
+      cacheFile,
+    });
+    expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT.slice(0, 2000), {
+      timeoutMs: 12_000,
+    });
   });
 
   it("autoReflect false: never calls reflect, injects no memory block", async () => {
