@@ -536,6 +536,7 @@ List documents that have been ingested into the memory bank.
 |-----------|------|----------|-------------|
 | `q` | string | No | Search query to filter documents |
 | `limit` | integer | No | Maximum number of results (default: 100) |
+| `offset` | integer | No | Number of results to skip for pagination (default: 0) |
 
 ---
 
@@ -561,12 +562,15 @@ Delete a document and all memories linked to it.
 
 ### list_operations
 
-List async operations (retain processing, mental model refresh, etc.) with optional status filtering.
+List async operations (retain processing, mental model refresh, etc.) with optional status and type filtering.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `status` | string | No | Filter by status: `pending`, `running`, `completed`, `failed`, `cancelled` |
-| `limit` | integer | No | Maximum number of results (default: 100) |
+| `type` | string | No | Filter by type: `retain`, `consolidation`, `refresh_mental_model`, `file_convert_retain`, `webhook_delivery` |
+| `limit` | integer | No | Maximum number of results, 1–100 (default: 20) |
+| `offset` | integer | No | Number of results to skip for pagination (default: 0) |
+| `exclude_parents` | boolean | No | Exclude parent batch operations (default: false) |
 
 ---
 
@@ -598,6 +602,7 @@ List all unique tags used in a bank, optionally filtered by pattern.
 |-----------|------|----------|-------------|
 | `q` | string | No | Glob pattern to filter tags (e.g., `project:*`) |
 | `limit` | integer | No | Maximum number of results (default: 100) |
+| `offset` | integer | No | Number of results to skip for pagination (default: 0) |
 
 ---
 

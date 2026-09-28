@@ -1682,6 +1682,15 @@ class TestDocumentTools:
         result = await _tools(mcp)["list_documents"].fn()
         assert isinstance(result, dict)
 
+    @pytest.mark.parametrize("tool", ["list_documents", "list_tags"])
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_list_pages_with_offset(self, mock_memory, tool, include_bank_id):
+        """#4859: documents and tags page with offset, like their HTTP endpoints."""
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=include_bank_id)
+        await _tools(mcp)[tool].fn(limit=10, offset=20)
+        call_kwargs = getattr(mock_memory, tool).call_args.kwargs
+        assert call_kwargs["offset"] == 20
+
 
 # =========================================================================
 # Operation Tool Tests
@@ -1716,6 +1725,56 @@ class TestOperationTools:
         mcp = _make_mcp_server(mock_memory, {"list_operations"}, include_bank_id=False)
         result = await _tools(mcp)["list_operations"].fn()
         assert isinstance(result, dict)
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_list_operations_pages_and_filters_like_http(self, mock_memory, include_bank_id):
+        """#4859: MCP takes the same offset / type / exclude_parents as the HTTP endpoint."""
+        mcp = _make_mcp_server(mock_memory, {"list_operations"}, include_bank_id=include_bank_id)
+        await _tools(mcp)["list_operations"].fn(type="refresh_mental_model", limit=50, offset=250, exclude_parents=True)
+        call_kwargs = mock_memory.list_operations.call_args.kwargs
+        assert call_kwargs["task_type"] == "refresh_mental_model"
+        assert call_kwargs["limit"] == 50
+        assert call_kwargs["offset"] == 250
+        assert call_kwargs["exclude_parents"] is True
+
+
+@pytest.mark.asyncio
+class TestListToolBounds:
+    """#4859: list tools reject the same limit/offset values their HTTP endpoints reject."""
+
+    @pytest.fixture
+    def mock_memory(self, mock_memory):
+        # call_tool runs the bank tool filter first; leave every tool enabled.
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+        mock_memory._operation_validator = None
+        return mock_memory
+
+    @pytest.mark.parametrize(
+        "tool,args",
+        [
+            ("list_operations", {"limit": 101}),
+            ("list_operations", {"limit": 0}),
+            ("list_mental_models", {"limit": 1001}),
+            ("list_directives", {"limit": 1001}),
+            ("list_memories", {"limit": -1}),
+            ("list_documents", {"offset": -1}),
+            ("list_tags", {"offset": -1}),
+            ("list_banks", {"offset": -1}),
+        ],
+    )
+    async def test_out_of_range_is_rejected(self, mock_memory, tool, args):
+        from pydantic import ValidationError
+
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=True)
+        with pytest.raises(ValidationError):
+            await mcp.call_tool(tool, args)
+        engine_method = "list_memory_units" if tool == "list_memories" else tool
+        getattr(mock_memory, engine_method).assert_not_called()
+
+    async def test_limit_at_the_http_max_is_accepted(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"list_operations"}, include_bank_id=True)
+        await mcp.call_tool("list_operations", {"limit": 100})
+        assert mock_memory.list_operations.call_args.kwargs["limit"] == 100
 
 
 # =========================================================================

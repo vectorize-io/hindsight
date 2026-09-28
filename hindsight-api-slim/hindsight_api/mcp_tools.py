@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal, get_args
+from typing import Annotated, Any, Callable, Literal, get_args
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -30,6 +30,13 @@ from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
 
 _TAG_GROUP_LIST_ADAPTER = TypeAdapter(list[TagGroup])
+
+# Paging bounds for the list tools. They match the HTTP endpoints' Query bounds
+# so a limit rejected over HTTP is rejected over MCP too (#4859).
+_Offset = Annotated[int, Field(ge=0)]
+_Limit = Annotated[int, Field(ge=0)]
+_Limit1000 = Annotated[int, Field(ge=1, le=1000)]
+_OperationsLimit = Annotated[int, Field(ge=1, le=100)]
 
 # All tools available in the system (explicit list — no wildcards).
 # Defined here (shared module) to avoid circular imports with api/mcp.py.
@@ -1616,7 +1623,7 @@ def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     """Register the list_banks tool."""
 
     @mcp.tool(annotations=_tool_annotations("list_banks"))
-    async def list_banks(query: str | None = None, limit: int = 100, offset: int = 0) -> str:
+    async def list_banks(query: str | None = None, limit: _Limit = 100, offset: _Offset = 0) -> str:
         """
         List available memory banks, most recently written first.
 
@@ -1740,8 +1747,8 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit1000 = 100,
+            offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -1756,7 +1763,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                limit: Maximum number of results (default: 100)
+                limit: Maximum number of results, 1-1000 (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
             """
@@ -1774,8 +1781,8 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit1000 = 100,
+            offset: _Offset = 0,
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
@@ -1789,7 +1796,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                limit: Maximum number of results (default: 100)
+                limit: Maximum number of results, 1-1000 (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             return await _run_tool(
@@ -3225,8 +3232,8 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit1000 = 100,
+            offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -3238,7 +3245,7 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             Args:
                 tags: Optional tags to filter by
                 active_only: If True, only return active directives (default: True)
-                limit: Maximum number of results (default: 100)
+                limit: Maximum number of results, 1-1000 (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
@@ -3257,8 +3264,8 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit1000 = 100,
+            offset: _Offset = 0,
         ) -> dict:
             """
             List directives for this memory bank.
@@ -3269,7 +3276,7 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             Args:
                 tags: Optional tags to filter by
                 active_only: If True, only return active directives (default: True)
-                limit: Maximum number of results (default: 100)
+                limit: Maximum number of results, 1-1000 (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             return await _run_tool(
@@ -3459,8 +3466,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
         async def list_memories(
             type: str | None = None,
             q: str | None = None,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
             bank_id: str | None = None,
             tags: list[str] | None = None,
             tags_match: TagsMatch = "any",
@@ -3496,8 +3503,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
         async def list_memories(
             type: str | None = None,
             q: str | None = None,
-            limit: int = 100,
-            offset: int = 0,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
             tags: list[str] | None = None,
             tags_match: TagsMatch = "any",
         ) -> dict:
@@ -3794,11 +3801,12 @@ def _register_invalidate_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPT
 def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the list_documents tool."""
 
-    async def _run(target_bank: str, q: str | None, limit: int) -> Any:
+    async def _run(target_bank: str, q: str | None, limit: int, offset: int) -> Any:
         result = await memory.list_documents(
             target_bank,
             search_query=q,
             limit=limit,
+            offset=offset,
             request_context=_get_request_context(config),
         )
         return result
@@ -3808,7 +3816,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
         @mcp.tool(annotations=_tool_annotations("list_documents"))
         async def list_documents(
             q: str | None = None,
-            limit: int = 100,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -3820,6 +3829,7 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Args:
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             return await _run_tool(
@@ -3827,7 +3837,7 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 bank_id=bank_id,
                 as_json=True,
                 action="listing documents",
-                run=lambda target_bank: _run(target_bank, q, limit),
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
             )
 
     else:
@@ -3835,7 +3845,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
         @mcp.tool(annotations=_tool_annotations("list_documents"))
         async def list_documents(
             q: str | None = None,
-            limit: int = 100,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
         ) -> dict:
             """
             List documents in this memory bank.
@@ -3846,13 +3857,14 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Args:
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             return await _run_tool(
                 config,
                 bank_id=None,
                 as_json=False,
                 action="listing documents",
-                run=lambda target_bank: _run(target_bank, q, limit),
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
             )
 
 
@@ -3986,11 +3998,16 @@ def _register_delete_document(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the list_operations tool."""
 
-    async def _run(target_bank: str, status: str | None, limit: int) -> Any:
+    async def _run(
+        target_bank: str, status: str | None, type: str | None, limit: int, offset: int, exclude_parents: bool
+    ) -> Any:
         result = await memory.list_operations(
             target_bank,
             status=status,
+            task_type=type,
             limit=limit,
+            offset=offset,
+            exclude_parents=exclude_parents,
             request_context=_get_request_context(config),
         )
         return result
@@ -4000,7 +4017,10 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         @mcp.tool(annotations=_tool_annotations("list_operations"))
         async def list_operations(
             status: str | None = None,
-            limit: int = 20,
+            type: str | None = None,
+            limit: _OperationsLimit = 20,
+            offset: _Offset = 0,
+            exclude_parents: bool = False,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -4010,7 +4030,11 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 
             Args:
                 status: Filter by status: 'pending', 'running', 'completed', 'failed', 'cancelled'
-                limit: Maximum number of results (default: 20)
+                type: Filter by operation type: 'retain', 'consolidation', 'refresh_mental_model',
+                    'file_convert_retain', 'webhook_delivery'
+                limit: Maximum number of results, 1-100 (default: 20)
+                offset: Number of operations to skip (default: 0). Page until you reach 'total'.
+                exclude_parents: Exclude parent batch operations (default: False)
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             return await _run_tool(
@@ -4018,7 +4042,7 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
                 bank_id=bank_id,
                 as_json=True,
                 action="listing operations",
-                run=lambda target_bank: _run(target_bank, status, limit),
+                run=lambda target_bank: _run(target_bank, status, type, limit, offset, exclude_parents),
             )
 
     else:
@@ -4026,7 +4050,10 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         @mcp.tool(annotations=_tool_annotations("list_operations"))
         async def list_operations(
             status: str | None = None,
-            limit: int = 20,
+            type: str | None = None,
+            limit: _OperationsLimit = 20,
+            offset: _Offset = 0,
+            exclude_parents: bool = False,
         ) -> dict:
             """
             List async operations for this memory bank.
@@ -4035,14 +4062,18 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 
             Args:
                 status: Filter by status: 'pending', 'running', 'completed', 'failed', 'cancelled'
-                limit: Maximum number of results (default: 20)
+                type: Filter by operation type: 'retain', 'consolidation', 'refresh_mental_model',
+                    'file_convert_retain', 'webhook_delivery'
+                limit: Maximum number of results, 1-100 (default: 20)
+                offset: Number of operations to skip (default: 0). Page until you reach 'total'.
+                exclude_parents: Exclude parent batch operations (default: False)
             """
             return await _run_tool(
                 config,
                 bank_id=None,
                 as_json=False,
                 action="listing operations",
-                run=lambda target_bank: _run(target_bank, status, limit),
+                run=lambda target_bank: _run(target_bank, status, type, limit, offset, exclude_parents),
             )
 
 
@@ -4166,11 +4197,12 @@ def _register_cancel_operation(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the list_tags tool."""
 
-    async def _run(target_bank: str, q: str | None, limit: int) -> Any:
+    async def _run(target_bank: str, q: str | None, limit: int, offset: int) -> Any:
         result = await memory.list_tags(
             target_bank,
             pattern=q,
             limit=limit,
+            offset=offset,
             request_context=_get_request_context(config),
         )
         return result
@@ -4180,7 +4212,8 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
         @mcp.tool(annotations=_tool_annotations("list_tags"))
         async def list_tags(
             q: str | None = None,
-            limit: int = 100,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -4191,6 +4224,7 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
             Args:
                 q: Optional pattern to filter tags (e.g., 'project:*')
                 limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             return await _run_tool(
@@ -4198,7 +4232,7 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
                 bank_id=bank_id,
                 as_json=True,
                 action="listing tags",
-                run=lambda target_bank: _run(target_bank, q, limit),
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
             )
 
     else:
@@ -4206,7 +4240,8 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
         @mcp.tool(annotations=_tool_annotations("list_tags"))
         async def list_tags(
             q: str | None = None,
-            limit: int = 100,
+            limit: _Limit = 100,
+            offset: _Offset = 0,
         ) -> dict:
             """
             List tags used in this memory bank.
@@ -4216,13 +4251,14 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
             Args:
                 q: Optional pattern to filter tags (e.g., 'project:*')
                 limit: Maximum number of results (default: 100)
+                offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
             return await _run_tool(
                 config,
                 bank_id=None,
                 as_json=False,
                 action="listing tags",
-                run=lambda target_bank: _run(target_bank, q, limit),
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
             )
 
 
