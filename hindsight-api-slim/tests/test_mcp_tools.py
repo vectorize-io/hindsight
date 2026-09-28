@@ -2682,3 +2682,40 @@ class TestMentalModelTriggerInput:
 
     def test_no_trigger_and_no_shorthand_is_no_patch(self):
         assert _mental_model_trigger_patch(None) is None
+
+
+@pytest.mark.asyncio
+class TestRecallResponseSize:
+    """max_tokens budgets fact text only; the MCP payload around it should not add more than it must."""
+
+    @staticmethod
+    def _result():
+        from hindsight_api.engine.response_models import MemoryFact, RecallResult
+
+        facts = [
+            MemoryFact(
+                id=f"fact-{i}",
+                text=f"fact number {i}",
+                fact_type="world",
+                tags=["project:x", "research"],
+                mentioned_at="2026-09-28T00:00:00+00:00",
+            )
+            for i in range(3)
+        ]
+        return RecallResult(results=facts)
+
+    async def test_bank_id_recall_returns_compact_json(self, mock_memory):
+        mock_memory.recall_async = AsyncMock(return_value=self._result())
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=True)
+        out = await _tools(mcp)["recall"].fn(query="test")
+        assert json.loads(out) == json.loads(self._result().model_dump_json())
+        assert "\n" not in out
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_recall_docs_say_max_tokens_counts_fact_text_only(self, mock_memory, include_bank_id):
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=include_bank_id)
+        doc = _tools(mcp)["recall"].fn.__doc__
+        max_tokens_doc = doc.split("max_tokens:", 1)[1].split("budget:", 1)[0]
+        # An agent sizes its context from this line, so it must say what the budget covers.
+        assert "'text' counts" in max_tokens_doc
+        assert "several times larger" in max_tokens_doc
