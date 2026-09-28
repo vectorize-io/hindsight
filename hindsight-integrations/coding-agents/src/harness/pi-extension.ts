@@ -30,6 +30,10 @@ interface BeforeAgentStartEvent {
   prompt: string;
   /** The fully assembled system prompt for this turn. */
   systemPrompt: string;
+  /** Extension-contributed prompt sections, when supported by the host. */
+  systemPromptOptions?: {
+    sections?: Record<string, string>;
+  };
 }
 
 interface AgentEndEvent {
@@ -121,7 +125,11 @@ export function createPiHooks(
   let sessionStartAwaited = false;
   return {
     async beforeAgentStart(
-      event: { prompt: string; systemPrompt: string },
+      event: {
+        prompt: string;
+        systemPrompt: string;
+        systemPromptOptions?: { sections?: Record<string, string> };
+      },
       sessionId: string
     ): Promise<BeforeAgentStartResult | undefined> {
       if (!sessionStartAwaited) {
@@ -139,6 +147,10 @@ export function createPiHooks(
         return undefined;
       }
       diag(harness, "inject_ok", { session: sessionId, chars: injection.length });
+      if (event.systemPromptOptions?.sections) {
+        event.systemPromptOptions.sections.hindsight = injection;
+        return undefined;
+      }
       return { systemPrompt: `${event.systemPrompt}\n\n${injection}` };
     },
     async agentEnd(event: { messages: readonly PiMessage[] }, sessionId: string): Promise<void> {

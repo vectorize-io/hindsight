@@ -25,6 +25,31 @@ describe("pi extension adapter", () => {
     );
   });
 
+  it("injects into systemPromptOptions.sections when supported to preserve other extensions", async () => {
+    const onPrompt = vi.fn(async () => {});
+    const core = {
+      onPrompt,
+      getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
+      onTranscript: vi.fn(async () => {}),
+    };
+    const hooks = createPiHooks(core as never, "pi");
+
+    const sections: Record<string, string> = { other_ext: "OTHER-SECTION" };
+    const result = await hooks.beforeAgentStart(
+      {
+        prompt: "hello",
+        systemPrompt: "You are pi.",
+        systemPromptOptions: { sections },
+      },
+      "session-1"
+    );
+
+    expect(onPrompt).toHaveBeenCalledWith("session-1", "hello");
+    expect(result).toBeUndefined();
+    expect(sections.hindsight).toBe("<hindsight_memories>remember this</hindsight_memories>");
+    expect(sections.other_ext).toBe("OTHER-SECTION");
+  });
+
   it("injects nothing when the core has no injection for this turn", async () => {
     const core = {
       onPrompt: vi.fn(async () => {}),
