@@ -50,6 +50,9 @@ from hindsight_api.extensions.operation_validator import (
     CreateBankContext,
     # File Conversion
     FileConvertResult,
+    # Memory curation
+    MemoryUpdateContext,
+    MemoryUpdateResult,
     # Mental Model operations
     MentalModelGetContext,
     MentalModelGetResult,
@@ -120,6 +123,8 @@ __all__ = [
     # Operation Validator - Mental Model
     "MentalModelGetContext",
     "MentalModelGetResult",
+    "MemoryUpdateContext",
+    "MemoryUpdateResult",
     "MentalModelRefreshContext",
     "MentalModelRefreshResult",
     # Tenant/Auth
