@@ -1,15 +1,15 @@
 ---
-title: "Giving Meta's Muse a Memory It Didn't Ship With"
+title: "I Gave Meta's AI Assistant My Entire Memory. Here's What It Found."
 authors: [benfrank241]
 slug: "2026/09/28/meta-muse-agent-memory"
 date: 2026-09-28T18:00
 tags: [hindsight, meta-muse, mcp, agent-memory, integration, oauth]
-description: "Muse runs in Meta's cloud with no plugin host, so there is nothing to install. Connecting it to Hindsight is a prompt and an OAuth sign-in, and it reads the banks your other AI tools already write to."
+description: "We connected Meta Muse to a live Hindsight account and asked what it knew. It runs in Meta's cloud with no plugin host, so there is nothing to install: a prompt, an OAuth sign-in, and it reads the banks your other AI tools already write to."
 image: /img/blog/meta-muse-agent-memory.png
 hide_table_of_contents: true
 ---
 
-![Connecting Meta Muse to Hindsight memory banks over MCP](/img/blog/meta-muse-agent-memory.png)
+![Meta Muse connected to Hindsight memory banks over MCP](/img/blog/meta-muse-agent-memory.png)
 
 Most of our integrations hook into something. The Hermes plugin sits in the provider slot. The coding-agents plugin wires into eighteen harnesses' lifecycle events. Both of them can reach into a prompt before it goes out and a transcript after it comes back.
 
