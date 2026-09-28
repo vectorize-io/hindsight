@@ -22,7 +22,7 @@ This guide walks through the safe path, including how to back up your current co
 >
 > 1. Back up your current Hermes and Hindsight config.
 > 2. Uninstall `hindsight-hermes` from the Hermes Python environment.
-> 3. Run `hermes memory setup` and select `hindsight`, or update the native config manually.
+> 3. Run `hermes plugins install hindsight`, then `hermes memory setup` and select `hindsight`, or update the native config manually.
 > 4. Keep the same `bank_id` if you want to preserve your existing memories.
 > 5. Run `hermes memory status`, then test recall on the next turn, not the same turn.
 
@@ -128,7 +128,8 @@ If you still see an entry for `hindsight`, you are probably uninstalling from th
 The simplest path is the setup wizard:
 
 ```bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ```
 
 When prompted, select **Hindsight** as the provider. If you are using Hindsight Cloud, enter the same API URL and API key you used before. If you are using local mode, point Hermes at the same local backend or choose local mode in the wizard so it can create the expected native config.

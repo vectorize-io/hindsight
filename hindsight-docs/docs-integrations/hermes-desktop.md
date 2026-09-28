@@ -10,6 +10,10 @@ Configure [Hindsight](https://vectorize.io/hindsight) as the memory provider for
 
 :::tip
 Prefer the command line, or running Hermes as a CLI/gateway? See the [Hermes Agent integration](/sdks/integrations/hermes) for the `hermes memory setup` wizard, plugin architecture, and the full configuration reference.
+
+:::note Hindsight now installs from the Hermes plugin catalog
+Nous Research moved every memory provider out of the Hermes core tree. The desktop app handles this for you: it installs the catalog plugin the first time an agent starts, and your settings, bank and API key are unchanged. Nothing in this guide changes. See [How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin) if you also use the CLI.
+:::
 :::
 
 ## Setup

@@ -11,6 +11,13 @@ hide_table_of_contents: true
 
 ![Hermes Agent on Windows with Hindsight](/img/blog/hermes-hindsight-windows-setup.png)
 
+:::info Setup has changed since this post
+Hindsight is no longer bundled with Hermes. Nous Research moved every memory provider out of the
+Hermes core tree, so new installs now run `hermes plugins install hindsight` before
+`hermes memory setup`. Existing setups migrate themselves. See
+[How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin).
+:::
+
 Earlier this week, Nous Research [announced that Hermes Agent is now natively supported on Windows](https://x.com/NousResearch/status/2061236625925886252). Here's how to give it persistent memory.
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is a self-improving assistant with 40+ tools — chat, research, voice, gateway integrations into Telegram, Discord, Slack, and more. Out of the box, every conversation starts from zero: Hermes doesn't remember what you discussed yesterday, what project you were planning, or what preferences you've already shared. Hindsight closes that gap. Once configured, Hermes recalls relevant facts before every reply and retains the conversation afterward — across sessions, across platforms, across restarts.

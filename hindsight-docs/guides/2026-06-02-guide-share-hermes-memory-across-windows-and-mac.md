@@ -39,7 +39,8 @@ The easiest pattern is Hindsight Cloud.
 On both machines:
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 Choose **Hindsight**, then **Cloud**.

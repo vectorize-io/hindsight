@@ -26,7 +26,7 @@ This guide is the practical decision framework: which path is faster, which path
 
 ## How the two approaches differ
 
-The native memory provider plugs directly into Hermes's built-in memory abstraction. You run hermes memory setup, choose Hindsight, and Hermes starts using Hindsight for recall and retention through the same memory flow it already understands.
+The native memory provider plugs directly into Hermes's built-in memory abstraction. You install the plugin from the Hermes catalog with `hermes plugins install hindsight`, run `hermes memory setup`, choose Hindsight, and Hermes starts using Hindsight for recall and retention through the same memory flow it already understands.
 
 The MCP route connects Hermes to Hindsight as an external tool server. Instead of memory being handled through Hermes's provider layer, Hermes calls Hindsight through MCP tools. That gives you more explicit control and a wider tool surface, but it also means more moving pieces.
 
@@ -70,7 +70,8 @@ Here is the real operational tradeoff.
 ### Native provider
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 This is the short path. Hermes owns the memory configuration, the runtime experience is straightforward, and onboarding a teammate is mostly “pick Hindsight and use the same bank strategy.”

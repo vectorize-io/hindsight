@@ -44,10 +44,11 @@ That is exactly the kind of context that gets more valuable every time you talk 
 
 ## Step 1: Connect Hermes to Hindsight
 
-The shortest path is the native memory provider:
+The shortest path is the native memory provider, installed from the Hermes plugin catalog:
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 Choose **Hindsight** as the provider, then decide whether you want Cloud, Local Embedded, or Local External mode.

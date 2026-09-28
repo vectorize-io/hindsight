@@ -58,7 +58,8 @@ Use Hermes as the agent layer and Hindsight as the long-term memory layer.
 A typical setup looks like this:
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 Choose **Hindsight**, then choose a bank strategy that matches the workflow.

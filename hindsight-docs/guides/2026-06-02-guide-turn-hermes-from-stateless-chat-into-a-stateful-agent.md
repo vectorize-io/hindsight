@@ -59,7 +59,8 @@ Memory is what makes that possible.
 The shortest setup path is:
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 Choose **Hindsight**. Once connected, Hermes can retain and recall context across sessions instead of treating every chat as a fresh start.

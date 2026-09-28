@@ -11,6 +11,13 @@ hide_table_of_contents: true
 
 ![Hermes Agent on Windows with Hindsight](/img/blog/hermes-hindsight-windows.png)
 
+:::info Setup has changed since this post
+Hindsight is no longer bundled with Hermes. Nous Research moved every memory provider out of the
+Hermes core tree, so new installs now run `hermes plugins install hindsight` before
+`hermes memory setup`. Existing setups migrate themselves. See
+[How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin).
+:::
+
 Yesterday, Nous Research [announced that Hermes Agent is now natively supported on Windows](https://x.com/NousResearch/status/2061236625925886252). Here's how to give it persistent codebase memory.
 
 If Windows is your daily driver, the gap has been real — WSL workarounds, Mac-only binaries, embedded databases that assume `bash`. Hermes just closed its side of that gap. Hindsight closes the memory side.
