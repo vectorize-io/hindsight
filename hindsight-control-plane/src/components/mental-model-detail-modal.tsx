@@ -158,6 +158,7 @@ function RefreshErrorTimeline({
     retrieval_failed: t("failureReasonRetrievalFailed"),
     no_answer: t("failureReasonNoAnswer"),
     empty_candidate: t("failureReasonEmptyCandidate"),
+    candidate_too_short: t("failureReasonCandidateTooShort"),
     structured_doc_unreadable: t("failureReasonDocUnreadable"),
     delta_ops_failed: t("failureReasonDeltaOpsFailed"),
     delta_ops_all_skipped: t("failureReasonDeltaOpsAllSkipped"),

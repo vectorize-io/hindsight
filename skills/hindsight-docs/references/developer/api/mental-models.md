@@ -831,7 +831,7 @@ somewhere else.
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
 | `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds two the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output` and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, `refresh_failed_candidate_too_short` (a degenerate short answer over a real document — #4860), or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds two the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output` and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |

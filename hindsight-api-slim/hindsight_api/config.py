@@ -863,6 +863,7 @@ ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENT
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
 ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 ENV_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS"
+ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO"
 ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER = "HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER"
 ENV_REFLECT_DEFAULT_OPTIONS = "HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS"
 
@@ -1708,6 +1709,11 @@ DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enab
 # (API/MCP/control plane) ignore it entirely. Per-model
 # `trigger.min_refresh_interval_seconds` overrides this.
 DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = 0
+# Floor for accepting a full-mode refresh candidate over existing content (#4860):
+# a candidate must be at least this fraction of the current document's length, so a
+# degenerate LLM answer ("OK", "Done.") cannot replace a real document. 0 disables
+# the guard (the pre-#4860 behaviour). Per-bank static, not hierarchical.
+DEFAULT_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO = 0.1
 # Trigger fields layered over the engine's built-in knowledge-page default
 # (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER) when a page is created; a request's
 # own trigger still wins. JSON object, e.g. {"refresh_cron": "0 * * * *"}.
@@ -2195,6 +2201,27 @@ def _parse_non_negative_float(name: str, raw: str | None, default: float) -> flo
         raise ValueError(f"{name} must be a number, got {raw!r}") from e
     if parsed < 0:
         raise ValueError(f"{name} must be >= 0, got {parsed}")
+    return parsed
+
+
+def _parse_ratio_0_to_1(name: str, raw: str | float) -> float:
+    """Parse a ratio that must lie in [0, 1].
+
+    ``0`` is meaningful here — it disables the guard — unlike the similarity
+    thresholds, which reject 0. The caller folds the default in for an unset/empty
+    env var (see the sibling ``mental_model_min_refresh_interval_seconds`` for why
+    the empty value must not fail config load), so ``raw`` is already the value to
+    parse: a non-empty string or the numeric default.
+    """
+    if isinstance(raw, str):
+        try:
+            parsed = float(raw)
+        except ValueError as e:
+            raise ValueError(f"{name} must be a number, got {raw!r}") from e
+    else:
+        parsed = float(raw)
+    if not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be between 0.0 and 1.0, got {parsed}")
     return parsed
 
 
@@ -3368,6 +3395,7 @@ class HindsightConfig:
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     mental_model_min_refresh_interval_seconds: int
+    mental_model_refresh_min_content_ratio: float
     knowledge_page_default_trigger: dict | None
     consolidation_batch_size: int
     consolidation_dedup_threshold: float
@@ -3988,6 +4016,15 @@ class HindsightConfig:
             value = getattr(self, field_name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"Invalid {field_name}: {value}. Must be between 0.0 and 1.0")
+
+        # 0 disables the refresh shrink guard (#4860) and is valid; above 1 would
+        # refuse every full-mode refresh (no candidate can exceed its own baseline
+        # by construction of the check).
+        if not 0.0 <= self.mental_model_refresh_min_content_ratio <= 1.0:
+            raise ValueError(
+                f"Invalid mental_model_refresh_min_content_ratio: "
+                f"{self.mental_model_refresh_min_content_ratio}. Must be between 0.0 and 1.0"
+            )
 
         if self.bm25_max_query_terms < 0:
             raise ValueError(f"Invalid bm25_max_query_terms: {self.bm25_max_query_terms}. Must be >= 0")
@@ -4989,6 +5026,14 @@ class HindsightConfig:
                     os.getenv(ENV_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS, "").strip()
                     or DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS
                 ),
+            ),
+            # Empty-string tolerance mirrors the sibling above: the variable ships
+            # commented out in .env.example, so an uncommented-but-unfilled `VAR=`
+            # must fall back to the default, not fail config load.
+            mental_model_refresh_min_content_ratio=_parse_ratio_0_to_1(
+                ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO,
+                os.getenv(ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO, "").strip()
+                or DEFAULT_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO,
             ),
             knowledge_page_default_trigger=json.loads(
                 os.getenv(ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER, "").strip() or "null"

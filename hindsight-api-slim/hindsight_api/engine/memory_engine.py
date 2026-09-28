@@ -45,6 +45,7 @@ from ..config import (
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     DEFAULT_STORE_DOCUMENT_TEXT,
+    ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO,
     ENV_MODEL_INIT_TIMEOUT,
     LLM_STRATEGY_METADATA,
     HindsightConfig,
@@ -158,6 +159,11 @@ def _authorize_nested_operations() -> "Iterator[None]":
 #: the delta baseline, the sibling readability query, the refresh outcome's
 #: populated_content, and read metering.
 _LEGACY_PENDING_PLACEHOLDER = "Generating content..."
+# Absolute floor for the #4860 shrink guard: below this a candidate cannot plausibly
+# be a document at all — "OK", "Done.", "Yes." — it is an acknowledgement rather than
+# a synthesis. The ratio floor alone would let a two-character answer through on any
+# baseline shorter than ~20 characters.
+_MM_REFRESH_MIN_FLOOR_CHARS = 8
 
 
 def _is_unwritten_body(content: str | None) -> bool:
@@ -18454,6 +18460,47 @@ class MemoryEngine(MemoryEngineInterface):
                 outcome="refresh_failed_delta_not_applied",
             )
 
+        # Refuse to shrink a real document to a fragment (#4860). The empty-candidate
+        # guard above catches the blank answer, but a degenerate synthesis can also
+        # come back short-but-non-blank — "OK", "Done." — and that passed here and
+        # replaced a multi-thousand-character document, with the operation reported
+        # as a success. Gate on the existing content, so a first refresh over an
+        # empty page (and the legacy placeholder) keeps writing; delta edits are
+        # exempt because a surgical edit legitimately re-renders the document
+        # smaller, and runs already refused by the delta guard keep their own
+        # outcome rather than being double-reported.
+        #
+        # The floor is the configured ratio of the current length (and an absolute
+        # minimum, so tiny documents don't get a free pass through the ratio alone):
+        # a legitimate rewrite that condenses the document that drastically is rare
+        # enough that an explicit re-run with a lower ratio (or 0 to disable) covers
+        # it. The env var is read per refresh, so the cached-config tests can flip
+        # it.
+        min_ratio = get_config().mental_model_refresh_min_content_ratio
+        if (
+            effective_mode == "full"
+            and current_content
+            and current_content != _LEGACY_PENDING_PLACEHOLDER
+            and min_ratio > 0
+        ):
+            floor = max(int(len(current_content) * min_ratio), _MM_REFRESH_MIN_FLOOR_CHARS)
+            if len(final_content.strip()) < floor:
+                warnings.append(
+                    f"The refresh produced a {len(final_content.strip())}-character answer for a "
+                    f"{len(current_content)}-character document, which looks like a degenerate synthesis "
+                    f"rather than a real rewrite. The existing content is preserved and the refresh fails. "
+                    f"Set {ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO} lower (or to 0) if this candidate "
+                    "was intentional."
+                )
+                return _finish(
+                    effective_mode=effective_mode,
+                    mode_fallback_reason=mode_fallback_reason,
+                    final_content=final_content,
+                    final_structured=None,
+                    delta_operations=delta_operations,
+                    outcome="refresh_failed_candidate_too_short",
+                )
+
         # When delta is not applied (full mode, or delta fallback), split the
         # candidate markdown so the next refresh has a structured baseline to
         # operate against, and store the render of that structure as the content.
@@ -18679,6 +18726,21 @@ class MemoryEngine(MemoryEngineInterface):
                     reason="empty_candidate",
                     outcome="refresh_failed_empty_candidate",
                     detail="the refresh produced empty content (likely an upstream LLM failure).",
+                )
+
+            if run.outcome == "refresh_failed_candidate_too_short":
+                # #4860: the reflect agent collapsed to a short-but-non-blank answer
+                # ("OK", "Done.") over a real document. Same contract as the empty
+                # candidate: keep the document, watermark and last_refreshed_at
+                # exactly where they were, record the reason, and fail loudly.
+                await _preserve_and_fail(
+                    reason="candidate_too_short",
+                    outcome="refresh_failed_candidate_too_short",
+                    detail=(
+                        "the refresh produced a candidate far shorter than the existing document "
+                        "(a degenerate synthesis, often under prompt growth on small models). "
+                        f"Lower {ENV_MENTAL_MODEL_REFRESH_MIN_CONTENT_RATIO} if the shrink was intended."
+                    ),
                 )
 
             if run.outcome == "refresh_failed_delta_not_applied":

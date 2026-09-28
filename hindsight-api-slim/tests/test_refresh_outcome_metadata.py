@@ -471,6 +471,14 @@ _OUTCOME_CASES = [
         why="an empty synthesis is an upstream failure; the guard fires before the delta reason is considered",
     ),
     _OutcomeCase(
+        id="candidate_too_short",
+        mode="full",
+        reflect_text="OK",
+        expect_outcome="refresh_failed_candidate_too_short",
+        expect_failure_reason="candidate_too_short",
+        why="a short-but-non-blank answer must not replace a real document (#4860)",
+    ),
+    _OutcomeCase(
         id="delta_op_call_failed",
         mode="delta",
         reflect_text="# Team\n\nNarrow candidate.\n",

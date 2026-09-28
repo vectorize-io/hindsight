@@ -282,11 +282,13 @@ export type RefreshOutcome =
   | "content_written"
   | "content_preserved_no_new_facts"
   | "refresh_failed_empty_candidate"
+  | "refresh_failed_candidate_too_short"
   | "refresh_failed_delta_not_applied";
 
 /** Why a refresh refused to write, as recorded on the model's own history. */
 export type RefreshFailureReason =
   | "empty_candidate"
+  | "candidate_too_short"
   | "structured_doc_unreadable"
   | "delta_ops_failed"
   | "delta_ops_all_skipped"

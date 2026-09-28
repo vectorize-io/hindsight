@@ -42,6 +42,7 @@ RefreshOutcome = Literal[
     "content_unchanged",
     "content_preserved_no_new_facts",
     "refresh_failed_empty_candidate",
+    "refresh_failed_candidate_too_short",
     "refresh_failed_delta_not_applied",
 ]
 
@@ -61,6 +62,7 @@ RefreshOperationOutcome = Literal[
     "content_unchanged",
     "content_preserved_no_new_facts",
     "refresh_failed_empty_candidate",
+    "refresh_failed_candidate_too_short",
     "refresh_failed_delta_not_applied",
     "refresh_failed_structured_output",
     "refresh_failed_error",
@@ -78,6 +80,7 @@ RefreshOperationOutcome = Literal[
 # pipeline models, but the refresh still failed and still has to leave a record.
 RefreshFailureReason = Literal[
     "empty_candidate",
+    "candidate_too_short",
     "structured_doc_unreadable",
     "delta_ops_failed",
     "delta_ops_all_skipped",

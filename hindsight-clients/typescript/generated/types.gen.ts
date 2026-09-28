@@ -4229,6 +4229,7 @@ export type MentalModelDryRunRefreshResult = {
     | "content_unchanged"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
+    | "refresh_failed_candidate_too_short"
     | "refresh_failed_delta_not_applied";
   /**
    * Would Persist
@@ -4466,6 +4467,7 @@ export type MentalModelRefreshTrace = {
     | "content_unchanged"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
+    | "refresh_failed_candidate_too_short"
     | "refresh_failed_delta_not_applied";
   /**
    * Tool Calls
@@ -6080,6 +6082,7 @@ export type RefreshMentalModelOperationDetails = {
     | "content_unchanged"
     | "content_preserved_no_new_facts"
     | "refresh_failed_empty_candidate"
+    | "refresh_failed_candidate_too_short"
     | "refresh_failed_delta_not_applied"
     | "refresh_failed_structured_output"
     | "refresh_failed_error";
@@ -6090,6 +6093,7 @@ export type RefreshMentalModelOperationDetails = {
    */
   failure_reason?:
     | "empty_candidate"
+    | "candidate_too_short"
     | "structured_doc_unreadable"
     | "delta_ops_failed"
     | "delta_ops_all_skipped"

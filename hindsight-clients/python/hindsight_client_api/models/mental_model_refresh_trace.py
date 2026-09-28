@@ -65,8 +65,8 @@ class MentalModelRefreshTrace(BaseModel):
     @field_validator('outcome')
     def outcome_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied']):
-            raise ValueError("must be one of enum values ('content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied')")
+        if value not in set(['content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_candidate_too_short', 'refresh_failed_delta_not_applied']):
+            raise ValueError("must be one of enum values ('content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_candidate_too_short', 'refresh_failed_delta_not_applied')")
         return value
 
     model_config = ConfigDict(
