@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 import pytest_asyncio
+
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 
@@ -58,16 +59,12 @@ BAD = "OK"
 async def test_patch_accepts_content_and_stores_it(client, bank, memory):
     """The reported gap: PATCH with {"content": ...} is no longer silently ignored."""
     mm = await _model(memory, bank, GOOD)
-    resp = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD}
-    )
+    resp = await client.patch(f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["content"].strip() == BAD, "the content field was dropped by the request model"
 
-    stored = await memory.get_mental_model(
-        bank, mm["id"], request_context=RequestContext()
-    )
+    stored = await memory.get_mental_model(bank, mm["id"], request_context=RequestContext())
     assert stored is not None and stored["content"].strip() == BAD
 
 
@@ -76,14 +73,10 @@ async def test_patch_content_snapshots_the_overwritten_version_into_history(clie
     """Restoring is itself undoable: the bad version lands in history as previous_content."""
     mm = await _model(memory, bank, GOOD)
 
-    resp = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD}
-    )
+    resp = await client.patch(f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD})
     assert resp.status_code == 200, resp.text
 
-    history = await memory.get_mental_model_history(
-        bank, mm["id"], request_context=RequestContext()
-    )
+    history = await memory.get_mental_model_history(bank, mm["id"], request_context=RequestContext())
     assert len(history) == 1
     assert history[0]["previous_content"].strip() == GOOD.strip()
 
@@ -95,9 +88,7 @@ async def test_restore_workflow_end_to_end(client, bank, memory):
     mm = await _model(memory, bank, GOOD)
 
     # A refresh (or any content write) leaves a bad document behind.
-    bad = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD}
-    )
+    bad = await client.patch(f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": BAD})
     assert bad.status_code == 200, bad.text
 
     # The operator reads history through the API, exactly as the issue describes.
@@ -109,9 +100,7 @@ async def test_restore_workflow_end_to_end(client, bank, memory):
     assert good_version is not None and good_version.strip() == GOOD.strip()
 
     # And writes it back.
-    restore = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": good_version}
-    )
+    restore = await client.patch(f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"content": good_version})
     assert restore.status_code == 200, restore.text
     assert restore.json()["content"] == GOOD
 
@@ -123,9 +112,7 @@ async def test_restore_workflow_end_to_end(client, bank, memory):
 async def test_patch_without_content_still_leaves_content_alone(client, bank, memory):
     """A metadata-only PATCH must not touch the document (regression guard)."""
     mm = await _model(memory, bank, GOOD)
-    resp = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"name": "Renamed"}
-    )
+    resp = await client.patch(f"/v1/default/banks/{bank}/mental-models/{mm['id']}", json={"name": "Renamed"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["name"] == "Renamed"
     assert resp.json()["content"].strip() == GOOD.strip()
@@ -133,7 +120,5 @@ async def test_patch_without_content_still_leaves_content_alone(client, bank, me
 
 @pytest.mark.asyncio
 async def test_patch_content_on_missing_model_is_404(client, bank):
-    resp = await client.patch(
-        f"/v1/default/banks/{bank}/mental-models/no-such-id", json={"content": "x"}
-    )
+    resp = await client.patch(f"/v1/default/banks/{bank}/mental-models/no-such-id", json={"content": "x"})
     assert resp.status_code == 404
