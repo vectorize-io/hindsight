@@ -79,11 +79,9 @@ async def test_completed_after_retry_clears_error_message(memory, request_contex
     finally:
         MockLLM.call = original_call
 
-    row = await pool.fetchrow(
-        "SELECT status, error_message FROM async_operations WHERE operation_id = $1", operation_id
-    )
-    assert row["status"] == "pending"
-    assert "503" in row["error_message"]
+    pending = await memory.get_operation_status(bank_id, str(operation_id), request_context=request_context)
+    assert pending["status"] == "pending"
+    assert "503" in pending["error_message"]
 
     # Attempt 2: the worker re-claims it and it succeeds.
     await pool.execute(
