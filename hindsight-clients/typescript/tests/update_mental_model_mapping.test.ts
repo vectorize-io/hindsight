@@ -49,6 +49,12 @@ describe("updateMentalModel trigger mapping", () => {
     expect(sentTriggerKeys()).toEqual(["mode"]);
   });
 
+  test("sends content when the caller restores a document", async () => {
+    await client.updateMentalModel("bank", "mm-1", { content: "# Restored\n\nGood document." });
+
+    expect(lastBody().content).toBe("# Restored\n\nGood document.");
+  });
+
   test("keeps an explicit false rather than treating it as an omission", async () => {
     await client.updateMentalModel("bank", "mm-1", {
       trigger: { refreshAfterConsolidation: false },

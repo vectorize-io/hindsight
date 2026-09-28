@@ -1386,6 +1386,10 @@ export class HindsightClient {
     mentalModelId: string,
     options: {
       name?: string;
+      /** New content as markdown — e.g. a version read back from getMentalModelHistory
+       *  after a refresh wrote something wrong. The overwritten version is snapshotted
+       *  into the model's history, so this is itself undoable. */
+      content?: string;
       sourceQuery?: string;
       tags?: string[];
       maxTokens?: number;
@@ -1400,6 +1404,7 @@ export class HindsightClient {
       path: { bank_id: bankId, mental_model_id: mentalModelId },
       body: {
         name: options.name,
+        content: options.content,
         source_query: options.sourceQuery,
         tags: options.tags,
         max_tokens: options.maxTokens,

@@ -2063,6 +2063,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
         target_bank: str,
         mental_model_id: str,
         name: str | None,
+        content: str | None,
         source_query: str | None,
         max_tokens: int | None,
         tags: list[str] | None,
@@ -2086,6 +2087,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             "bank_id": target_bank,
             "mental_model_id": mental_model_id,
             "name": name,
+            "content": content,
             "source_query": source_query,
             "max_tokens": max_tokens,
             "tags": tags,
@@ -2105,6 +2107,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
         async def update_mental_model(
             mental_model_id: str,
             name: str | None = None,
+            content: str | None = None,
             source_query: str | None = None,
             max_tokens: int | None = None,
             tags: list[str] | None = None,
@@ -2114,14 +2117,18 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             bank_id: str | None = None,
         ) -> str:
             """
-            Update a mental model's metadata.
+            Update a mental model's metadata or content.
 
-            Changes the name, source query, or tags of an existing mental model.
-            To regenerate the content, use refresh_mental_model after updating the source query.
+            Changes the name, source query, tags, or the document itself.
+            To regenerate the content from the bank, use refresh_mental_model.
 
             Args:
                 mental_model_id: The ID of the mental model to update
                 name: New name (leave None to keep current)
+                content: New content as markdown — e.g. a version read back from
+                    get_mental_model_history after a refresh wrote something wrong.
+                    The overwritten version is snapshotted into the model's history,
+                    so this is itself undoable. Leave None to keep the current content.
                 source_query: New source query (leave None to keep current)
                 max_tokens: New max tokens for content generation (256-8192, leave None to keep current)
                 tags: New tags (leave None to keep current)
@@ -2143,6 +2150,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     target_bank,
                     mental_model_id,
                     name,
+                    content,
                     source_query,
                     max_tokens,
                     tags,
@@ -2158,6 +2166,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
         async def update_mental_model(
             mental_model_id: str,
             name: str | None = None,
+            content: str | None = None,
             source_query: str | None = None,
             max_tokens: int | None = None,
             tags: list[str] | None = None,
@@ -2166,14 +2175,18 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             trigger_refresh_after_consolidation: bool | None = None,
         ) -> dict:
             """
-            Update a mental model's metadata.
+            Update a mental model's metadata or content.
 
-            Changes the name, source query, or tags of an existing mental model.
-            To regenerate the content, use refresh_mental_model after updating the source query.
+            Changes the name, source query, tags, or the document itself.
+            To regenerate the content from the bank, use refresh_mental_model.
 
             Args:
                 mental_model_id: The ID of the mental model to update
                 name: New name (leave None to keep current)
+                content: New content as markdown — e.g. a version read back from
+                    get_mental_model_history after a refresh wrote something wrong.
+                    The overwritten version is snapshotted into the model's history,
+                    so this is itself undoable. Leave None to keep the current content.
                 source_query: New source query (leave None to keep current)
                 max_tokens: New max tokens for content generation (256-8192, leave None to keep current)
                 tags: New tags (leave None to keep current)
@@ -2194,6 +2207,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     target_bank,
                     mental_model_id,
                     name,
+                    content,
                     source_query,
                     max_tokens,
                     tags,

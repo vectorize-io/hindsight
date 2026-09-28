@@ -48,6 +48,18 @@ def test_update_mental_model_sends_only_the_named_setting(monkeypatch):
     assert request.trigger.to_dict() == {"mode": "delta"}
 
 
+def test_update_mental_model_sends_content_when_given(monkeypatch):
+    """The restore path (#4861): a content edit reaches the request model."""
+    client = _client()
+    captured: dict[str, object] = {}
+    _capture(monkeypatch, client._mental_models_api, "update_mental_model", captured)
+
+    client.update_mental_model("bank-1", "mm-1", content="# Restored\n\nGood document.")
+
+    _, _, request = captured["args"]
+    assert request.content == "# Restored\n\nGood document."
+
+
 def test_update_mental_model_keeps_an_explicit_false(monkeypatch):
     """A caller turning a setting OFF must still be heard: False is a value, not an omission."""
     client = _client()

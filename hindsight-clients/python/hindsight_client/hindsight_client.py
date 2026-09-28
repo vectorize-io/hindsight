@@ -1746,13 +1746,14 @@ class Hindsight:
         bank_id: str,
         mental_model_id: str,
         name: str | None = None,
+        content: str | None = None,
         source_query: str | None = None,
         tags: list[str] | None = None,
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Update a mental model's metadata (sync wrapper — prefer :meth:`aupdate_mental_model` in async code).
+        Update a mental model's metadata or content (sync wrapper — prefer :meth:`aupdate_mental_model` in async code).
 
         See :meth:`aupdate_mental_model` for the full argument and return documentation.
         """
@@ -1761,6 +1762,7 @@ class Hindsight:
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
                 name=name,
+                content=content,
                 source_query=source_query,
                 tags=tags,
                 max_tokens=max_tokens,
@@ -1773,18 +1775,23 @@ class Hindsight:
         bank_id: str,
         mental_model_id: str,
         name: str | None = None,
+        content: str | None = None,
         source_query: str | None = None,
         tags: list[str] | None = None,
         max_tokens: int | None = None,
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Update a mental model's metadata (async — preferred over :meth:`update_mental_model`).
+        Update a mental model's metadata or content (async — preferred over :meth:`update_mental_model`).
 
         Args:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
             name: Optional new name
+            content: Optional new content as markdown — e.g. a version read back from
+                get_mental_model_history after a refresh wrote something wrong. The
+                overwritten version is snapshotted into the model's history, so this
+                is itself undoable.
             source_query: Optional new source query
             tags: Optional new tags
             max_tokens: Optional new max tokens
@@ -1799,6 +1806,7 @@ class Hindsight:
 
         request_obj = update_mental_model_request.UpdateMentalModelRequest(
             name=name,
+            content=content,
             source_query=source_query,
             tags=tags,
             max_tokens=max_tokens,

@@ -18851,6 +18851,18 @@
             "title": "Name",
             "description": "New name for the mental model"
           },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content",
+            "description": "New content for the mental model, as markdown. The overwritten version is snapshotted into the model's history, so a restore is itself undoable. Omit to leave the content untouched."
+          },
           "source_query": {
             "anyOf": [
               {
@@ -18908,6 +18920,7 @@
         "title": "UpdateMentalModelRequest",
         "description": "Request model for updating a mental model.",
         "example": {
+          "content": "# Team\n\nRestored from history.",
           "max_tokens": 4096,
           "name": "Updated Team Communication Preferences",
           "source_query": "How does the team prefer to communicate?",

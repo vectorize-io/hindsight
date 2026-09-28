@@ -1108,6 +1108,12 @@ enum MentalModelCommands {
         #[arg(long)]
         name: Option<String>,
 
+        /// New content as markdown — e.g. a version read back from the
+        /// history command after a refresh wrote something wrong. The
+        /// overwritten version is snapshotted into the model's history
+        #[arg(long)]
+        content: Option<String>,
+
         /// New source query
         #[arg(long)]
         source_query: Option<String>,
@@ -1970,6 +1976,7 @@ fn run() -> Result<()> {
                 bank_id,
                 mental_model_id,
                 name,
+                content,
                 source_query,
                 max_tokens,
                 tags,
@@ -1985,6 +1992,7 @@ fn run() -> Result<()> {
                 &bank_id,
                 &mental_model_id,
                 name,
+                content,
                 source_query,
                 max_tokens,
                 tags,

@@ -924,7 +924,7 @@ For long-lived delta-mode mental models, consider scheduling a periodic clear + 
 
 ## Update a Mental Model
 
-Update the mental model's name:
+Update the mental model's name, or write its content directly:
 
 ### Python
 
@@ -938,6 +938,17 @@ updated = client.update_mental_model(
 )
 
 print(f"Updated name: {updated.name}")
+
+# Restore an earlier version's content (the overwritten version is snapshotted
+# into history, so a restore is itself undoable)
+history = client.get_mental_model_history(bank_id=BANK_ID, mental_model_id=mental_model_id)
+if history and history[0]["previous_content"]:
+    restored = client.update_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id,
+        content=history[0]["previous_content"],
+    )
+    print(f"Restored content starts with: {restored.content[:40]}")
 ```
 
 ### Node.js
@@ -950,6 +961,16 @@ const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
 });
 
 console.log(`Updated name: ${updated.name}`);
+
+// Restore an earlier version's content (the overwritten version is snapshotted
+// into history, so a restore is itself undoable)
+const history = await client.getMentalModelHistory(BANK_ID, mentalModelId);
+if (history.length > 0 && history[0].previous_content) {
+    const restored = await client.updateMentalModel(BANK_ID, mentalModelId, {
+        content: history[0].previous_content,
+    });
+    console.log(`Restored content starts with: ${restored.content.slice(0, 40)}`);
+}
 ```
 
 ### CLI
@@ -958,6 +979,13 @@ console.log(`Updated name: ${updated.name}`);
 # Update a mental model's metadata
 hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
   --name "Updated Team Communication Preferences"
+
+# Restore an earlier version's content (the overwritten version is snapshotted
+# into history, so a restore is itself undoable)
+PREVIOUS=$(hindsight mental-model history "$BANK_ID" "$MENTAL_MODEL_ID" | jq -r '.[0].previous_content')
+if [ "$PREVIOUS" != "null" ] && [ -n "$PREVIOUS" ]; then
+  hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" --content "$PREVIOUS"
+fi
 ```
 
 ### Go
@@ -975,7 +1003,26 @@ updated, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalM
 	}).Execute()
 
 fmt.Printf("Updated name: %s\n", updated.GetName())
+
+// Restore an earlier version's content (the overwritten version is snapshotted
+// into history, so a restore is itself undoable)
+history, _, _ := client.MentalModelsAPI.GetMentalModelHistory(ctx, mmBankID, mentalModelID).Execute()
+if len(history) > 0 && history[0].PreviousContent.IsSet() {
+	restoredContent := history[0].PreviousContent.Get()
+	restoredModel, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+		UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+			Content: *hindsight.NewNullableString(&restoredModel),
+		}).Execute()
+	fmt.Printf("Restored content starts with: %.40s\n", restoredModel.GetContent())
+}
 ```
+
+`content` is also the restore path (#4861): `GET .../history` returns every
+prior version as `previous_content`, and passing one of those back as `content`
+undoes a bad refresh. The write goes through the same path a refresh uses — the
+markdown is split into the model's structured document, the search embedding is
+recomputed, and the overwritten version is snapshotted into history, so a
+restore is itself undoable. Omitting the field leaves the content untouched.
 
 ---
 

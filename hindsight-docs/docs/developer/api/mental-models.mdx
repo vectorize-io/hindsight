@@ -579,7 +579,7 @@ For long-lived delta-mode mental models, consider scheduling a periodic clear + 
 
 ## Update a Mental Model
 
-Update the mental model's name:
+Update the mental model's name, or write its content directly:
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -596,7 +596,15 @@ Update the mental model's name:
 </TabItem>
 </Tabs>
 
+`content` is also the restore path (#4861): `GET .../history` returns every
+prior version as `previous_content`, and passing one of those back as `content`
+undoes a bad refresh. The write goes through the same path a refresh uses — the
+markdown is split into the model's structured document, the search embedding is
+recomputed, and the overwritten version is snapshotted into history, so a
+restore is itself undoable. Omitting the field leaves the content untouched.
+
 ---
+
 
 ## Delete a Mental Model
 

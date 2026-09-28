@@ -106,7 +106,8 @@ fn stored_trigger_as_input(
         recall_max_tokens: stored.recall_max_tokens,
         recall_chunks_max_tokens: stored.recall_chunks_max_tokens,
         reflect_search_observations_max_tokens: stored.reflect_search_observations_max_tokens,
-        reflect_search_observations_include_entities: stored.reflect_search_observations_include_entities,
+        reflect_search_observations_include_entities: stored
+            .reflect_search_observations_include_entities,
         response_schema: stored.response_schema.clone(),
         keep_trace: stored.keep_trace,
     }
@@ -351,6 +352,7 @@ pub fn update(
     bank_id: &str,
     mental_model_id: &str,
     name: Option<String>,
+    content: Option<String>,
     source_query: Option<String>,
     max_tokens: Option<i64>,
     tags: Option<Vec<String>>,
@@ -359,13 +361,14 @@ pub fn update(
     output_format: OutputFormat,
 ) -> Result<()> {
     if name.is_none()
+        && content.is_none()
         && source_query.is_none()
         && max_tokens.is_none()
         && tags.is_none()
         && trigger_update.is_empty()
     {
         anyhow::bail!(
-            "At least one of --name, --source-query, --max-tokens, --tags, or a \
+            "At least one of --name, --content, --source-query, --max-tokens, --tags, or a \
              --trigger-* flag must be provided"
         );
     }
@@ -394,6 +397,7 @@ pub fn update(
 
     let request = types::UpdateMentalModelRequest {
         name,
+        content,
         source_query,
         max_tokens,
         tags,
@@ -959,6 +963,7 @@ mod tests {
     fn update_request_omits_trigger_when_no_flags() {
         let request = types::UpdateMentalModelRequest {
             name: Some("renamed".to_string()),
+            content: None,
             source_query: None,
             max_tokens: None,
             tags: None,
@@ -967,5 +972,16 @@ mod tests {
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["name"], "renamed");
         assert!(value.get("trigger").is_none() || value["trigger"].is_null());
+
+        let request = types::UpdateMentalModelRequest {
+            name: None,
+            content: Some("# Restored".to_string()),
+            source_query: None,
+            max_tokens: None,
+            tags: None,
+            trigger: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["content"], "# Restored");
     }
 }

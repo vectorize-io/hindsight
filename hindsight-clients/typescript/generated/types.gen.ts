@@ -6737,6 +6737,12 @@ export type UpdateMentalModelRequest = {
    */
   name?: string | null;
   /**
+   * Content
+   *
+   * New content for the mental model, as markdown. The overwritten version is snapshotted into the model's history, so a restore is itself undoable. Omit to leave the content untouched.
+   */
+  content?: string | null;
+  /**
    * Source Query
    *
    * New source query for the mental model

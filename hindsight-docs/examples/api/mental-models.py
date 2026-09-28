@@ -153,6 +153,17 @@ if mental_model_id:
     )
 
     print(f"Updated name: {updated.name}")
+
+    # Restore an earlier version's content (the overwritten version is snapshotted
+    # into history, so a restore is itself undoable)
+    history = client.get_mental_model_history(bank_id=BANK_ID, mental_model_id=mental_model_id)
+    if history and history[0]["previous_content"]:
+        restored = client.update_mental_model(
+            bank_id=BANK_ID,
+            mental_model_id=mental_model_id,
+            content=history[0]["previous_content"],
+        )
+        print(f"Restored content starts with: {restored.content[:40]}")
     # [/docs:update-mental-model]
 
 

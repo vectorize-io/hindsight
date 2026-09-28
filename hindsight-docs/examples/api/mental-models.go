@@ -167,6 +167,18 @@ func main() {
 		}).Execute()
 
 	fmt.Printf("Updated name: %s\n", updated.GetName())
+
+	// Restore an earlier version's content (the overwritten version is snapshotted
+	// into history, so a restore is itself undoable)
+	history, _, _ := client.MentalModelsAPI.GetMentalModelHistory(ctx, mmBankID, mentalModelID).Execute()
+	if len(history) > 0 && history[0].PreviousContent.IsSet() {
+		restoredContent := history[0].PreviousContent.Get()
+		restoredModel, _, _ := client.MentalModelsAPI.UpdateMentalModel(ctx, mmBankID, mentalModelID).
+			UpdateMentalModelRequest(hindsight.UpdateMentalModelRequest{
+				Content: *hindsight.NewNullableString(&restoredModel),
+			}).Execute()
+		fmt.Printf("Restored content starts with: %.40s\n", restoredModel.GetContent())
+	}
 	// [/docs:update-mental-model]
 
 	// [docs:get-mental-model-history]

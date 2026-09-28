@@ -12738,6 +12738,10 @@ components:
     UpdateMentalModelRequest:
       description: Request model for updating a mental model.
       example:
+        content: |-
+          # Team
+
+          Restored from history.
         max_tokens: 4096
         name: Updated Team Communication Preferences
         source_query: How does the team prefer to communicate?
@@ -12748,6 +12752,9 @@ components:
           refresh_after_consolidation: true
       properties:
         name:
+          nullable: true
+          type: string
+        content:
           nullable: true
           type: string
         source_query:

@@ -3612,6 +3612,7 @@ class UpdateMentalModelRequest(BaseModel):
             "example": {
                 "name": "Updated Team Communication Preferences",
                 "source_query": "How does the team prefer to communicate?",
+                "content": "# Team\n\nRestored from history.",
                 "max_tokens": 4096,
                 "tags": ["team", "communication"],
                 "trigger": {"refresh_after_consolidation": True},
@@ -3620,6 +3621,19 @@ class UpdateMentalModelRequest(BaseModel):
     )
 
     name: str | None = Field(default=None, description="New name for the mental model")
+    # Write access to the document (#4861): the restore path. GET .../history returns
+    # every prior version's previous_content, but before this field nothing on the
+    # API could put one back — the engine has supported a content edit all along
+    # (structure derivation, re-embedding, history snapshot of the overwritten
+    # version); only the request model blocked it.
+    content: str | None = Field(
+        default=None,
+        description=(
+            "New content for the mental model, as markdown. The overwritten version is "
+            "snapshotted into the model's history, so a restore is itself undoable. "
+            "Omit to leave the content untouched."
+        ),
+    )
     source_query: str | None = Field(default=None, description="New source query for the mental model")
     max_tokens: int | None = Field(default=None, ge=256, le=8192, description="Maximum tokens for generated content")
     tags: list[str] | None = Field(default=None, description="Tags for scoped visibility")
@@ -6963,6 +6977,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
                 name=body.name,
+                content=body.content,
                 source_query=body.source_query,
                 max_tokens=body.max_tokens,
                 tags=body.tags,

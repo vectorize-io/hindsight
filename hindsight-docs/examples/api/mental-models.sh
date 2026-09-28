@@ -89,6 +89,13 @@ if [ -n "$MENTAL_MODEL_ID" ]; then
   # Update a mental model's metadata
   hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \
     --name "Updated Team Communication Preferences"
+
+  # Restore an earlier version's content (the overwritten version is snapshotted
+  # into history, so a restore is itself undoable)
+  PREVIOUS=$(hindsight mental-model history "$BANK_ID" "$MENTAL_MODEL_ID" | jq -r '.[0].previous_content')
+  if [ "$PREVIOUS" != "null" ] && [ -n "$PREVIOUS" ]; then
+    hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" --content "$PREVIOUS"
+  fi
   # [/docs:update-mental-model]
 
   # [docs:get-mental-model-history]

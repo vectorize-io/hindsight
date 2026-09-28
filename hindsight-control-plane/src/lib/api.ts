@@ -1833,6 +1833,9 @@ export class ControlPlaneClient {
     mentalModelId: string,
     params: {
       name?: string;
+      /** New content as markdown — the restore path (#4861): write back a version
+       *  read from history. The overwritten version is snapshotted into history. */
+      content?: string;
       source_query?: string;
       max_tokens?: number;
       tags?: string[];

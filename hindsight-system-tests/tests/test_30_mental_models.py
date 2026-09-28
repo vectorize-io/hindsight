@@ -108,6 +108,40 @@ async def test_a_model_is_listed_with_the_bank(client, bank_with_facts, settled)
     assert [m.name for m in listing.items] == ["Alice housing"]
 
 
+async def test_a_bad_write_can_be_restored_from_history(client, bank_with_facts, settled, llm):
+    """The restore path (#4861): what a bad refresh destroyed can be put back.
+
+    A refresh failure mode that still reaches the write used to leave the model
+    holding garbage with no way back except another refresh. Now the operator
+    reads the prior version from history and PATCHes it as `content` — and the
+    PATCH itself snapshots what it overwrites, so the move is undoable too.
+    """
+    model_id = await _create(client, bank_with_facts)
+    await settled(bank_with_facts)
+
+    # A bad content write lands (any non-blank answer once did; a direct write
+    # stands in for the degenerate-refresh shape).
+    llm.reset()
+    await client.mental_models.update_mental_model(
+        bank_with_facts, model_id, {"content": "OK"}
+    )
+    bad = await client.mental_models.get_mental_model(bank_with_facts, model_id, detail="full")
+    assert bad.content.strip() == "OK"
+
+    # History holds the good version.
+    history = await client.mental_models.get_mental_model_history(bank_with_facts, model_id)
+    assert history, "the overwrite left no history to restore from"
+    assert history[0]["previous_content"] is not None
+    good_version = history[0]["previous_content"]
+
+    # And the API can write it back.
+    await client.mental_models.update_mental_model(
+        bank_with_facts, model_id, {"content": good_version}
+    )
+    restored = await client.mental_models.get_mental_model(bank_with_facts, model_id, detail="full")
+    assert restored.content == good_version
+
+
 async def test_deleting_a_model_leaves_the_facts_alone(client, bank_with_facts, settled):
     """A mental model is derived, like an observation: throwing it away must not
     reach the memories it was written from."""

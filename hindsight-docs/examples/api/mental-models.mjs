@@ -133,6 +133,16 @@ const updated = await client.updateMentalModel(BANK_ID, mentalModelId, {
 });
 
 console.log(`Updated name: ${updated.name}`);
+
+// Restore an earlier version's content (the overwritten version is snapshotted
+// into history, so a restore is itself undoable)
+const history = await client.getMentalModelHistory(BANK_ID, mentalModelId);
+if (history.length > 0 && history[0].previous_content) {
+    const restored = await client.updateMentalModel(BANK_ID, mentalModelId, {
+        content: history[0].previous_content,
+    });
+    console.log(`Restored content starts with: ${restored.content.slice(0, 40)}`);
+}
 // [/docs:update-mental-model]
 
 // [docs:get-mental-model-history]
