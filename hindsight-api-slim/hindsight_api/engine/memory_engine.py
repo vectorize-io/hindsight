@@ -681,7 +681,14 @@ from .retain.fold import FoldMemberRef
 from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
-from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
+from .search.tags import (
+    TagGroup,
+    TagsMatch,
+    build_tag_groups_where_clause,
+    build_tags_where_clause,
+    strict_tag_group,
+    strict_tags_match,
+)
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
 from .task_backend import TaskBackend
@@ -1857,13 +1864,18 @@ def _mental_model_stale_scope(
     trigger = trigger or {}
     tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
+    # A tag-scoped model is stale only when a write lands *in* its tags. The
+    # refresh under "any"/"all" may still read untagged memories, but an untagged
+    # write is not about this model — counting it flagged every such model stale
+    # after nearly every write to a bank that mixes the two (#4857). A model with
+    # no tag filter keeps counting every write: the whole bank is its scope.
     return MemoryScopeWatermark(
         key=key,
         since=since,
         fact_types=list(trigger.get("fact_types") or []),
         tags=tag_filtering.tags,
-        tags_match=tag_filtering.tags_match,
-        tag_groups=tag_filtering.tag_groups,
+        tags_match=strict_tags_match(tag_filtering.tags_match) if tag_filtering.tags else tag_filtering.tags_match,
+        tag_groups=[strict_tag_group(g) for g in tag_filtering.tag_groups] if tag_filtering.tag_groups else None,
     )
 
 

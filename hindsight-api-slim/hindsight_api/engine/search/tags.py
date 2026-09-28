@@ -340,6 +340,28 @@ TagGroupOr.model_rebuild()
 TagGroupNot.model_rebuild()
 
 
+_STRICT_MATCH: dict[TagsMatch, TagsMatch] = {"any": "any_strict", "all": "all_strict"}
+
+
+def strict_tags_match(match: TagsMatch) -> TagsMatch:
+    """``match`` with its untagged-row visibility dropped: any→any_strict, all→all_strict."""
+    return _STRICT_MATCH.get(match, match)
+
+
+def strict_tag_group(group: TagGroup) -> TagGroup:
+    """``group`` with every leaf's mode made strict (see :func:`strict_tags_match`).
+
+    Only the leaves' implicit "untagged rows match too" goes away; an expression
+    that selects untagged rows on its own — an ``exact`` leaf with no tags, or a
+    ``not`` — still does.
+    """
+    if isinstance(group, TagGroupLeaf):
+        return group.model_copy(update={"match": strict_tags_match(group.match)})
+    if isinstance(group, TagGroupNot):
+        return group.model_copy(update={"filter": strict_tag_group(group.filter)})
+    return group.model_copy(update={"filters": [strict_tag_group(child) for child in group.filters]})
+
+
 # =============================================================================
 # SQL builder for compound tag groups
 # =============================================================================

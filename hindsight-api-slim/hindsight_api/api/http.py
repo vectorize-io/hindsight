@@ -3149,7 +3149,9 @@ class MentalModelTrigger(ReflectDefaultOptions):
             "one of the model's tags and untagged memories are excluded, which is why a model "
             "tagged with labels its memories do not carry refreshes to empty content. "
             "Set to 'all' to keep requiring the tags while including untagged memories, or to "
-            "'any' to include untagged memories alongside any single tag match."
+            "'any' to include untagged memories alongside any single tag match. "
+            "Staleness ignores that widening: an untagged write never marks a tagged model stale, "
+            "in any mode — only a write that matches the model's tags does."
         ),
     )
     tag_groups: list[TagGroup] | None = Field(
