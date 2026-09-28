@@ -12,8 +12,11 @@ So, per reflect:
 
 * ids become short aliases (``f1`` fact, ``o1`` observation, ``p1`` page,
   ``c1`` chunk), and every alias the model writes back — in ``done``, in
-  ``expand`` — is resolved to the real id before anything reads it. The API
-  trace keeps the raw output; only the prompt is shortened.
+  ``expand``, and as tokens inside the final ``answer`` / ``document`` text —
+  is resolved to the real id before anything reads it. ``query`` and ``reason``
+  free text are left alone so a search string that happens to contain ``f1``
+  is not rewritten. The API trace keeps the raw output; only the prompt is
+  shortened.
 * timestamps keep their minute (``2026-03-07 12:00``), dropping seconds,
   microseconds and the UTC offset (they are all UTC). Dates are evidence:
   supersession is decided by them, so they are shortened, never dropped.
@@ -31,6 +34,8 @@ import re
 from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
+#: Whole-token aliases inside free text (answer / document prose).
+_ALIAS_TOKEN_RE = re.compile(r"\b[fopc]\d+\b")
 _TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]00:?00)?$")
 _DATE_FIELDS = ("mentioned_at", "occurred_start", "occurred_end", "updated_at", "created_at")
 #: Result lists and the alias prefix of their items.
@@ -66,18 +71,36 @@ class ToolResultPresenter:
         self._id_by_alias[alias] = raw_id
         return alias
 
+    def resolve_text(self, text: str) -> str:
+        """Expand known alias tokens in free text to real ids.
+
+        Only whole tokens that appear in this reflect's alias table are rewritten
+        (``f1``, ``o2``, …). Unknown tokens and non-alias text are left unchanged.
+        """
+        if not text or not self._id_by_alias:
+            return text
+
+        def _repl(match: re.Match[str]) -> str:
+            return self._id_by_alias.get(match.group(0), match.group(0))
+
+        return _ALIAS_TOKEN_RE.sub(_repl, text)
+
     def resolve(self, value: Any) -> Any:
         """Map every alias in a tool call's arguments back to its real id.
 
-        Only exact alias strings are touched (a list element or a whole value), so
-        free text — a query that happens to contain ``f1`` — is left alone.
+        Exact alias strings (list elements / whole values) map 1:1. Free-text
+        strings — including ``answer`` and nested ``document`` prose — expand
+        known alias tokens in place. ``query`` and ``reason`` are left alone so
+        a search string that happens to contain ``f1`` is not rewritten.
         """
         if isinstance(value, str):
-            return self._id_by_alias.get(value, value) if _ALIAS_RE.match(value) else value
+            if _ALIAS_RE.match(value):
+                return self._id_by_alias.get(value, value)
+            return self.resolve_text(value)
         if isinstance(value, list):
             return [self.resolve(v) for v in value]
         if isinstance(value, dict):
-            return {k: (v if k in ("query", "reason", "answer") else self.resolve(v)) for k, v in value.items()}
+            return {k: (v if k in ("query", "reason") else self.resolve(v)) for k, v in value.items()}
         return value
 
     def present(self, output: Any) -> Any:
