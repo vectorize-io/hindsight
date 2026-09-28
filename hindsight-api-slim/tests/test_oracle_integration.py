@@ -1575,7 +1575,8 @@ class TestOracleRetainSql:
             # executemany typed the column from row one and failed with ORA-01461 (#4630).
             fact_texts=["short fact", "long fact " + "é" * 3000],
             embeddings=[embedding_to_pgvector(near), embedding_to_pgvector(also_near)],
-            event_dates=[None] * n,
+            # event_date is NOT NULL on Oracle; the other temporal columns are optional.
+            event_dates=[datetime(2024, 1, 1, tzinfo=timezone.utc)] * n,
             occurred_starts=[None] * n,
             occurred_ends=[None] * n,
             mentioned_ats=[None] * n,
