@@ -3385,31 +3385,30 @@ async def test_repeated_source_ids_are_stored_once(memory: MemoryEngine, request
             [first] = await _insert_memories_with_tags(conn, bank_id, ["Alice loves hiking."])
         await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
 
+        [obs] = (await memory.list_memory_units(bank_id, fact_type="observation", request_context=request_context))[
+            "items"
+        ]
+        assert obs["source_memory_ids"] == [str(first)]
+        assert obs["proof_count"] == 1
+        obs_id = obs["id"]
+
         async with memory._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT id, source_memory_ids, proof_count FROM memory_units "
-                "WHERE bank_id = $1 AND fact_type = 'observation'",
-                bank_id,
-            )
-            assert list(row["source_memory_ids"]) == [first]
-            assert row["proof_count"] == 1
-            obs_id = row["id"]
-            # Simulate a row corrupted before the fix: the same source repeated many times.
+            # Forge a row written before the fix (one source repeated many times);
+            # no public API can produce this state any more.
             await conn.execute(
                 "UPDATE memory_units SET source_memory_ids = $1, proof_count = 200 WHERE id = $2",
                 [first] * 200,
-                obs_id,
+                uuid.UUID(obs_id),
             )
             [second] = await _insert_memories_with_tags(conn, bank_id, ["Alice runs on trails."])
         await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
 
-        async with memory._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT text, source_memory_ids, proof_count FROM memory_units WHERE id = $1", obs_id
-            )
-        assert "trails" in row["text"]
-        assert list(row["source_memory_ids"]) == [first, second]
-        assert row["proof_count"] == 2
+        [obs] = (await memory.list_memory_units(bank_id, fact_type="observation", request_context=request_context))[
+            "items"
+        ]
+        assert "trails" in obs["text"]
+        assert obs["source_memory_ids"] == [str(first), str(second)]
+        assert obs["proof_count"] == 2
     finally:
         memory._consolidation_llm_config = original_llm
         await memory.delete_bank(bank_id, request_context=request_context)
