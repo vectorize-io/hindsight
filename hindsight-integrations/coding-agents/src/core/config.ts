@@ -842,24 +842,28 @@ export function applyBankConfig(
     return { cfg: { ...cfg, disabled: true }, bankId: resolvedId };
   const byPath = directory === undefined ? undefined : pathSection(cfg, cfg.paths, directory);
   if (byPath) {
-    const safe: Record<string, unknown> = { ...byPath };
-    for (const k of BANK_OVERRIDE_EXCLUDED) delete safe[k];
-    delete safe.banks;
-    delete safe.paths;
-    delete safe.bank;
-    cfg = { ...cfg, ...resolvePartial(cfg, safe as RawConfig) };
+    // A path entry never renames the bank: only `banks.<id>` may, below.
+    const { bank: _rename, ...rest } = overrideFields(byPath);
+    cfg = { ...cfg, ...resolvePartial(cfg, rest as RawConfig) };
   }
   const section = cfg.banks[resolvedId];
   if (!section) return { cfg, bankId: resolvedId };
-  const safe: Record<string, unknown> = { ...section };
-  for (const k of BANK_OVERRIDE_EXCLUDED) delete safe[k];
-  delete safe.banks;
-  delete safe.paths;
+  const safe = overrideFields(section);
   // `bank` renames the destination — single hop, selected by the ORIGINAL resolved id (the
   // target's own banks section, if any, is deliberately NOT consulted: no chaining).
   const bankId = typeof safe.bank === "string" && safe.bank ? (safe.bank as string) : resolvedId;
   delete safe.bank;
   return { cfg: { ...cfg, ...resolvePartial(cfg, safe as RawConfig) }, bankId };
+}
+
+/** An override section minus what it may not set: the resolution/approval fields and the nested
+ *  maps (a section cannot carry sections of its own). */
+function overrideFields(section: object): Record<string, unknown> {
+  const safe: Record<string, unknown> = { ...section };
+  for (const k of BANK_OVERRIDE_EXCLUDED) delete safe[k];
+  delete safe.banks;
+  delete safe.paths;
+  return safe;
 }
 
 /** Resolve just the fields present in `patch`, defaulting against the CURRENT cfg (not the global
@@ -873,5 +877,18 @@ function resolvePartial(cfg: Config, patch: RawConfig): Partial<Config> {
   }
   // The legacy key resolves into a differently-named field, so the loop above can't carry it.
   if ("autoReflect" in patch && !("autoInject" in patch)) out.autoInject = full.autoInject;
+  // `apiUrl` is derived from `serverMode` + `apiPort`, so an override naming any of the three
+  // re-derives all three against the current cfg: `{ serverMode: "daemon" }` alone must also move
+  // the URL to the local daemon, and `{ apiUrl }` under a global daemon mode stays ignored.
+  if ("serverMode" in patch || "apiUrl" in patch || "apiPort" in patch) {
+    const conn = resolveConfig({
+      serverMode: patch.serverMode ?? cfg.serverMode,
+      apiPort: patch.apiPort ?? cfg.apiPort,
+      apiUrl: patch.apiUrl ?? (cfg.serverMode === "daemon" ? undefined : cfg.apiUrl),
+    });
+    out.serverMode = conn.serverMode;
+    out.apiUrl = conn.apiUrl;
+    out.apiPort = conn.apiPort;
+  }
   return out;
 }

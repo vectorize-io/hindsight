@@ -41,6 +41,35 @@ describe("paths.<prefix> overrides", () => {
     expect(resolve(raw, otherRepo).cfg.apiToken).toBe("default-key");
   });
 
+  it("sends one directory to a local daemon and another to Cloud in the same config", () => {
+    const raw = {
+      apiToken: "cloud-key",
+      paths: {
+        [join(root, "oss")]: { serverMode: "daemon" as const, apiPort: 9177, apiToken: "" },
+        [join(root, "work")]: { apiUrl: "http://self-hosted:8888", apiToken: "work-key" },
+      },
+    };
+    const local = resolve(raw, otherRepo).cfg;
+    expect(local.serverMode).toBe("daemon");
+    expect(local.apiUrl).toBe("http://127.0.0.1:9177");
+    expect(local.apiToken).toBeUndefined();
+    const work = resolve(raw, clientRepo).cfg;
+    expect(work.apiUrl).toBe("http://self-hosted:8888");
+    expect(work.apiToken).toBe("work-key");
+    expect(resolve({ ...raw, paths: {} }, clientRepo).cfg.apiUrl).toBe(
+      "https://api.hindsight.vectorize.io"
+    );
+  });
+
+  it("moves a daemon-mode config to Cloud when a path entry leaves daemon mode", () => {
+    const raw = {
+      serverMode: "daemon" as const,
+      paths: { [join(root, "work")]: { serverMode: "cloud" as const, apiToken: "k" } },
+    };
+    expect(resolve(raw, clientRepo).cfg.apiUrl).toBe("https://api.hindsight.vectorize.io");
+    expect(resolve(raw, otherRepo).cfg.apiUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+  });
+
   it("picks the longest matching prefix", () => {
     const raw = {
       apiToken: "default-key",

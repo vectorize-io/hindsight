@@ -69,7 +69,12 @@ export function resolveHostMemory(harness: string, directory: string): HostMemor
       // rotate the key mid-session and the snapshot 401s every call until restart (#3600). Read
       // through the same pipeline the constructor used, so a per-bank `banks.<id>.apiToken` is
       // honoured on re-resolution exactly as it was on the first one.
-      tokenProvider: () => resolveHostConfig(harness, directory).cfg.apiToken,
+      // The URL stays the one this client was built with, so a token re-read after the config
+      // moved this directory to ANOTHER server is that server's credential: never send it here.
+      tokenProvider: () => {
+        const live = resolveHostConfig(harness, directory).cfg;
+        return live.apiUrl === cfg.apiUrl ? live.apiToken : cfg.apiToken;
+      },
     }),
   };
 }
