@@ -670,5 +670,15 @@
       "link": "https://github.com/agentguard-ai/tealtiger/tree/main/packages/tealtiger-hindsight",
       "icon": "/img/icons/tealtiger.png"
     }
-  ]
+ ,
+{
+  "id": "accrue",
+  "name": "Accrue",
+  "description": "AI Customer Success Copilot that uses Hindsight persistent memory to help teams handle customer escalations with context from past conversations, incidents, commitments, and resolutions.",
+  "type": "community",
+  "by": "arshiasharmaeagle-bot",
+  "category": "tool",
+  "link": "https://github.com/arshiasharmaeagle-bot/accrue-customer-memory-agent",
+  "icon": "/img/icons/github.png"
+} ]
 }
