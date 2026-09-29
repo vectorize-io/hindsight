@@ -275,6 +275,31 @@ const RETRY_AFTER_FLOOR_MS = 10 * 1000;
  */
 const RETRY_AFTER_CEILING_MS = 60 * 1000;
 
+/**
+ * What the agent gets back from reading one page.
+ *
+ * The API returns `body` AND `markdown`, where `markdown` is that same body with YAML frontmatter
+ * on top — so passing the response straight through handed the model the entire page twice, on
+ * every read. `timestamp` goes out as `last_updated_at`: the value is the page's last refresh, and
+ * a bare "timestamp" beside a page tells the model nothing about whether it is looking at something
+ * current.
+ *
+ * Applied inside `getPage`, not by the read tool: it used to live in knowledge-tools, which left
+ * `getPage` itself returning both copies to any other caller (#4836).
+ */
+function shapePage(page: unknown): unknown {
+  const p = (page ?? {}) as Record<string, unknown>;
+  const body = typeof p.body === "string" && p.body.trim() ? p.body : p.markdown;
+  return {
+    id: p.id,
+    name: p.name,
+    ...(p.description ? { description: p.description } : {}),
+    ...(Array.isArray(p.tags) && p.tags.length ? { tags: p.tags } : {}),
+    ...(p.timestamp ? { last_updated_at: p.timestamp } : {}),
+    body,
+  };
+}
+
 export class HindsightClient {
   readonly apiUrl: string;
   /** The credential the NEXT request will sign with — NOT the one the config file holds. The two
@@ -744,14 +769,10 @@ export class HindsightClient {
   }
 
   /**
-   * Read one knowledge page's synthesized content by knowledge-base id, as an OKF document
-   * (YAML frontmatter + markdown body). The endpoint omits the internal reflect trace that built
+   * Read one knowledge page's synthesized content by knowledge-base id, shaped by `shapePage` so
+   * the body arrives once. The endpoint omits the internal reflect trace that built
    * the page — that is 70-95% of the raw bytes and can blow past an MCP host's per-tool-result
    * token cap.
-   *
-   * The page payload also carries the content twice (`body` plus `markdown` with the same body
-   * plus frontmatter that duplicates the top-level keys). Drop `markdown` here so a single
-   * read_knowledge_page call costs ~half the tokens — `body` holds the full content (see #4836).
    */
   async getPage(pageId: string): Promise<unknown> {
     if (this.knowledgePagesSupported === false) throw new KnowledgePagesUnavailableError();
@@ -760,9 +781,7 @@ export class HindsightClient {
       this.bankUrl(`/knowledge-base/pages/${encodeURIComponent(pageId)}`)
     );
     if (r.status === 404) throw new Error(`knowledge page not found: ${pageId}`);
-    const page = (await r.json()) as { body?: unknown; markdown?: unknown } & Record<string, unknown>;
-    if (typeof page?.body === "string" && typeof page?.markdown === "string") delete page.markdown;
-    return page;
+    return shapePage(await r.json());
   }
 
   /** Hybrid (BM25 + vector, RRF-fused) server-side search over the bank's knowledge pages.
