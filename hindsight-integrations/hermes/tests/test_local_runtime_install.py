@@ -1,28 +1,19 @@
-"""The local_embedded self-install of ``hindsight-all``.
+"""``embedded._ensure_local_runtime`` no longer self-installs ``hindsight-all``.
 
-Hermes core installs that package through a special case keyed on the provider name
-(``memory_setup._provider_pip_dependencies``), which this plugin cannot carry out of the Hermes
-tree. These cover the guards that decide whether we install it ourselves.
+It used to call Hermes's ``tools.lazy_deps.install_specs`` to self-install the missing package.
+That helper has since been reduced, on the Hermes side, to an old-updater relaunch stub that
+raises ``SystemExit`` instead of installing anything (NousResearch/hermes-agent's
+``tools/lazy_deps.py``, guarded by ``scripts/ci/check_lazy_deps_imports.py``). Calling it from
+here killed the whole Hermes gateway on every session/cron turn that touched memory while the
+package was missing — each relaunch redoing a full desktop/TUI/web rebuild — producing a
+crash-restart loop instead of ever installing the dependency. These cover the graceful-
+degradation contract that replaced the self-install attempt.
 """
 
 import sys
-from types import SimpleNamespace
 
 import pytest
-
 from hindsight_hermes import embedded
-
-
-class _Recorder:
-    """Stands in for ``tools.lazy_deps.install_specs``; records what was asked for."""
-
-    def __init__(self, ok=True):
-        self.calls = []
-        self.ok = ok
-
-    def __call__(self, specs, **kwargs):
-        self.calls.append(list(specs))
-        return SimpleNamespace(ok=self.ok, reason="blocked by policy", stderr="")
 
 
 @pytest.fixture(autouse=True)
@@ -32,61 +23,61 @@ def _reset_attempt_flag():
     embedded._local_runtime_install_attempted = False
 
 
-def _patch(monkeypatch, *, probe_results, active="hindsight", installer=None):
-    """Wire the probe to yield ``probe_results`` in order, plus the active provider + installer."""
+def _patch(monkeypatch, *, probe_results, active="hindsight"):
+    """Wire the probe to yield ``probe_results`` in order, plus the active provider."""
     results = iter(probe_results)
     monkeypatch.setattr(embedded, "_check_local_runtime", lambda: next(results))
-    # conftest registers these as synthetic sys.modules entries, so patch the module objects
+    # conftest registers this as a synthetic sys.modules entry, so patch the module object
     # directly — dotted-path monkeypatching walks attributes from the parent package.
     monkeypatch.setattr(sys.modules["plugins.memory"], "_get_active_memory_provider", lambda: active)
-    recorder = installer or _Recorder()
-    monkeypatch.setattr(sys.modules["tools.lazy_deps"], "install_specs", recorder)
-    return recorder
 
 
-def test_installs_hindsight_all_when_the_package_is_missing(monkeypatch):
-    recorder = _patch(
-        monkeypatch,
-        probe_results=[(False, "No module named 'hindsight'"), (True, None)],
-    )
+def test_working_runtime_reports_available(monkeypatch):
+    _patch(monkeypatch, probe_results=[(True, None)])
     assert embedded._ensure_local_runtime() == (True, None)
-    assert recorder.calls == [["hindsight-all"]]
 
 
-def test_working_runtime_installs_nothing(monkeypatch):
-    recorder = _patch(monkeypatch, probe_results=[(True, None)])
-    assert embedded._ensure_local_runtime() == (True, None)
-    assert recorder.calls == []
+def test_missing_package_degrades_gracefully_instead_of_crashing(monkeypatch, caplog):
+    """The old behaviour called into Hermes's dead relaunch stub here, which raised SystemExit
+    and killed the gateway. It must now just report unavailable and log the install hint."""
+    reason = "No module named 'hindsight'"
+    _patch(monkeypatch, probe_results=[(False, reason)])
+    with caplog.at_level("WARNING"):
+        assert embedded._ensure_local_runtime() == (False, reason)
+    assert "hindsight-all" in caplog.text
 
 
-def test_unrelated_import_failure_installs_nothing(monkeypatch):
-    """An old CPU raising inside NumPy is not something reinstalling fixes."""
+def test_unrelated_import_failure_logs_nothing(monkeypatch, caplog):
+    """An old CPU raising inside NumPy is not something reinstalling fixes, so it gets no hint
+    and no warning here (agent_init's own unavailable-provider warning still covers it)."""
     reason = "numpy: this CPU lacks AVX support"
-    recorder = _patch(monkeypatch, probe_results=[(False, reason)])
-    assert embedded._ensure_local_runtime() == (False, reason)
-    assert recorder.calls == []
+    _patch(monkeypatch, probe_results=[(False, reason)])
+    with caplog.at_level("WARNING"):
+        assert embedded._ensure_local_runtime() == (False, reason)
+    assert caplog.text == ""
 
 
-def test_inactive_provider_installs_nothing(monkeypatch):
-    """A stale local_embedded config.json must not make a dashboard probe pull the ML stack down."""
+def test_inactive_provider_logs_nothing(monkeypatch, caplog):
+    """A stale local_embedded config.json must not make a dashboard availability probe log this."""
     reason = "No module named 'hindsight'"
-    recorder = _patch(monkeypatch, probe_results=[(False, reason)], active="mem0")
-    assert embedded._ensure_local_runtime() == (False, reason)
-    assert recorder.calls == []
+    _patch(monkeypatch, probe_results=[(False, reason)], active="mem0")
+    with caplog.at_level("WARNING"):
+        assert embedded._ensure_local_runtime() == (False, reason)
+    assert caplog.text == ""
 
 
-def test_install_is_attempted_once_per_process(monkeypatch):
+def test_warning_logged_once_per_process(monkeypatch, caplog):
     reason = "No module named 'hindsight'"
-    recorder = _patch(monkeypatch, probe_results=[(False, reason)] * 4, installer=_Recorder(ok=False))
-    assert embedded._ensure_local_runtime() == (False, reason)
-    assert embedded._ensure_local_runtime() == (False, reason)
-    assert recorder.calls == [["hindsight-all"]]
+    _patch(monkeypatch, probe_results=[(False, reason)] * 4)
+    with caplog.at_level("WARNING"):
+        assert embedded._ensure_local_runtime() == (False, reason)
+        logged_after_first = len(caplog.records)
+        assert embedded._ensure_local_runtime() == (False, reason)
+    assert len(caplog.records) == logged_after_first  # nothing new logged on the second call
 
 
-def test_blocked_install_reports_the_original_reason(monkeypatch):
-    """security.allow_lazy_installs=false: the caller still gets the hint, not a crash."""
+def test_unavailable_reason_still_surfaces_the_install_hint(monkeypatch):
+    """``_local_runtime_hint`` (used by ``HindsightMemoryProvider.unavailable_reason``) still
+    gives the manual-install instruction even though nothing here acts on it automatically."""
     reason = "No module named 'hindsight'"
-    _patch(monkeypatch, probe_results=[(False, reason)], installer=_Recorder(ok=False))
-    available, got = embedded._ensure_local_runtime()
-    assert (available, got) == (False, reason)
-    assert "hindsight-all" in embedded._local_runtime_hint(got)
+    assert "hindsight-all" in embedded._local_runtime_hint(reason)

@@ -112,18 +112,31 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
         provider_config["llm_provider"] = llm_provider
 
     print("\n  Checking dependencies...")
-    # Environment-aware install: sealed hosted venvs redirect to the durable data volume.
-    from tools.lazy_deps import install_specs
-
+    # No auto-install: Hermes's own lazy-install helper (tools.lazy_deps.install_specs) is an
+    # old-updater relaunch stub that raises SystemExit instead of installing anything, so calling
+    # it here would kill the wizard's own process mid-setup (see embedded._ensure_local_runtime
+    # for the full history). Just report what's missing and let the user install it.
     deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
-    outcome = install_specs(deps, timeout=120)
-    if outcome.ok:
-        print("  ✓ Dependencies up to date")
-    elif outcome.blocked:
-        print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
+    if mode == "local_embedded":
+        from .embedded import _check_local_runtime
+
+        dependency_ok, _reason = _check_local_runtime()
     else:
-        print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
-        print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
+        try:
+            from importlib.metadata import version as pkg_version
+
+            from packaging.version import Version
+
+            dependency_ok = Version(pkg_version("hindsight-client")) >= Version(_MIN_CLIENT_VERSION)
+        except Exception:
+            dependency_ok = False
+    if dependency_ok:
+        print("  ✓ Dependencies up to date")
+    else:
+        print(
+            f"  ⚠ Missing or outdated dependency. Run manually: uv pip install --python {sys.executable} "
+            f"{' '.join(deps)}"
+        )
 
     if mode == "cloud":
         print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")

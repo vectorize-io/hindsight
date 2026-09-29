@@ -99,22 +99,25 @@ _local_runtime_install_attempted = False
 
 
 def _ensure_local_runtime() -> tuple[bool, str | None]:
-    """``_check_local_runtime``, self-installing ``hindsight-all`` once if that is what's missing.
+    """``_check_local_runtime``, without self-installing.
 
-    ``plugin.yaml`` can only declare the cloud-sized ``hindsight-client`` — declaring
-    ``hindsight-all`` there would push the whole local-ML stack onto cloud-mode users, who never
-    need it. That left the embedded package to a special case in Hermes core
-    (``hermes_cli/memory_setup.py::_provider_pip_dependencies``, keyed on the literal provider name),
-    which is core-side logic this plugin cannot carry with it out of the Hermes tree. Installing it
-    here keeps embedded mode working without that: on a `plugins install` that never ran
-    `hermes memory setup`, after a venv rebuild stripped the package (#70636), and on a restored
-    backup or hand-written config.
+    This used to self-install ``hindsight-all`` via ``tools.lazy_deps.install_specs`` on a Hermes
+    core that still performed lazy installs there. ``tools/lazy_deps.py`` has since been reduced to
+    an old-updater relaunch stub in Hermes (guarded by its own CI: NousResearch/hermes-agent's
+    ``scripts/ci/check_lazy_deps_imports.py`` blocks in-tree code from importing it, and its
+    module docstring reads "New code must not use these"). Calling it no longer installs anything —
+    its ``install_specs`` unconditionally calls ``stop_for_relaunch()``, which raises ``SystemExit``
+    and kills the whole running Hermes gateway. Because that happens on every session/cron turn that
+    touches memory while the package is missing, and the process relaunch redoes a full
+    desktop/TUI/web rebuild each time, this produced a crash-restart loop instead of ever installing
+    the dependency (NousResearch/hermes-agent restart-loop breaker #30719, #81642).
 
-    Only fires for the configured provider, so a stale ``local_embedded`` in ``config.json`` cannot
-    make a dashboard availability probe pull the ML stack down. Only fires when the hint recognises
-    the reason as a missing package: an import that fails for another cause (older CPUs raise inside
-    NumPy) is not something reinstalling can fix. Once per process, and ``install_specs`` enforces
-    ``security.allow_lazy_installs`` and sealed-venv policy for us.
+    Degrade gracefully instead: log the install hint once per process and let the caller fall back
+    to built-in memory (``is_available()`` returning False here is exactly what makes Hermes's
+    ``agent_init`` drop the provider and continue without it). Only fires for the configured
+    provider, so a stale ``local_embedded`` in ``config.json`` cannot make a dashboard availability
+    probe log this. Only fires when the hint recognises the reason as a missing package: an import
+    that fails for another cause (older CPUs raise inside NumPy) gets no hint text anyway.
     """
     global _local_runtime_install_attempted
     available, reason = _check_local_runtime()
@@ -127,17 +130,14 @@ def _ensure_local_runtime() -> tuple[bool, str | None]:
         return available, reason
 
     _local_runtime_install_attempted = True
-    logger.warning("Hindsight local_embedded runtime is missing (%s); installing hindsight-all...", reason)
-    from tools.lazy_deps import install_specs
-
-    outcome = install_specs(["hindsight-all"], timeout=600)
-    if not outcome.ok:
-        logger.warning(
-            "Could not install hindsight-all automatically: %s",
-            outcome.reason or (outcome.stderr or "").strip() or "install error",
-        )
-        return available, reason
-    return _check_local_runtime()
+    logger.warning(
+        "Hindsight local_embedded runtime is missing (%s).%s Automatic installation is disabled "
+        "here because Hermes's lazy-install path no longer installs anything and instead restarts "
+        "the gateway; install manually and restart Hermes once done.",
+        reason,
+        _local_runtime_hint(reason),
+    )
+    return available, reason
 
 
 def _load_simple_env(path) -> dict[str, str]:
