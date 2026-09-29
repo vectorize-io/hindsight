@@ -214,7 +214,7 @@ describe("background git stderr isolation", () => {
         captures: /stdio: \["ignore", "pipe", "pipe"\]/.test(m[0]),
       }))
     );
-    expect(calls.length).toBeGreaterThanOrEqual(5);
+    expect(calls.length).toBeGreaterThanOrEqual(5); // the 5 known calls: a broken regex must not pass empty
     expect(calls.filter((c) => !c.captures)).toEqual([]);
   });
 });
