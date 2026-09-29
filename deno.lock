@@ -1,0 +1,170 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/assert@^1.0.17": "1.0.19",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
+    "jsr:@std/expect@*": "1.0.18",
+    "jsr:@std/internal@^1.0.12": "1.0.12",
+    "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/testing@*": "1.0.17"
+  },
+  "jsr": {
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/expect@1.0.18": {
+      "integrity": "8566eab35200466f8609eb7e7aed062ed0db314e9a258d5d201b1b8997ce801a",
+      "dependencies": [
+        "jsr:@std/assert@^1.0.19",
+        "jsr:@std/internal",
+        "jsr:@std/path"
+      ]
+    },
+    "@std/internal@1.0.12": {
+      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
+    },
+    "@std/path@1.1.4": {
+      "integrity": "1d2d43f39efb1b42f0b1882a25486647cb851481862dc7313390b2bb044314b5",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/testing@1.0.17": {
+      "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
+      "dependencies": [
+        "jsr:@std/assert@^1.0.17",
+        "jsr:@std/internal"
+      ]
+    }
+  },
+  "workspace": {
+    "members": {
+      "hindsight-all-npm": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@types/node@22",
+            "npm:tsup@^8.5.1",
+            "npm:typescript@^5.7.0",
+            "npm:vitest@^4.1.2"
+          ]
+        }
+      },
+      "hindsight-clients/typescript": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@hey-api/openapi-ts@0.88.0",
+            "npm:@types/jest@29",
+            "npm:@types/node@20",
+            "npm:jest@29",
+            "npm:ts-jest@29",
+            "npm:tsup@^8.5.1",
+            "npm:typescript@5"
+          ]
+        }
+      },
+      "hindsight-control-plane": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@chenglou/pretext@^0.0.3",
+            "npm:@eslint/eslintrc@^3.3.3",
+            "npm:@eslint/js@^9.39.2",
+            "npm:@radix-ui/react-alert-dialog@^1.1.15",
+            "npm:@radix-ui/react-checkbox@^1.3.3",
+            "npm:@radix-ui/react-dialog@^1.1.15",
+            "npm:@radix-ui/react-dropdown-menu@^2.1.16",
+            "npm:@radix-ui/react-label@^2.1.8",
+            "npm:@radix-ui/react-popover@^1.1.15",
+            "npm:@radix-ui/react-select@^2.2.6",
+            "npm:@radix-ui/react-slider@^1.3.6",
+            "npm:@radix-ui/react-slot@^1.2.4",
+            "npm:@radix-ui/react-switch@^1.2.6",
+            "npm:@radix-ui/react-tabs@^1.1.13",
+            "npm:@radix-ui/react-tooltip@^1.2.8",
+            "npm:@tailwindcss/postcss@^4.1.17",
+            "npm:@tailwindcss/typography@~0.5.19",
+            "npm:@types/cytoscape@^3.21.9",
+            "npm:@types/node@^24.10.0",
+            "npm:@types/react-dom@^19.2.2",
+            "npm:@types/react@^19.2.2",
+            "npm:autoprefixer@^10.4.21",
+            "npm:class-variance-authority@~0.7.1",
+            "npm:clsx@^2.1.1",
+            "npm:cmdk@^1.1.1",
+            "npm:cytoscape-fcose@^2.2.0",
+            "npm:cytoscape@^3.33.1",
+            "npm:eslint-config-next@^16.0.1",
+            "npm:eslint-plugin-react-hooks@^7.0.1",
+            "npm:eslint-plugin-react@^7.37.5",
+            "npm:eslint@^9.39.1",
+            "npm:lucide-react@0.553",
+            "npm:next-themes@~0.4.6",
+            "npm:next@^16.1.7",
+            "npm:postcss@^8.5.6",
+            "npm:prettier@^3.7.4",
+            "npm:react-chrono@^2.9.1",
+            "npm:react-dom@^19.2.0",
+            "npm:react-is@^19.2.4",
+            "npm:react-markdown@^10.1.0",
+            "npm:react18-json-view@~0.2.9",
+            "npm:react@^19.2.0",
+            "npm:recharts@^3.5.1",
+            "npm:remark-gfm@^4.0.1",
+            "npm:sonner@^2.0.7",
+            "npm:tailwind-merge@^3.4.0",
+            "npm:tailwindcss-animate@^1.0.7",
+            "npm:tailwindcss@^4.1.17",
+            "npm:three@0.182",
+            "npm:typescript-eslint@^8.50.0",
+            "npm:typescript@^5.9.3"
+          ]
+        }
+      },
+      "hindsight-docs": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@docusaurus/core@3.9.2",
+            "npm:@docusaurus/module-type-aliases@3.9.2",
+            "npm:@docusaurus/preset-classic@3.9.2",
+            "npm:@docusaurus/theme-common@^3.9.2",
+            "npm:@docusaurus/theme-mermaid@^3.9.2",
+            "npm:@docusaurus/tsconfig@3.9.2",
+            "npm:@docusaurus/types@3.9.2",
+            "npm:@easyops-cn/docusaurus-search-local@~0.52.2",
+            "npm:@mdx-js/react@3",
+            "npm:clsx@2",
+            "npm:prism-react-renderer@^2.3.0",
+            "npm:raw-loader@^4.0.2",
+            "npm:react-dom@19",
+            "npm:react-icons@^5.6.0",
+            "npm:react@19",
+            "npm:redocusaurus@^2.5.0",
+            "npm:typescript@~5.6.2"
+          ]
+        }
+      },
+      "hindsight-tools/hindsight-agent-sdk": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@vectorize-io/hindsight-client@~0.5.6",
+            "npm:typescript@^5.4.0",
+            "npm:vitest@^4.1.2"
+          ]
+        }
+      },
+      "hindsight-tools/self-driving-agents": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@clack/prompts@^1.2.0",
+            "npm:@vectorize-io/hindsight-client@~0.5.6",
+            "npm:picocolors@^1.1.0",
+            "npm:typescript@^5.4.0",
+            "npm:vitest@^4.1.2"
+          ]
+        }
+      }
+    }
+  }
+}

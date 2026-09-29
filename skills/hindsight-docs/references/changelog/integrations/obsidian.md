@@ -1,0 +1,49 @@
+---
+hide_table_of_contents: true
+---
+
+# Obsidian Integration Changelog
+
+Changelog for [`@vectorize-io/hindsight-obsidian`](https://www.npmjs.com/package/@vectorize-io/hindsight-obsidian).
+
+For the source code, see [`hindsight-integrations/obsidian`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/obsidian).
+
+← [Back to main changelog](../index.md)
+
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.3.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/obsidian/v0.3.0)
+
+**Features**
+
+- Adds support for observation scopes in the Obsidian integration, allowing observations to be associated with a configured scope.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/omgbabyweb" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@omgbabyweb</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/57f0b8d10" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>57f0b8d10</a>
+
+## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.2.1)
+
+**Bug Fixes**
+
+- Fix sync index scoping so Obsidian syncs/reconciliation are isolated per memory bank and API target, preventing cross-target index conflicts.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ea81cf345" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ea81cf345</a>
+
+## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.2.0)
+
+**Features**
+
+- Added a headless CLI tool (hindsight-obsidian-sync) to ingest/sync an Obsidian vault into Hindsight without running the Obsidian app.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/93fa0b016" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>93fa0b016</a>
+
+## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.1.2)
+
+**Bug Fixes**
+
+- Fixes an issue in the Obsidian chat view to meet community-store review requirements for v0.1.2.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c06e85b64" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c06e85b64</a>
+
+## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.1.1)
+
+**Features**
+
+- Improved chat note viewing with grounded-note citations, collapsed-by-default behavior, persisted layout, and inline depth controls.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/fe404efb2" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>fe404efb2</a>
+
+## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.1.0)
+
+**Features**
+
+- Introduces the Hindsight Obsidian plugin, enabling in-editor Hindsight chat and syncing Obsidian notes/memory with Hindsight.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b0f86f9c" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b0f86f9c</a>

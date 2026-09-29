@@ -1,0 +1,200 @@
+"""The count/aggregate surfaces: consolidation freshness, per-document counts,
+ingestion over time, observation scopes.
+
+Each is one ``GROUP BY`` (or filtered ``COUNT``) over `memory_units`. They back
+the stats and admin views, not retrieval, so they are grouped here away from the
+addressed reads. The SQL is lifted verbatim from the engine methods that used to
+carry it; only the connection and ``fq_table`` resolver are now parameters.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
+
+
+async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
+    """Last consolidation time, the pending / failed fact counts, and the write watermark, in one scan.
+
+    ``pending`` and ``failed`` are disjoint: pending carries the consolidator's
+    own candidate predicate (``consolidated_at IS NULL AND consolidation_failed_at
+    IS NULL``, see ``reads.find_unconsolidated``), so it reads as "work the
+    consolidator will still do" and drains to zero. A fact the LLM could not
+    handle is counted once, under ``failed``, and only leaves that bucket via the
+    consolidation-recovery endpoint.
+
+    All four come from a single pass so keeping ``failed`` — part of the
+    published contract — costs nothing over reflect()'s ``pending`` read, and
+    ``last_memory_write_at`` (the newest ``updated_at`` anywhere in the bank)
+    rides along for free. That watermark is what lets a caller decide a mental
+    model is up to date without running its own scoped scan: nothing in the bank
+    changed since the refresh, so nothing in the model's scope did either.
+    """
+    row = await conn.fetchrow(
+        f"""
+        SELECT
+            MAX(consolidated_at) AS last_consolidated_at,
+            MAX(updated_at) AS last_memory_write_at,
+            COUNT(*) FILTER (
+                WHERE consolidated_at IS NULL
+                  AND consolidation_failed_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+            ) AS pending,
+            COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) AS failed
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1
+        """,
+        bank_id,
+    )
+    if row is None:
+        return {"last_consolidated_at": None, "last_memory_write_at": None, "pending": 0, "failed": 0}
+    return {
+        "last_consolidated_at": row["last_consolidated_at"],
+        "last_memory_write_at": row["last_memory_write_at"],
+        "pending": row["pending"] or 0,
+        "failed": row["failed"] or 0,
+    }
+
+
+async def link_counts(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, int]:
+    """``{link_type: count}`` of live links in a bank.
+
+    Non-entity links (temporal / semantic / caused_by) are a single ``GROUP BY`` over
+    ``memory_links``. Entity links are no longer stored there — they are derived on demand
+    from ``unit_entities``, replicating the historical writer cap of ``MAX_LINKS_PER_ENTITY``
+    bidirectional edges per shared entity — so they are aggregated to one ``entity`` scalar.
+    """
+    max_links_per_entity = 10
+    non_entity_link_rows = await conn.fetch(
+        f"""
+        SELECT link_type, COUNT(*) as count
+        FROM {fq_table("memory_links")}
+        WHERE bank_id = $1
+        GROUP BY link_type
+        """,
+        bank_id,
+    )
+    entity_total_row = await conn.fetchrow(
+        f"""
+        WITH per_entity AS (
+            SELECT ue.entity_id, COUNT(*) AS n
+            FROM {fq_table("unit_entities")} ue
+            JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+            WHERE mu.bank_id = $1
+            GROUP BY ue.entity_id
+        )
+        SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
+        FROM per_entity
+        """,
+        bank_id,
+        max_links_per_entity,
+    )
+    entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
+    counts: dict[str, int] = {row["link_type"]: row["count"] for row in non_entity_link_rows}
+    if entity_link_total > 0:
+        counts["entity"] = entity_link_total
+    return counts
+
+
+async def document_memory_counts(
+    *, conn, fq_table: Callable[[str], str], bank_id: str, document_ids: list[str]
+) -> dict[str, int]:
+    """Live memory count per document id, for the ids given."""
+    if not document_ids:
+        return {}
+    rows = await conn.fetch(
+        f"""
+        SELECT document_id, COUNT(*) AS unit_count
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND document_id = ANY($2::text[])
+        GROUP BY document_id
+        """,
+        bank_id,
+        list(document_ids),
+    )
+    return {row["document_id"]: row["unit_count"] for row in rows}
+
+
+async def memories_timeseries(
+    *, conn, fq_table: Callable[[str], str], bank_id: str, time_field: str, trunc: str, since: datetime
+) -> list[dict[str, Any]]:
+    """Memories bucketed by ``time_field`` (truncated to ``trunc``) and fact_type.
+
+    ``time_field`` is whitelisted by the caller before it reaches here — it is
+    interpolated into SQL. Event-time fields fall back to ``created_at`` per row so
+    rows without an event timestamp still appear.
+    """
+    bucket_expr = time_field if time_field == "created_at" else f"COALESCE({time_field}, created_at)"
+    rows = await conn.fetch(
+        f"""
+        SELECT date_trunc('{trunc}', {bucket_expr} AT TIME ZONE 'UTC') AS bucket,
+               fact_type, COUNT(*) AS count
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND {bucket_expr} >= $2
+        GROUP BY bucket, fact_type
+        ORDER BY bucket
+        """,
+        bank_id,
+        since,
+    )
+    return [{"bucket": r["bucket"], "fact_type": r["fact_type"], "count": r["count"]} for r in rows]
+
+
+async def observation_scope_counts(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """One page of the bank's observation scope histogram.
+
+    Returns ``{"scopes": [{tags, count}], "total", "limit", "offset"}``. A bank
+    can hold as many distinct scopes as it has distinct tag sets, so the
+    grouping, the ``count DESC, scope ASC`` ordering and the paging all run in
+    SQL — the whole histogram never crosses the wire.
+    """
+    scopes_select = f"""
+        SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND fact_type = 'observation'
+    """
+
+    total_row = await conn.fetchrow(
+        f"""
+        SELECT COUNT(*) AS total
+        FROM (SELECT DISTINCT scope FROM ({scopes_select}) s) d
+        """,
+        bank_id,
+    )
+    total = int(total_row["total"]) if total_row else 0
+
+    rows = await conn.fetch(
+        f"""
+        SELECT scope, COUNT(*) AS count
+        FROM ({scopes_select}) s
+        GROUP BY scope
+        ORDER BY count DESC, scope
+        LIMIT $2 OFFSET $3
+        """,
+        bank_id,
+        limit,
+        offset,
+    )
+    return {
+        "scopes": [{"tags": list(r["scope"]), "count": int(r["count"])} for r in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+__all__ = [
+    "consolidation_freshness",
+    "document_memory_counts",
+    "link_counts",
+    "memories_timeseries",
+    "observation_scope_counts",
+]

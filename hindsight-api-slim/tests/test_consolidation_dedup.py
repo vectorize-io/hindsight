@@ -1,0 +1,772 @@
+"""Deterministic unit tests for the consolidation duplicate-create guard.
+
+These exercise the dedup decision directly (no LLM, no DB), so they reliably
+guard the fix in CI — unlike the real-LLM integration test, which only triggers
+the path stochastically.
+"""
+
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
+import logging
+import types
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from unittest.mock import DEFAULT, AsyncMock, patch
+
+import pytest
+
+from hindsight_api.engine.consolidation.consolidator import (
+    _DEDUP_PROMPT,
+    _apply_dedup_create_fold,
+    _apply_dedup_update_fold,
+    _dedup_active,
+    _dedup_adjudicate,
+    _dedup_decision_from_response,
+    _DedupDecision,
+    _DedupOutcome,
+    _duplicate_create_target,
+    _norm_obs_text,
+    _TemporalBounds,
+)
+from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.memories import RecallArms
+from hindsight_api.engine.search.types import RetrievalResult
+
+#: Dates the skipped CREATE would have been stamped with; the fold must carry them onto the twin.
+_SOURCE_BOUNDS = _TemporalBounds(
+    event_date=datetime(2024, 1, 2, tzinfo=timezone.utc),
+    occurred_start=datetime(2023, 1, 2, tzinfo=timezone.utc),
+    occurred_end=datetime(2024, 1, 3, tzinfo=timezone.utc),
+    mentioned_at=datetime(2024, 1, 4, tzinfo=timezone.utc),
+)
+
+
+# Consolidation prepares an action (probe + adjudicate, connection-free) and applies it
+# (the fold) in separate phases, so that every write from one LLM response shares one
+# transaction (#3876). These helpers compose the two halves the way the batch executor
+# does, so the tests below still cover the whole decision -> write path.
+
+
+async def _dedup_reconcile_create(
+    *, pool, memory_engine, bank_id, config, dedup_llm_config, create_text, create_source_ids, tags, source_bounds
+):
+    outcome = await _dedup_adjudicate(
+        pool, memory_engine, bank_id, config, dedup_llm_config, create_text, None, tags, exclude_id=None
+    )
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_dedup_create_fold(
+                conn, memory_engine, bank_id, config, outcome, create_source_ids, source_bounds
+            )
+
+
+async def _dedup_reconcile_update(
+    *, pool, memory_engine, bank_id, config, dedup_llm_config, updated_id, updated_text, updated_emb_str, tags
+):
+    outcome = await _dedup_adjudicate(
+        pool,
+        memory_engine,
+        bank_id,
+        config,
+        dedup_llm_config,
+        updated_text,
+        updated_emb_str,
+        tags,
+        exclude_id=updated_id,
+    )
+    async with acquire_with_retry(pool) as conn:
+        async with conn.transaction():
+            return await _apply_dedup_update_fold(
+                conn, memory_engine, bank_id, config, outcome, updated_id, updated_text
+            )
+
+
+@dataclass
+class _FakeObs:
+    id: str
+    text: str
+
+
+def _shown(*observations: _FakeObs) -> dict[str, _FakeObs]:
+    return {_norm_obs_text(o.text): o for o in observations}
+
+
+def test_norm_obs_text_collapses_whitespace_preserves_case() -> None:
+    # Whitespace (incl. newlines) collapses; case is preserved.
+    assert _norm_obs_text("  The  User  likes BASIL.\n") == "The User likes BASIL."
+    assert _norm_obs_text(None) == ""
+
+
+def test_create_matching_shown_observation_is_duplicate() -> None:
+    shown = _shown(_FakeObs(id="11111111-aaaa", text="User waters the herbs early in the morning."))
+    # Same text with only-whitespace differences still matches.
+    target = _duplicate_create_target("User waters the   herbs early in the morning.", shown, set())
+    assert target is not None
+    assert target.startswith("shown observation 11111111")
+
+
+def test_create_differing_only_in_case_is_not_duplicate() -> None:
+    # Case-folding would lose information (e.g. acronyms), so a case-only difference
+    # is treated as novel rather than silently dropped.
+    shown = _shown(_FakeObs(id="22222222-bbbb", text="The user prefers TLS."))
+    assert _duplicate_create_target("The user prefers tls.", shown, set()) is None
+
+
+def test_create_matching_inresponse_update_is_duplicate() -> None:
+    update_texts = {_norm_obs_text("Mint is kept in its own separate bed.")}
+    target = _duplicate_create_target("Mint is kept in its own separate bed.", {}, update_texts)
+    assert target == "an UPDATE in this response"
+
+
+def test_novel_create_is_not_duplicate() -> None:
+    shown = _shown(_FakeObs(id="22222222-bbbb", text="User waters the herbs early in the morning."))
+    assert _duplicate_create_target("Rosemary is drought-tolerant.", shown, set()) is None
+    assert _duplicate_create_target("", {}, set()) is None
+
+
+# ── semantic dedup (create path: adjudicate + fold) ──────────────────────────────────
+#
+# Mocks the embedder, the obs-anchored ANN probe, and the LLM so the decision logic is
+# tested without a DB or a real model.
+
+_TWIN_ID = "33333333-3333-4333-8333-333333333333"
+
+
+def _obs(text: str, sim: float, oid: str = _TWIN_ID) -> RetrievalResult:
+    return RetrievalResult(id=oid, text=text, fact_type="observation", similarity=sim)
+
+
+class _DedupConn:
+    """Backend-shaped conn for dedup-fold tests. Enforces that the live-source filter and
+    the fold UPDATE run inside the fold transaction on an acquired connection, and that the
+    fold UPDATE is RETURNING-gated."""
+
+    def __init__(self):
+        self.active = 0  # >0 while a connection is acquired (set by _DedupBackend.acquire)
+        self._in_txn = False
+        self.fetchval_result = uuid.UUID(_TWIN_ID)  # survivor id the fold "returns"
+        self.fetchrow_result = None  # update-path source snapshot
+        self.live_rows = None  # override liveness rows; None -> echo all source ids as live
+        # Modeled row text so the fold/snapshot text guards actually bite. None -> "match any"
+        # (keeps every pre-existing test, which never sets these, behaving as before).
+        self.current_twin_text = None  # survivor/twin row's current text (create + update folds)
+        self.current_updated_text = None  # updated row's current text (update snapshot + fold)
+        self.fetchval = AsyncMock(side_effect=self._fetchval)
+        self.fetch = AsyncMock(side_effect=self._fetch)
+        self.fetchrow = AsyncMock(side_effect=self._fetchrow)
+        self.execute = AsyncMock()
+
+    @asynccontextmanager
+    async def transaction(self):
+        assert self.active > 0, "fold transaction opened without an acquired connection"
+        self._in_txn = True
+        try:
+            yield
+        finally:
+            self._in_txn = False
+
+    async def _fetchval(self, query, *args):
+        assert self._in_txn, "fold UPDATE must run inside the fold transaction"
+        assert "RETURNING" in query, "fold UPDATE must be RETURNING-gated"
+        # Assert the text-guard CLAUSE is present (not just that the arg is passed) so deleting the SQL
+        # guard fails even if the param is left behind, then model the guarded row text so a stale-text
+        # fold matches no row. ``args`` excludes the bound ``query``.
+        if "u.text" in query:  # update-path fold
+            assert "t.text = $4" in query and "u.text = $5" in query, "update fold must keep both text guards"
+            if self.current_twin_text is not None and args[3] != self.current_twin_text:
+                return None
+            if self.current_updated_text is not None and args[4] != self.current_updated_text:
+                return None
+        else:  # create-path fold
+            assert "AND text = $4" in query, "create fold must keep the twin text guard (AND text = $4)"
+            if self.current_twin_text is not None and args[3] != self.current_twin_text:
+                return None
+        return self.fetchval_result
+
+    async def _fetch(self, query, source_ids, bank_id):
+        assert self._in_txn, "live-source filter must run inside the fold transaction"
+        assert "FOR SHARE" in query, "live-source filter must hold FOR SHARE on the source rows"
+        if self.live_rows is not None:
+            return self.live_rows
+        return [{"id": s} for s in source_ids]
+
+    async def _fetchrow(self, query, *args):
+        # Assert the text-guard CLAUSE is present (so deleting it fails even if the arg stays), then
+        # model the updated row's text so a row rewritten during the LLM window snapshots as gone.
+        # ``args`` excludes the bound ``query``.
+        assert "AND text = $2" in query, "update snapshot must keep the updated-text guard (AND text = $2)"
+        if self.current_updated_text is not None and args[1] != self.current_updated_text:
+            return None
+        return self.fetchrow_result
+
+
+class _DedupBackend:
+    """Backend-shaped stand-in matching acquire_with_retry's ``_wraps_backend`` path."""
+
+    _wraps_backend = True
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    @asynccontextmanager
+    async def acquire(self):
+        self._conn.active += 1
+        try:
+            yield self._conn
+        finally:
+            self._conn.active -= 1
+
+
+def _make_dedup_llm(conn):
+    """An LLM stub that asserts no pooled connection is held when it is called."""
+    llm = types.SimpleNamespace(call=AsyncMock())
+
+    def _assert_released(*a, **k):
+        assert conn.active == 0, "no pooled connection may be held during the dedup LLM call"
+        return DEFAULT  # fall through to the llm.call.return_value the test sets
+
+    llm.call.side_effect = _assert_released
+    return llm
+
+
+def _ctx(threshold: float = 0.97):
+    """Return (kwargs, conn_mock, llm_mock) for a create-path adjudicate + fold."""
+    conn = _DedupConn()
+    llm = _make_dedup_llm(conn)
+    kwargs = dict(
+        pool=_DedupBackend(conn),
+        memory_engine=types.SimpleNamespace(embeddings=object()),
+        bank_id="bank1",
+        # The merge path builds a search_vector UPDATE clause from the text-search
+        # config, so these must be present (production defaults: native/english).
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            llm_temperature_consolidation=0.0,
+            text_search_extension="native",
+            text_search_extension_native_language="english",
+        ),
+        dedup_llm_config=llm,
+        create_text="YouTube content in Uzbek is very rich.",
+        create_source_ids=[uuid.uuid4()],
+        tags=["t1"],
+        source_bounds=_SOURCE_BOUNDS,
+    )
+    return kwargs, conn, llm
+
+
+def _patch_probe(results):
+    # Dedup's candidate probe now goes through the memories store's unified recall method (dense
+    # arm only), so stub the store rather than the old routing wrapper.
+    store = types.SimpleNamespace(recall_unified=AsyncMock(return_value={"observation": RecallArms(semantic=results)}))
+    return patch("hindsight_api.engine.memories.get_memories", lambda: store)
+
+
+def _patch_embed():
+    return patch(
+        "hindsight_api.engine.retain.embedding_utils.generate_embeddings_batch",
+        AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+    )
+
+
+async def test_dedup_no_twin_above_threshold_returns_none() -> None:
+    kwargs, conn, llm = _ctx(threshold=0.97)
+    with _patch_embed(), _patch_probe([_obs("something loosely related", 0.81)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None
+    llm.call.assert_not_called()  # below threshold → no LLM call
+    conn.fetchval.assert_not_called()  # no merge
+
+
+async def test_dedup_llm_keep_does_not_merge() -> None:
+    kwargs, conn, llm = _ctx()
+    llm.call.return_value = LLMCallResult(
+        content='{"action": "keep", "text": "", "reason": "different language"}',
+        usage=TokenUsage(),
+    )
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None
+    llm.call.assert_awaited_once()
+    assert llm.call.await_args.kwargs["temperature"] == 0.0
+    conn.fetchval.assert_not_called()  # kept distinct → no merge
+
+
+async def test_dedup_llm_missing_action_defaults_to_keep() -> None:
+    kwargs, conn, llm = _ctx()
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(reason="underfilled structured response"),
+        usage=TokenUsage(),
+    )
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None
+    llm.call.assert_awaited_once()
+    conn.fetchval.assert_not_called()  # missing action is a conservative no-merge
+
+
+def test_dedup_decision_accepts_exact_valid_actions() -> None:
+    assert _DedupDecision(action="merge").action == "merge"
+    assert _DedupDecision(action="keep").action == "keep"
+
+
+def test_dedup_decision_invalid_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _DedupDecision(action="need_input", reason="model asked for more context")
+
+    assert decision.action == "keep"
+    assert "need_input" in caplog.text
+    assert "defaulting to keep" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Case / whitespace variants of the CORRECT verdict are recovered via
+        # normalize, not discarded — a genuine merge must not become a missed merge.
+        ("Merge", "merge"),
+        (" MERGE ", "merge"),
+        ("keep\n", "keep"),
+        ("KEEP", "keep"),
+        # Unrecognized / non-str values still degrade to keep (unchanged fail-safe;
+        # the warning path is covered by the dedicated tests below).
+        ("await", "keep"),
+        ("unknown", "keep"),
+        (None, "keep"),
+        (123, "keep"),
+    ],
+)
+def test_dedup_decision_normalizes_action_case_and_whitespace(raw: object, expected: str) -> None:
+    assert _DedupDecision(action=raw).action == expected
+
+
+def test_dedup_decision_non_scalar_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        list_decision = _DedupDecision(action=[])
+        dict_decision = _DedupDecision(action={"value": "merge"})
+
+    assert list_decision.action == "keep"
+    assert dict_decision.action == "keep"
+    assert "defaulting to keep" in caplog.text
+
+
+def test_dedup_decision_accepts_raw_json_and_dict_responses() -> None:
+    raw_merge = '{"action": "merge", "text": "Merged observation.", "reason": "same fact"}'
+    raw_keep = {"action": "keep", "text": "", "reason": "different fact"}
+
+    merge_decision = _dedup_decision_from_response(raw_merge)
+    keep_decision = _dedup_decision_from_response(raw_keep)
+
+    assert merge_decision.action == "merge"
+    assert merge_decision.text == "Merged observation."
+    assert keep_decision.action == "keep"
+    assert keep_decision.text == ""
+
+
+def test_dedup_decision_legacy_raw_text_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _dedup_decision_from_response('action="merge" text="Merged observation."')
+
+    assert decision.action == "keep"
+    assert decision.reason == "invalid structured response"
+    assert "Invalid consolidation dedup response" in caplog.text
+
+
+def test_dedup_prompt_contract_requests_json_not_key_value() -> None:
+    prompt = _DEDUP_PROMPT.format(new="The agent checked health at 14:07.", existing="Health was checked.")
+
+    assert '{"action": "merge", "text": "...", "reason": "..."}' in prompt
+    assert '{"action": "keep", "text": "", "reason": "..."}' in prompt
+    assert '"text" to an empty string' in prompt
+    assert "Do NOT use key=value" in prompt
+    assert 'respond action="merge"' not in prompt
+    assert "{new}" not in prompt
+    assert "{existing}" not in prompt
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_llm_merge_folds_into_twin() -> None:
+    kwargs, conn, llm = _ctx()
+    kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
+    llm.call.return_value = LLMCallResult(
+        content=('{"action": "merge", "text": "Uzbek content on YouTube is very rich.", "reason": "same fact"}'),
+        usage=TokenUsage(),
+    )
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result == _TWIN_ID  # merged into the twin; caller skips the CREATE
+    conn.fetchval.assert_awaited_once()  # fold is a RETURNING-gated UPDATE
+    args = conn.fetchval.await_args.args
+    assert args[1] == "Uzbek content on YouTube is very rich."  # merged text persisted
+    assert args[2] == kwargs["create_source_ids"]  # new (live) source facts folded in
+    assert args[3] == uuid.UUID(_TWIN_ID)  # onto the twin row
+    # ...along with the dates the skipped CREATE carried, so the twin's interval widens (#3477).
+    # What the SQL *does* with them is covered against a real database in
+    # test_consolidation_temporal_merge.py — a mocked connection cannot check that.
+    assert args[5:] == (
+        _SOURCE_BOUNDS.event_date,
+        _SOURCE_BOUNDS.occurred_start,
+        _SOURCE_BOUNDS.occurred_end,
+        _SOURCE_BOUNDS.mentioned_at,
+    )
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_llm_merge_sanitizes_text_before_write() -> None:
+    # The merge path writes the LLM's synthesized text straight to the fold UPDATE, so it needs
+    # the same character-safety scrub _CreateAction/_UpdateAction already apply via field_validator.
+    # A raw NUL reaching the driver breaks the Postgres UTF-8 encode.
+    kwargs, conn, llm = _ctx()
+    kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="Uzbek content\x00 on YouTube is very rich.", reason="same fact"),
+        usage=TokenUsage(),
+    )
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result == _TWIN_ID  # still folds into the twin
+    conn.fetchval.assert_awaited_once()
+    args = conn.fetchval.await_args.args
+    assert "\x00" not in args[1]  # the control character never reaches SQL
+    assert args[1] == "Uzbek content on YouTube is very rich."  # scrubbed, not mangled
+
+
+async def test_dedup_picks_highest_above_threshold_skips_below() -> None:
+    # Only the >=threshold candidate is considered; a 0.95 result is ignored at threshold 0.97.
+    kwargs, conn, llm = _ctx(threshold=0.97)
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="keep"),
+        usage=TokenUsage(),
+    )
+    with _patch_embed(), _patch_probe([_obs("near but distinct", 0.95), _obs("the real twin", 0.98)]):
+        await _dedup_reconcile_create(**kwargs)
+    # the twin passed to the LLM is the >=0.97 one, not the 0.95
+    sent = llm.call.await_args.kwargs["messages"][0]["content"]
+    assert "the real twin" in sent
+    assert "near but distinct" not in sent
+
+
+# ── UPDATE-path dedup (adjudicate + fold) ───────────────────────────────
+#
+# An UPDATE rewrites+re-embeds an observation, which can drift it into a near-twin of a
+# DIFFERENT existing observation. These cover the fold-and-delete reconciliation (unlike
+# CREATE, both rows already exist), the self-exclusion, and the keep/no-twin no-ops.
+
+_UPDATED_ID = "44444444-4444-4444-8444-444444444444"
+
+
+def _update_ctx(threshold: float = 0.97):
+    """Return (kwargs, conn_mock, llm_mock) for an update-path adjudicate + fold."""
+    conn = _DedupConn()
+    conn.fetchrow_result = {"source_memory_ids": [uuid.uuid4(), uuid.uuid4()]}
+    llm = _make_dedup_llm(conn)
+    kwargs = dict(
+        pool=_DedupBackend(conn),
+        memory_engine=types.SimpleNamespace(embeddings=object()),
+        bank_id="bank1",
+        # The merge path builds a search_vector UPDATE clause from the text-search
+        # config, so these must be present (production defaults: native/english).
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            llm_temperature_consolidation=0.0,
+            text_search_extension="native",
+            text_search_extension_native_language="english",
+        ),
+        dedup_llm_config=llm,
+        updated_id=_UPDATED_ID,
+        updated_text="Uzbek content on YouTube is very rich and growing.",
+        updated_emb_str="[0.1, 0.2, 0.3]",  # already embedded by the prepare phase
+        tags=["t1"],
+    )
+    return kwargs, conn, llm
+
+
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_update_merge_folds_into_twin_and_deletes_updated() -> None:
+    kwargs, conn, llm = _update_ctx()
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="Uzbek YouTube content is very rich and growing."),
+        usage=TokenUsage(),
+    )
+    with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        await _dedup_reconcile_update(**kwargs)
+    llm.call.assert_awaited_once()
+    # The fold-into-twin is a RETURNING-gated UPDATE (fetchval); it folds only the updated row's
+    # LIVE sources (snapshotted via fetchrow, filtered FOR SHARE).
+    conn.fetchval.assert_awaited_once()
+    fold_args = conn.fetchval.await_args.args
+    assert fold_args[1] == "Uzbek YouTube content is very rich and growing."  # merged text on the twin
+    assert fold_args[2] == uuid.UUID(_TWIN_ID)  # survivor = the twin
+    assert fold_args[3] == uuid.UUID(_UPDATED_ID)  # folded-from = the updated row
+    assert fold_args[6] == conn.fetchrow_result["source_memory_ids"]  # only live updated-row sources
+    # Then the updated row is deleted: DELETE of the row, and DELETE of its observation_history
+    # (no longer cascaded from memory_units — that FK was dropped).
+    assert conn.execute.await_count == 2
+    delete_args = conn.execute.await_args_list[0].args
+    assert delete_args[1] == uuid.UUID(_UPDATED_ID)  # the updated row is deleted
+    history_delete_args = conn.execute.await_args_list[1].args
+    assert history_delete_args[2] == uuid.UUID(_UPDATED_ID)  # its history is reclaimed too
+
+
+async def test_dedup_update_keep_does_not_merge() -> None:
+    kwargs, conn, llm = _update_ctx()
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="keep", reason="different growth claim"),
+        usage=TokenUsage(),
+    )
+    with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        await _dedup_reconcile_update(**kwargs)
+    llm.call.assert_awaited_once()
+    conn.fetchval.assert_not_called()  # kept distinct → no fold
+    conn.execute.assert_not_called()  # → no delete
+
+
+async def test_dedup_update_excludes_self() -> None:
+    # The probe surfaces the updated observation itself at 1.0; it must be excluded so we don't
+    # "merge" a row into itself. With no other candidate, there is no twin → no LLM, no writes.
+    kwargs, conn, llm = _update_ctx()
+    with _patch_probe([_obs("its own current text", 1.0, oid=_UPDATED_ID)]):
+        await _dedup_reconcile_update(**kwargs)
+    llm.call.assert_not_called()
+    conn.fetchval.assert_not_called()
+    conn.execute.assert_not_called()
+
+
+async def test_dedup_update_no_twin_above_threshold() -> None:
+    kwargs, conn, llm = _update_ctx(threshold=0.97)
+    with _patch_probe([_obs("loosely related", 0.8)]):
+        await _dedup_reconcile_update(**kwargs)
+    llm.call.assert_not_called()
+    conn.fetchval.assert_not_called()
+    conn.execute.assert_not_called()
+
+
+# ── dedup activation gate (_dedup_active) ─────────────────────────────────────
+#
+# Enabled by default (threshold < 1.0), but skipped on Oracle because the merge path is
+# Postgres-only — so the feature can ship on-by-default without breaking Oracle.
+
+
+def _gate_cfg(threshold: float):
+    return types.SimpleNamespace(consolidation_dedup_threshold=threshold)
+
+
+def _patch_backend(name: str):
+    return patch(
+        "hindsight_api.engine.consolidation.consolidator.get_config",
+        return_value=types.SimpleNamespace(database_backend=name),
+    )
+
+
+def test_dedup_active_enabled_on_postgres() -> None:
+    with _patch_backend("postgresql"):
+        assert _dedup_active(_gate_cfg(0.97)) is True
+
+
+def test_dedup_active_disabled_when_threshold_is_one() -> None:
+    with _patch_backend("postgresql"):
+        assert _dedup_active(_gate_cfg(1.0)) is False
+
+
+def test_dedup_active_skipped_on_oracle() -> None:
+    # PG-only merge path → dedup is skipped on Oracle even with a sub-1.0 threshold.
+    with _patch_backend("oracle"):
+        assert _dedup_active(_gate_cfg(0.97)) is False
+
+
+def test_dedup_active_none_config() -> None:
+    assert _dedup_active(None) is False
+
+
+# ── connection-release fold guards (RETURNING-gated, live-source re-filter) ────
+#
+# The embed/LLM adjudication runs with no connection held; the fold then re-checks source
+# liveness inside a short transaction and is RETURNING-gated so a twin that vanished (or a
+# source deleted) during the connection-free window can't drop a CREATE or fold a dead id.
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_create_twin_vanished_returns_none_so_caller_creates() -> None:
+    # If the twin is deleted during the (connection-free) LLM window, the fold UPDATE matches
+    # no row (fetchval -> None); the helper must return None so the caller still CREATEs.
+    kwargs, conn, llm = _ctx()
+    conn.fetchval_result = None
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with (
+        _patch_embed(),
+        _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
+    ):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None  # twin gone → don't drop the CREATE
+    conn.fetchval.assert_awaited_once()
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_create_fold_uses_only_live_new_sources() -> None:
+    kwargs, conn, llm = _ctx()
+    live_source_id = uuid.uuid4()
+    deleted_source_id = uuid.uuid4()
+    kwargs["create_source_ids"] = [deleted_source_id, live_source_id]
+    conn.live_rows = [{"id": live_source_id}]
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with (
+        _patch_embed(),
+        _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
+    ):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result == _TWIN_ID
+    conn.fetchval.assert_awaited_once()
+    assert conn.fetchval.await_args.args[2] == [live_source_id]
+
+
+async def test_dedup_create_all_new_sources_deleted_returns_none() -> None:
+    kwargs, conn, llm = _ctx()
+    kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
+    conn.live_rows = []
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with (
+        _patch_embed(),
+        _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]),
+    ):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None
+    conn.fetchval.assert_not_called()
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_update_twin_vanished_does_not_delete_updated() -> None:
+    # If the fold matches no row (twin vanished mid-window), the updated row must NOT be deleted.
+    kwargs, conn, llm = _update_ctx()
+    conn.fetchval_result = None
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        await _dedup_reconcile_update(**kwargs)
+    conn.fetchval.assert_awaited_once()  # fold attempted
+    conn.execute.assert_not_called()  # but no delete, since the fold touched nothing
+
+
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
+async def test_dedup_update_fold_uses_only_live_updated_sources() -> None:
+    kwargs, conn, llm = _update_ctx()
+    live_source_id = uuid.uuid4()
+    deleted_source_id = uuid.uuid4()
+    conn.fetchrow_result = {"source_memory_ids": [deleted_source_id, live_source_id]}
+    conn.live_rows = [{"id": live_source_id}]
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        await _dedup_reconcile_update(**kwargs)
+    conn.fetchval.assert_awaited_once()
+    assert conn.fetchval.await_args.args[6] == [live_source_id]
+    conn.execute.assert_awaited()  # fold succeeded → updated row deleted
+
+
+async def test_dedup_update_all_updated_sources_deleted_skips_fold_and_delete() -> None:
+    kwargs, conn, llm = _update_ctx()
+    conn.fetchrow_result = {"source_memory_ids": [uuid.uuid4(), uuid.uuid4()]}
+    conn.live_rows = []
+    llm.call.return_value = LLMCallResult(
+        content=_DedupDecision(action="merge", text="merged text"),
+        usage=TokenUsage(),
+    )
+    with _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        await _dedup_reconcile_update(**kwargs)
+    conn.fetchval.assert_not_called()
+    conn.execute.assert_not_called()
+
+
+# ── _process_memory_batch create-contract (created vs skipped) ────────────────
+
+
+def _batch_engine():
+    return types.SimpleNamespace(_consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()))
+
+
+async def _run_create_batch(create_action_result: str):
+    from hindsight_api.engine.consolidation import consolidator as C
+
+    mem_id = str(uuid.uuid4())
+    memories = [{"id": mem_id, "text": "Uzbek YouTube content is very rich.", "tags": []}]
+    create = C._CreateAction(text="Uzbek YouTube content is very rich.", source_fact_ids=[mem_id])
+    llm_result = C._BatchLLMResult(creates=[create])
+    with (
+        patch.object(
+            C,
+            "_find_related_observations",
+            new=AsyncMock(return_value=types.SimpleNamespace(results=[], source_facts={})),
+        ),
+        patch.object(C, "_consolidate_batch_with_llm", new=AsyncMock(return_value=llm_result)),
+        patch.object(C, "_effective_scope_limit", return_value=-1),
+        patch.object(C, "_config_for_scope", side_effect=lambda config, _tags: config),
+        patch.object(C, "_dedup_active", return_value=True),
+        patch.object(C, "_any_live_source_memory", new=AsyncMock(return_value=True)),
+        patch.object(C, "_embed_observation_text", new=AsyncMock(return_value="[0.1, 0.2, 0.3]")),
+        # No twin above threshold: the adjudicator's no-merge verdict is what makes the
+        # batch fall through to the CREATE.
+        patch.object(
+            C,
+            "_dedup_adjudicate",
+            new=AsyncMock(return_value=_DedupOutcome(best_id=None, merged_text="", should_merge=False)),
+        ),
+        patch.object(C, "_apply_create_action", new=AsyncMock(return_value=create_action_result)) as create_action,
+    ):
+        result = await C._process_memory_batch(
+            pool=_DedupBackend(_DedupConn()),
+            memory_engine=_batch_engine(),
+            llm_config=object(),
+            bank_id="bank1",
+            memories=memories,
+            request_context=object(),
+            config=object(),
+        )
+    return result, create_action, mem_id
+
+
+async def test_process_batch_creates_when_dedup_target_vanished() -> None:
+    # Caller contract: when the adjudicator finds no twin to fold into, _process_memory_batch
+    # must still CREATE the observation instead of dropping it.
+    result, create_action, mem_id = await _run_create_batch("created")
+    create_action.assert_awaited_once()
+    prepared = create_action.await_args.kwargs["prepared"]
+    assert prepared.text == "Uzbek YouTube content is very rich."
+    assert prepared.source_memory_ids == [mem_id]
+    assert result == ([{"action": "created"}], 0, False)
+
+
+async def test_process_batch_reports_skipped_when_create_skipped() -> None:
+    # _apply_create_action returns "skipped" (all sources deleted in the write txn) ->
+    # _process_memory_batch must NOT mark the memory created; it falls through to skipped.
+    result, _create_action, _mem_id = await _run_create_batch("skipped")
+    assert result == ([{"action": "skipped", "reason": "no_durable_knowledge"}], 0, False)
+
+
+async def test_process_batch_reports_created_when_create_created() -> None:
+    # _apply_create_action returns "created" -> the memory is marked created.
+    result, _create_action, _mem_id = await _run_create_batch("created")
+    assert result == ([{"action": "created"}], 0, False)

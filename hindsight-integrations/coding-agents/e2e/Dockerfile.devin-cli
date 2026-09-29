@@ -1,0 +1,4 @@
+FROM hindsight-coding-agents-e2e-base
+# The installer drops the binary and THEN starts an interactive login, which cannot succeed in a
+# build and exits non-zero. Tolerate that; assert the binary landed instead.
+RUN { curl -fsSL https://cli.devin.ai/install.sh | bash || true; } && command -v devin

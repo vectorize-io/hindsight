@@ -1,0 +1,420 @@
+"""Input-robustness regression tests.
+
+Covers the "server 500s on unusual-but-valid input" class:
+- #1883: content containing tokenizer special-token literals (e.g. ``<|endoftext|>``).
+- #1875: queries/content containing an unpaired UTF-16 surrogate (e.g. a half-emoji).
+- #3729: structured LLM fact output containing an unpaired surrogate.
+"""
+
+import dataclasses
+import json
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from hindsight_api.engine.llm_wrapper import (
+    LLMProvider,
+    parse_llm_json,
+    sanitize_llm_output,
+    sanitize_value,
+    sanitize_text,
+)
+from hindsight_api.engine.reflect.tokenization import count_prompt_tokens
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.retain.fact_extraction import ExtractionPrompt, Fact
+from hindsight_api.engine.token_encoding import count_tokens, truncate_to_tokens
+
+# A lone high surrogate — valid in a Python str, but rejected by the Rust
+# tokenizers behind the local embedder / cross-encoder and uncodable to UTF-8.
+HIGH_SURROGATE = "\ud83d"
+LONE_SURROGATE = f"deploy the {HIGH_SURROGATE} service"
+# U+0000. Legal in JSON, storable in neither a PostgreSQL ``text`` nor a ``jsonb``
+# column, so it aborts an INSERT rather than merely crashing a tokenizer.
+NUL = "\u0000"
+SPECIAL_TOKEN_TEXT = "The fix was to sanitize the <|endoftext|> token before sending."
+
+
+# --- Prong A: the tokenizer tolerates special-token literals (#1883) ------------
+
+
+def test_count_tokens_handles_special_token_literal():
+    # The tokenizer's default disallowed_special="all" would raise ValueError here.
+    assert count_tokens(SPECIAL_TOKEN_TEXT) > 0
+    assert count_prompt_tokens(SPECIAL_TOKEN_TEXT) > 0
+
+
+def test_truncation_round_trips_a_special_token_literal():
+    # The other half of #1883: truncation must treat the literal as ordinary text
+    # too. A budget this generous truncates nothing, so it must come back
+    # byte-for-byte.
+    assert truncate_to_tokens(SPECIAL_TOKEN_TEXT, 10_000).text == SPECIAL_TOKEN_TEXT
+
+
+def test_special_token_counted_as_ordinary_text():
+    # The literal is split into ordinary tokens, not collapsed into one special id.
+    assert count_tokens("<|endoftext|>") > 1
+
+
+# --- Prong B: surrogate / control-char sanitization (#1875) ----------------------
+
+
+def test_sanitize_strips_lone_surrogate():
+    cleaned = sanitize_text(LONE_SURROGATE)
+    assert cleaned == "deploy the  service"
+    assert cleaned.encode("utf-8")  # no longer raises
+
+
+def test_sanitize_preserves_valid_text_and_paired_emoji():
+    text = "café 🎉\tindented\nnewline"
+    assert sanitize_text(text) == text
+
+
+def test_sanitize_strips_control_chars_but_keeps_whitespace():
+    assert sanitize_text("a\x00b\x07c") == "abc"
+    assert sanitize_text("a\tb\nc\rd") == "a\tb\nc\rd"
+
+
+def test_sanitize_none_and_empty():
+    assert sanitize_text(None) is None
+    assert sanitize_text("") == ""
+
+
+def test_sanitize_llm_output_is_alias():
+    assert sanitize_llm_output is sanitize_text
+
+
+@pytest.mark.asyncio
+async def test_fact_extraction_sanitizes_surrogates_generated_by_llm():
+    """Valid source can still produce a lone surrogate in structured LLM output."""
+    from hindsight_api.config import _get_raw_config
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = dataclasses.replace(
+        _get_raw_config(),
+        retain_llm_max_retries=0,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        llm_temperature_retain=0.1,
+        llm_strict_schema_retain=False,
+        entity_labels=None,
+        entities_allow_free_form=True,
+    )
+    llm = MagicMock(spec=LLMProvider)
+    llm.provider = "mock"
+    llm.call = AsyncMock(
+        return_value=LLMCallResult(
+            content={
+                "facts": [
+                    {
+                        "what": "Alex laughed 😂",
+                        "when": "N/A",
+                        "where": "N/A",
+                        "who": "Alex",
+                        "why": "The joke was funny \ude02",
+                        "fact_type": "world",
+                        "fact_kind": "conversation",
+                    }
+                ]
+            },
+            usage=TokenUsage(),
+        )
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alex laughed at the joke.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2026, 8, 22, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm,
+            config=config,
+        )
+
+    assert facts[0].fact == "Alex laughed 😂 | Involving: Alex | The joke was funny "
+    assert facts[0].fact.encode("utf-8")
+
+
+# --- Prong C: every LLM response is scrubbed at one boundary (#3729) ------------
+
+
+def test_sanitize_value_returns_clean_input_unchanged():
+    """The common case must not copy: identity is preserved all the way down."""
+    payload = {"facts": [{"what": "café 🎉", "n": 3}], "ok": None, "flag": True, "score": 1.5}
+    assert sanitize_value(payload) is payload
+    text = "plain text"
+    assert sanitize_value(text) is text
+
+
+def test_sanitize_value_scrubs_nested_strings_only():
+    payload = {"facts": [{"what": f"a{HIGH_SURROGATE}b", "count": 3, "ratio": 0.5, "missing": None}]}
+    cleaned = sanitize_value(payload)
+    assert cleaned["facts"][0]["what"] == "ab"
+    # Non-text fields keep their type and value.
+    assert cleaned["facts"][0]["count"] == 3
+    assert cleaned["facts"][0]["ratio"] == 0.5
+    assert cleaned["facts"][0]["missing"] is None
+
+
+def test_sanitize_value_scrubs_dict_keys():
+    cleaned = sanitize_value({f"na{HIGH_SURROGATE}me": "Alex"})
+    assert cleaned == {"name": "Alex"}
+
+
+def test_sanitize_value_scrubs_pydantic_models():
+    result = LLMToolCallResult(
+        content=f"answer{HIGH_SURROGATE}",
+        tool_calls=[LLMToolCall(id="call_1", name="recall", arguments={"query": f"q{HIGH_SURROGATE}"})],
+        output_tokens=42,
+    )
+    cleaned = sanitize_value(result)
+    assert isinstance(cleaned, LLMToolCallResult)
+    assert cleaned.content == "answer"
+    assert cleaned.tool_calls[0].arguments == {"query": "q"}
+    # Numeric fields survive the copy.
+    assert cleaned.output_tokens == 42
+
+
+def test_sanitize_value_preserves_tuple_shape():
+    """A tuple reaching the scrubber keeps its shape — both members must survive.
+
+    ``call`` returns an ``LLMCallResult`` now (handled by the BaseModel branch), but
+    parsed JSON payloads still nest tuples, so the tuple branch has to stay correct.
+    """
+    usage = TokenUsage()
+    cleaned = sanitize_value(({"text": f"x{HIGH_SURROGATE}"}, usage))
+    assert isinstance(cleaned, tuple) and len(cleaned) == 2
+    assert cleaned[0] == {"text": "x"}
+    assert cleaned[1] is usage
+
+
+def test_parse_llm_json_scrubs_surrogates_born_at_decode():
+    """The exact mechanism behind #3729.
+
+    A model writes the six ASCII characters ``\\ud83d``; nothing is wrong with the
+    raw text and scrubbing it there is a no-op. ``json.loads`` is what turns them
+    into a lone surrogate no downstream stage can UTF-8 encode, so the scrub has
+    to happen on the parsed object.
+    """
+    raw = '{"facts": [{"what": "Alex laughed \\ud83d", "entities": ["Al\\ud83dex"], "n": 3}]}'
+    assert sanitize_text(raw) == raw  # the escape is invisible before decoding
+
+    parsed = parse_llm_json(raw)
+
+    assert parsed["facts"][0]["what"] == "Alex laughed "
+    assert parsed["facts"][0]["entities"] == ["Alex"]
+    assert parsed["facts"][0]["n"] == 3
+    assert json.dumps(parsed).encode("utf-8")
+
+
+def test_parse_llm_json_keeps_valid_surrogate_pairs():
+    """Only *lone* surrogates go. A pair is how JSON spells an astral codepoint."""
+    raw = '{"what": "caf\\u00e9 \\ud83c\\udf89", "n": 1, "ok": true}'
+
+    assert parse_llm_json(raw) == {"what": "caf\u00e9 \U0001f389", "n": 1, "ok": True}
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_call_sanitizes_response():
+    """Every structured/text LLM response is scrubbed inside ``LLMProvider.call``."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock-model")
+    llm.set_mock_response({"facts": [{"what": f"Alex laughed 😂{HIGH_SURROGATE}"}]})
+
+    result = await llm.call(messages=[{"role": "user", "content": "hi"}], skip_validation=True)
+
+    assert result.content["facts"][0]["what"] == "Alex laughed 😂"
+    assert result.content["facts"][0]["what"].encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_call_with_tools_sanitizes_content_and_arguments():
+    """The reflect/agent path is model-authored too, arguments included."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock-model")
+    llm.set_mock_response(
+        LLMToolCallResult(
+            content=f"thinking{HIGH_SURROGATE}",
+            tool_calls=[LLMToolCall(id="call_1", name="recall", arguments={"query": f"deploy{HIGH_SURROGATE}"})],
+        )
+    )
+
+    result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    assert result.content == "thinking"
+    assert result.tool_calls[0].arguments["query"] == "deploy"
+    assert result.tool_calls[0].arguments["query"].encode("utf-8")
+
+
+# --- Prong D: entity names are text too (#3729) ---------------------------------
+
+
+def test_fact_model_sanitizes_entity_names():
+    """Entity names join the embedded string and the BM25 ``text_signals`` column."""
+    fact = Fact(fact="Alex shipped it", fact_type="world", entities=[f"Al{HIGH_SURROGATE}ex", "Kubernetes"])
+    assert fact.entities == ["Alex", "Kubernetes"]
+
+
+def test_fact_model_drops_entity_names_that_sanitize_away():
+    """A name made only of hostile characters is dropped, not stored blank."""
+    fact = Fact(fact="Alex shipped it", fact_type="world", entities=[HIGH_SURROGATE, "Alex"])
+    assert fact.entities == ["Alex"]
+
+
+def test_fact_model_leaves_valid_entity_names_alone():
+    fact = Fact(fact="Alex shipped it", fact_type="world", entities=["key:value", "café 🎉"])
+    assert fact.entities == ["key:value", "café 🎉"]
+
+
+def test_embedding_text_for_sanitized_fact_is_utf8_encodable():
+    """The end the crash actually happened at: the string handed to the embedder.
+
+    ``augment_texts_with_dates`` splices entity names into the fact text, so a
+    surrogate in either field reaches the tokenizer as one un-encodable string.
+    """
+    from hindsight_api.engine.retain import embedding_processing
+    from hindsight_api.engine.retain.types import ExtractedFact
+
+    fact = Fact(
+        fact=f"Alex laughed 😂{HIGH_SURROGATE}",
+        fact_type="world",
+        entities=[f"Al{HIGH_SURROGATE}ex"],
+    )
+    shim = ExtractedFact(fact_text=fact.fact, fact_type=fact.fact_type, entities=list(fact.entities or []))
+    (augmented,) = embedding_processing.augment_texts_with_dates([shim], lambda d: "today")
+
+    assert augmented.encode("utf-8")  # raised UnicodeEncodeError before the fix
+    assert augmented == "Alex laughed 😂 [Alex]"
+
+
+# --- Integration: full pipeline survives both inputs -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_retain_with_special_token_literal(memory, request_context):
+    """Retaining content that mentions ``<|endoftext|>`` must not 500 (#1883)."""
+    bank_id = f"test_special_token_{datetime.now(timezone.utc).timestamp()}"
+    unit_ids = await memory.retain_async(
+        bank_id=bank_id,
+        content=SPECIAL_TOKEN_TEXT,
+        context="debugging tokenizers",
+        request_context=request_context,
+    )
+    assert isinstance(unit_ids, list)
+
+
+@pytest.mark.asyncio
+async def test_recall_with_lone_surrogate_query(memory, request_context):
+    """A recall query with an unpaired surrogate must not crash the embedder (#1875)."""
+    bank_id = f"test_surrogate_{datetime.now(timezone.utc).timestamp()}"
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="The deploy service ships releases.",
+        request_context=request_context,
+    )
+    # Without ingress sanitization the local ST embedder raises TextEncodeInput.
+    result = await memory.recall_async(
+        bank_id=bank_id,
+        query=LONE_SURROGATE,
+        request_context=request_context,
+    )
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_retain_with_lone_surrogate_content(memory, request_context):
+    """Retaining content with an unpaired surrogate must not 500 (#1875)."""
+    bank_id = f"test_surrogate_retain_{datetime.now(timezone.utc).timestamp()}"
+    unit_ids = await memory.retain_async(
+        bank_id=bank_id,
+        content="A half emoji \ud83d slipped into the transcript.",
+        request_context=request_context,
+    )
+    assert isinstance(unit_ids, list)
+
+
+@pytest.mark.asyncio
+async def test_retain_with_lone_surrogate_entity_name(memory, request_context):
+    """A client-supplied entity name with an unpaired surrogate must not 500 (#3729).
+
+    Entity names are spliced into the string handed to the embedder and joined
+    into the ``text_signals`` column, so they crash in the same two places the
+    fact text does — but nothing sanitized them at ingress.
+    """
+    bank_id = f"test_surrogate_entity_{datetime.now(timezone.utc).timestamp()}"
+    unit_ids = await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": "The deploy service ships releases.",
+                "entities": [{"text": f"depl{HIGH_SURROGATE}oy"}, {"text": HIGH_SURROGATE}],
+            }
+        ],
+        request_context=request_context,
+    )
+    assert isinstance(unit_ids, list)
+
+
+# --- Prong D: a retain item is scrubbed as a whole, not field by field ----------
+#
+# U+0000 is the second character PostgreSQL refuses, and unlike a surrogate it is
+# rejected by ``jsonb`` as well as by ``text``. An async retain writes the entire
+# item into ``async_operations.task_payload::jsonb``, so a NUL in *any* field aborts
+# that INSERT — the request 500s and the memory is never queued. The failure is
+# deterministic for that payload, so a retrying client re-sends it forever. JSON
+# permits ``\u0000``, and text scraped from PDFs, log captures and chat exports
+# carries it (see PR #3908).
+
+
+def test_sanitize_value_strips_nul_from_a_whole_retain_item():
+    """Every string in the item, metadata keys and nested values included."""
+    item = {
+        "content": f"Alice{NUL} joined.",
+        "context": f"team{NUL} meeting",
+        "document_id": f"doc{NUL}1",
+        "metadata": {f"so{NUL}urce": f"sl{NUL}ack", "nested": [f"a{NUL}b", {f"k{NUL}": f"v{NUL}"}]},
+        "tags": [f"te{NUL}am"],
+    }
+    cleaned = sanitize_value(item)
+    assert cleaned == {
+        "content": "Alice joined.",
+        "context": "team meeting",
+        "document_id": "doc1",
+        "metadata": {"source": "slack", "nested": ["ab", {"k": "v"}]},
+        "tags": ["team"],
+    }
+    # Nothing may survive anywhere: the whole item is what reaches jsonb.
+    assert NUL not in json.dumps(cleaned)
+
+
+def test_sanitize_value_preserves_non_hostile_text():
+    """Only the uncodable characters go — ordinary unicode is content."""
+    item = {"content": "Über — naïve 🙂 \t newline\n kept", "metadata": {"emoji": "🎉"}}
+    assert sanitize_value(item) is item
+
+
+@pytest.mark.asyncio
+async def test_sync_retain_with_nul_in_metadata(memory, request_context):
+    """The synchronous path is not exempt: metadata lands in a ``jsonb`` column.
+
+    Only ``content``, ``context`` and ``entities`` used to be scrubbed here, so a
+    NUL in ``metadata`` — the field most likely to carry one, since it is copied
+    from whatever produced the document — still aborted the document INSERT.
+    """
+    bank_id = f"test_nul_metadata_{datetime.now(timezone.utc).timestamp()}"
+    unit_ids = await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": f"Alice{NUL} joined the team.",
+                "metadata": {f"so{NUL}urce": f"sl{NUL}ack"},
+                "tags": [f"te{NUL}am"],
+            }
+        ],
+        request_context=request_context,
+    )
+    assert isinstance(unit_ids, list)

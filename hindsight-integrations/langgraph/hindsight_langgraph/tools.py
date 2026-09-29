@@ -1,0 +1,323 @@
+"""LangGraph tool definitions for Hindsight memory operations.
+
+Provides factory functions that create LangGraph-compatible tool functions
+backed by Hindsight's retain/recall/reflect APIs. These tools can be bound
+to a ChatModel via `model.bind_tools()` or used in a ToolNode.
+"""
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional
+
+from hindsight_client import Hindsight
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool, tool
+
+from ._client import resolve_client
+from .config import get_config
+from .errors import HindsightError
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_bank_id(
+    bank_id: Optional[str],
+    config: Optional[RunnableConfig],
+    bank_id_from_config: str,
+) -> str:
+    if bank_id:
+        return bank_id
+    if config:
+        configurable = config.get("configurable", {})
+        resolved_bank_id = configurable.get(bank_id_from_config)
+        if resolved_bank_id:
+            return resolved_bank_id
+    raise HindsightError(
+        f"No bank_id available for Hindsight tool. Pass bank_id or set config['configurable']['{bank_id_from_config}']."
+    )
+
+
+def create_hindsight_tools(
+    *,
+    bank_id: Optional[str] = None,
+    client: Optional[Hindsight] = None,
+    hindsight_api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    budget: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    tags: Optional[list[str]] = None,
+    recall_tags: Optional[list[str]] = None,
+    recall_tags_match: Optional[str] = None,
+    # Retain options
+    retain_metadata: Optional[dict[str, str]] = None,
+    retain_document_id: Optional[str] = None,
+    # Recall options
+    recall_types: Optional[list[str]] = None,
+    recall_include_entities: bool = False,
+    bank_id_from_config: str = "user_id",
+    # Reflect options
+    reflect_context: Optional[str] = None,
+    reflect_max_tokens: Optional[int] = None,
+    reflect_response_schema: Optional[dict[str, Any]] = None,
+    reflect_tags: Optional[list[str]] = None,
+    reflect_tags_match: Optional[str] = None,
+    include_retain: bool = True,
+    include_recall: bool = True,
+    include_reflect: bool = True,
+) -> list[BaseTool]:
+    """Create Hindsight memory tools for a LangGraph agent.
+
+    Returns a list of LangChain tool instances compatible with LangGraph's
+    ToolNode and ChatModel.bind_tools().
+
+    Args:
+        bank_id: Static Hindsight memory bank ID. If omitted, the tools
+            resolve the bank at invocation time from RunnableConfig.
+        client: Pre-configured Hindsight client (preferred).
+        hindsight_api_url: API URL (used if no client provided).
+        api_key: API key (used if no client provided).
+        budget: Recall/reflect budget level (low/mid/high).
+        max_tokens: Maximum tokens for recall results.
+        tags: Tags applied when storing memories via retain.
+        recall_tags: Tags to filter when searching memories.
+        recall_tags_match: Tag matching mode (any/all/any_strict/all_strict).
+        retain_metadata: Default metadata dict for retain operations.
+        retain_document_id: Default document_id for retain (groups/upserts memories).
+        recall_types: Fact types to filter (world, experience, observation).
+        recall_include_entities: Include entity information in recall results.
+        bank_id_from_config: Config key to read bank_id from at runtime.
+            Looked up in ``config["configurable"][bank_id_from_config]``.
+            Only used when ``bank_id`` is not provided.
+        reflect_context: Additional context for reflect operations.
+        reflect_max_tokens: Max tokens for reflect results (defaults to max_tokens).
+        reflect_response_schema: JSON schema to constrain reflect output format.
+        reflect_tags: Tags to filter memories used in reflect (defaults to recall_tags).
+        reflect_tags_match: Tag matching for reflect (defaults to recall_tags_match).
+        include_retain: Include the retain (store) tool.
+        include_recall: Include the recall (search) tool.
+        include_reflect: Include the reflect (synthesize) tool.
+
+    Returns:
+        List of LangChain tool instances. When no client/URL/config is
+        supplied, the tools target the default API URL and read the
+        ``HINDSIGHT_API_KEY`` env var; a missing key surfaces only when a
+        tool is actually invoked.
+    """
+    resolved_client = resolve_client(client, hindsight_api_url, api_key)
+
+    config = get_config()
+    effective_tags = tags if tags is not None else (config.tags if config else None)
+    effective_recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
+    effective_recall_tags_match = (
+        recall_tags_match if recall_tags_match is not None else (config.recall_tags_match if config else "any")
+    )
+    effective_budget = budget if budget is not None else (config.budget if config else "mid")
+    effective_max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
+
+    tools: list = []
+
+    if include_retain:
+
+        @tool
+        async def hindsight_retain(content: str, runnable_config: RunnableConfig) -> str:
+            """Store information to long-term memory for later retrieval.
+
+            Use this to save important facts, user preferences, decisions,
+            or any information that should be remembered across conversations.
+
+            Args:
+                content: The information to store in memory.
+            """
+            try:
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
+                retain_kwargs: dict[str, Any] = {"bank_id": resolved_bank_id, "content": content}
+                if effective_tags:
+                    retain_kwargs["tags"] = effective_tags
+                if retain_metadata:
+                    retain_kwargs["metadata"] = retain_metadata
+                if retain_document_id:
+                    retain_kwargs["document_id"] = retain_document_id
+                await resolved_client.aretain(**retain_kwargs)
+                return "Memory stored successfully."
+            except HindsightError:
+                raise
+            except Exception as e:
+                logger.error(f"Retain failed: {e}")
+                raise HindsightError(f"Retain failed: {e}") from e
+
+        tools.append(hindsight_retain)
+
+    if include_recall:
+
+        @tool
+        async def hindsight_recall(query: str, runnable_config: RunnableConfig) -> str:
+            """Search long-term memory for relevant information.
+
+            Use this to find previously stored facts, preferences, or context.
+            Returns a numbered list of matching memories.
+
+            Args:
+                query: What to search for in memory.
+            """
+            try:
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
+                recall_kwargs: dict[str, Any] = {
+                    "bank_id": resolved_bank_id,
+                    "query": query,
+                    "budget": effective_budget,
+                    "max_tokens": effective_max_tokens,
+                }
+                if effective_recall_tags:
+                    recall_kwargs["tags"] = effective_recall_tags
+                    recall_kwargs["tags_match"] = effective_recall_tags_match
+                if recall_types:
+                    recall_kwargs["types"] = recall_types
+                if recall_include_entities:
+                    recall_kwargs["include_entities"] = True
+                response = await resolved_client.arecall(**recall_kwargs)
+                if not response.results:
+                    return "No relevant memories found."
+                lines = []
+                for i, result in enumerate(response.results, 1):
+                    lines.append(f"{i}. {result.text}")
+                return "\n".join(lines)
+            except HindsightError:
+                raise
+            except Exception as e:
+                logger.error(f"Recall failed: {e}")
+                raise HindsightError(f"Recall failed: {e}") from e
+
+        tools.append(hindsight_recall)
+
+    if include_reflect:
+
+        @tool
+        async def hindsight_reflect(query: str, runnable_config: RunnableConfig) -> str:
+            """Synthesize a thoughtful answer from long-term memories.
+
+            Use this when you need a coherent summary or reasoned response
+            about what you know, rather than raw memory facts.
+
+            Args:
+                query: The question to reflect on using stored memories.
+            """
+            try:
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
+                reflect_kwargs: dict[str, Any] = {
+                    "bank_id": resolved_bank_id,
+                    "query": query,
+                    "budget": effective_budget,
+                }
+                if reflect_context:
+                    reflect_kwargs["context"] = reflect_context
+                effective_reflect_max = reflect_max_tokens or effective_max_tokens
+                if effective_reflect_max:
+                    reflect_kwargs["max_tokens"] = effective_reflect_max
+                if reflect_response_schema:
+                    reflect_kwargs["response_schema"] = reflect_response_schema
+                # Reflect tags: use reflect-specific or fall back to recall tags
+                effective_reflect_tags = reflect_tags if reflect_tags is not None else effective_recall_tags
+                effective_reflect_tags_match = reflect_tags_match or effective_recall_tags_match
+                if effective_reflect_tags:
+                    reflect_kwargs["tags"] = effective_reflect_tags
+                    reflect_kwargs["tags_match"] = effective_reflect_tags_match
+                response = await resolved_client.areflect(**reflect_kwargs)
+                return response.text or "No relevant memories found."
+            except HindsightError:
+                raise
+            except Exception as e:
+                logger.error(f"Reflect failed: {e}")
+                raise HindsightError(f"Reflect failed: {e}") from e
+
+        tools.append(hindsight_reflect)
+
+    return tools
+
+
+def memory_instructions(
+    *,
+    bank_id: str,
+    base_instructions: str = "",
+    client: Optional[Hindsight] = None,
+    hindsight_api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    query: str = "relevant context about the user",
+    budget: Optional[str] = None,
+    max_results: int = 5,
+    max_tokens: Optional[int] = None,
+    prefix: str = "\n\nRelevant memories:\n",
+    tags: Optional[list[str]] = None,
+    tags_match: Optional[str] = None,
+) -> Callable[..., Awaitable[str]]:
+    """Create an async callable that auto-injects relevant memories into instructions.
+
+    Returns an async function that recalls memories from Hindsight and appends
+    them to base instructions. Useful for LangChain chains or any context where
+    you want memory injection without a full LangGraph graph.
+
+    Args:
+        bank_id: The Hindsight memory bank to recall from.
+        base_instructions: Static instructions prepended before memories.
+        client: Pre-configured Hindsight client (preferred).
+        hindsight_api_url: API URL (used if no client provided).
+        api_key: API key (used if no client provided).
+        query: The recall query to find relevant memories.
+        budget: Recall budget level (low/mid/high).
+        max_results: Maximum number of memories to include.
+        max_tokens: Maximum tokens for recall results.
+        prefix: Text prepended before the memory list.
+        tags: Tags to filter when searching memories.
+        tags_match: Tag matching mode (any/all/any_strict/all_strict).
+
+    Returns:
+        An async callable that returns instructions with memories appended.
+        On Hindsight error (network failure, etc.), logs the failure and
+        returns ``base_instructions`` unchanged so the LLM call can proceed.
+        This differs from the recall/retain nodes, which raise
+        ``HindsightError`` — ``memory_instructions`` is intended for the
+        prompt-construction path where a failure should degrade silently
+        rather than break the request.
+
+    Example::
+
+        from hindsight_langgraph import memory_instructions
+
+        get_instructions = memory_instructions(
+            client=client,
+            bank_id="user-123",
+            base_instructions="You are a helpful assistant.",
+        )
+        instructions = await get_instructions()
+    """
+    resolved_client = resolve_client(client, hindsight_api_url, api_key)
+
+    config = get_config()
+    effective_budget = budget if budget is not None else (config.budget if config else "mid")
+    effective_max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
+    effective_tags = tags if tags is not None else (config.recall_tags if config else None)
+    effective_tags_match = tags_match if tags_match is not None else (config.recall_tags_match if config else "any")
+
+    async def _instructions(*args: Any, **kwargs: Any) -> str:
+        """Recall memories and format as instructions text."""
+        try:
+            recall_kwargs: dict[str, Any] = {
+                "bank_id": bank_id,
+                "query": query,
+                "budget": effective_budget,
+                "max_tokens": effective_max_tokens,
+            }
+            if effective_tags:
+                recall_kwargs["tags"] = effective_tags
+                recall_kwargs["tags_match"] = effective_tags_match
+            response = await resolved_client.arecall(**recall_kwargs)
+            if not response.results:
+                return base_instructions
+            lines = []
+            for i, result in enumerate(response.results[:max_results], 1):
+                lines.append(f"{i}. {result.text}")
+            return base_instructions + prefix + "\n".join(lines)
+        except Exception as e:
+            logger.error("memory_instructions recall failed: %s", e)
+            return base_instructions
+
+    return _instructions

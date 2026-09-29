@@ -1,0 +1,1782 @@
+"""Test async batch retain with smart batching and parent-child operations."""
+
+import asyncio
+import json
+import os
+import uuid
+
+import pytest
+
+from hindsight_api.extensions import RequestContext
+
+# These tests submit async operations and rely on the engine-owned worker to
+# drain them. test_worker.py drives its own WorkerPoller.claim_batch() against
+# the same pool, so running the two files on different xdist workers causes
+# them to steal each other's pending rows. Share the "worker_tests" group so
+# they serialize on the same xdist process.
+pytestmark = pytest.mark.xdist_group("worker_tests")
+
+
+async def _ensure_bank(pool, bank_id: str) -> None:
+    """Upsert a minimal bank row so FK on async_operations passes."""
+    await pool.execute(
+        "INSERT INTO banks (bank_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        bank_id,
+        bank_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_document_ids_rejected_async(memory, request_context):
+    """Test that async retain rejects batches with duplicate document_ids."""
+    bank_id = "test_duplicate_async"
+    contents = [
+        {"content": "First item", "document_id": "doc1"},
+        {"content": "Second item", "document_id": "doc2"},
+        {"content": "Third item", "document_id": "doc1"},  # Duplicate!
+    ]
+
+    # Should raise ValueError due to duplicate document_ids
+    with pytest.raises(ValueError, match="duplicate document_ids.*doc1"):
+        await memory.submit_async_retain(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+
+@pytest.mark.asyncio
+async def test_shared_document_id_folds_sync(memory, request_context):
+    """Sync retain accepts several items sharing one document_id and folds them
+    into a single document, in request order (the documented RetainRequest
+    example — see issue #3363)."""
+    bank_id = f"test_shared_doc_sync_{uuid.uuid4().hex}"
+    try:
+        contents = [
+            {"content": "Alice works at Google", "context": "work", "document_id": "conversation_123"},
+            {"content": "Bob went hiking yesterday", "document_id": "conversation_123"},
+        ]
+
+        # Must NOT raise (this used to be a 400).
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+        # One result slot per input content is preserved.
+        assert len(result) == 2
+
+        # The items folded into exactly one document.
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+        assert docs["items"][0]["id"] == "conversation_123"
+
+        # Both items' content lands in that one document's body, in order.
+        doc = await memory.get_document("conversation_123", bank_id, request_context=request_context)
+        body = doc["original_text"]
+        assert "Alice works at Google" in body
+        assert "Bob went hiking yesterday" in body
+        assert body.index("Alice works at Google") < body.index("Bob went hiking yesterday")
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_batch_level_document_id_folds_sync(memory, request_context):
+    """The deprecated batch-level document_id (applied to every item without its
+    own) folds those items into one document instead of tripping the guard."""
+    bank_id = f"test_batch_doc_id_sync_{uuid.uuid4().hex}"
+    try:
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google"},
+                {"content": "Bob loves Python"},
+            ],
+            document_id="meeting-2024-01-15",
+            request_context=request_context,
+        )
+        assert len(result) == 2
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+        assert docs["items"][0]["id"] == "meeting-2024-01-15"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_shared_and_distinct_document_ids_sync(memory, request_context):
+    """A batch mixing a shared document_id with a distinct one folds only the
+    shared items, leaving the distinct document on its own."""
+    bank_id = f"test_mixed_doc_ids_sync_{uuid.uuid4().hex}"
+    try:
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google", "document_id": "docA"},
+                {"content": "Bob loves Python", "document_id": "docB"},
+                {"content": "Alice also mentors interns", "document_id": "docA"},
+            ],
+            request_context=request_context,
+        )
+        assert len(result) == 3
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 2
+
+        doc_a = await memory.get_document("docA", bank_id, request_context=request_context)
+        assert "Alice works at Google" in doc_a["original_text"]
+        assert "Alice also mentors interns" in doc_a["original_text"]
+
+        doc_b = await memory.get_document("docB", bank_id, request_context=request_context)
+        assert "Bob loves Python" in doc_b["original_text"]
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_shared_document_id_folds_sync_large_batch(memory, request_context):
+    """A shared-document batch large enough to exceed the auto-split token
+    threshold still folds into one document with NO lost content. Splitting one
+    document across sub-batches would trip the streaming pipeline's content-hash
+    ownership check and drop later sub-batches, so shared groups take a single
+    pass — this guards that decision (issue #3363)."""
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_shared_doc_large_sync_{uuid.uuid4().hex}"
+    try:
+        # Two ~5.5k-token items sharing one document_id → ~11k tokens, over the
+        # 10k default split threshold. Distinct markers pin each item's presence.
+        filler = "The quick brown fox jumps over the lazy dog. " * 500
+        contents = [
+            {"content": f"MARKER_ALPHA at the start. {filler}", "document_id": "big_conversation"},
+            {"content": f"{filler} MARKER_OMEGA at the end.", "document_id": "big_conversation"},
+        ]
+        assert sum(count_tokens(c["content"]) for c in contents) > 10_000
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+        assert len(result) == 2
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+
+        # Both items survive — neither sub-batch was dropped by a takeover abort.
+        doc = await memory.get_document("big_conversation", bank_id, request_context=request_context)
+        assert "MARKER_ALPHA" in doc["original_text"]
+        assert "MARKER_OMEGA" in doc["original_text"]
+
+        chunks = await memory.list_document_chunks(bank_id, "big_conversation", request_context=request_context)
+        assert chunks["total"] > 1
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_small_async_batch_no_splitting(memory, request_context):
+    """Test that small async batches create parent with single child (simplified code path)."""
+    bank_id = "test_small_async"
+    contents = [{"content": "Alice works at Google", "document_id": f"doc{i}"} for i in range(5)]
+
+    # Calculate total chars (should be well under threshold)
+    total_chars = sum(len(item["content"]) for item in contents)
+    assert total_chars < 10_000, "Test batch should be small"
+
+    # Submit async retain
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    # Verify we got an operation_id back
+    assert "operation_id" in result
+    assert "items_count" in result
+    assert result["items_count"] == 5
+
+    operation_id = result["operation_id"]
+
+    # Wait for task to complete (SyncTaskBackend executes immediately)
+    await asyncio.sleep(0.1)
+
+    # Check operation status
+    status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=operation_id,
+        request_context=request_context,
+    )
+
+    # Should be a parent operation with single child (simplified code path)
+    assert status["status"] == "completed"
+    assert status["operation_type"] == "batch_retain"
+    assert "child_operations" in status
+    assert status["result_metadata"]["num_sub_batches"] == 1  # Single sub-batch
+    assert len(status["child_operations"]) == 1
+    assert status["child_operations"][0]["status"] == "completed"
+    child_meta = await _child_metadata(memory, bank_id, operation_id, request_context)
+    assert child_meta["unit_ids_count"] > 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert status["result_metadata"]["unit_ids_count"] == child_meta["unit_ids_count"]
+    assert status["result_metadata"]["extraction_errors_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+async def test_large_async_batch_auto_splits(memory, request_context):
+    """Test that large async batches automatically split into sub-batches with parent operation."""
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = "test_large_async"
+
+    # Create a large batch that exceeds the threshold (10k tokens default)
+    # Repeating "A"s gets heavily compressed by tokenizer, use varied content
+    # Use ~22k chars per item = ~5.5k tokens per item, 2 items = ~11k tokens total (exceeds 10k)
+    large_content = "The quick brown fox jumps over the lazy dog. " * 500  # ~22k chars = ~5.5k tokens
+    contents = [{"content": large_content + f" item {i}", "document_id": f"doc{i}"} for i in range(2)]
+
+    # Calculate total tokens (should exceed threshold)
+    total_tokens = sum(count_tokens(item["content"]) for item in contents)
+    assert total_tokens > 10_000, "Test batch should exceed threshold"
+
+    # Submit async retain
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    # Verify we got an operation_id back
+    assert "operation_id" in result
+    assert "items_count" in result
+    assert result["items_count"] == 2
+
+    parent_operation_id = result["operation_id"]
+
+    # Wait for tasks to complete
+    await asyncio.sleep(0.5)
+
+    # Check parent operation status
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=parent_operation_id,
+        request_context=request_context,
+    )
+
+    # Should be a parent operation with children
+    assert parent_status["operation_type"] == "batch_retain"
+    assert "child_operations" in parent_status
+    assert "num_sub_batches" in parent_status["result_metadata"]
+    assert parent_status["result_metadata"]["num_sub_batches"] >= 2  # Should split into at least 2 batches
+    assert parent_status["result_metadata"]["items_count"] == 2
+
+    # Verify child operations
+    child_ops = parent_status["child_operations"]
+    assert len(child_ops) >= 2, "Should have at least 2 child operations"
+
+    # All children should be completed (SyncTaskBackend executes immediately)
+    for child in child_ops:
+        assert child["status"] == "completed"
+        assert child["sub_batch_index"] is not None
+        assert child["items_count"] > 0
+
+    # Parent status should be aggregated as "completed"
+    assert parent_status["status"] == "completed"
+    child_unit_counts = []
+    for child in child_ops:
+        child_status = await memory.get_operation_status(
+            bank_id=bank_id,
+            operation_id=child["operation_id"],
+            request_context=request_context,
+        )
+        child_meta = child_status["result_metadata"]
+        assert child_meta["unit_ids_count"] > 0
+        assert child_meta["extraction_errors_count"] == 0
+        child_unit_counts.append(child_meta["unit_ids_count"])
+    assert parent_status["result_metadata"]["unit_ids_count"] == sum(child_unit_counts)
+    assert parent_status["result_metadata"]["extraction_errors_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_parent_operation_status_aggregation_pending(memory, request_context):
+    """Test that parent operation shows 'pending' when children are pending."""
+    bank_id = "test_parent_pending"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Manually create a parent operation
+    parent_id = uuid.uuid4()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            parent_id,
+            bank_id,
+            "batch_retain",
+            json.dumps({"items_count": 20, "num_sub_batches": 2, "is_parent": True}),
+            "pending",
+        )
+
+        # Create 2 child operations - one completed, one pending
+        child1_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child1_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 1,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "completed",
+        )
+
+        child2_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child2_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 2,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "pending",
+        )
+
+    # Check parent status
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=str(parent_id),
+        request_context=request_context,
+    )
+
+    # Parent should aggregate as "pending" since one child is still pending
+    assert parent_status["status"] == "pending"
+    assert len(parent_status["child_operations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_parent_operation_status_aggregation_failed(memory, request_context):
+    """Test that parent operation shows 'failed' when any child fails."""
+    bank_id = "test_parent_failed"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Manually create a parent operation
+    parent_id = uuid.uuid4()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            parent_id,
+            bank_id,
+            "batch_retain",
+            json.dumps({"items_count": 20, "num_sub_batches": 2, "is_parent": True}),
+            "pending",
+        )
+
+        # Create 2 child operations - one completed, one failed
+        child1_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child1_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 1,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "completed",
+        )
+
+        child2_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status, error_message)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            child2_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 2,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "failed",
+            "Test error",
+        )
+
+    # Check parent status
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=str(parent_id),
+        request_context=request_context,
+    )
+
+    # Parent should aggregate as "failed" since one child failed
+    assert parent_status["status"] == "failed"
+    assert len(parent_status["child_operations"]) == 2
+
+    # Verify child with error is included
+    failed_child = [c for c in parent_status["child_operations"] if c["status"] == "failed"][0]
+    assert failed_child["error_message"] == "Test error"
+
+
+@pytest.mark.asyncio
+async def test_parent_operation_status_aggregation_completed(memory, request_context):
+    """Test that parent operation shows 'completed' when all children are completed."""
+    bank_id = "test_parent_completed"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Manually create a parent operation
+    parent_id = uuid.uuid4()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            parent_id,
+            bank_id,
+            "batch_retain",
+            json.dumps({"items_count": 20, "num_sub_batches": 2, "is_parent": True}),
+            "pending",
+        )
+
+        # Create 2 child operations - both completed
+        child1_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child1_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 1,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "completed",
+        )
+
+        child2_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child2_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {
+                    "items_count": 10,
+                    "parent_operation_id": str(parent_id),
+                    "sub_batch_index": 2,
+                    "total_sub_batches": 2,
+                }
+            ),
+            "completed",
+        )
+
+    # Check parent status
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=str(parent_id),
+        request_context=request_context,
+    )
+
+    # Parent should aggregate as "completed" since all children are completed
+    assert parent_status["status"] == "completed"
+    assert len(parent_status["child_operations"]) == 2
+    assert all(c["status"] == "completed" for c in parent_status["child_operations"])
+
+
+@pytest.mark.asyncio
+async def test_config_retain_batch_tokens_respected(memory, request_context):
+    """Test that the retain_batch_tokens config setting is respected."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = "test_config_batch_tokens"
+    config = get_config()
+
+    # Check that config has the retain_batch_tokens setting
+    assert hasattr(config, "retain_batch_tokens")
+    assert config.retain_batch_tokens > 0
+
+    # Create a batch that's just under the threshold
+    # Use content that produces roughly half the token limit per item
+    content_size = config.retain_batch_tokens * 2  # chars (rough estimate: 1 token ~= 4 chars)
+    contents = [{"content": "A" * content_size, "document_id": f"doc{i}"} for i in range(2)]
+
+    total_tokens = sum(count_tokens(item["content"]) for item in contents)
+    # Should be equal to threshold (boundary case, no splitting since we use > not >=)
+    assert total_tokens <= config.retain_batch_tokens
+
+    # Submit - should NOT split
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    # Wait for completion
+    await asyncio.sleep(0.1)
+
+    # Check status - should be a parent with single child (even for small batches)
+    status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+
+    # Even small batches use parent-child pattern now (simpler code path)
+    assert "child_operations" in status
+    assert status["result_metadata"]["num_sub_batches"] == 1
+
+
+async def _child_metadata(memory, bank_id: str, parent_operation_id: str, request_context):
+    """Fetch the first child operation's result_metadata for a parent batch_retain."""
+    parent = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=parent_operation_id,
+        request_context=request_context,
+    )
+    assert parent["status"] == "completed", parent
+    assert parent["child_operations"], "expected at least one child operation"
+    child_id = parent["child_operations"][0]["operation_id"]
+    child = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=child_id,
+        request_context=request_context,
+    )
+    return child["result_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_retain_outcome_metadata_records_zero_counts(memory, request_context, monkeypatch):
+    """Completed retain operations expose explicit zero outcome counters."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ExtractionResult
+
+    async def empty_extract_facts_from_contents(*args: object, **kwargs: object) -> ExtractionResult:
+        return ExtractionResult([], [], TokenUsage())
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", empty_extract_facts_from_contents)
+
+    bank_id = "test_retain_outcome_zero_counts"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "No extracted facts for this item."}],
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    parent = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    child_meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+
+    assert child_meta["unit_ids_count"] == 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in child_meta
+    assert parent["result_metadata"]["unit_ids_count"] == 0
+    assert parent["result_metadata"]["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in parent["result_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_all_degenerate_facts_still_persist_document_chunks(memory, request_context, monkeypatch):
+    """Filtering every extracted fact must not turn an extracted chunk into the zero-extraction fast path."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
+
+    async def degenerate_extract_facts_from_contents(contents, *_args, **_kwargs):
+        return ExtractionResult(
+            [ExtractedFact(fact_text="...", fact_type="world", content_index=0, chunk_index=0)],
+            [ChunkMetadata(chunk_text=contents[0].content, fact_count=1, content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", degenerate_extract_facts_from_contents)
+
+    bank_id = f"test_all_degenerate_{uuid.uuid4().hex[:8]}"
+    document_id = "all-degenerate-document"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="A source chunk whose only extracted fact is rejected.",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        chunks = await memory.list_document_chunks(bank_id, document_id, limit=10, request_context=request_context)
+        units = await memory.list_memory_units(bank_id, request_context=request_context)
+        assert [chunk["chunk_index"] for chunk in chunks["items"]] == [0]
+        assert units["total"] == 0
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request_context, monkeypatch):
+    """Causal targets from independently extracted chunks must stay within their source chunk."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact, ExtractionResult
+
+    chunks = ["first-streaming-chunk", "second-streaming-chunk"]
+    # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
+    # `chunk_text` is `list(iter_chunks(...))`, so this stubs both forms at once.
+    monkeypatch.setattr(fact_extraction, "iter_chunks", lambda *_args, **_kwargs: iter(chunks))
+
+    async def extract_chunk_facts(contents, *_args, **_kwargs):
+        chunk_text = contents[0].content
+        return ExtractionResult(
+            [
+                ExtractedFact(fact_text=f"{chunk_text} cause", fact_type="world", chunk_index=0),
+                ExtractedFact(
+                    fact_text=f"{chunk_text} effect",
+                    fact_type="world",
+                    chunk_index=0,
+                    causal_relations=[CausalRelation(relation_type="caused_by", target_fact_index=0)],
+                ),
+            ],
+            [ChunkMetadata(chunk_text=chunk_text, fact_count=2, content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", extract_chunk_facts)
+
+    bank_id = f"test_streaming_causal_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Content is replaced by the deterministic chunk_text stub.",
+            document_id="streaming-causal-document",
+            request_context=request_context,
+        )
+
+        pool = await memory._get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT source.text AS source_text, target.text AS target_text
+            FROM memory_links links
+            JOIN memory_units source ON source.id = links.from_unit_id
+            JOIN memory_units target ON target.id = links.to_unit_id
+            WHERE links.bank_id = $1 AND links.link_type = 'caused_by'
+            """,
+            bank_id,
+        )
+        assert {(row["source_text"], row["target_text"]) for row in rows} == {
+            (f"{chunk} effect", f"{chunk} cause") for chunk in chunks
+        }
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_context, monkeypatch):
+    """A rejected degenerate fact must not shift chunk provenance onto a later chunk's survivor.
+
+    Regression for #2794: filtering only ``processed_facts`` left ``extracted_facts``
+    full-length, so the consumer's ``zip(batch_extracted, batch_processed)`` paired
+    every survivor after a rejected fact with the wrong extracted fact — assigning it
+    the wrong chunk_id.
+
+    Each of the two chunks emits [real, degenerate]. After the first (real, degenerate)
+    pair the zip is off-by-one for the rest of the batch, so *both* surviving real facts
+    collapse onto whichever chunk sorted first — regardless of the nondeterministic
+    producer completion order. The fix filters both lists in lockstep per chunk, so each
+    real fact keeps its own chunk_index.
+    """
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ExtractionResult
+
+    chunks = ["chunk-zero-source", "chunk-one-source"]
+    # Patch the generator, not `chunk_text`: retain streams its chunks since #3756, and
+    # `chunk_text` is `list(iter_chunks(...))`, so this stubs both forms at once.
+    monkeypatch.setattr(fact_extraction, "iter_chunks", lambda *_args, **_kwargs: iter(chunks))
+
+    real_fact_by_chunk = {chunks[0]: "chunk zero real fact", chunks[1]: "chunk one real fact"}
+
+    async def extract_chunk_facts(contents, *_args, **_kwargs):
+        chunk_text = contents[0].content
+        facts = [
+            ExtractedFact(fact_text=real_fact_by_chunk[chunk_text], fact_type="world", chunk_index=0),
+            ExtractedFact(fact_text="...", fact_type="world", chunk_index=0),
+        ]
+        return ExtractionResult(
+            facts,
+            [ChunkMetadata(chunk_text=chunk_text, fact_count=len(facts), content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", extract_chunk_facts)
+
+    bank_id = f"test_degen_provenance_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Content is replaced by the deterministic chunk_text stub.",
+            document_id="degen-provenance-document",
+            request_context=request_context,
+        )
+
+        # Each fact carries the chunk it came from, and the document's chunks carry
+        # their index, so the join the assertion needs is over two API reads.
+        chunk_index_by_id = {
+            chunk["chunk_id"]: chunk["chunk_index"]
+            for chunk in (
+                await memory.list_document_chunks(
+                    bank_id, "degen-provenance-document", limit=500, request_context=request_context
+                )
+            )["items"]
+        }
+        units = (await memory.list_memory_units(bank_id, limit=500, request_context=request_context))["items"]
+        # Chunkless units (an observation, say) were dropped by the inner join before
+        # and are dropped here for the same reason: they have no provenance to check.
+        assert {
+            (unit["text"], chunk_index_by_id[unit["chunk_id"]])
+            for unit in units
+            if unit["chunk_id"] in chunk_index_by_id
+        } == {
+            ("chunk zero real fact", 0),
+            ("chunk one real fact", 1),
+        }
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def _seed_retain_op_with_errors(pool, bank_id: str, error_count: int) -> uuid.UUID:
+    """Insert a pending retain operation whose outcome metadata records extraction errors."""
+    operation_id = uuid.uuid4()
+    await pool.execute(
+        """
+        INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        operation_id,
+        bank_id,
+        "retain",
+        json.dumps(
+            {
+                "unit_ids_count": 3,
+                "extraction_errors_count": error_count,
+                "extraction_errors_sample": ["chunk 2 failed to parse"],
+            }
+        ),
+        "pending",
+    )
+    return operation_id
+
+
+async def _op_row(pool, operation_id: uuid.UUID):
+    return await pool.fetchrow(
+        "SELECT status, error_message FROM async_operations WHERE operation_id = $1",
+        operation_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_completion_marks_failed_when_flag_on_and_errors_present(memory):
+    """With the escape hatch on, a retain that dropped facts ends 'failed' (issue #2700)."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_on"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=2)
+
+    os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS] = "true"
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        del os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS]
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "failed"
+    assert row["error_message"] is not None
+    assert "2" in row["error_message"]
+    assert "extraction error" in row["error_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_completion_stays_completed_when_flag_off(memory):
+    """Default behavior is preserved: extraction errors still complete the operation."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_off"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=2)
+
+    os.environ.pop(ENV_FAIL_ON_EXTRACTION_ERRORS, None)
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "completed"
+    assert row["error_message"] is None
+
+
+@pytest.mark.asyncio
+async def test_completion_completed_when_flag_on_but_no_errors(memory):
+    """The flag only fails operations that actually accumulated extraction errors."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_none"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=0)
+
+    os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS] = "true"
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        del os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS]
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_retain_records_user_provided_document_ids(memory, request_context):
+    """User-supplied document_ids land in child op result_metadata.document_ids."""
+    bank_id = "test_doc_ids_user_supplied"
+    d1 = str(uuid.uuid4())
+    d2 = str(uuid.uuid4())
+    contents = [
+        {"content": "User-supplied doc one content.", "document_id": d1},
+        {"content": "User-supplied doc two content.", "document_id": d2},
+    ]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+    assert "document_ids" in meta, meta
+    assert set(meta["document_ids"]) == {d1, d2}
+
+
+@pytest.mark.asyncio
+async def test_retain_records_generated_document_id(memory, request_context):
+    """With no document_ids supplied, retain records the single generated id."""
+    bank_id = "test_doc_ids_generated"
+    contents = [
+        {"content": "Generated doc item one."},
+        {"content": "Generated doc item two."},
+    ]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+    assert "document_ids" in meta, meta
+    assert isinstance(meta["document_ids"], list)
+    assert len(meta["document_ids"]) == 1
+    # Must be a valid UUID string (generated by the orchestrator)
+    uuid.UUID(meta["document_ids"][0])
+
+
+@pytest.mark.asyncio
+async def test_retain_records_shared_document_id_once(memory, request_context):
+    """Items sharing one document_id record it exactly once (idempotent set-append)."""
+    bank_id = "test_doc_ids_shared"
+    shared = str(uuid.uuid4())
+    # Duplicate per-item doc_ids are rejected up front, so shared-doc mode
+    # is exercised by a single item carrying the id.
+    contents = [{"content": "Shared doc, chunk A.", "document_id": shared}]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+    assert meta.get("document_ids") == [shared]
+
+
+@pytest.mark.asyncio
+async def test_get_operation_status_include_payload(memory, request_context):
+    """include_payload=True returns the original submission payload; default omits it."""
+    bank_id = "test_include_payload"
+    contents = [{"content": "Payload roundtrip test item."}]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    parent = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    child_id = parent["child_operations"][0]["operation_id"]
+
+    # Default: no payload
+    without = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=child_id,
+        request_context=request_context,
+    )
+    assert without.get("task_payload") is None
+
+    # With flag: payload populated
+    with_payload = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=child_id,
+        request_context=request_context,
+        include_payload=True,
+    )
+    payload = with_payload.get("task_payload")
+    assert payload is not None, with_payload
+    assert payload.get("bank_id") == bank_id
+    assert payload.get("contents")
+    assert payload["contents"][0]["content"] == "Payload roundtrip test item."
+
+
+@pytest.mark.asyncio
+async def test_operation_status_exposes_retry_count_and_next_retry_at(memory, request_context):
+    """get_operation_status and list_operations return retry_count and next_retry_at.
+
+    Consumers need these to distinguish a freshly-queued pending task from
+    one that's parked for a future retry (e.g. because an extension raised
+    DeferOperation). Without them, "pending" is ambiguous and callers can't
+    render a helpful "deferred until X" state.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    bank_id = "test_retry_fields"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "retry-fields test item"}],
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.1)
+    parent_id = result["operation_id"]
+    child_id = None
+
+    # Get the child op (the batch_retain parent holds a single child in the
+    # sync/simplified path used by SyncTaskBackend tests).
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=parent_id,
+        request_context=request_context,
+    )
+    assert "retry_count" in parent_status
+    assert "next_retry_at" in parent_status
+    assert parent_status["retry_count"] == 0
+    # Completed tasks should have next_retry_at cleared on the row (or the
+    # status field doesn't include it meaningfully), so we don't assert a
+    # specific value here — only that the key is present.
+    if parent_status.get("child_operations"):
+        child_id = parent_status["child_operations"][0]["operation_id"]
+
+    # list_operations also exposes both fields
+    listed = await memory.list_operations(
+        bank_id=bank_id,
+        request_context=request_context,
+        limit=10,
+        offset=0,
+    )
+    assert listed["operations"], listed
+    for op in listed["operations"]:
+        assert "retry_count" in op
+        assert "next_retry_at" in op
+        assert isinstance(op["retry_count"], int)
+
+    # Simulate a deferred op: set next_retry_at to 15 min in the future for
+    # the child row directly in the DB, then fetch via the API and confirm
+    # the value round-trips as an ISO-8601 string.
+    if child_id:
+        pool = await memory._get_pool()
+        future = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await pool.execute(
+            "UPDATE async_operations SET status = 'pending', next_retry_at = $1, retry_count = 2 WHERE operation_id = $2",
+            future,
+            uuid.UUID(child_id),
+        )
+        fetched = await memory.get_operation_status(
+            bank_id=bank_id,
+            operation_id=child_id,
+            request_context=request_context,
+        )
+        assert fetched["retry_count"] == 2
+        assert fetched["next_retry_at"] is not None
+        # Round-trip tolerance: within 1 second.
+        parsed = datetime.fromisoformat(fetched["next_retry_at"])
+        assert abs((parsed - future).total_seconds()) < 1.0
+
+
+@pytest.mark.asyncio
+async def test_list_operations_exclude_parents(memory, request_context):
+    """list_operations with exclude_parents=True hides parent batch operations."""
+    bank_id = "test_exclude_parents"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Create a parent operation (is_parent=True)
+    parent_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    standalone_id = uuid.uuid4()
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            parent_id,
+            bank_id,
+            "batch_retain",
+            json.dumps({"items_count": 10, "num_sub_batches": 1, "is_parent": True}),
+            "completed",
+        )
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            child_id,
+            bank_id,
+            "retain",
+            json.dumps(
+                {"items_count": 10, "parent_operation_id": str(parent_id), "sub_batch_index": 1, "total_sub_batches": 1}
+            ),
+            "completed",
+        )
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            standalone_id,
+            bank_id,
+            "consolidation",
+            json.dumps({}),
+            "completed",
+        )
+
+    # Without exclude_parents: all 3 operations visible
+    all_ops = await memory.list_operations(
+        bank_id=bank_id,
+        request_context=request_context,
+        limit=10,
+        offset=0,
+    )
+    all_ids = {op["id"] for op in all_ops["operations"]}
+    assert str(parent_id) in all_ids
+    assert str(child_id) in all_ids
+    assert str(standalone_id) in all_ids
+    assert all_ops["total"] == 3
+
+    # With exclude_parents: parent is hidden
+    filtered_ops = await memory.list_operations(
+        bank_id=bank_id,
+        request_context=request_context,
+        limit=10,
+        offset=0,
+        exclude_parents=True,
+    )
+    filtered_ids = {op["id"] for op in filtered_ops["operations"]}
+    assert str(parent_id) not in filtered_ids
+    assert str(child_id) in filtered_ids
+    assert str(standalone_id) in filtered_ids
+    assert filtered_ops["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_request_context_retry_count_propagated_to_validator(memory_no_llm_verify, request_context):
+    """_handle_batch_retain forwards the task's _retry_count as
+    RequestContext.retry_count, so validator extensions can compute
+    exponential backoff without querying async_operations themselves.
+    """
+    from hindsight_api.extensions import (
+        OperationValidatorExtension,
+        RecallContext,
+        ReflectContext,
+        RetainContext,
+        ValidationResult,
+    )
+
+    captured: dict[str, int] = {"retry_count": -1}
+
+    class CapturingValidator(OperationValidatorExtension):
+        def __init__(self):
+            super().__init__({})
+
+        async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+            captured["retry_count"] = ctx.request_context.retry_count
+            return ValidationResult.accept()
+
+        async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+            return ValidationResult.accept()
+
+        async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+            return ValidationResult.accept()
+
+    memory_no_llm_verify._operation_validator = CapturingValidator()
+
+    bank_id = f"test-retry-propagate-{uuid.uuid4().hex[:8]}"
+    pool = await memory_no_llm_verify._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    task_dict = {
+        "type": "batch_retain",
+        "bank_id": bank_id,
+        "contents": [{"content": "retry-propagate test"}],
+        "_tenant_id": "default",
+        "_retry_count": 3,  # simulate 3rd retry
+    }
+    await memory_no_llm_verify._handle_batch_retain(task_dict)
+
+    assert captured["retry_count"] == 3, (
+        f"Validator should see retry_count=3 from task_dict['_retry_count']; got {captured['retry_count']}"
+    )
+
+    # Default (missing _retry_count key) must surface as 0, not raise.
+    captured["retry_count"] = -1
+    task_dict_no_retry = {
+        "type": "batch_retain",
+        "bank_id": bank_id,
+        "contents": [{"content": "retry-propagate default test"}],
+        "_tenant_id": "default",
+    }
+    await memory_no_llm_verify._handle_batch_retain(task_dict_no_retry)
+    assert captured["retry_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_async_operation_leaves_claimable_row_when_submit_task_fails(memory):
+    """Regression for the crash-window orphan bug fixed in #1091.
+
+    Previously, _submit_async_operation INSERTed the async_operations row without
+    task_payload, then called submit_task as a separate step to fill it in. If
+    submit_task failed (crash, timeout, dropped connection) after the INSERT
+    committed, the row was left with task_payload IS NULL and became permanently
+    stuck because the worker claim query filters on task_payload IS NOT NULL.
+
+    With the atomic INSERT, even if submit_task raises afterwards the row is born
+    claimable. This test simulates the crash by forcing submit_task to raise.
+    """
+    bank_id = f"test_orphan_prevention_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    async def failing_submit_task(_task_dict):
+        raise RuntimeError("Simulated crash between INSERT and submit_task")
+
+    memory._task_backend.submit_task = failing_submit_task  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="Simulated crash"):
+        await memory._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="retain",
+            task_type="batch_retain",
+            task_payload={"contents": [{"content": "hello", "document_id": "d1"}]},
+        )
+
+    rows = await pool.fetch(
+        """
+        SELECT status, task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(rows) == 1, f"Expected exactly one retain row for bank_id={bank_id}, got {len(rows)}"
+    row = rows[0]
+    assert row["status"] == "pending"
+    assert row["task_payload"] is not None, (
+        "task_payload must be set atomically by the INSERT — a NULL here means "
+        "the worker claim query (task_payload IS NOT NULL) will never pick this row up"
+    )
+    payload = json.loads(row["task_payload"])
+    assert payload["type"] == "batch_retain"
+    assert payload["bank_id"] == bank_id
+    assert payload["contents"] == [{"content": "hello", "document_id": "d1"}]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #1795: submit_async_retain must NOT fragment a
+# single oversized item across multiple child async-operations. Workers have
+# no per-document serialization for retain (the busy-bank guard in
+# claim_tasks only covers consolidation), so concurrent siblings sharing one
+# document_id race on handle_document_tracking(is_first_batch=True), cascade-
+# delete each other's memory_units, and trip FK violations on memory_links in
+# the final ANN pass. The fix: keep the oversized item un-chunked in a single
+# child; the worker's in-process splitter handles intra-document chunking
+# sequentially with correct is_first_batch semantics.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oversized_single_item_creates_one_child_not_many(memory, request_context, monkeypatch):
+    """One oversized document → one child operation holding the un-chunked content."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_oversized_one_child_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # No-op the worker dispatch: this is a structural assertion on the
+    # async_operations rows that submit_async_retain inserts (those rows are
+    # committed before submit_task is invoked), so we don't need the
+    # SyncTaskBackend to drive the slow LLM pipeline to completion.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    # Build content that comfortably exceeds the per-batch token budget.
+    # The pre-fix code would split this into many siblings, all sharing
+    # the same document_id and racing on handle_document_tracking.
+    unit = "The quick brown fox jumps over the lazy dog. " * 50  # ~570 tokens
+    repetitions = max(1, (tokens_per_batch * 4) // count_tokens(unit) + 1)
+    big_content = unit * repetitions
+    document_id = f"doc-oversize-{uuid.uuid4().hex[:8]}"
+
+    total_tokens = count_tokens(big_content)
+    assert total_tokens > tokens_per_batch, (
+        f"Test setup error: content has {total_tokens} tokens, must exceed the batch budget of {tokens_per_batch}"
+    )
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": big_content, "document_id": document_id}],
+        request_context=request_context,
+    )
+    parent_operation_id = result["operation_id"]
+
+    # Parent metadata must say one child — even though token count is huge,
+    # the un-fragmenting splitter keeps the single item in one child.
+    parent_row = await pool.fetchrow(
+        "SELECT result_metadata FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(parent_operation_id),
+    )
+    parent_meta = (
+        json.loads(parent_row["result_metadata"])
+        if isinstance(parent_row["result_metadata"], str)
+        else parent_row["result_metadata"]
+    )
+    assert parent_meta["num_sub_batches"] == 1, (
+        f"Expected 1 child for an oversized single item, got {parent_meta['num_sub_batches']}. "
+        "Issue #1795: per-chunk children race on the shared document_id."
+    )
+
+    # Exactly one retain child row.
+    children = await pool.fetch(
+        """
+        SELECT operation_id, status, task_payload, result_metadata
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(children) == 1, (
+        f"Expected exactly 1 child retain operation for bank_id={bank_id}, "
+        f"got {len(children)}. Issue #1795 regression: oversized item was "
+        f"fragmented into per-chunk children."
+    )
+
+    child = children[0]
+    payload = child["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+    assert payload["type"] == "batch_retain"
+    assert payload["bank_id"] == bank_id
+    # Child holds the full un-chunked content — the worker's in-process
+    # splitter will re-chunk it sequentially with is_first_batch=(i==1).
+    assert len(payload["contents"]) == 1, (
+        f"Child payload should hold the original single item, got {len(payload['contents'])} items"
+    )
+    assert payload["contents"][0]["document_id"] == document_id
+    assert payload["contents"][0]["content"] == big_content, (
+        "Child must carry the FULL un-chunked content — chunking happens inside the worker, not at submit time"
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_item_among_small_items_keeps_small_items_packed(memory, request_context, monkeypatch):
+    """Mixed batch: small items pack together; oversized item isolates to its own child."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_mixed_pack_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Structural assertion on async_operations rows only — skip worker dispatch.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    big_unit = "The quick brown fox jumps over the lazy dog. " * 50
+    big_repetitions = max(1, (tokens_per_batch * 3) // count_tokens(big_unit) + 1)
+    big_content = big_unit * big_repetitions
+
+    big_doc = f"doc-big-{uuid.uuid4().hex[:8]}"
+    small_docs = [f"doc-small-{i}-{uuid.uuid4().hex[:6]}" for i in range(3)]
+    contents = [
+        {"content": "Alice works at Google.", "document_id": small_docs[0]},
+        {"content": big_content, "document_id": big_doc},
+        {"content": "Bob loves Python.", "document_id": small_docs[1]},
+        {"content": "Carol writes Rust.", "document_id": small_docs[2]},
+    ]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    children = await pool.fetch(
+        """
+        SELECT task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        ORDER BY created_at, operation_id
+        """,
+        bank_id,
+    )
+
+    # Find the child holding the big doc — it must hold ONLY the big doc.
+    big_child = None
+    small_doc_ids_seen: list[str] = []
+    for row in children:
+        payload = row["task_payload"]
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        items = payload["contents"]
+        doc_ids = [item["document_id"] for item in items]
+        if big_doc in doc_ids:
+            assert big_child is None, f"Big doc {big_doc} should appear in exactly one child, found in 2"
+            big_child = items
+            assert doc_ids == [big_doc], f"Child holding the oversized item must hold ONLY that item, got {doc_ids}"
+            assert items[0]["content"] == big_content
+        else:
+            small_doc_ids_seen.extend(doc_ids)
+
+    assert big_child is not None, "Big doc must appear in some child"
+    # Every small input present, exactly once, across the other children.
+    assert sorted(small_doc_ids_seen) == sorted(small_docs)
+
+
+@pytest.mark.asyncio
+async def test_submit_async_batch_retain_rolls_back_parent_on_child_failure(
+    memory_no_llm_verify, request_context, monkeypatch
+):
+    """Regression for orphaned-parent rows.
+
+    submit_async_batch_retain inserts a parent row (status='pending',
+    task_payload=NULL — it's a status aggregator, not directly executable) and
+    then loops to insert one child row per sub-batch. If the parent INSERT and
+    the child INSERTs were not transactionally coupled, any failure during the
+    child loop (connection drop, timeout, schema-cache invalidation under
+    concurrent load) would leave a parent with zero children. Workers ignore
+    such rows forever (task_payload IS NULL filter), the status aggregator
+    never fires (no children to complete), and the row sits pending
+    indefinitely — visible in queue-depth metrics and growing without bound.
+
+    This test simulates a child-step failure by raising on the second
+    BatchRetainChildMetadata construction. After the failure we expect zero
+    async_operations rows for the bank: the parent INSERT must roll back
+    together with the children.
+    """
+    import hindsight_api.engine.memory_engine as me
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_parent_rollback_{uuid.uuid4().hex[:8]}"
+    pool = await memory_no_llm_verify._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Force at least 2 sub-batches so the child loop runs more than once
+    # (matches the existing large-batch fixture's sizing).
+    large_content = "The quick brown fox jumps over the lazy dog. " * 500
+    contents = [{"content": large_content + f" item {i}", "document_id": f"doc{i}"} for i in range(2)]
+    assert sum(count_tokens(item["content"]) for item in contents) > 10_000
+
+    real_class = me.BatchRetainChildMetadata
+    call_count = {"n": 0}
+
+    def failing_child_metadata(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("Simulated child-step failure mid-batch")
+        return real_class(*args, **kwargs)
+
+    monkeypatch.setattr(me, "BatchRetainChildMetadata", failing_child_metadata)
+
+    with pytest.raises(RuntimeError, match="Simulated child-step failure"):
+        await memory_no_llm_verify.submit_async_retain(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+    rows = await pool.fetch(
+        "SELECT operation_id, operation_type, status, task_payload FROM async_operations WHERE bank_id = $1",
+        bank_id,
+    )
+    assert rows == [], (
+        f"Expected zero rows for bank_id={bank_id} after rollback, got {len(rows)}: "
+        f"{[(r['operation_type'], r['status'], r['task_payload'] is not None) for r in rows]}. "
+        "The parent INSERT must be transactionally coupled to the child INSERTs."
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_async_batch_retain_creates_missing_bank(memory, request_context, monkeypatch):
+    """First async retain to a new bank lazily creates the bank (async_operations
+    has an FK to banks) instead of raising a constraint error."""
+
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    bank_id = f"test_batch_newbank_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Google.", "document_id": "doc1"}],
+        request_context=request_context,
+    )
+
+    bank = await pool.fetchrow("SELECT bank_id FROM banks WHERE bank_id = $1", bank_id)
+    assert bank is not None, "submit_async_retain should have lazily created the bank"
+
+
+@pytest.mark.asyncio
+async def test_submit_async_batch_retain_rolls_back_missing_bank_on_child_failure(
+    memory_no_llm_verify, request_context, monkeypatch
+):
+    """The lazy bank-create shares the parent+child transaction. When the child
+    loop fails for a bank that did not previously exist, the freshly-created bank
+    must roll back together with the operation rows — no orphan bank."""
+    import hindsight_api.engine.memory_engine as me
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_batch_bank_rollback_{uuid.uuid4().hex[:8]}"
+    pool = await memory_no_llm_verify._get_pool()
+    # Intentionally do NOT pre-create the bank — it must be created (and then
+    # rolled back) inside submit_async_retain's transaction.
+
+    large_content = "The quick brown fox jumps over the lazy dog. " * 500
+    contents = [{"content": large_content + f" item {i}", "document_id": f"doc{i}"} for i in range(2)]
+    assert sum(count_tokens(item["content"]) for item in contents) > 10_000
+
+    real_class = me.BatchRetainChildMetadata
+    call_count = {"n": 0}
+
+    def failing_child_metadata(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("Simulated child-step failure mid-batch")
+        return real_class(*args, **kwargs)
+
+    monkeypatch.setattr(me, "BatchRetainChildMetadata", failing_child_metadata)
+
+    with pytest.raises(RuntimeError, match="Simulated child-step failure"):
+        await memory_no_llm_verify.submit_async_retain(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+    bank = await pool.fetchrow("SELECT bank_id FROM banks WHERE bank_id = $1", bank_id)
+    assert bank is None, "the lazily-created bank must roll back with the failed operation inserts"
+
+
+# ── retrying a batch_retain parent re-runs its outstanding children ─────────
+# Regression for #2985's retry guard, which rejected *every* payload-null
+# batch_retain parent — that made `retain --async` operations un-retryable
+# (their operation_id is always such a parent) and 409'd the operations doc
+# example. Retry now re-queues the parent's failed/cancelled children and
+# revives the parent, without touching in-flight children or re-stranding a
+# parent whose work is already done.
+
+
+async def _insert_parent(conn, bank_id: str, parent_id, status: str) -> None:
+    await conn.execute(
+        "INSERT INTO banks (bank_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING",
+        bank_id,
+    )
+    await conn.execute(
+        "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, result_metadata) "
+        "VALUES ($1, $2, 'batch_retain', $3, $4::jsonb)",
+        parent_id,
+        bank_id,
+        status,
+        json.dumps({"is_parent": True}),
+    )
+
+
+async def _insert_child(conn, bank_id: str, child_id, parent_id, status: str) -> None:
+    await conn.execute(
+        "INSERT INTO async_operations "
+        "(operation_id, bank_id, operation_type, status, task_payload, result_metadata) "
+        "VALUES ($1, $2, 'retain', $3, $4::jsonb, $5::jsonb)",
+        child_id,
+        bank_id,
+        status,
+        json.dumps({"contents": []}),
+        json.dumps({"parent_operation_id": str(parent_id)}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_requeues_failed_child_and_revives_parent(memory, request_context):
+    from hindsight_api.engine.db_utils import acquire_with_retry
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "failed")
+
+    result = await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert result["success"] is True
+
+    async with acquire_with_retry(backend) as conn:
+        rows = {
+            r["operation_id"]: r["status"]
+            for r in await conn.fetch("SELECT operation_id, status FROM async_operations WHERE bank_id = $1", bank_id)
+        }
+    assert rows[child_id] == "pending", "the failed child must be re-queued"
+    assert rows[parent_id] == "pending", "the parent must be revived so it re-aggregates"
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_leaves_processing_child_untouched(memory, request_context):
+    # A 'processing' child is owned by a live worker; resetting it would let a
+    # second worker race it on the same document_id (#1795). Retry must revive
+    # the parent (the processing child is non-completed) but not touch the child.
+    from hindsight_api.engine.db_utils import acquire_with_retry
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "processing")
+
+    result = await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert result["success"] is True
+
+    async with acquire_with_retry(backend) as conn:
+        rows = {
+            r["operation_id"]: r["status"]
+            for r in await conn.fetch("SELECT operation_id, status FROM async_operations WHERE bank_id = $1", bank_id)
+        }
+    assert rows[child_id] == "processing", "an in-flight child must not be reset"
+    assert rows[parent_id] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_all_children_completed_is_rejected(memory, request_context):
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "completed")
+
+    with pytest.raises(OperationValidationError) as exc:
+        await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert exc.value.status_code == 409
+
+    async with acquire_with_retry(backend) as conn:
+        parent = await conn.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
+    assert parent["status"] == "cancelled", "a parent with no retryable work must not be revived (no re-strand)"
+
+
+@pytest.mark.asyncio
+async def test_single_document_retain_surfaces_document_id(memory, request_context):
+    """A single-document async retain (e.g. a document reprocess) surfaces its
+    target document_id in the operations list, so the documents UI can cross-check
+    pending/processing ops and badge that row as "updating" while it's in flight.
+    """
+    bank_id = "test_single_doc_update"
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Google", "document_id": "report_2024"}],
+        request_context=request_context,
+    )
+
+    ops = (await memory.list_operations(bank_id, request_context=request_context))["operations"]
+    parents = [op for op in ops if op["task_type"] == "batch_retain"]
+    assert parents, "expected a batch_retain parent operation"
+    # Both the parent and its single child should carry the document_id.
+    assert all(op["document_id"] == "report_2024" for op in ops if op["task_type"] == "batch_retain")
+
+
+@pytest.mark.asyncio
+async def test_multi_document_batch_does_not_misattribute_document_id(memory, request_context):
+    """A batch that packs several documents into one child must NOT claim a single
+    document_id — that would badge the wrong row. The document_id is surfaced only
+    when an operation genuinely targets exactly one document.
+    """
+    bank_id = "test_multi_doc_update"
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[
+            {"content": "Alice works at Google", "document_id": "doc_a"},
+            {"content": "Bob loves Python", "document_id": "doc_b"},
+        ],
+        request_context=request_context,
+    )
+
+    ops = (await memory.list_operations(bank_id, request_context=request_context))["operations"]
+    # These two small items pack into one multi-document child, so neither the
+    # parent nor the child resolves to a single document_id.
+    assert ops, "expected operations for the batch"
+    assert all(op["document_id"] is None for op in ops)
+
+
+# --- NUL / lone surrogate in a queued item (PR #3908) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_retain_survives_nul_and_surrogate_in_any_field(memory, request_context, monkeypatch):
+    """A queued item carrying U+0000 must be stored, not 500 on the jsonb INSERT.
+
+    ``submit_async_retain`` serializes the whole item into
+    ``async_operations.task_payload::jsonb``. PostgreSQL stores U+0000 in neither
+    ``text`` nor ``jsonb`` and asyncpg cannot UTF-8-encode a lone surrogate, so
+    before the ingress scrub one such character *anywhere* in the item — content,
+    a tag, a nested metadata value, even a metadata key — aborted that INSERT with
+    ``UntranslatableCharacterError``. The request returned 500 and the memory was
+    never queued; the failure is deterministic for that payload, so a retrying
+    client re-sent it forever.
+    """
+    nul = "\u0000"
+    surrogate = "\ud83d"
+
+    bank_id = f"test_nul_payload_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Structural assertion on the committed rows — no need to drive the pipeline.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    document_id = f"doc-{uuid.uuid4().hex[:8]}"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": f"Alice{nul} joined the {surrogate}team.",
+                "context": f"team{nul} meeting",
+                "document_id": f"{document_id}{nul}",
+                "metadata": {f"so{nul}urce": f"sl{nul}ack", "nested": [f"a{nul}b"]},
+                "tags": [f"te{nul}am"],
+            }
+        ],
+        document_tags=[f"batch{nul}"],
+        request_context=request_context,
+    )
+
+    assert result["operation_id"]
+
+    # Read the committed row directly: the assertion is about what reached the
+    # jsonb column, which no engine read method exposes (the surrounding tests in
+    # this file inspect task_payload the same way).
+    children = await pool.fetch(
+        """
+        SELECT task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(children) == 1
+    payload = children[0]["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+
+    item = payload["contents"][0]
+    assert item["content"] == "Alice joined the team."
+    assert item["context"] == "team meeting"
+    assert item["document_id"] == document_id
+    assert item["metadata"] == {"source": "slack", "nested": ["ab"]}
+    assert item["tags"] == ["team"]
+    assert payload["document_tags"] == ["batch"]
+    # Nothing hostile may remain anywhere in the round-tripped payload.
+    assert nul not in json.dumps(payload)
+    assert surrogate not in json.dumps(payload)

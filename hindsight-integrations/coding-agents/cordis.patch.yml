@@ -1,0 +1,18 @@
+# DeepSeek Harness profile layer for Hindsight memory.
+#
+# `dsh plugin --profile <name> add @vectorize-io/hindsight-coding-agents` installs this package into
+# the profile and — because package.json declares `dsh.bundle.patch` — appends this file to the
+# profile's ordered bundle list. Nothing else needs editing: the row below mounts on the host plane,
+# where the pre-step/session-start/turn-stopping events and the layered tools registry all reach
+# every session, including the Web surface's per-session agent presets.
+#
+# Memory itself is configured OUTSIDE dsh, in ~/.hindsight/coding-agent.json (server URL, token,
+# bank naming, opt-outs) — the same file every other Hindsight coding-agent harness reads. To turn
+# it off for one profile without uninstalling, patch this row in the profile's own
+# cordis.patch.yml:
+#
+#   - id: hindsight
+#     disabled: true
+- insert:
+    - id: hindsight
+      name: "@vectorize-io/hindsight-coding-agents/dsh"

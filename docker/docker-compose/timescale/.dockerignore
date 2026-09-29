@@ -1,0 +1,16 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker
+docker-compose.yaml
+.dockerignore
+
+# Documentation
+README.md
+*.md
+
+# Environment
+.env
+.env.example

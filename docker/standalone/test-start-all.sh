@@ -1,0 +1,296 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+HINDSIGHT_START_ALL_SOURCE_ONLY=true
+source "$SCRIPT_DIR/start-all.sh"
+unset HINDSIGHT_START_ALL_SOURCE_ONLY
+
+TMP_DIR="$(mktemp -d)"
+HTTP_SERVER_PID=""
+
+cleanup() {
+    if [ -n "$HTTP_SERVER_PID" ]; then
+        kill "$HTTP_SERVER_PID" 2>/dev/null || true
+        wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    fi
+    chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+assert_contains() {
+    local output="$1"
+    local expected="$2"
+
+    if [[ "$output" != *"$expected"* ]]; then
+        echo "Expected output to contain: $expected"
+        echo "Actual output:"
+        echo "$output"
+        exit 1
+    fi
+}
+
+assert_not_contains() {
+    local output="$1"
+    local unexpected="$2"
+
+    if [[ "$output" == *"$unexpected"* ]]; then
+        echo "Expected output not to contain: $unexpected"
+        echo "Actual output:"
+        echo "$output"
+        exit 1
+    fi
+}
+
+assert_empty() {
+    local output="$1"
+
+    if [ -n "$output" ]; then
+        echo "Expected no output, got:"
+        echo "$output"
+        exit 1
+    fi
+}
+
+# =============================================================================
+# http_probe wiring
+#
+# The probe's semantics are covered by pytest, against the module that
+# implements them: hindsight-api-slim/tests/test_http_probe.py. All that is
+# left to check here is that this script delegates to it correctly.
+#
+# Skipped when hindsight_api.http_probe is not importable - this file also runs in CI
+# from a bare checkout with no virtualenv, where only the pg0 helpers below
+# are exercisable.
+# =============================================================================
+if python3 -c "import hindsight_api.http_probe" >/dev/null 2>&1; then
+    HTTP_PORT_FILE="$TMP_DIR/http-port"
+
+    python3 - "$HTTP_PORT_FILE" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(204 if self.path == "/ok" else 404)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+pathlib.Path(sys.argv[1]).write_text(str(server.server_port), encoding="ascii")
+server.serve_forever()
+PY
+    HTTP_SERVER_PID=$!
+
+    for _ in $(seq 1 50); do
+        [ -s "$HTTP_PORT_FILE" ] && break
+        sleep 0.1
+    done
+    if [ ! -s "$HTTP_PORT_FILE" ]; then
+        echo "HTTP probe test server did not start"
+        exit 1
+    fi
+    HTTP_TEST_URL="http://127.0.0.1:$(cat "$HTTP_PORT_FILE")"
+
+    if ! http_probe "$HTTP_TEST_URL/ok" 5 >/dev/null 2>&1; then
+        echo "http_probe should succeed against a healthy endpoint"
+        exit 1
+    fi
+    if http_probe "$HTTP_TEST_URL/missing" 5 >/dev/null 2>&1; then
+        echo "http_probe should fail against a 404"
+        exit 1
+    fi
+    if ! require_http_probe_runtime; then
+        echo "require_http_probe_runtime should pass when the module imports"
+        exit 1
+    fi
+
+    kill "$HTTP_SERVER_PID" 2>/dev/null || true
+    wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    HTTP_SERVER_PID=""
+    echo "start-all HTTP probe wiring checks passed"
+else
+    echo "start-all HTTP probe wiring checks skipped (hindsight_api.http_probe not importable)"
+fi
+
+mkdir -p "$TMP_DIR/empty"
+assert_empty "$(check_pg0_data_integrity "$TMP_DIR/empty")"
+
+mkdir -p "$TMP_DIR/direct"
+touch "$TMP_DIR/direct/PG_VERSION"
+direct_output="$(check_pg0_data_integrity "$TMP_DIR/direct")"
+assert_contains "$direct_output" "Existing pg0 data directory detected"
+assert_not_contains "$direct_output" "WARNING"
+
+mkdir -p "$TMP_DIR/legacy/instance"
+touch "$TMP_DIR/legacy/instance/PG_VERSION"
+legacy_output="$(check_pg0_data_integrity "$TMP_DIR/legacy")"
+assert_contains "$legacy_output" "Existing pg0 data directory detected"
+assert_not_contains "$legacy_output" "WARNING"
+
+mkdir -p "$TMP_DIR/nested/instances/hindsight/data"
+touch "$TMP_DIR/nested/instances/hindsight/data/PG_VERSION"
+nested_output="$(check_pg0_data_integrity "$TMP_DIR/nested")"
+assert_contains "$nested_output" "Existing pg0 data directory detected"
+assert_not_contains "$nested_output" "WARNING"
+
+mkdir -p "$TMP_DIR/nonempty/instances/hindsight"
+touch "$TMP_DIR/nonempty/instances/hindsight/instance.json"
+nonempty_output="$(check_pg0_data_integrity "$TMP_DIR/nonempty")"
+assert_contains "$nonempty_output" "WARNING: pg0 data directory exists"
+
+echo "start-all pg0 integrity checks passed"
+
+# =============================================================================
+# resolve_api_startup_wait_seconds (#3733)
+# =============================================================================
+assert_equals() {
+    local actual="$1"
+    local expected="$2"
+
+    if [ "$actual" != "$expected" ]; then
+        echo "Expected: $expected"
+        echo "Actual:   $actual"
+        exit 1
+    fi
+}
+
+# Neither knob set: the wrapper default.
+assert_equals "$(HINDSIGHT_API_STARTUP_WAIT_SECONDS= HINDSIGHT_API_MODEL_INIT_TIMEOUT= resolve_api_startup_wait_seconds)" "300"
+
+# The documented knob raised: the wrapper waits at least that long, so raising
+# it actually takes effect instead of being cut short at the default.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200 resolve_api_startup_wait_seconds)" "7230"
+
+# Floats are accepted — the API parses its cap as one.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200.0 resolve_api_startup_wait_seconds)" "7230"
+
+# A shorter cap never shortens the wrapper wait.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=60 resolve_api_startup_wait_seconds)" "300"
+
+# Garbage falls back to the default rather than breaking startup.
+assert_equals "$(HINDSIGHT_API_MODEL_INIT_TIMEOUT=abc resolve_api_startup_wait_seconds)" "300"
+
+# An explicit wrapper setting always wins.
+assert_equals "$(HINDSIGHT_API_STARTUP_WAIT_SECONDS=45 HINDSIGHT_API_MODEL_INIT_TIMEOUT=7200 resolve_api_startup_wait_seconds)" "45"
+
+echo "start-all API startup wait checks passed"
+
+# =============================================================================
+# check_pg0_writable (#1483)
+# These rely on filesystem permissions, which root bypasses; skip under root.
+# =============================================================================
+if [ "$(id -u)" != "0" ]; then
+    # Writable directory: returns 0, prints nothing, leaves no artifact behind.
+    mkdir -p "$TMP_DIR/writable"
+    writable_output="$(check_pg0_writable "$TMP_DIR/writable")"
+    assert_empty "$writable_output"
+    if [ -e "$TMP_DIR/writable/.hindsight-write-test" ]; then
+        echo "check_pg0_writable left its write-test file behind"
+        exit 1
+    fi
+
+    # Non-writable directory: returns 1 with actionable guidance.
+    mkdir -p "$TMP_DIR/readonly"
+    chmod 000 "$TMP_DIR/readonly"
+    set +e
+    readonly_output="$(check_pg0_writable "$TMP_DIR/readonly" 2>&1)"
+    readonly_rc=$?
+    set -e
+    chmod 755 "$TMP_DIR/readonly"
+    if [ "$readonly_rc" -eq 0 ]; then
+        echo "check_pg0_writable should fail on a non-writable directory"
+        exit 1
+    fi
+    assert_contains "$readonly_output" "not writable"
+    assert_contains "$readonly_output" "hindsight-data:/home/hindsight/.pg0"
+    assert_contains "$readonly_output" "--user"
+
+    # External database configured: skip the check regardless of dir perms.
+    mkdir -p "$TMP_DIR/extdb"
+    chmod 000 "$TMP_DIR/extdb"
+    set +e
+    HINDSIGHT_API_DATABASE_URL="postgres://x" check_pg0_writable "$TMP_DIR/extdb" >/dev/null 2>&1
+    extdb_rc=$?
+    set -e
+    chmod 755 "$TMP_DIR/extdb"
+    if [ "$extdb_rc" -ne 0 ]; then
+        echo "check_pg0_writable should skip when an external database is configured"
+        exit 1
+    fi
+
+    echo "start-all pg0 writability checks passed"
+else
+    echo "⚠️  Running as root; skipping pg0 writability checks (permissions are bypassed)."
+fi
+
+# =============================================================================
+# Control Plane loopback hostname resolution (#1926)
+#
+# A literal loopback HOSTNAME makes Next 307 every control-plane page to itself
+# while every other health signal stays green, so the substitution below is the
+# difference between a working UI and an unreachable one. The address family
+# matters as much as the fix: `localhost` resolves to ::1 in Docker's generated
+# /etc/hosts, so a bare substitution would silently move a requested IPv4 bind
+# onto IPv6. These assert that the spelling changes and the family does not.
+#
+# resolve_cp_hostname sets globals, so its output is captured through a file --
+# command substitution would run it in a subshell and drop CP_HOSTNAME.
+# =============================================================================
+assert_equals() {
+    local actual="$1"
+    local expected="$2"
+    local what="$3"
+
+    if [ "$actual" != "$expected" ]; then
+        echo "Expected $what to be '$expected', got '$actual'"
+        exit 1
+    fi
+}
+
+CP_OUT="$TMP_DIR/cp-hostname-out"
+
+# IPv4 loopback: rebound as localhost, pinned back to IPv4.
+NODE_OPTIONS=""
+CP_HOSTNAME=""
+resolve_cp_hostname "127.0.0.1" > "$CP_OUT" 2>&1
+assert_equals "$CP_HOSTNAME" "localhost" "CP_HOSTNAME for 127.0.0.1"
+assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv4first"
+assert_contains "$(cat "$CP_OUT")" "redirect every page to itself"
+assert_contains "$(cat "$CP_OUT")" "issues/1926"
+
+# IPv6 loopback, both spellings: same treatment, pinned back to IPv6.
+for v6 in "::1" "[::1]"; do
+    NODE_OPTIONS=""
+    CP_HOSTNAME=""
+    resolve_cp_hostname "$v6" > "$CP_OUT" 2>&1
+    assert_equals "$CP_HOSTNAME" "localhost" "CP_HOSTNAME for $v6"
+    assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv6first"
+done
+
+# The default and ordinary hostnames are left alone, silently.
+for untouched in "0.0.0.0" "localhost" "cp.internal"; do
+    NODE_OPTIONS=""
+    CP_HOSTNAME=""
+    resolve_cp_hostname "$untouched" > "$CP_OUT" 2>&1
+    assert_equals "$CP_HOSTNAME" "$untouched" "CP_HOSTNAME for $untouched"
+    assert_empty "$NODE_OPTIONS"
+    assert_empty "$(cat "$CP_OUT")"
+done
+
+# An operator's own NODE_OPTIONS must survive; this appends, never replaces.
+NODE_OPTIONS="--max-old-space-size=2048"
+CP_HOSTNAME=""
+resolve_cp_hostname "127.0.0.1" > "$CP_OUT" 2>&1
+assert_contains "$NODE_OPTIONS" "--max-old-space-size=2048"
+assert_contains "$NODE_OPTIONS" "--dns-result-order=ipv4first"
+
+NODE_OPTIONS=""
+echo "start-all control-plane hostname checks passed"

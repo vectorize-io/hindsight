@@ -1,0 +1,420 @@
+name: Performance Tests
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: "Test scale (perf-test)"
+        type: choice
+        options:
+          - tiny
+          - small
+          - medium
+          - large
+        default: large
+      suite:
+        description: "Perf-test suite to run (blank = all)"
+        type: choice
+        options:
+          - ""
+          - retain
+          - recall
+          - recall-with-observations
+          - recall-temporal
+          - consolidation
+          - graph-maintenance
+        default: ""
+      amb_skip:
+        description: "Skip the AMB benchmark job (LoComo + LongMemEval)"
+        type: boolean
+        default: false
+      amb_args:
+        description: "Extra `amb run` arguments, e.g. --unit conv-26 --query-limit 20"
+        type: string
+        default: ""
+      obs_skip:
+        description: "Skip observation-dedup benchmark job"
+        type: boolean
+        default: false
+      obs_dataset:
+        description: "Obs benchmark dataset substring (blank = English hermes transcript)."
+        type: string
+        default: ""
+      obs_fraction:
+        description: "Obs benchmark fraction (0-1] of each document to run."
+        type: string
+        default: "1.0"
+      system_evals_skip:
+        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language, retain fidelity)"
+        type: boolean
+        default: false
+      system_evals_mode:
+        description: "system-evals mode: full (every category) or minimum (only the cases that have regressed)."
+        type: choice
+        options:
+          - full
+          - minimum
+        default: full
+      ref:
+        description: "Git ref to test (branch, tag, or SHA). Defaults to main."
+        type: string
+        default: ""
+
+concurrency:
+  group: perf-test
+  cancel-in-progress: true
+
+jobs:
+  perf-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run --frozen --all-extras --index-strategy unsafe-best-match python -c "
+        from sentence_transformers import SentenceTransformer
+        print('Downloading embedding model...')
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        print('Model downloaded successfully')
+        "
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Run perf-test
+      run: |
+        SUITE_ARG=""
+        if [ -n "${{ inputs.suite }}" ]; then
+          SUITE_ARG="--suite ${{ inputs.suite }}"
+        fi
+        ./scripts/benchmarks/run-perf-test.sh \
+          --scale ${{ inputs.scale || 'large' }} \
+          $SUITE_ARG \
+          --output perf-results.json
+
+    - name: Upload perf results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: perf-results-${{ github.sha }}
+        path: hindsight-dev/perf-results.json
+        retention-days: 90
+
+    # Publish enriched results (perf JSON + commit metadata) to the dashboard
+    # repo's gh-pages branch. The static site at
+    #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/
+    # reads data/index.json + data/<run>.json and renders charts client-side.
+    - name: Publish to dashboard
+      if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-perf-results.sh hindsight-dev/perf-results.json
+
+  amb:
+    # LoComo and LongMemEval come from AMB (vectorize-io/agent-memory-benchmark),
+    # which owns their datasets, prompts, answer model, judge and scoring and
+    # publishes to agentmemorybenchmark.ai. This job only starts a server and
+    # points AMB's `hindsight-http` provider at it — see
+    # hindsight-system-evals/README.md. It replaced a second in-repo copy of the
+    # same two datasets, which was free to drift from the published ones.
+    if: inputs.amb_skip != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      # One dataset failing says nothing about the other.
+      fail-fast: false
+      matrix:
+        include:
+          - dataset: locomo
+            split: locomo10
+          - dataset: longmemeval
+            split: s
+    env:
+      # The server under test. AMB's own answer and judge models are configured
+      # separately, below.
+      HINDSIGHT_EVAL_LLM_PROVIDER: vertexai
+      HINDSIGHT_EVAL_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      # AMB generates and judges answers itself, through a Gemini API key: its
+      # LLM registry is gemini/groq/openai with no vertexai backend, so the
+      # service account above covers only the server under test.
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AMB_CHECKOUT: ${{ github.workspace }}/.amb
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run --frozen --all-extras --index-strategy unsafe-best-match python -c "
+        from sentence_transformers import SentenceTransformer
+        print('Downloading embedding model...')
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        print('Model downloaded successfully')
+        "
+
+    - name: Cache the AMB checkout
+      uses: actions/cache@v5
+      with:
+        path: ${{ github.workspace }}/.amb
+        key: amb-${{ hashFiles('hindsight-system-evals/AMB_REF') }}
+
+    - name: Install server and eval dependencies
+      run: |
+        (cd hindsight-api-slim && uv sync --frozen --all-extras --index-strategy unsafe-best-match)
+        (cd hindsight-system-evals && uv sync)
+
+    - name: Run AMB
+      run: |
+        # Fail here rather than 40 minutes in, mid-dataset: AMB answers and
+        # judges through the Gemini API key, not the VertexAI service account.
+        if [ -z "${GEMINI_API_KEY}" ]; then
+          echo "::error::GEMINI_API_KEY is not set — AMB's answer and judge models need it." >&2
+          exit 1
+        fi
+        cd hindsight-system-evals
+        uv run run-amb --dataset ${{ matrix.dataset }} --split ${{ matrix.split }} -- ${{ inputs.amb_args }}
+
+    - name: Upload AMB results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: amb-${{ matrix.dataset }}-${{ github.sha }}
+        path: ${{ github.workspace }}/.amb/outputs/
+        retention-days: 90
+
+    - name: Publish LoComo to dashboard
+      # LoComo only: the monitor's locomo series is 86 runs deep and the script
+      # writes data/locomo/. LongMemEval has no series there, and inventing one
+      # is not this change. AMB's own numbers still go to agentmemorybenchmark.ai.
+      if: success() && matrix.dataset == 'locomo' && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        ./scripts/benchmarks/publish-locomo-results.sh \
+          "${{ github.workspace }}/.amb/outputs/locomo/hindsight-http/rag/locomo10.json"
+
+  obs:
+    # Observation-dedup quality benchmark: ingests a transcript, drains consolidation
+    # (serial SyncTaskBackend + embedded pg0 — no external DB / worker), and reports the
+    # near-duplicate observation rate. Real LLM via VertexAI, like the other quality jobs.
+    if: inputs.obs_skip != true
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_ENABLE_OBSERVATIONS: "true"
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run --frozen --all-extras --index-strategy unsafe-best-match python -c "
+        from sentence_transformers import SentenceTransformer
+        print('Downloading embedding model...')
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        print('Model downloaded successfully')
+        "
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Run obs benchmark
+      # Default to the English hermes transcript at full fraction — a clean, deterministic
+      # consolidation-dedup signal (the Chinese variant adds a cross-lingual embedding
+      # confound). Override dataset/fraction via workflow_dispatch.
+      run: |
+        DATASET="${{ inputs.obs_dataset }}"
+        if [ -z "$DATASET" ]; then DATASET="hermes_session_2026-05-15_en"; fi
+        FRACTION="${{ inputs.obs_fraction }}"
+        if [ -z "$FRACTION" ]; then FRACTION="1.0"; fi
+        cd hindsight-dev
+        uv run python -m benchmarks.obs.obs_benchmark \
+          --dataset "$DATASET" --fraction "$FRACTION" --wipe-bank --output obs-results.json
+
+    - name: Upload obs results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: obs-results-${{ github.sha }}
+        path: hindsight-dev/obs-results.json
+        retention-days: 90
+
+    - name: Publish obs to dashboard
+      if: success() && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-obs-results.sh hindsight-dev/obs-results.json
+
+  system-evals:
+    # Knowledge-page convergence, reflect answers and retain language, graded by an
+    # independent judge. Blackbox: a real
+    # hindsight-api process driven only through the published Python client, the
+    # same shape as hindsight-system-tests — except the model is REAL, because a
+    # quality eval against a stub would score the stub. That also means it needs
+    # provider secrets, which is why it lives here and not in the PR workflow.
+    if: inputs.system_evals_skip != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HINDSIGHT_EVAL_LLM_PROVIDER: vertexai
+      HINDSIGHT_EVAL_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      # A different model from the one under test: a model grading its own output
+      # agrees with itself.
+      HINDSIGHT_EVAL_JUDGE_PROVIDER: vertexai
+      HINDSIGHT_EVAL_JUDGE_MODEL: google/gemini-2.5-flash
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Install server and eval dependencies
+      # The server under test keeps its default local embeddings and reranker (only
+      # the LLM is real-provider), so it needs the full extras, unlike test-system.
+      run: |
+        (cd hindsight-api-slim && uv sync --frozen --all-extras --index-strategy unsafe-best-match)
+        (cd hindsight-system-evals && uv sync)
+
+    - name: Run system evals
+      run: |
+        MODE="${{ inputs.system_evals_mode }}"
+        FLAG="--full"
+        if [ "$MODE" = "minimum" ]; then FLAG=""; fi
+        cd hindsight-system-evals
+        # `tests` first: fast, model-free unit tests of the harness itself (target
+        # resolution). They cost seconds and a break there invalidates the evals.
+        uv run pytest tests evals $FLAG --output system-evals-results.json
+
+    - name: Upload system-evals results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: system-evals-results-${{ github.sha }}
+        path: hindsight-system-evals/system-evals-results.json
+        retention-days: 90
+
+    - name: Publish system-evals to dashboard
+      # Published even when an eval fails: for a quality metric the red run IS the
+      # data point, and dropping it would hide exactly the regressions it exists to
+      # show. Skipped only when nothing was written (the run died before grading).
+      if: >-
+        always() &&
+        hashFiles('hindsight-system-evals/system-evals-results.json') != '' &&
+        (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-system-evals-results.sh hindsight-system-evals/system-evals-results.json

@@ -1,0 +1,1755 @@
+/**
+ * Hindsight custom theme - Modern, clean style
+ */
+
+/* Primary colors - Blue to Teal gradient theme */
+:root {
+  /* Primary gradient */
+  --hindsight-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  /* Same ramp left-to-right, for wide-and-short surfaces (buttons, bars) where
+     the 135° version would only show one end of it. */
+  --hindsight-gradient-horizontal: linear-gradient(90deg, #0074d9 0%, #009296 100%);
+  --hindsight-gradient-start: #0074d9;
+  --hindsight-gradient-end: #009296;
+
+  /* The surface every active navbar item wears. Flat rather than a gradient:
+     active items keep gradient *text*, which needs `background-clip: text` and
+     therefore owns `background` — so the surface is painted with an inset
+     box-shadow instead, and box-shadow takes no gradient. At this alpha the
+     ramp was imperceptible anyway. */
+  --hindsight-active-surface: rgba(0, 116, 217, 0.09);
+
+  /* Skill banner (src/components/SkillBanner) — a quiet strip that reads as
+     tooling attached to the page, not as an alert competing with the title. */
+  --skill-banner-surface: rgba(0, 116, 217, 0.04);
+  --skill-banner-border: rgba(0, 116, 217, 0.22);
+  --skill-banner-button: rgba(255, 255, 255, 0.6);
+  --skill-banner-button-hover: rgba(0, 116, 217, 0.08);
+
+  /* Body copy on docs pages, a step back from headings and bolded terms. */
+  --hindsight-docs-body-color: #3f3f46;
+
+  /* lucide "chevron-down", masked so it takes the element's own color */
+  --hindsight-chevron-down-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+
+  /* lucide "search" for the sidebar field. Infima ships its own, but it is a
+     filled glyph in a fixed near-black that disappears on the dark surface. */
+  --hindsight-search-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%2371717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>');
+
+  /* Fallback solid colors (midpoint of gradient) */
+  --ifm-color-primary: #0074d9;
+  --ifm-color-primary-dark: #0068c3;
+  --ifm-color-primary-darker: #005db0;
+  --ifm-color-primary-darkest: #004d91;
+  --ifm-color-primary-light: #1a85e0;
+  --ifm-color-primary-lighter: #3396e8;
+  --ifm-color-primary-lightest: #e6f3ff;
+
+  --ifm-code-font-size: 90%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 116, 217, 0.1);
+
+  /* Typography */
+  --ifm-font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --ifm-heading-font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
+  --ifm-font-weight-semibold: 600;
+  --ifm-font-size-base: 96%;
+
+  /* Spacing */
+  --ifm-spacing-horizontal: 1.5rem;
+  /* 4rem, not Infima's 4.5: with 2rem-tall items the taller bar was mostly
+     empty. Everything positioned under the navbar — sidebar offset, sticky
+     TOC — derives from this variable, so they follow. */
+  --ifm-navbar-height: 4rem;
+
+  /* Borders */
+  --ifm-global-radius: 0.5rem;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #3396e8;
+  --ifm-color-primary-dark: #1a85e0;
+  --ifm-color-primary-darker: #0074d9;
+  --ifm-color-primary-darkest: #0068c3;
+  --ifm-color-primary-light: #66b3f0;
+  --ifm-color-primary-lighter: #99cff5;
+  --ifm-color-primary-lightest: rgba(51, 150, 232, 0.15);
+  --docusaurus-highlighted-code-line-bg: rgba(51, 150, 232, 0.15);
+
+  --hindsight-active-surface: rgba(51, 150, 232, 0.16);
+
+  --skill-banner-surface: rgba(51, 150, 232, 0.06);
+  --skill-banner-border: rgba(51, 150, 232, 0.28);
+  --skill-banner-button: rgba(255, 255, 255, 0.03);
+  --skill-banner-button-hover: rgba(51, 150, 232, 0.14);
+
+  --hindsight-docs-body-color: #b4b4be;
+
+  /* Same magnifier, a step lighter to hold up against the dark field. */
+  --hindsight-search-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23a1a1aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>');
+
+  --ifm-background-color: #09090b;
+  --ifm-background-surface-color: #18181b;
+  --ifm-navbar-background-color: #09090b;
+  --ifm-footer-background-color: #09090b;
+  --ifm-toc-border-color: #27272a;
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Navbar styling */
+.navbar {
+  box-shadow: none;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  padding: 0 1rem;
+}
+
+.navbar__logo {
+  margin-bottom: 0.5rem;
+}
+
+.navbar__title {
+  font-weight: 700;
+  font-size: 1.125rem;
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.navbar__items {
+  gap: 0.25rem;
+}
+
+/* One height and one radius for every item up here, so the hover box, the
+   active surface and the Docs/version group are all the same shape. Flex
+   rather than inline: it centres the dropdown chevrons against their labels
+   without per-item baseline nudging. */
+.navbar__link {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700;
+  font-size: 0.875rem;
+  padding: 0 0.75rem;
+  border-radius: 0.625rem;
+  transition: background-color 0.15s ease;
+}
+
+
+.header-github-link:hover {
+  opacity: 0.7;
+}
+
+/* Hide Docusaurus's built-in external link SVG — we use LuExternalLink via iconAfter */
+svg[aria-label="(opens in new tab)"] {
+  display: none;
+}
+
+.navbar__link:hover {
+  background-color: var(--ifm-background-surface-color);
+}
+
+/* Whichever section you are in wears the same badge — gradient text on a
+   tinted surface — whether that is Docs, Integrations, Changelog or Resources.
+   The spread just has to exceed half the widest item for the inset shadow to
+   fill the box. */
+.navbar__link--active {
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  box-shadow: inset 0 0 0 100px var(--hindsight-active-surface);
+}
+
+[data-theme='dark'] .navbar__link:hover {
+  background-color: #27272a;
+}
+
+/* ── Brand block ──────────────────────────────────────────────────────────
+   The logo occupies the sidebar's column, so the rule closing the block
+   continues the sidebar's own edge instead of cutting the navbar at an
+   arbitrary point. Only on pages that actually have a sidebar. */
+.navbar__brand-block {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+}
+
+@media (min-width: 997px) {
+  html:has(.theme-doc-sidebar-container) .navbar__brand-block {
+    width: calc(var(--doc-sidebar-width) - 1rem);
+    margin-right: 1.5rem;
+    border-right: 1px solid var(--ifm-toc-border-color);
+  }
+}
+
+/* ── Docs + version ───────────────────────────────────────────────────────
+   The version qualifies the docs section rather than pointing anywhere of its
+   own, so the two sit on one surface — "Docs │ 0.9 ⌄" — wrapped together by
+   src/theme/Navbar/Content. That surface *is* the section's active state: it
+   is painted only while you are in the docs, which is also why the pair needs
+   no separate treatment from the other nav links when you are not. */
+.navbar__docs-group {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  margin-right: 0.5rem;
+  border-radius: 0.625rem;
+}
+
+/* Same surface as any other active item, only spanning the pair. */
+.navbar__docs-group:has(.navbar__link--active) {
+  background: var(--hindsight-active-surface);
+}
+
+/* The group carries the surface, so its links must not paint their own —
+   either the active one (it would stack a second tint inside the first) or a
+   hover box, which would be a shape inside a shape. */
+.navbar__docs-group .navbar__link--active {
+  box-shadow: none;
+}
+
+.navbar__docs-group .navbar__link:hover,
+[data-theme='dark'] .navbar__docs-group .navbar__link:hover {
+  background-color: transparent;
+}
+
+.navbar__docs-group .navbar-item-developer.navbar__link {
+  padding-right: 0.75rem;
+}
+
+.navbar-item-version.navbar__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.875rem 0 0;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-800);
+}
+
+/* Hairline between the two halves, sized to the text rather than the surface. */
+.navbar-item-version.navbar__link::before {
+  content: '';
+  width: 1px;
+  height: 0.875rem;
+  margin-right: 0.75rem;
+  background-color: currentColor;
+  opacity: 0.3;
+}
+
+/* Docusaurus marks the version dropdown active alongside the docs link, which
+   would hand it the gradient-clipped (transparent) text of an active item. */
+.navbar-item-version.navbar__link--active {
+  color: var(--ifm-color-emphasis-800);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+/* Infima's caret is a solid triangle; a stroked chevron matches the icon set
+   the rest of the navbar uses. */
+.navbar-item-version.navbar__link::after {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-left: 0.0625rem;
+  border: none;
+  opacity: 0.6;
+  background-color: currentColor;
+  -webkit-mask: var(--hindsight-chevron-down-icon) center / contain no-repeat;
+  mask: var(--hindsight-chevron-down-icon) center / contain no-repeat;
+}
+
+/* Infima nudges its caret with `top: 2px` + `translateY(-50%)`, sized for a
+   0.4em triangle sitting on the text baseline. Our icons are full 0.75rem
+   boxes centred by the flex row, so the nudge only pushes them up. */
+.navbar-item-version.navbar__link::after,
+.navbar-item-resources.navbar__link::after {
+  position: static;
+  top: auto;
+  transform: none;
+}
+
+/* Infima draws dropdown carets as filled triangles; a stroked chevron matches
+   the icon set the rest of the navbar uses. */
+.navbar-item-resources.navbar__link::after {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-left: 0.125rem;
+  border: none;
+  opacity: 0.6;
+  background-color: currentColor;
+  -webkit-mask: var(--hindsight-chevron-down-icon) center / contain no-repeat;
+  mask: var(--hindsight-chevron-down-icon) center / contain no-repeat;
+}
+
+/* ── Sign-up call to action ───────────────────────────────────────────── */
+.navbar-item-signup.navbar__link {
+  margin-left: 0.75rem;
+  padding: 0 0.875rem;
+  font-size: 0.875rem;
+  color: #ffffff;
+  border-radius: 0.5rem;
+  background: var(--hindsight-gradient-horizontal);
+  transition: filter 0.15s ease;
+}
+
+.navbar-item-signup.navbar__link:hover,
+[data-theme='dark'] .navbar-item-signup.navbar__link:hover {
+  color: #ffffff;
+  background: var(--hindsight-gradient-horizontal);
+  filter: brightness(1.08);
+}
+
+/* As the last item on the right, the button is caught by the navbar's
+   `:last-child { padding-right: 0 }` (a Docusaurus workaround for text links
+   ending flush with the navbar edge) — on a filled button that padding is the
+   gap between the label and the button's own edge, so it is put back here. */
+.navbar__items--right > .navbar-item-signup.navbar__link {
+  position: relative;
+  padding-right: 0.875rem;
+}
+
+/* Separates the icon buttons from the call to action. */
+.navbar__items--right > .navbar-item-signup.navbar__link::before {
+  content: '';
+  position: absolute;
+  left: -0.75rem;
+  height: 1.25rem;
+  border-left: 1px solid var(--ifm-toc-border-color);
+}
+
+/* ── Search ───────────────────────────────────────────────────────────────
+   Search moved into the docs sidebar (src/theme/DocSidebar/Desktop/Content).
+   The navbar keeps its own copy for pages with no sidebar — blog, galleries,
+   the API reference — and stands down wherever the sidebar renders one. */
+@media (min-width: 997px) {
+  html:has(.theme-doc-sidebar-container) .navbar__items--right .navbar__search {
+    display: none;
+  }
+}
+
+/* Docusaurus clips the sidebar column to its own width (for the hideable
+   sidebar animation it does not use here), which would cut the search results
+   panel off at the sidebar's edge. */
+.theme-doc-sidebar-container {
+  clip-path: none;
+}
+
+/* `searchBarPosition: 'left'` is set for the sidebar copy, which would swing
+   this one's results panel off the right of the window. Needs to out-specify
+   the plugin's own `.searchBar.searchBarLeft .dropdownMenu`. */
+nav.navbar .navbar__items--right .navbar__search [class*='dropdownMenu'] {
+  left: auto !important;
+  right: 0 !important;
+}
+
+/* The nav links and the hamburger are alternatives, never both: the switch is
+   at 997px, where Docusaurus itself moves the docs sidebar into the drawer.
+   It used to be 1400px, but the rule meant to hide the links there targeted
+   `.navbar__items--left` — a modifier the left container does not carry — so
+   the links stayed up alongside the hamburger and crowded it. */
+@media (min-width: 997px) {
+  .navbar__toggle {
+    display: none !important;
+  }
+}
+
+/* Mobile navbar - show hamburger, hide desktop items */
+@media (max-width: 996px) {
+  :root {
+    --ifm-navbar-height: 3.5rem;
+  }
+
+  .navbar {
+    padding: 0 0.75rem;
+  }
+
+  .navbar__logo {
+    margin-bottom: 0;
+    height: 24px !important;
+  }
+
+  .navbar__logo img {
+    height: 24px !important;
+  }
+
+  /* Hide the left navbar items — they are in the drawer. Matched on the theme
+     class, since the left container is `theme-layout-navbar-left navbar__items`
+     with no `--left` modifier, and dropdowns wrap their link in `.dropdown`. */
+  .theme-layout-navbar-left > .navbar__link,
+  .theme-layout-navbar-left > .dropdown,
+  .navbar__docs-group {
+    display: none !important;
+  }
+
+  /* Show hamburger toggle */
+  .navbar__toggle {
+    display: flex !important;
+    color: var(--ifm-color-primary);
+  }
+
+  /* Mobile sidebar */
+  .navbar-sidebar {
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar__brand {
+    padding: 1rem;
+    border-bottom: 1px solid var(--ifm-toc-border-color);
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar__items {
+    padding: 1rem 0;
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar .menu__link {
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 0.75rem 1.25rem;
+    color: #1e293b !important;
+  }
+
+  .navbar-sidebar .menu__link--active {
+    background: var(--hindsight-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Close button */
+  .navbar-sidebar__close {
+    color: #1e293b !important;
+  }
+
+  /* Backdrop overlay */
+  .navbar-sidebar__backdrop {
+    background: rgba(0, 0, 0, 0.5) !important;
+  }
+}
+
+/* Dark mode mobile sidebar */
+@media (max-width: 1399px) {
+  [data-theme='dark'] .navbar-sidebar {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__brand {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__items {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar .menu__link {
+    color: #e2e8f0 !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar .menu__link--active,
+  [data-theme='dark'] .navbar-sidebar .menu__link--active:hover {
+    color: transparent !important;
+    background: var(--hindsight-gradient) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__close {
+    color: #e2e8f0 !important;
+  }
+}
+
+/* Truly mobile (<= 996px): hide right navbar items too */
+@media (max-width: 996px) {
+  .navbar__items--right > .navbar__item {
+    display: none !important;
+  }
+}
+
+/* Mobile sidebar - show right navbar items */
+@media (max-width: 1399px) {
+  /* Ensure right-side items are visible in mobile sidebar */
+  .navbar-sidebar .navbar__item {
+    display: block !important;
+  }
+
+}
+
+/* Hero section */
+.hero {
+  padding: 4rem 0;
+}
+
+.hero--primary {
+  background: linear-gradient(135deg, var(--hindsight-gradient-start) 0%, var(--hindsight-gradient-end) 100%);
+}
+
+[data-theme='dark'] .hero--primary {
+  background: linear-gradient(135deg, #0f1419 0%, #0d1117 100%);
+}
+
+.hero__title {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+}
+
+.hero__subtitle {
+  font-size: 1.125rem;
+  opacity: 0.9;
+}
+
+/* Buttons */
+.button {
+  border-radius: 0.5rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.button--primary {
+  background: var(--hindsight-gradient);
+  border: none;
+  color: white;
+}
+
+.button--primary:hover {
+  background: linear-gradient(135deg, #005db0 0%, #007a7d 100%);
+  color: white;
+}
+
+.button--secondary {
+  background: transparent;
+  border: 2px solid var(--hindsight-gradient-start);
+  color: var(--ifm-color-primary);
+}
+
+.button--secondary:hover {
+  background: var(--hindsight-gradient);
+  border-color: transparent;
+  color: white;
+}
+
+/* Sidebar */
+.menu__link {
+  border-radius: 0.375rem;
+  font-weight: 500;
+  font-size: 0.8125rem;
+}
+
+.menu__link--active {
+  background: linear-gradient(135deg, rgba(0, 116, 217, 0.1) 0%, rgba(0, 146, 150, 0.1) 100%);
+}
+
+.menu__link--active .menu__link {
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+[data-theme='dark'] .menu__link--active {
+  background: linear-gradient(135deg, rgba(0, 116, 217, 0.15) 0%, rgba(0, 146, 150, 0.15) 100%);
+}
+
+/* Non-collapsible category styling */
+.menu__list-item-collapsible {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 700;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.menu__list-item-collapsible .menu__link {
+  padding: 0.25rem 0.75rem;
+}
+
+.menu__list-item-collapsible .menu__link:hover {
+  background: transparent;
+}
+
+[data-theme='dark'] .menu__list-item-collapsible {
+  color: var(--ifm-color-emphasis-500);
+}
+
+/* Space between sections */
+li.theme-doc-sidebar-item-category-level-1 {
+  margin-top: 1.75rem;
+}
+
+li.theme-doc-sidebar-item-category-level-1:first-child {
+  margin-top: 0;
+}
+
+/* Reduce item indentation */
+.menu__list .menu__list {
+  padding-left: 0.5rem;
+}
+
+/* Code blocks */
+pre,
+pre code,
+.prism-code {
+  font-family: 'JetBrains Mono', var(--ifm-font-family-monospace) !important;
+}
+
+.prism-code {
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  padding: 1rem !important;
+}
+
+/* Inline code */
+code {
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.875em;
+  font-family: 'JetBrains Mono', var(--ifm-font-family-monospace) !important;
+  background-color: #f1f5f9;
+  color: #0f172a;
+  font-weight: 500;
+}
+
+[data-theme='dark'] code {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+
+/* Don't apply inline styles to code inside pre blocks */
+pre code {
+  background-color: transparent !important;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+  font-weight: normal;
+}
+
+/* Code block container - single background source */
+div[class*="codeBlockContainer"] {
+  border-radius: 0.5rem;
+  border: 1px solid var(--ifm-toc-border-color);
+  overflow: hidden;
+  background: #f8fafc !important;
+}
+
+[data-theme='dark'] div[class*="codeBlockContainer"] {
+  background: #0f172a !important;
+}
+
+div[class*="codeBlockTitle"] {
+  font-size: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  font-family: 'JetBrains Mono', var(--ifm-font-family-monospace);
+  background: transparent !important;
+}
+
+/* Code block content area - transparent to show container bg */
+div[class*="codeBlockContent"],
+div[class*="codeBlockContent"] pre,
+div[class*="codeBlockContent"] .prism-code {
+  background: transparent !important;
+}
+
+/* Prism token backgrounds */
+.prism-code span {
+  background: transparent !important;
+}
+
+/* Cards/Features */
+.features {
+  padding: 4rem 0;
+}
+
+/* Docs page */
+.theme-doc-markdown {
+  max-width: 100%;
+}
+
+
+/* Page title with gradient */
+article h1,
+.markdown h1,
+header h1,
+h1[class*="title"] {
+  font-size: 2.25rem;
+  font-weight: 800;
+  margin-bottom: 1.25rem;
+  background-image: linear-gradient(90deg, #0074d9, #009296) !important;
+  background-size: 100% !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+  display: inline-block;
+}
+
+/* The rule under a section heading is structure, not decoration: a hairline in
+   the same colour as every other divider on the page, where it used to be a
+   2px brand gradient that pulled the eye to each heading in turn. */
+article h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+}
+
+article h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+}
+
+article p {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+/* Links with gradient - exclude RecipeCarousel cards and sidebar links */
+article a:not(.button):not([class*="hash-link"]):not([class*="card"]):not([class*="menu__link"]) {
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+/* Links containing code - the code inherits the transparent text-fill from the link */
+article a code {
+  -webkit-text-fill-color: #3396e8 !important;
+  color: #3396e8 !important;
+}
+
+article a:hover code {
+  -webkit-text-fill-color: #0074d9 !important;
+  color: #0074d9 !important;
+}
+
+article a:not(.button):not([class*="hash-link"]):hover {
+  text-decoration: underline;
+  text-decoration-color: var(--hindsight-gradient-start);
+}
+
+/* Admonitions - gradient themed */
+.theme-admonition,
+[class*="admonition_"] {
+  border-radius: 0.5rem !important;
+  border-left: none !important;
+  border: none !important;
+  background: rgba(0, 116, 217, 0.05) !important;
+  position: relative !important;
+  overflow: hidden !important;
+  padding-left: 1.25rem !important;
+}
+
+/* Gradient left border using pseudo-element */
+.theme-admonition::before,
+[class*="admonition_"]::before {
+  content: '' !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 4px !important;
+  background: linear-gradient(180deg, #0074d9, #009296) !important;
+  border-radius: 0.5rem 0 0 0.5rem !important;
+}
+
+/* Admonition heading text - gradient */
+[class*="admonitionHeading_"] {
+  background-image: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+/* Inline code inside admonition headings: don't inherit the transparent
+   text fill from the gradient title, or backticks render invisible. */
+[class*="admonitionHeading_"] code {
+  -webkit-text-fill-color: initial !important;
+  color: var(--ifm-color-content) !important;
+  background-image: none !important;
+}
+
+/* Admonition icon - gradient start color */
+[class*="admonitionIcon_"] svg,
+[class*="admonitionIcon_"] svg path {
+  fill: #0074d9 !important;
+}
+
+/* Different admonition types */
+.alert--info[class*="admonition_"],
+.theme-admonition-info {
+  background: rgba(0, 116, 217, 0.05) !important;
+}
+
+.alert--success[class*="admonition_"],
+.theme-admonition-tip {
+  background: rgba(0, 146, 150, 0.05) !important;
+}
+
+.alert--warning[class*="admonition_"],
+.theme-admonition-warning {
+  background: rgba(0, 116, 217, 0.08) !important;
+}
+
+.alert--secondary[class*="admonition_"],
+.theme-admonition-note {
+  background: rgba(0, 131, 154, 0.05) !important;
+}
+
+/* Dark mode admonitions */
+[data-theme='dark'] .theme-admonition,
+[data-theme='dark'] [class*="admonition_"] {
+  background: rgba(0, 131, 154, 0.1) !important;
+}
+
+[data-theme='dark'] .theme-admonition::before,
+[data-theme='dark'] [class*="admonition_"]::before {
+  background: linear-gradient(180deg, #3396e8, #00b4b8) !important;
+}
+
+/* Tables - Compact styling */
+table {
+  display: table;
+  width: 100%;
+  font-size: 0.8125rem;
+  margin: 1rem 0;
+}
+
+th, td {
+  border: 1px solid var(--ifm-toc-border-color);
+  padding: 0.5rem 0.75rem;
+}
+
+th {
+  background: var(--ifm-background-surface-color);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+/* ── Previous / next ──────────────────────────────────────────────────────
+   Two boxed cards were the loudest thing on the page by the time you reached
+   the end of an article. They are just the two links either side of where you
+   are, so they read as links: no fill, no border, one rule separating them
+   from the content in the same way the footer is separated. */
+.pagination-nav {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--ifm-toc-border-color);
+  gap: 1rem;
+}
+
+.pagination-nav__link {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  transition: none;
+}
+
+.pagination-nav__link:hover {
+  background: none;
+}
+
+.pagination-nav__sublabel {
+  font-family: 'Space Grotesk', var(--ifm-font-family-base);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.25rem;
+}
+
+.pagination-nav__label {
+  font-family: 'Space Grotesk', var(--ifm-font-family-base);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--hindsight-docs-body-color);
+  transition: color 0.15s ease;
+}
+
+.pagination-nav__link:hover .pagination-nav__label {
+  color: var(--ifm-color-primary);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────
+   Continues the page rather than closing it with a slab: same background as
+   the content above, one hairline to separate them, and everything inside a
+   step quieter than body copy. It is a set of links you go looking for, not
+   something that should compete with the last paragraph you just read. */
+.footer {
+  background-color: transparent;
+  border-top: 1px solid var(--ifm-toc-border-color);
+  padding: 2.5rem 0 3rem;
+  font-size: 0.875rem;
+}
+
+.footer__title {
+  font-family: 'Space Grotesk', var(--ifm-font-family-base);
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.75rem;
+}
+
+.footer__item {
+  font-size: 0.875rem;
+  line-height: 1.9;
+}
+
+.footer__link-item {
+  color: var(--hindsight-docs-body-color);
+  transition: color 0.15s ease;
+}
+
+.footer__link-item:hover {
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+}
+
+.footer__copyright {
+  font-size: 0.8125rem;
+  color: var(--ifm-color-emphasis-500);
+}
+
+.footer__bottom {
+  margin-top: 2rem;
+}
+
+/* Tabs styling */
+.tabs-container {
+  margin: 1rem 0;
+}
+
+.tabs__item {
+  font-size: 0.8125rem;
+  padding: 0.5rem 1rem;
+}
+
+.tabs__item--active {
+  border-bottom-color: var(--hindsight-gradient-start);
+  background: var(--hindsight-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+
+/* Redoc sidebar - expand all tags by default */
+[class*="redoc-wrap"] [class*="menu-content"] ul {
+  display: block !important;
+}
+
+/* Hide Redoc footer/branding */
+[class*="redoc-wrap"] a[href*="redocly.com"] {
+  display: none !important;
+}
+
+/* Mermaid diagram styling - using high specificity selectors */
+.mermaid svg[id^="mermaid"] {
+  background: transparent !important;
+}
+
+/* Node shapes - gradient start color (#0074d9 blue) */
+.mermaid svg[id^="mermaid"] .node rect,
+.mermaid svg[id^="mermaid"] .node circle,
+.mermaid svg[id^="mermaid"] .node ellipse,
+.mermaid svg[id^="mermaid"] .node polygon,
+.mermaid svg[id^="mermaid"] .node path,
+svg[id^="mermaid"] .node rect,
+svg[id^="mermaid"] .node circle,
+svg[id^="mermaid"] .node ellipse,
+svg[id^="mermaid"] .node polygon,
+svg[id^="mermaid"] .node path {
+  fill: #0074d9 !important;
+  stroke: #005db0 !important;
+}
+
+/* Node text - white on colored background, Inter font */
+.mermaid svg[id^="mermaid"] .node .label,
+.mermaid svg[id^="mermaid"] .nodeLabel,
+.mermaid svg[id^="mermaid"] .node text,
+.mermaid svg[id^="mermaid"] .node foreignObject div,
+.mermaid svg[id^="mermaid"] .node foreignObject span,
+.mermaid svg[id^="mermaid"] .node foreignObject p,
+svg[id^="mermaid"] .node .label,
+svg[id^="mermaid"] .nodeLabel,
+svg[id^="mermaid"] .node text,
+svg[id^="mermaid"] .node foreignObject div,
+svg[id^="mermaid"] .node foreignObject span,
+svg[id^="mermaid"] .node foreignObject p {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.9375rem !important;
+}
+
+/* Edge/arrow lines - gradient end color (#009296 teal) */
+.mermaid svg[id^="mermaid"] .edgePath .path,
+.mermaid svg[id^="mermaid"] .flowchart-link,
+svg[id^="mermaid"] .edgePath .path,
+svg[id^="mermaid"] .flowchart-link {
+  stroke: #009296 !important;
+}
+
+/* Arrow heads - gradient end color */
+.mermaid svg[id^="mermaid"] .marker path,
+.mermaid svg[id^="mermaid"] .arrowheadPath,
+.mermaid svg[id^="mermaid"] marker path,
+svg[id^="mermaid"] .marker path,
+svg[id^="mermaid"] .arrowheadPath,
+svg[id^="mermaid"] marker path {
+  fill: #009296 !important;
+  stroke: #009296 !important;
+}
+
+/* Edge labels - transparent background, Inter font */
+.mermaid svg[id^="mermaid"] .edgeLabel,
+.mermaid svg[id^="mermaid"] .edgeLabel rect,
+.mermaid svg[id^="mermaid"] .edgeLabel span,
+.mermaid svg[id^="mermaid"] .labelBkg,
+svg[id^="mermaid"] .edgeLabel,
+svg[id^="mermaid"] .edgeLabel rect,
+svg[id^="mermaid"] .edgeLabel span,
+svg[id^="mermaid"] .labelBkg {
+  background: transparent !important;
+  background-color: transparent !important;
+  fill: transparent !important;
+}
+
+.mermaid svg[id^="mermaid"] .edgeLabel text,
+.mermaid svg[id^="mermaid"] .edgeLabel span,
+.mermaid svg[id^="mermaid"] .edgeLabel p,
+svg[id^="mermaid"] .edgeLabel text,
+svg[id^="mermaid"] .edgeLabel span,
+svg[id^="mermaid"] .edgeLabel p {
+  color: var(--ifm-font-color-base) !important;
+  fill: var(--ifm-font-color-base) !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.875rem !important;
+}
+
+/* Cluster/subgraph boxes - gradient end color border (#009296) */
+.mermaid svg[id^="mermaid"] .cluster rect,
+svg[id^="mermaid"] .cluster rect {
+  fill: rgba(0, 146, 150, 0.08) !important;
+  stroke: #009296 !important;
+  stroke-width: 2px !important;
+}
+
+/* Cluster labels - Inter font */
+.mermaid svg[id^="mermaid"] .cluster text,
+.mermaid svg[id^="mermaid"] .cluster .nodeLabel,
+.mermaid svg[id^="mermaid"] .cluster-label text,
+.mermaid svg[id^="mermaid"] .cluster-label span,
+.mermaid svg[id^="mermaid"] .cluster-label p,
+svg[id^="mermaid"] .cluster text,
+svg[id^="mermaid"] .cluster .nodeLabel,
+svg[id^="mermaid"] .cluster-label text,
+svg[id^="mermaid"] .cluster-label span,
+svg[id^="mermaid"] .cluster-label p {
+  color: var(--ifm-font-color-base) !important;
+  fill: var(--ifm-font-color-base) !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.9375rem !important;
+}
+
+/* All mermaid text should use Inter */
+.mermaid svg[id^="mermaid"] text,
+.mermaid svg[id^="mermaid"] span,
+.mermaid svg[id^="mermaid"] p,
+svg[id^="mermaid"] text,
+svg[id^="mermaid"] span,
+svg[id^="mermaid"] p {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Dark mode adjustments */
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .edgeLabel text,
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .edgeLabel span,
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .edgeLabel p,
+[data-theme='dark'] svg[id^="mermaid"] .edgeLabel text,
+[data-theme='dark'] svg[id^="mermaid"] .edgeLabel span,
+[data-theme='dark'] svg[id^="mermaid"] .edgeLabel p {
+  color: #e2e8f0 !important;
+  fill: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .cluster text,
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .cluster-label text,
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .cluster-label span,
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .cluster-label p,
+[data-theme='dark'] svg[id^="mermaid"] .cluster text,
+[data-theme='dark'] svg[id^="mermaid"] .cluster-label text,
+[data-theme='dark'] svg[id^="mermaid"] .cluster-label span,
+[data-theme='dark'] svg[id^="mermaid"] .cluster-label p {
+  color: #e2e8f0 !important;
+  fill: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .mermaid svg[id^="mermaid"] .cluster rect,
+[data-theme='dark'] svg[id^="mermaid"] .cluster rect {
+  fill: rgba(0, 146, 150, 0.15) !important;
+}
+
+/* List styling */
+article ul, article ol {
+  font-size: 0.9375rem;
+}
+
+article li {
+  margin-bottom: 0.25rem;
+}
+
+/* Announcement bar */
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+div[class*="announcementBar"] {
+  padding: 0.875rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(90deg, #0074d9 0%, #009296 100%) !important;
+  background-size: 100% 100% !important;
+  border: none !important;
+  position: relative;
+  overflow: hidden;
+}
+
+div[class*="announcementBar"]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+div[class*="announcementBar"] > div {
+  position: relative;
+  z-index: 1;
+}
+
+div[class*="announcementBarContent"] {
+  font-size: 0.875rem;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+div[class*="announcementBar"] a {
+  color: #ffffff !important;
+  text-decoration: none;
+  font-weight: 700;
+  padding: 0.25rem 0.75rem;
+  margin-left: 0.75rem;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  transition: all 0.2s ease;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+div[class*="announcementBar"] a:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===== Local Search Plugin Styling ===== */
+
+/* Search bar in navbar */
+.navbar__search {
+  margin-left: auto;
+}
+
+
+/* Hide keyboard shortcut hints */
+[class*="searchHint"],
+[class*="searchHintContainer"] {
+  display: none !important;
+}
+
+/* Minimal search button */
+[class*="searchBarContainer"] button,
+[class*="searchBar_"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid transparent !important;
+  border-image: linear-gradient(90deg, #0074d9, #009296) 1 !important;
+  border-radius: 0 !important;
+  padding: 0.25rem 0 !important;
+  color: var(--ifm-color-emphasis-600) !important;
+  transition: all 0.2s ease !important;
+  height: auto !important;
+  min-height: unset !important;
+}
+
+[class*="searchBarContainer"] button:hover,
+[class*="searchBar_"]:hover {
+  color: var(--ifm-font-color-base) !important;
+}
+
+[data-theme='dark'] [class*="searchBarContainer"] button,
+[data-theme='dark'] [class*="searchBar_"] {
+  color: var(--ifm-color-emphasis-500) !important;
+}
+
+[data-theme='dark'] [class*="searchBarContainer"] button:hover,
+[data-theme='dark'] [class*="searchBar_"]:hover {
+  color: #e2e8f0 !important;
+}
+
+/* Search input field - remove ALL borders */
+[class*="searchInput"],
+[class*="searchQueryInput"],
+[class*="searchInput"] *,
+[class*="searchQueryInput"] *,
+[class*="searchBarContainer"] input,
+[class*="searchBarContainer"] input * {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-top: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 0 !important;
+  border-left: 0 !important;
+  border-radius: 0 !important;
+  color: var(--ifm-font-color-base) !important;
+  padding: 0.5rem 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Add single underline via pseudo or direct */
+[class*="searchQueryInput"],
+[class*="searchBarContainer"] input[type="search"] {
+  border-bottom: 1px solid var(--ifm-toc-border-color) !important;
+}
+
+[data-theme='dark'] [class*="searchQueryInput"],
+[data-theme='dark'] [class*="searchBarContainer"] input[type="search"] {
+  border-bottom: 1px solid #27272a !important;
+}
+
+[class*="searchQueryInput"]:focus,
+[class*="searchBarContainer"] input[type="search"]:focus {
+  border-bottom: 1px solid #0074d9 !important;
+}
+
+[class*="searchInput"]::placeholder,
+[class*="searchQueryInput"]::placeholder,
+[class*="searchBarContainer"] input::placeholder {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 500 !important;
+  color: var(--ifm-color-emphasis-400) !important;
+}
+
+/* Minimal dropdown */
+[class*="dropdownMenu"],
+[class*="suggestionsContainer"],
+[class*="searchResultsContainer"],
+[class*="suggestions"],
+ul[class*="suggestion"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  border: none !important;
+  border-radius: 0.25rem !important;
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.15) !important;
+  padding: 0.25rem !important;
+}
+
+[data-theme='dark'] [class*="dropdownMenu"],
+[data-theme='dark'] [class*="suggestionsContainer"],
+[data-theme='dark'] [class*="searchResultsContainer"],
+[data-theme='dark'] [class*="suggestions"],
+[data-theme='dark'] ul[class*="suggestion"] {
+  background: #0f0f11 !important;
+  background-color: #0f0f11 !important;
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Minimal result items */
+[class*="searchResultItem"],
+[class*="suggestion"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  background: transparent !important;
+  border-radius: 0.25rem !important;
+  padding: 0.5rem 0.75rem !important;
+  margin: 0 !important;
+  transition: background-color 0.1s ease !important;
+  cursor: pointer !important;
+  border-left: 2px solid transparent !important;
+}
+
+/* No background hover - keep transparent */
+[class*="searchResultItem"]:hover,
+[class*="searchResultItem"][class*="cursor"],
+[class*="suggestion"]:hover,
+[class*="suggestion"][class*="cursor"] {
+  background: transparent !important;
+  border-left-color: transparent !important;
+}
+
+/* Icons - default color */
+[class*="hitIcon"],
+[class*="hitTree"] {
+  color: #71717a !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="hitIcon"] svg path,
+[class*="hitIcon"] svg,
+[class*="hitTree"] svg path,
+[class*="hitTree"] svg {
+  stroke: #71717a !important;
+  color: #71717a !important;
+  transition: all 0.15s ease !important;
+}
+
+/* Icons - hover gradient effect */
+[class*="suggestion"]:hover [class*="hitIcon"] svg path,
+[class*="suggestion"]:hover [class*="hitIcon"] svg,
+[class*="suggestion"]:hover [class*="hitTree"] svg path,
+[class*="suggestion"]:hover [class*="hitTree"] svg {
+  stroke: #0074d9 !important;
+  color: #0074d9 !important;
+}
+
+[data-theme='dark'] [class*="hitIcon"] svg path,
+[data-theme='dark'] [class*="hitIcon"] svg,
+[data-theme='dark'] [class*="hitTree"] svg path,
+[data-theme='dark'] [class*="hitTree"] svg {
+  stroke: #71717a !important;
+  color: #71717a !important;
+}
+
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitIcon"] svg path,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitIcon"] svg,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitTree"] svg path,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitTree"] svg {
+  stroke: #3396e8 !important;
+  color: #3396e8 !important;
+}
+
+/* === PAGE-LEVEL RESULTS (doc icon, no tree) === */
+/* Title is the page name - GRADIENT */
+[class*="suggestion"]:not(:has([class*="hitTree"])) [class*="hitTitle"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  margin: 0 !important;
+}
+
+/* === SECTION-LEVEL RESULTS (hashtag icon, has tree) === */
+/* Title is the section name - regular gray text */
+[class*="suggestion"]:has([class*="hitTree"]) [class*="hitTitle"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 500 !important;
+  font-size: 0.8125rem !important;
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  background-clip: unset !important;
+  color: #3f3f46 !important;
+  -webkit-text-fill-color: #3f3f46 !important;
+  margin: 0 !important;
+}
+
+[data-theme='dark'] [class*="suggestion"]:has([class*="hitTree"]) [class*="hitTitle"] {
+  color: #d4d4d8 !important;
+  -webkit-text-fill-color: #d4d4d8 !important;
+}
+
+/* Path is the page name - GRADIENT */
+[class*="suggestion"]:has([class*="hitTree"]) [class*="hitPath"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.75rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  margin-top: 0.125rem !important;
+  display: block !important;
+}
+
+/* === FALLBACK for browsers without :has() === */
+[class*="hitPath"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.625rem !important;
+  font-weight: 400 !important;
+  color: #71717a !important;
+  -webkit-text-fill-color: #71717a !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+[class*="hitTitle"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  margin: 0 !important;
+}
+
+/* Highlight matched text - must override color rules */
+[class*="searchResultItem"] mark,
+[class*="suggestion"] mark,
+.search-result-match mark,
+[class*="searchResultItem"]:hover mark,
+[class*="suggestion"]:hover mark,
+[class*="searchResultItem"][class*="cursor"] mark,
+[class*="suggestion"][class*="cursor"] mark {
+  background: transparent !important;
+  color: #0074d9 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+}
+
+[data-theme='dark'] [class*="searchResultItem"] mark,
+[data-theme='dark'] [class*="suggestion"] mark,
+[data-theme='dark'] .search-result-match mark,
+[data-theme='dark'] [class*="searchResultItem"]:hover mark,
+[data-theme='dark'] [class*="suggestion"]:hover mark,
+[data-theme='dark'] [class*="searchResultItem"][class*="cursor"] mark,
+[data-theme='dark'] [class*="suggestion"][class*="cursor"] mark {
+  color: #66b3f0 !important;
+}
+
+/* No results */
+[class*="noResults"],
+[class*="searchNoResult"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  color: var(--ifm-color-emphasis-500) !important;
+  padding: 1rem !important;
+  text-align: center !important;
+}
+
+/* Loading */
+[class*="searchIndexLoading"],
+[class*="loadingRing"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  color: var(--ifm-color-emphasis-400) !important;
+}
+
+/* Hide footer */
+[class*="hitFooter"],
+[class*="searchFooter"] {
+  display: none !important;
+}
+
+/* Hide action icons */
+[class*="hitAction"] {
+  display: none !important;
+}
+
+/* ===== Blog Post & Cookbook Typography ===== */
+
+/* Shared: larger body text, looser line-height */
+html.blog-post-page article p,
+html.blog-post-page article li,
+html.blog-post-page article blockquote p,
+html.mdx-wrapper article p,
+html.mdx-wrapper article li,
+html.mdx-wrapper article blockquote p,
+html.docs-wrapper article p,
+html.docs-wrapper article li,
+html.docs-wrapper article blockquote p {
+  font-size: 1rem;
+  line-height: 1.85;
+}
+
+/* Blog only: sans-serif body font */
+html.blog-post-page article p,
+html.blog-post-page article li,
+html.blog-post-page article blockquote p {
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* Blog only: make bold text stand out more */
+html.blog-post-page article strong {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--ifm-color-primary);
+}
+
+/* Shared: bump heading sizes */
+html.blog-post-page article h1,
+html.mdx-wrapper article h1,
+html.docs-wrapper article h1 {
+  font-size: 2.5rem;
+}
+
+html.blog-post-page article h2,
+html.mdx-wrapper article h2,
+html.docs-wrapper article h2 {
+  font-size: 1.6rem;
+}
+
+html.blog-post-page article h3,
+html.mdx-wrapper article h3,
+html.docs-wrapper article h3 {
+  font-size: 1.2rem;
+}
+
+/* ── Docs typography ──────────────────────────────────────────────────────
+   Reference material, read in passes rather than start to finish: the type is
+   a step smaller and the body a step quieter than the blog's, so scanning for
+   the heading or the bolded term is the easy path. Docs only — the blog keeps
+   the larger, more editorial setting above. */
+html.docs-wrapper article h1 {
+  font-size: 2rem;
+}
+
+html.docs-wrapper article h2 {
+  font-size: 1.25rem;
+  margin-top: 2.25rem;
+}
+
+html.docs-wrapper article h3 {
+  font-size: 1.0625rem;
+}
+
+html.docs-wrapper article p,
+html.docs-wrapper article li,
+html.docs-wrapper article blockquote p {
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--hindsight-docs-body-color);
+}
+
+/* The terms a scanner is looking for stay at full contrast against that. */
+html.docs-wrapper article strong {
+  color: var(--ifm-font-color-base);
+}
+
+/* ===== Blog Styling ===== */
+
+/* Blog author text visible in light mode */
+[class*="blogPostAuthor"],
+[class*="blogPostAuthor"] *,
+.avatar__name,
+.avatar__name a,
+.avatar__subtitle,
+[class*="authorName"],
+[class*="blogPostData"] a,
+[class*="blogPostInfo"] a {
+  color: #1e293b !important;
+  -webkit-text-fill-color: #1e293b !important;
+}
+
+/* Blog author text visible in dark mode */
+[data-theme='dark'] [class*="blogPostAuthor"],
+[data-theme='dark'] [class*="blogPostAuthor"] *,
+[data-theme='dark'] .avatar__name,
+[data-theme='dark'] .avatar__name a,
+[data-theme='dark'] .avatar__subtitle,
+[data-theme='dark'] [class*="authorName"],
+[data-theme='dark'] [class*="blogPostData"] a,
+[data-theme='dark'] [class*="blogPostInfo"] a {
+  color: #e2e8f0 !important;
+  -webkit-text-fill-color: #e2e8f0 !important;
+}
+
+/* Blog navbar icon */
+@media (min-width: 997px) {
+  .navbar-item-blog::before {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    content: '';
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-blog::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
+}
+
+
+/* Remove right border from doc sidebar */
+.theme-doc-sidebar-container {
+  border-right: none !important;
+}
+
+/* ── On this page ─────────────────────────────────────────────────────────
+   The table of contents is a map, not content: at full text contrast a long
+   one competes with the article beside it. Every entry is muted, and the one
+   Docusaurus marks as active — it scroll-spies the headings — is the only
+   thing that carries colour, so the eye finds your position in one look. */
+/* Explicit tones rather than --ifm-color-emphasis-600: in dark mode that token
+   resolves to #ccd0d5, all but body-text bright, so the muting never landed. */
+.table-of-contents__link,
+.table-of-contents__link code {
+  color: #71717a;
+  transition: color 0.15s ease;
+}
+
+[data-theme='dark'] .table-of-contents__link,
+[data-theme='dark'] .table-of-contents__link code {
+  color: #a1a1aa;
+}
+
+.table-of-contents__link:hover,
+.table-of-contents__link:hover code {
+  color: #18181b;
+}
+
+[data-theme='dark'] .table-of-contents__link:hover,
+[data-theme='dark'] .table-of-contents__link:hover code {
+  color: #f4f4f5;
+}
+
+/* Repeated under [data-theme='dark'] so it outweighs the muted rule above,
+   which would otherwise win on specificity and grey out the active entry. */
+.table-of-contents__link--active,
+.table-of-contents__link--active code,
+.table-of-contents__link--active:hover,
+.table-of-contents__link--active:hover code,
+[data-theme='dark'] .table-of-contents__link--active,
+[data-theme='dark'] .table-of-contents__link--active code,
+[data-theme='dark'] .table-of-contents__link--active:hover,
+[data-theme='dark'] .table-of-contents__link--active:hover code {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* Marks the active entry against the TOC's own left rule, so its position in
+   the list is readable without relying on colour alone. */
+.table-of-contents .table-of-contents__left-border {
+  border-left-color: var(--ifm-toc-border-color);
+}
+
+.table-of-contents__link--active {
+  position: relative;
+}
+
+.table-of-contents__link--active::before {
+  content: '';
+  position: absolute;
+  left: -1.02rem;
+  top: 0.15rem;
+  bottom: 0.15rem;
+  border-left: 2px solid var(--ifm-color-primary);
+}
+
+/* Blog filter view transitions (BlogListPage wraps filter updates in
+   document.startViewTransition): shorten the default 250ms crossfade so
+   filtering feels soft but still snappy. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
+/* On mobile the single-post 2.5rem Space Grotesk title was overwhelming —
+   use the body (paragraph) font at a calmer size instead. */
+@media (max-width: 640px) {
+  html.blog-post-page article h1,
+  html.blog-post-page article h2,
+  html.blog-post-page article h3 {
+    font-family: var(--ifm-font-family-base);
+  }
+
+  html.blog-post-page article h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  html.blog-post-page article h2 {
+    font-size: 1.2rem;
+  }
+
+  html.blog-post-page article h3 {
+    font-size: 1.05rem;
+  }
+}
+
+/* interfig figures (hindsight-interfig): follow the site colors */
+.interfig {
+  --fig-accent: var(--ifm-color-primary);
+}
+[data-theme='dark'] .interfig {
+  --fig-fg: #e3e3e3;
+  --fig-muted: #9aa0a6;
+  --fig-bg: #1b1b1d;
+  --fig-surface: #242526;
+  --fig-border: #3a3b3c;
+}

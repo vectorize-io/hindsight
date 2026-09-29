@@ -1,0 +1,431 @@
+"""
+Search tracer for collecting detailed search execution traces.
+
+The SearchTracer collects comprehensive information about each step
+of the spreading activation search process for debugging and visualization.
+"""
+
+import logging
+import time
+from datetime import UTC, datetime
+from typing import Any, Literal
+
+from .trace import (
+    EntryPoint,
+    NodeVisit,
+    QueryInfo,
+    RerankedResult,
+    RetrievalMethodResults,
+    RetrievalResult,
+    RRFMergeResult,
+    SearchPhaseMetrics,
+    SearchSummary,
+    SearchTrace,
+    TemporalConstraint,
+    WeightComponents,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SearchTracer:
+    """
+    Tracer for collecting detailed search execution information.
+
+    Usage:
+        tracer = SearchTracer(query="Who is Alice?", budget=50, max_tokens=4096)
+        tracer.start()
+
+        # During search...
+        tracer.record_query_embedding(embedding)
+        tracer.add_entry_point(node_id, text, similarity, rank)
+        tracer.visit_node(...)
+
+        # After search...
+        trace = tracer.finalize(final_results)
+        json_output = trace.to_json()
+    """
+
+    def __init__(
+        self,
+        query: str,
+        budget: int,
+        max_tokens: int,
+        tags: list[str] | None = None,
+        tags_match: str | None = None,
+        query_timestamp: datetime | None = None,
+    ):
+        # `phases_only` keeps the timings and drops everything expensive. Phase metrics are a
+        # handful of floats; the rest of a trace is every candidate's text, the query embedding and
+        # the full visit list, which is why tracing is opt-in. Separating them lets the phase
+        # timings be ALWAYS on: without them a recall log accounts for 58% of its own duration and
+        # the reader goes hunting for the rest in the wrong layer.
+        self.phases_only = False
+        """
+        Initialize tracer.
+
+        Args:
+            query: Search query text
+            budget: Maximum nodes to explore
+            max_tokens: Maximum tokens to return in results
+            tags: Tags filter applied to recall
+            tags_match: Tags matching mode (any, all, any_strict, all_strict)
+            query_timestamp: The as-of anchor the query was resolved against, when the
+                caller supplied one. Defaults to the moment the trace is finalized.
+        """
+        self.query_text = query
+        self.budget = budget
+        self.max_tokens = max_tokens
+        self.tags = tags
+        self.tags_match = tags_match
+        self.query_timestamp = query_timestamp
+
+        # Trace data
+        self.query_embedding: list[float] | None = None
+        self.start_time: float | None = None
+        self.entry_points: list[EntryPoint] = []
+        self.visits: list[NodeVisit] = []
+        self.phase_metrics: list[SearchPhaseMetrics] = []
+
+        # Temporal constraint detected from query
+        self.temporal_constraint: TemporalConstraint | None = None
+
+        # New 4-way retrieval tracking
+        self.retrieval_results: list[RetrievalMethodResults] = []
+        self.rrf_merged: list[RRFMergeResult] = []
+        self.reranked: list[RerankedResult] = []
+
+        # Tracking state
+        self.current_step = 0
+        self.nodes_visited_set = set()  # For quick lookups
+
+    def start(self):
+        """Start timing the search."""
+        self.start_time = time.time()
+
+    def record_query_embedding(self, embedding: list[float]):
+        """Record the query embedding."""
+        if self.phases_only:
+            return
+        self.query_embedding = embedding
+
+    def record_temporal_constraint(self, start: datetime | None, end: datetime | None):
+        """Record the detected temporal constraint from query analysis."""
+        if start is not None or end is not None:
+            self.temporal_constraint = TemporalConstraint(start=start, end=end)
+
+    def add_entry_point(self, node_id: str, text: str, similarity: float, rank: int):
+        """
+        Record an entry point.
+
+        Args:
+            node_id: Memory unit ID
+            text: Memory unit text
+            similarity: Cosine similarity to query
+            rank: Rank among entry points (1-based)
+        """
+        if self.phases_only:
+            return
+        # Clamp similarity to [0.0, 1.0] to handle floating-point precision
+        similarity = min(1.0, max(0.0, similarity))
+
+        self.entry_points.append(
+            EntryPoint(
+                node_id=node_id,
+                text=text,
+                similarity_score=similarity,
+                rank=rank,
+            )
+        )
+
+    def visit_node(
+        self,
+        node_id: str,
+        text: str,
+        context: str,
+        event_date: datetime | None,
+        is_entry_point: bool,
+        activation: float,
+        semantic_similarity: float,
+        recency: float,
+        frequency: float,
+        final_weight: float,
+    ):
+        """
+        Record visiting a node.
+
+        Args:
+            node_id: Memory unit ID
+            text: Memory unit text
+            context: Memory unit context
+            event_date: When the memory occurred
+            is_entry_point: Whether this is an entry point
+            activation: Activation score
+            semantic_similarity: Semantic similarity to query
+            recency: Recency weight
+            frequency: Frequency weight
+            final_weight: Combined final weight
+        """
+        self.current_step += 1
+        self.nodes_visited_set.add(node_id)
+
+        # The counters above are cheap and feed the summary totals, so they stay. Everything below
+        # constructs per-node trace records and is skipped unless a trace was actually asked for --
+        # see the note in `add_retrieval_results`.
+        if self.phases_only:
+            return
+
+        # Clamp values to handle floating-point precision issues
+        # (sometimes normalization produces values like 1.0000005 instead of 1.0)
+        semantic_similarity = min(1.0, max(0.0, semantic_similarity))
+        recency = min(1.0, max(0.0, recency))
+        frequency = min(1.0, max(0.0, frequency))
+
+        # Calculate weight contributions for transparency
+        weights = WeightComponents(
+            activation=activation,
+            semantic_similarity=semantic_similarity,
+            recency=recency,
+            frequency=frequency,
+            final_weight=final_weight,
+            activation_contribution=0.3 * activation,
+            semantic_contribution=0.3 * semantic_similarity,
+            recency_contribution=0.25 * recency,
+            frequency_contribution=0.15 * frequency,
+        )
+
+        visit = NodeVisit(
+            step=self.current_step,
+            node_id=node_id,
+            text=text,
+            context=context,
+            event_date=event_date,
+            is_entry_point=is_entry_point,
+            weights=weights,
+            final_rank=None,  # Will be set later
+        )
+
+        self.visits.append(visit)
+
+    def add_phase_metric(self, phase_name: str, duration_seconds: float, details: dict[str, Any] | None = None):
+        """
+        Record metrics for a search phase.
+
+        Args:
+            phase_name: Name of the phase
+            duration_seconds: Time taken
+            details: Additional phase-specific details
+        """
+        self.phase_metrics.append(
+            SearchPhaseMetrics(
+                phase_name=phase_name,
+                duration_seconds=duration_seconds,
+                details=details or {},
+            )
+        )
+        # Every recall phase already funnels through here, and the tracer is constructed for EVERY
+        # recall so the `[phases]` line has somewhere to write -- so this is the one place that
+        # turns a per-request log line into an aggregate, with no new timers and no per-request
+        # flag for a caller to remember.
+        #
+        # Instrumentation must never be the thing that fails the request it measures.
+        try:
+            from ...metrics import get_metrics_collector
+
+            get_metrics_collector().record_recall_phase(
+                phase_name,
+                duration_seconds,
+                diagnostic=bool((details or {}).get("diagnostic")),
+            )
+        except Exception:
+            logger.debug("recall phase metrics not recorded", exc_info=True)
+
+    def add_retrieval_results(
+        self,
+        method_name: Literal["semantic", "bm25", "graph", "temporal"],
+        results: list[tuple],  # List of (doc_id, data) tuples
+        duration_seconds: float,
+        score_field: str,  # e.g., "similarity", "bm25_score"
+        metadata: dict[str, Any] | None = None,
+        fact_type: str | None = None,
+    ):
+        """
+        Record results from a single retrieval method.
+
+        Args:
+            method_name: Name of the retrieval method
+            results: List of (doc_id, data) tuples from retrieval
+            duration_seconds: Time taken for this retrieval
+            score_field: Field name containing the score in data dict
+            metadata: Optional metadata about this retrieval method
+            fact_type: Fact type this retrieval was for (world, experience)
+        """
+        # Builds one object per retrieval hit, and a recall's arms carry hundreds. Profiled under
+        # load this and `visit_node` were ~7% of the api process's loop thread, entirely for a
+        # trace nobody requested -- the tracer is constructed for EVERY recall now so the phase
+        # metrics have somewhere to live, so a method without this guard runs on every request.
+        # Its siblings (`record_query_embedding`, `add_entry_point`, `add_rrf_merged`, ...) all
+        # have it; these two were missed.
+        if self.phases_only:
+            return
+        retrieval_results = []
+        for rank, (doc_id, data) in enumerate(results, start=1):
+            score = data.get(score_field)
+            if score is None:
+                score = 0.0
+            retrieval_results.append(
+                RetrievalResult(
+                    rank=rank,
+                    node_id=doc_id,
+                    text=data.get("text") or "",
+                    context=data.get("context") or "",
+                    event_date=data.get("event_date"),
+                    fact_type=data.get("fact_type") or fact_type,
+                    score=score,
+                    score_name=score_field,
+                )
+            )
+
+        self.retrieval_results.append(
+            RetrievalMethodResults(
+                method_name=method_name,
+                fact_type=fact_type,
+                results=retrieval_results,
+                duration_seconds=duration_seconds,
+                metadata=metadata or {},
+            )
+        )
+
+    def add_rrf_merged(self, merged_results: list[tuple]):
+        """
+        Record RRF merged results.
+
+        Args:
+            merged_results: List of (doc_id, data, rrf_meta) tuples from RRF merge
+        """
+        if self.phases_only:
+            return
+        self.rrf_merged = []
+        for rank, (doc_id, data, rrf_meta) in enumerate(merged_results, start=1):
+            source_ranks = rrf_meta.get("source_ranks")
+            if source_ranks is None:
+                source_ranks = {key: value for key, value in rrf_meta.items() if key.endswith("_rank")}
+            self.rrf_merged.append(
+                RRFMergeResult(
+                    node_id=doc_id,
+                    text=data.get("text", ""),
+                    rrf_score=rrf_meta.get("rrf_score", 0.0),
+                    source_ranks=source_ranks,
+                    final_rrf_rank=rank,
+                )
+            )
+
+    def add_reranked(self, reranked_results: list[dict[str, Any]], rrf_merged: list):
+        """
+        Record reranked results.
+
+        Args:
+            reranked_results: List of result dicts after reranking
+            rrf_merged: Original RRF merged results for comparison
+        """
+        if self.phases_only:
+            return
+        # Build map of node_id -> rrf_rank
+        rrf_rank_map = {}
+        for item in self.rrf_merged:
+            rrf_rank_map[item.node_id] = item.final_rrf_rank
+
+        self.reranked = []
+        for rank, result in enumerate(reranked_results, start=1):
+            node_id = result["id"]
+            rrf_rank = rrf_rank_map.get(node_id, len(rrf_merged) + 1)
+            rank_change = rrf_rank - rank  # Positive = moved up
+
+            # Extract score components (only include non-None values)
+            # Keys from ScoredResult.to_dict(): cross_encoder_score, cross_encoder_score_normalized,
+            # rrf_normalized, temporal, recency, proof_norm, combined_score, weight
+            score_components = {}
+            for key in [
+                "cross_encoder_score",
+                "cross_encoder_score_normalized",
+                "rrf_score",
+                "rrf_normalized",
+                "temporal",
+                "recency",
+                "proof_norm",
+                "combined_score",
+            ]:
+                if key in result and result[key] is not None:
+                    score_components[key] = result[key]
+
+            self.reranked.append(
+                RerankedResult(
+                    node_id=node_id,
+                    text=result.get("text", ""),
+                    rerank_score=result.get("weight", 0.0),
+                    rerank_rank=rank,
+                    rrf_rank=rrf_rank,
+                    rank_change=rank_change,
+                    score_components=score_components,
+                )
+            )
+
+    def finalize(self, final_results: list[dict[str, Any]]) -> SearchTrace:
+        """
+        Finalize the trace and return the complete SearchTrace object.
+
+        Args:
+            final_results: Final ranked results returned to user
+
+        Returns:
+            Complete SearchTrace object
+        """
+        if self.start_time is None:
+            raise ValueError("Tracer not started - call start() first")
+
+        total_duration = time.time() - self.start_time
+
+        # Set final ranks on visits based on results
+        for rank, result in enumerate(final_results, 1):
+            result_node_id = result["id"]
+            for visit in self.visits:
+                if visit.node_id == result_node_id:
+                    visit.final_rank = rank
+                    break
+
+        # Create query info
+        query_info = QueryInfo(
+            query_text=self.query_text,
+            query_embedding=self.query_embedding or [],
+            timestamp=self.query_timestamp or datetime.now(UTC),
+            budget=self.budget,
+            max_tokens=self.max_tokens,
+            tags=self.tags,
+            tags_match=self.tags_match,
+            temporal_constraint=self.temporal_constraint,
+        )
+
+        # Create summary
+        summary = SearchSummary(
+            total_nodes_visited=len(self.visits),
+            entry_points_found=len(self.entry_points),
+            budget_used=len(self.visits),
+            budget_remaining=self.budget - len(self.visits),
+            total_duration_seconds=total_duration,
+            results_returned=len(final_results),
+            phase_metrics=self.phase_metrics,
+        )
+
+        # Create complete trace
+        trace = SearchTrace(
+            query=query_info,
+            retrieval_results=self.retrieval_results,
+            rrf_merged=self.rrf_merged,
+            reranked=self.reranked,
+            entry_points=self.entry_points,
+            visits=self.visits,
+            summary=summary,
+            final_results=final_results,
+        )
+
+        return trace

@@ -1,0 +1,359 @@
+
+
+# Observations: Knowledge Consolidation
+
+After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
+
+**Figure: Observation Consolidation.** An animated diagram on the docs site; its narration, step by step:
+
+- **refine**
+  1. A new fact lands. Until it is consolidated, observation searches are flagged stale, so reflect checks them against the raw facts.
+  2. Consolidation runs in the background after retain. For each new fact it recalls related observations, only within the same tag scope.
+  3. One LLM call sees the new facts next to those observations and decides, facet by facet: create, update or delete.
+  4. Before anything is written, each new or rewritten observation is compared with its closest neighbours. Only a near-identical one gets a merge-or-keep check.
+  5. The observation is rewritten with the fact attached as evidence, so its proof count goes up. The previous wording is kept in history.
+  6. The same write marks the fact consolidated, so the observation is fresh again.
+- **contradict**
+  1. Now a fact that contradicts what the bank believes.
+  2. A change of state is not a reason to delete. The LLM updates the belief so it records what changed, with dates when it has them.
+  3. The observation now tells the whole journey, not just “prefers Vue”. It rests on all three facts, and both older versions stay in history.
+- **something new**
+  1. A fact about something the bank has no belief on yet.
+  2. Nothing covers this facet, so the LLM creates a new observation instead of bending an unrelated one.
+  3. The near-duplicate check keeps it: different facets stay separate observations.
+  4. The new observation starts with one source. It will gain evidence as more facts repeat it.
+
+---
+
+## What Are Observations?
+
+Observations are **consolidated knowledge** built from multiple facts. Unlike raw facts — which are individual pieces of information — observations represent deduplicated beliefs, preferences, and learnings grounded in accumulated evidence. They are not summaries the LLM invents on the fly: each observation is backed by specific source memories, carries a proof count, and evolves as new evidence supports, contradicts, or extends it.
+
+| Raw Facts | Observation |
+|-----------|--------------|
+| "Alice prefers Python" | "Alice is a Python-focused developer who values readability and simplicity" |
+| "Alice dislikes verbose code" | |
+| "Alice recommends type hints" | |
+
+Observations provide:
+- **Deduplication**: One durable belief instead of many overlapping facts
+- **Grounding**: Every observation references the specific memories (with quotes) that support it
+- **Evolution**: Refined as evidence strengthens, weakens, or contradicts it — history is preserved
+- **Freshness awareness**: when newer memories haven't been consolidated yet, `reflect` treats the affected observations as stale and verifies them against raw facts
+- **Efficiency**: Condensed knowledge for faster retrieval
+
+---
+
+## How Consolidation Works
+
+### Automatic Background Processing
+
+After `retain()` completes, the consolidation engine runs automatically:
+
+1. **New facts analyzed** — Each new fact is compared against existing observations
+2. **Pattern detection** — Related facts are grouped and synthesized
+3. **Observation creation/update** — New observations are created or existing ones refined
+4. **Evidence tracking** — Each observation maintains references to supporting facts
+
+### Near-Duplicate Reconciliation
+
+Consolidation can still produce two observations that say the same thing in slightly different words — for example when a weaker model writes a near-identical observation instead of refining the existing one, or when refining an observation reshapes its wording so it overlaps another one. Left alone, these near-duplicates clutter recall with redundant beliefs.
+
+When enabled, Hindsight reconciles them automatically. Whenever an observation is created **or** updated, it is compared against the existing observations it most closely resembles. If one is highly similar, a focused check decides whether to **merge** them into a single belief (folding both sets of supporting evidence together) or **keep** them separate. Because the check reads the full text of both, observations that differ in a meaningful detail — a number, a negation, a named entity or language — are correctly kept apart rather than collapsed.
+
+This is controlled by the [`HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD`](configuration.md#observations) setting: the cosine similarity at or above which two observations are reconciled. It is **enabled by default** (`0.97`); a lower value reconciles more aggressively, and `1.0` disables it. Reconciliation runs on PostgreSQL deployments only — it is skipped on Oracle regardless of the threshold.
+
+Reconciliation only compares observations **within the same tag scope**. If you tag retains with a unique per-call value (e.g. a `session-id`), each session lands in its own scope and never dedups against the others — producing one near-identical observation per session. To consolidate across those volatile tags, retain with [`observation_scopes: "shared"`](api/retain.md#shared), which scopes observations to one global, untagged belief while leaving the session tag on the source facts for recall filtering.
+
+### Disabling Auto-Consolidation
+
+Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api/memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).
+
+This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running consolidation only for specific scopes.
+
+### Targeted Consolidation
+
+By default, consolidation processes **all** unconsolidated memories in a bank. You can scope it to specific tag sets using the `observation_scopes` parameter on the consolidate endpoint:
+
+```python
+# Consolidate only memories tagged with user:alice
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(observation_scopes=[["user:alice"]]),
+)
+
+# Consolidate memories for alice OR the engineering team
+await client.banks.trigger_consolidation(
+    bank_id=BANK_ID,
+    consolidation_request=ConsolidationRequest(
+        observation_scopes=[["user:alice"], ["team:engineering"]]
+    ),
+)
+```
+
+Each scope is a list of tags. A memory matches a scope if its tags **contain all** tags in that scope. For example, scope `["user:alice"]` matches memories tagged `["user:alice", "team:eng"]`.
+
+When `observation_scopes` is omitted, all unconsolidated memories are processed (backward compatible).
+
+### Evidence-Based Evolution
+
+Observations evolve as new evidence arrives:
+
+| Event | What the bank learns | Observation state |
+|-------|---------------------|----------------|
+| **Day 1** | "Redis is open source under BSD license" | "Redis is excellent for caching — fast, reliable, and OSS-friendly" (2 supporting facts) |
+| **Day 2** | "Redis has great community support" | Observation reinforced (3 supporting facts) |
+| **Day 30** | "Redis changed license to SSPL" | Observation refined: "Redis is technically strong, but has license concerns for cloud" |
+| **Day 45** | "Valkey forked Redis under BSD" | New observation: "Consider Valkey for new projects requiring true OSS" |
+
+### Handling Contradictory Evidence
+
+What happens when a new fact contradicts an existing observation?
+
+The consolidation engine doesn't blindly overwrite — it **reconciles** the contradiction by capturing the evolution:
+
+**Example: User preference changes**
+
+| Time | Fact | Observation |
+|------|------|--------------|
+| Week 1 | "User says they love React" | "User prefers React for frontend development" |
+| Week 2 | "User praises React's component model" | "User is enthusiastic about React, particularly its component model" |
+| Week 3 | "User says they've switched to Vue and won't use React anymore" | "User was previously a React enthusiast who appreciated its component model, but has now switched to Vue and no longer uses React" |
+
+Notice how the final observation captures the **full journey** — not just "User prefers Vue" but the complete evolution of their preference. This nuanced understanding means:
+
+- Your agent won't recommend React tutorials to someone who explicitly moved away from it
+- Your agent understands *why* this matters (they were enthusiastic before, so this is a deliberate choice)
+- Your agent can reference this history when relevant ("I know you used to work with React...")
+
+The system:
+1. **Detects the conflict** — New fact contradicts existing observation
+2. **Preserves history** — Incorporates the previous understanding into the new observation
+3. **Creates nuanced observation** — Synthesizes a richer understanding that captures the change
+4. **Updates freshness** — Marks the observation as recently updated
+
+**Example: Correcting misinformation**
+
+| Time | Fact | Observation |
+|------|------|--------------|
+| Day 1 | "Alice works at Google" | "Alice is a Google employee" |
+| Day 10 | "Alice actually works at Meta, not Google" | "Alice works at Meta (previously thought to work at Google)" |
+
+When a fact explicitly corrects previous information, the observation is updated to reflect the correction while noting the previous understanding. The raw facts are always preserved, so you can trace back to see what was originally stated and when it was corrected.
+
+---
+
+## Observations in Retrieval
+
+Observations are automatically included in both `recall()` and `reflect()` operations:
+
+### In Recall
+
+Observations are returned alongside raw facts, filtered by the `types` parameter:
+
+```python
+# Include observations in recall
+results = client.recall(
+    bank_id="my-bank",
+    query="What programming languages does Alice prefer?",
+    types=["world", "experience", "observation"]
+)
+
+# Observations only
+observations = client.recall(
+    bank_id="my-bank",
+    query="What patterns have I learned?",
+    types=["observation"]
+)
+```
+
+### In Reflect
+
+The reflect agent uses **hierarchical retrieval**:
+
+1. **[Mental Models](api/mental-models.md)** — User-curated summaries (highest priority)
+2. **Observations** — Consolidated knowledge with freshness awareness
+3. **Raw Facts** — Ground truth for verification
+
+The agent automatically queries observations and uses them to inform its reasoning.
+
+---
+
+## Freshness Awareness
+
+Observations track when they were last updated. During reflect, the agent considers freshness:
+
+- **Fresh observations**: Used directly for reasoning
+- **Stale observations**: Agent verifies against current facts before relying on them
+
+This ensures responses stay accurate even as the underlying data changes.
+
+---
+
+## Observation Scopes
+
+By default, observations are scoped to all of a memory's tags combined. The `observation_scopes` retain parameter lets you control this — building separate observations per tag, per combination, or with a custom list of scopes. This is key when a single memory carries multiple tags and you want each tag to accumulate its own observations independently.
+
+See [`observation_scopes` in the Retain API](./api/retain.md#observation_scopes) for the full explanation and options.
+
+To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. The listing is paged (`limit`, default 100, and `offset`), with `total` reporting how many distinct scopes the bank holds. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags. To recall **only** the global scope — the untagged observations written by `observation_scopes: "shared"` — pass an empty list with exact matching: `tags: []`, `tags_match: "exact"`.
+
+---
+
+## Observations Mission
+
+You can define exactly what this bank should synthesise by setting an **observations mission** (`observations_mission`). This replaces the built-in durable-knowledge rules with your own instructions, letting you control what shape observations take.
+
+```
+e.g. Observations are stable facts about people and projects.
+     Always include preferences, skills, and recurring patterns.
+     Ignore one-off events and ephemeral state.
+```
+
+Leave it blank to use the server default — durable, specific facts that stay true over time (preferences, skills, relationships, recurring patterns), with ephemeral state filtered out.
+
+**Examples:**
+
+| `observations_mission` | What gets synthesised |
+|------------------------|----------------------|
+| *(unset — default)* | Durable facts: preferences, skills, relationships, recurring patterns |
+| *"Observations are weekly summaries of sprint outcomes and blockers"* | Broad event summaries grouped by time period |
+| *"Observations are stable facts about named individuals only"* | Person-centric knowledge, tied to specific people |
+| *"Observations are recurring patterns in customer support interactions"* | Failure modes, common requests, pain points |
+
+Set `observations_mission` via the [bank config API](api/memory-banks.md#observations-configuration) or the [`HINDSIGHT_API_OBSERVATIONS_MISSION`](configuration.md#observations) environment variable.
+
+---
+
+## Consolidation Strategies
+
+The mission, the observation cap and the source-facts token limits apply to every scope in the bank. **Consolidation strategies** (`consolidation_strategies`) let specific scopes use their own instead.
+
+This is what makes one bank work across several audiences. Say each memory is tagged with its author, their team and the company, and retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]`. Each scope builds its own observations. But with a single mission, the company-wide scope gets the same detail as Dana's own — names, deal sizes, anything said in confidence — just visible to more people. A strategy fixes that:
+
+```json
+[
+  {
+    "scopes": [{"tags": ["company:*"]}],
+    "observations_mission": "This scope is shared with the whole company. Record only general, industry-level trends. Never name a specific company, person, deal size or funding stage.",
+    "max_observations_per_scope": 20
+  },
+  {
+    "scopes": [{"tags": ["team:*"]}],
+    "observations_mission": "Record decisions the team must act on."
+  }
+]
+```
+
+With that in place, Dana's scope keeps "Acme Robotics signed a 3-year lease for a 4,000 GPU cluster", while the company scope gets "Companies are leasing GPU clusters to run open-weight models".
+
+How a strategy is matched:
+
+- **`scopes`** is a list of alternatives. Each is `{"tags": [...], "tags_match": "all" | "exact"}`, where `tags` are [fnmatch](https://docs.python.org/3/library/fnmatch.html) patterns (`*` matches any text). A strategy applies to a consolidation scope when **any** of its alternatives matches it (OR); the tags inside one alternative must all be present (AND).
+- **`tags_match`**, set per alternative, decides whether other tags are allowed:
+
+  | `tags_match` | `{"tags": ["company:*", "team:*"]}` matches… | …but not |
+  |---|---|---|
+  | `"all"` *(default)* | `{company:acme, team:exec}`, `{user:dana, team:exec, company:acme}` | `{company:acme}` (no team) |
+  | `"exact"` | `{company:acme, team:exec}` only | `{user:dana, team:exec, company:acme}` (extra `user:` tag) |
+
+  Because the mode is per alternative, one strategy can mix them — `[{"tags": ["company:*"], "tags_match": "exact"}, {"tags": ["team:*"]}]` claims scopes that are *only* a company, or that have a team among other tags. To match *any one* of several tags, give each its own alternative: `[{"tags": ["company:*"]}, {"tags": ["team:*"]}]`. Excluding a tag ("has a company but no user") is not expressible.
+
+  Remember that a strategy matches **observation scopes** — the tag sets consolidation groups observations under, set by [`observation_scopes`](./api/retain.md#observation_scopes) at retain time — not the tags of individual memories. A memory tagged with a user, a team and a company but retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]` produces three single-tag scopes, none of which has both a company and a team.
+- **What a strategy can set:** `observations_mission`, `max_observations_per_scope`, `consolidation_source_facts_max_tokens` and `consolidation_source_facts_max_tokens_per_observation`. Every one is optional.
+- **Anything a strategy leaves unset, and every scope no strategy matches,** uses the bank-wide value. The control plane shows these bank-wide values as the **Default** strategy.
+
+### When two strategies match the same scope
+
+**The first one in the list wins, whole.** Exactly one strategy applies to a scope. List order is priority order — left to right in the control plane's tabs.
+
+The strategies are never mixed. If the winning strategy leaves a setting empty, that setting comes from **Default**, not from a later strategy that also matches. For example, with:
+
+```json
+[
+  {"scopes": [{"tags": ["company:acme"]}], "max_observations_per_scope": 5},
+  {"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only general trends."}
+]
+```
+
+the scope `company:acme` gets a cap of 5 and the **bank-wide mission**, not "Record only general trends". The second strategy still applies to every other `company:*` scope. To give `company:acme` both, put both settings on the first strategy.
+
+To see which strategy a scope uses, open the strategy in the control plane: each rule shows how many existing scopes it matches and how many an earlier strategy takes, with examples. The same answer is available from `POST /v1/default/banks/{bank_id}/consolidation-strategies/preview`, which takes a draft `strategies` list (nothing is saved) and reports, per strategy and rule, the matching scopes and which strategy actually handles each — computed with consolidation's own matching. It scans up to 10,000 distinct scopes; beyond that `complete` is `false` and the counts are lower bounds. Only scopes that already have observations exist to be previewed.
+
+A strategy that sets nothing is ignored: it matches no scope and doesn't block later ones.
+
+A malformed strategy is rejected when you save it — an unknown key (`"scope"` for `"scopes"`), a tag list that is not a list of strings, an unknown `tags_match` — with a 400 naming the offending entry. An *incomplete* one is accepted, because the control plane saves strategies as you type them: a rule with no tags yet, or a strategy with no setting yet, is stored and simply ignored until you finish it. Strategies survive [bank template](api/memory-banks.md) export and import unchanged.
+
+Each scope is consolidated in its own LLM call, so one scope's mission never reaches another scope's call.
+
+Set `consolidation_strategies` in the control plane (bank **Configuration → Observations**), via the [bank config API](api/memory-banks.md#observations-configuration), or with the [`HINDSIGHT_API_CONSOLIDATION_STRATEGIES`](configuration.md#observations) environment variable. It replaces the older `observation_scope_limits`, which still works but is checked only after the strategies.
+
+---
+
+## Observation Lifecycle & Invalidation
+
+### When Memories Are Deleted
+
+Observations are derived from source memories. When source memories are removed, Hindsight automatically keeps observations consistent:
+
+| Action | Effect on observations |
+|--------|----------------------|
+| Delete a document | All observations derived from the document's memories are deleted |
+| Delete individual memories (by type) | Observations sourced from those memories are deleted |
+| Delete an entire bank | All observations are deleted along with everything else |
+
+After deletion, the **remaining source memories** that fed the affected observations have their consolidation state reset, so they will be re-consolidated on the next consolidation run and produce fresh observations.
+
+### Clearing Observations for a Specific Memory
+
+You can clear all observations derived from a single memory without deleting the memory itself. This is useful when you want to force re-synthesis of a memory's contribution to consolidated knowledge.
+
+Use the `DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations` endpoint. This will:
+1. Delete all observations that list the memory as a source
+2. Reset `consolidated_at` on the memory itself and any other source memories that contributed to those observations
+3. Trigger a consolidation job so fresh observations are produced automatically
+
+### Resetting All Observations
+
+To wipe all consolidated knowledge and start over:
+
+```python
+# Clear all observations for a bank
+await client.banks.clear_observations(bank_id=BANK_ID)
+```
+
+This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch.
+
+---
+
+## Trigger Consolidation {#trigger-consolidation}
+
+Use the consolidate endpoint to manually trigger consolidation:
+
+```http
+POST /v1/default/banks/{bank_id}/consolidate
+Content-Type: application/json
+
+{
+  "observation_scopes": [["user:alice"], ["team:engineering"]]
+}
+```
+
+The request body is optional. When omitted (or sent as an empty body), all unconsolidated memories in the bank are processed.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `observation_scopes` | `list[list[str]]` \| `null` | Optional list of tag scopes. Only memories whose tags contain all tags in at least one scope are processed. Omit for a full-bank sweep. |
+
+## Configuration
+
+Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](configuration.md#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations.md).
+
+---
+
+## Next Steps
+
+- [**Retain**](./retain.md) — How facts are stored and trigger consolidation
+- [**Recall**](./retrieval.md) — How observations are retrieved
+- [**Reflect**](./reflect.md) — How the agentic loop uses observations
+- [**Mental Models**](./api/mental-models.md) — User-curated summaries for common queries

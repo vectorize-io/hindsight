@@ -1,0 +1,197 @@
+# Hindsight CLI ↔ OpenAPI coverage manifest.
+#
+# The CI job `cli-coverage-check` (see hindsight-dev/hindsight_dev/cli_coverage_check.py)
+# enforces both endpoint-level and parameter-level coverage:
+#
+#  1. Every operationId in hindsight-docs/static/openapi.json must be either
+#     called from hindsight-cli/src/**/*.rs (the progenitor-generated client
+#     methods are named identically to the operationId) or listed under
+#     [skip] below with a reason.
+#
+#  2. For each operation with a JSON request body, every top-level property
+#     of that body must be either present in hindsight-cli/src/main.rs as a
+#     clap command variant field (`field_name: <type>`) or a `long = "..."`
+#     attribute, OR listed under [fields.<operation_id>] below with a reason.
+#
+# Skip entries should explain *why* the field/operation is not exposed (e.g.
+# flattened into several CLI flags, complex nested struct, available via a
+# different subcommand).
+
+# ---------------------------------------------------------------------------
+# Operation-level skips
+# ---------------------------------------------------------------------------
+[skip]
+# UI-only endpoint powering the control-plane stats chart.
+# Zero-filled bucket arrays don't map to a useful CLI command.
+get_memories_timeseries = "UI-only endpoint for the control plane stats chart"
+
+# Per-bank LLM connectivity probe — a control-plane/diagnostics action (the "Health"
+# dialog). Makes a real provider call and is off by default; not an end-user CLI command.
+test_bank_llm = "Control-plane diagnostics action (Health dialog); not exposed in the CLI"
+
+# UI-only endpoint powering the control-plane entity constellation view.
+# Returns nodes/edges in cytoscape shape; not a useful CLI command.
+get_entity_graph = "UI-only endpoint for the control plane entity constellation"
+
+# Document chunks listing is a UI-only endpoint for the document detail dialog.
+list_document_chunks = "UI-only endpoint for the control plane document detail dialog"
+
+# Observation scope enumeration powers the control-plane scope filter/clusters;
+# not a useful end-user CLI command.
+list_observation_scopes = "UI-only endpoint for the control plane observation scope filter"
+preview_consolidation_strategies = "UI-only endpoint for the control plane consolidation strategy editor"
+
+# Reprocess triggers an async retain re-run; exposed in the control plane UI only.
+reprocess_document = "UI-only endpoint for the control plane document detail dialog"
+
+# Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
+clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
+
+# Dry-run extraction is a preview/diagnostics tool (control-plane "Dry-run extraction" dialog):
+# it runs extraction only, stores nothing, and previews what a candidate config would extract.
+# Not an end-user CLI command; available via the HTTP API and SDKs.
+dry_run_extract_memories = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
+
+# Prompt preview renders the exact messages an operation would send, with no LLM call and
+# no writes. It powers the control-plane "Extraction Tester" dialog alongside the dry run;
+# the multi-block payload is a UI shape, not a useful CLI output.
+preview_prompt = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
+
+# Memory curation (edit / invalidate / revert) is exposed via the HTTP API, SDKs,
+# and the control plane, not the end-user CLI. update_memory covers all three.
+update_memory = "Curation endpoint; exposed via the API, SDKs, and control plane, not the CLI"
+
+# UI-only endpoints powering the control-plane LLM Requests (per-bank tracing) tab.
+# The trace waterfall, token charts, and metadata viewers don't map to a useful
+# CLI command.
+list_llm_requests = "UI-only endpoint for the control plane LLM Requests tab"
+llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats chart"
+
+# Document transfer (export/import) is an admin/ops operation used from the API
+# and the control plane, not the end-user Rust CLI.
+export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+export_documents_sync_removed = "Removed sync export endpoint kept as a 410 stub; nothing should call it"
+
+# The bank profile/background endpoints were retired and answer 410. They stay in the
+# spec so generated SDK methods are not deleted out from under callers, but nothing —
+# the CLI least of all — should call them. Disposition traits and the reflect mission
+# are bank configuration: `bank disposition` and `bank set-disposition` read and write
+# them through get_bank_config / update_bank_config, and `bank mission` sets the mission.
+get_bank_profile = "Retired endpoint kept as a 410 stub; `bank disposition` reads the bank config instead"
+update_bank_disposition = "Retired endpoint kept as a 410 stub; `bank set-disposition` writes the bank config instead"
+add_bank_background = "Retired endpoint kept as a 410 stub; use `bank mission`"
+import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+# Unified bank transfer (export/import of a whole bank or a document subset).
+# Same admin/ops shape as the document-transfer pair above: submitted from the API
+# or the control plane, or run against the database with `hindsight-admin`.
+export_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+import_bank_transfer = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+clone_bank = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+download_file = "Serves async export archives; fetched via the API/control plane, not the end-user CLI"
+
+# Streams an inline attachment's raw bytes, for a UI or agent that already holds
+# the handle a read surface returned. Same shape as download_file above: a byte
+# stream fetched by whatever rendered the memory, not an end-user CLI command.
+get_bank_attachment = "Streams attachment bytes for the control plane/API, not the end-user CLI"
+
+# Kubernetes probe endpoints. `hindsight health` already calls /health, which is
+# the readiness check; /health/ready is its alias and /health/live is a DB-free
+# liveness signal meant for kubelet, not for a human at a terminal.
+get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
+get_readiness = "Alias of /health, which `hindsight health` already calls"
+
+# ---------------------------------------------------------------------------
+# Per-operation parameter skips
+# ---------------------------------------------------------------------------
+
+[fields.create_or_update_bank]
+disposition = "Flattened into --skepticism / --literalism / --empathy on `bank create`."
+disposition_skepticism = "Covered by --skepticism; the flat form is an API alias."
+disposition_literalism = "Covered by --literalism; the flat form is an API alias."
+disposition_empathy = "Covered by --empathy; the flat form is an API alias."
+background = "Deprecated alias of the mission; set via `bank mission`."
+reflect_mission = "Set via `bank set-config --reflect-mission`."
+retain_mission = "Set via `bank set-config --retain-mission`."
+retain_extraction_mode = "Set via `bank set-config --retain-extraction-mode`."
+retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
+retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
+retain_max_attachments_per_chunk = "Set via `bank set-config` (hierarchical config)."
+enable_observations = "Set via `bank set-config` (hierarchical config)."
+observations_mission = "Set via `bank set-config --observations-mission`."
+enable_text_search = "Set via `bank set-config` (hierarchical config)."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
+
+[fields.update_bank]
+disposition = "Flattened into --skepticism / --literalism / --empathy on `bank update`."
+disposition_skepticism = "Covered by --skepticism; the flat form is an API alias."
+disposition_literalism = "Covered by --literalism; the flat form is an API alias."
+disposition_empathy = "Covered by --empathy; the flat form is an API alias."
+background = "Deprecated alias of the mission; set via `bank mission`."
+reflect_mission = "Set via `bank set-config --reflect-mission`."
+retain_mission = "Set via `bank set-config --retain-mission`."
+retain_extraction_mode = "Set via `bank set-config --retain-extraction-mode`."
+retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
+retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
+retain_max_attachments_per_chunk = "Set via `bank set-config` (hierarchical config)."
+enable_observations = "Set via `bank set-config` (hierarchical config)."
+observations_mission = "Set via `bank set-config --observations-mission`."
+enable_text_search = "Set via `bank set-config` (hierarchical config)."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
+
+[fields.update_bank_config]
+updates = "Flattened into per-setting flags (--llm-provider, --llm-model, etc) on `bank set-config`."
+
+# `bank import-template` takes the whole manifest as a JSON file argument rather
+# than per-field flags — a template is authored by `bank export-template` and fed
+# back in verbatim, so flattening it into flags would defeat the round trip.
+[fields.import_bank_template]
+version = "Whole manifest is passed as a JSON file to `bank import-template`."
+bank = "Whole manifest is passed as a JSON file to `bank import-template`."
+mental_models = "Whole manifest is passed as a JSON file to `bank import-template`."
+directives = "Whole manifest is passed as a JSON file to `bank import-template`."
+
+[fields.create_webhook]
+http_config = "Advanced HTTP customisation (headers/method/timeout/params) is not exposed in the CLI yet; use the JSON API if needed."
+
+[fields.update_webhook]
+http_config = "Advanced HTTP customisation (headers/method/timeout/params) is not exposed in the CLI yet; use the JSON API if needed."
+
+[fields.recall_memories]
+types = "CLI exposes this as --fact-type (the schema property is named `types` but it holds fact types)."
+include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."
+tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
+min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
+temporal_window = "Flattened into --window-start / --window-end on `memory recall`."
+
+[fields.reflect]
+include = "Flattened into --include-facts and related flags."
+response_schema = "Exposed as --schema (path to a JSON schema file)."
+tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
+apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs, and control plane, not the end-user CLI yet."
+reflect_search_observations_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
+reflect_search_observations_include_entities = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
+
+[fields.retain_memories]
+items = "Constructed from the single positional content argument on `memory retain`."
+
+[fields.create_knowledge_page]
+trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
+
+[fields.update_knowledge_node]
+trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
+
+[fields.create_mental_model]
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation and --tags-match on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+
+[fields.update_mental_model]
+trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation, --trigger-refresh-cron, --trigger-min-refresh-interval-seconds, --trigger-tags-match, --trigger-keep-trace and --trigger-exclude-mental-models on `mental-model update`; the update merges these over the model's stored trigger, so the remaining nested fields (fact_types, tag_groups, response_schema, recall_* budgets) are left untouched and stay API-only."
+
+[fields.create_bank_alias]
+primary = "Creating an alias never changes which id the bank is displayed under; `bank alias primary` is the one command that does, so the two stay separate actions."
+
+[fields.set_bank_alias_primary]
+primary = "Exposed inverted as `--clear` on `bank alias primary`: the command's whole purpose is to promote, so the flag only has to express the opposite."

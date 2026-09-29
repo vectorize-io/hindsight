@@ -1,0 +1,1522 @@
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import { useTranslations } from "next-intl";
+import { client, MentalModel, MentalModelDryRunRefreshResult } from "@/lib/api";
+import { useBank } from "@/lib/bank-context";
+import { useRefreshAttempts } from "@/lib/use-refresh-attempts";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Zap,
+  FileText,
+  History as HistoryIcon,
+  Settings,
+  FlaskConical,
+  ChevronLeft,
+  ChevronRight,
+  MoreVertical,
+  Eraser,
+  Pencil,
+  RefreshCw,
+  Trash2,
+  AlertTriangle,
+} from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "sonner";
+import { CompactMarkdown } from "./compact-markdown";
+import { StalenessBadge } from "./staleness-badge";
+import { CronSchedulePreview } from "./cron-schedule-preview";
+import { NextRefresh } from "./next-refresh";
+import {
+  ExecutionTimeline,
+  MentalModelDryRunDialog,
+  TraceSummary,
+} from "./mental-model-diagnostics-view";
+import type { MentalModelRefreshTrace, RefreshFailureReason } from "@/lib/api";
+import { MemoryDetailModal } from "./memory-detail-modal";
+import { DirectiveDetailModal } from "./directive-detail-modal";
+import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { useTheme } from "@/lib/theme-context";
+import { TagChip } from "@/components/ui/facet-chip";
+
+const DIFF_PALETTE = {
+  light: {
+    body: "#1a1a1a",
+    removedLineBg: "#ffeef0",
+    addedLineBg: "#e6ffec",
+    removedWordBg: "#fdb8c0",
+    removedWordText: "#67060c",
+    addedWordBg: "#acf2bc",
+    addedWordText: "#0a3622",
+  },
+  dark: {
+    body: "#e6edf3",
+    removedLineBg: "#3d1419",
+    addedLineBg: "#0d2818",
+    removedWordBg: "#7d2530",
+    removedWordText: "#ffd0d6",
+    addedWordBg: "#1a4d2c",
+    addedWordText: "#b8e6c1",
+  },
+} as const;
+
+type BasedOnFact = {
+  id: string;
+  text: string;
+  type?: string;
+  context?: string | null;
+};
+
+type ReflectResponseSnapshot = {
+  text?: string;
+  based_on?: Record<string, BasedOnFact[]>;
+  mental_models?: unknown[];
+  /** How this version was produced. Only present when trigger.keep_trace was on. */
+  trace?: MentalModelRefreshTrace;
+} | null;
+
+export type HistoryEntry = {
+  previous_content: string | null;
+  previous_reflect_response?: ReflectResponseSnapshot;
+  changed_at: string;
+  /** Failure records carry these; version snapshots do not. A refresh that
+   *  refused to write produced no version, so it is an event on the timeline
+   *  rather than a diff — and without it the model looked as though it had
+   *  simply never been refreshed (#2894). */
+  kind?: "refresh_failed";
+  failure_reason?: RefreshFailureReason;
+  error_message?: string;
+};
+
+const isFailureEntry = (e: HistoryEntry) => e.kind === "refresh_failed";
+
+/** How often the modal re-reads the bank's in-flight refreshes; a retry gap is 60s. */
+const MODAL_ATTEMPT_POLL_MS = 12000;
+
+/** Consecutive attempts that failed the same way, as one entry on the timeline. */
+export type FailureGroup = { entry: HistoryEntry; attempts: number; oldest: string };
+
+/** The failures in a model's history, as episodes.
+ *
+ * A failed refresh is retried by the worker and each attempt records its own
+ * row, so one broken retriever produces a run of identical entries. They are
+ * collapsed into a single event with an attempt count.
+ *
+ * Takes the WHOLE history, not just the failures: a successful refresh between
+ * two identical failures means the thing broke, recovered, and broke again —
+ * two episodes, not one. Filtering the versions out first would silently merge
+ * them and under-report how often the model has been failing. */
+export function groupFailures(history: HistoryEntry[]): FailureGroup[] {
+  const groups: FailureGroup[] = [];
+  let previousWasFailure = false;
+  for (const entry of history) {
+    if (!isFailureEntry(entry)) {
+      previousWasFailure = false;
+      continue;
+    }
+    const last = groups[groups.length - 1];
+    if (
+      previousWasFailure &&
+      last &&
+      last.entry.failure_reason === entry.failure_reason &&
+      last.entry.error_message === entry.error_message
+    ) {
+      last.attempts += 1;
+      last.oldest = entry.changed_at;
+    } else {
+      groups.push({ entry, attempts: 1, oldest: entry.changed_at });
+    }
+    previousWasFailure = true;
+  }
+  return groups;
+}
+
+/** The model's failed refreshes, newest first, as a timeline of events.
+
+ * Kept out of the History tab on purpose: that tab is a version browser, and a
+ * refusal to write produces no version — interleaving the two made the failures
+ * read as versions and buried the diffs under repetitions of one outage. */
+function RefreshErrorTimeline({
+  groups,
+  paused,
+}: {
+  groups: FailureGroup[];
+  /** True while the model's last refresh is a failed one, so nothing re-runs it by itself. */
+  paused: boolean;
+}) {
+  const t = useTranslations("mentalModelDetailModal");
+  const reasonLabels: Record<RefreshFailureReason, string> = {
+    retrieval_failed: t("failureReasonRetrievalFailed"),
+    no_answer: t("failureReasonNoAnswer"),
+    empty_candidate: t("failureReasonEmptyCandidate"),
+    structured_doc_unreadable: t("failureReasonDocUnreadable"),
+    delta_ops_failed: t("failureReasonDeltaOpsFailed"),
+    delta_ops_all_skipped: t("failureReasonDeltaOpsAllSkipped"),
+    delta_not_applied: t("failureReasonDeltaNotApplied"),
+    structured_output_failed: t("failureReasonStructuredOutput"),
+    unexpected_error: t("failureReasonUnexpected"),
+  };
+
+  if (groups.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">{t("noErrors")}</p>;
+  }
+
+  return (
+    <div className="space-y-1">
+      <p className="text-sm text-muted-foreground pb-2">{t("errorsIntro")}</p>
+      {/* The state, not just the log: after the retries a model stops being picked up
+          by its own trigger, and the tab that shows the failures is where someone
+          finds out why nothing has refreshed since (#4532). */}
+      {paused && (
+        <p className="text-sm font-medium text-red-700 dark:text-red-400 pb-2">
+          {t("errorsPausedNotice")}
+        </p>
+      )}
+      <ol className="relative border-l border-border ml-2">
+        {groups.map((g, i) => (
+          <li key={`${g.entry.changed_at}-${i}`} className="relative pl-6 pb-5 last:pb-0">
+            <span className="absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-4 ring-background" />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">
+                {g.entry.failure_reason
+                  ? reasonLabels[g.entry.failure_reason]
+                  : t("failureReasonUnknown")}
+              </span>
+              {g.attempts > 1 && (
+                <span className="text-xs text-muted-foreground">
+                  {t("failureAttempts", { count: g.attempts })}
+                </span>
+              )}
+              <span
+                className="text-xs text-muted-foreground"
+                title={
+                  g.attempts > 1
+                    ? `${formatDateTime(g.oldest)} — ${formatDateTime(g.entry.changed_at)}`
+                    : formatDateTime(g.entry.changed_at)
+                }
+              >
+                &middot; {formatRelativeTime(g.entry.changed_at)}
+              </span>
+            </div>
+            {g.entry.error_message && (
+              <pre className="mt-1.5 rounded-md border border-border bg-muted/40 p-2 text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground">
+                {g.entry.error_message}
+              </pre>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function getFactTypeDisplay(factType: string, t?: (key: string) => string) {
+  if (factType === "directives") {
+    return {
+      label: t ? t("factTypeDirective") : "directive",
+      color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    };
+  }
+  if (factType === "mental-models") {
+    return {
+      label: t ? t("factTypeMentalModel") : "mental model",
+      color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    };
+  }
+  if (factType === "world") {
+    return {
+      label: t ? t("factTypeWorld") : "world",
+      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    };
+  }
+  if (factType === "experience") {
+    return {
+      label: t ? t("factTypeExperience") : "experience",
+      color: "bg-green-500/10 text-green-600 dark:text-green-400",
+    };
+  }
+  if (factType === "observation") {
+    return {
+      label: t ? t("factTypeObservation") : "observation",
+      color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    };
+  }
+  return { label: factType, color: "bg-slate-500/10 text-slate-600 dark:text-slate-400" };
+}
+
+const FACT_TYPE_ORDER = ["observation", "experience", "world", "directives", "mental-models"];
+
+function BasedOnList({
+  based_on,
+  onViewMemory,
+  onViewDirective,
+}: {
+  based_on: Record<string, BasedOnFact[]> | undefined;
+  onViewMemory?: (id: string) => void;
+  onViewDirective?: (id: string) => void;
+}) {
+  const t = useTranslations("mentalModelDetailModal");
+  const groups = useMemo(() => {
+    if (!based_on) return [] as Array<{ factType: string; facts: BasedOnFact[] }>;
+    const all = Object.entries(based_on)
+      .map(([factType, facts]) => ({ factType, facts: facts ?? [] }))
+      .filter((g) => g.facts.length > 0);
+    all.sort((a, b) => {
+      const ai = FACT_TYPE_ORDER.indexOf(a.factType);
+      const bi = FACT_TYPE_ORDER.indexOf(b.factType);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
+    return all;
+  }, [based_on]);
+
+  if (groups.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">{t("noBasedOnData")}</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => {
+        const display = getFactTypeDisplay(group.factType, t);
+        return (
+          <div key={group.factType} className="rounded-lg border border-border/60 overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b border-border/60">
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${display.color}`}
+              >
+                {display.label}
+              </span>
+              <span className="text-xs text-muted-foreground">{group.facts.length}</span>
+            </div>
+            <ul className="divide-y divide-border/50">
+              {group.facts.map((fact, i) => {
+                const canView =
+                  (group.factType === "directives" && !!onViewDirective) ||
+                  (group.factType !== "directives" &&
+                    group.factType !== "mental-models" &&
+                    !!onViewMemory);
+                return (
+                  <li
+                    key={fact.id || i}
+                    className="group flex items-start gap-3 px-3 py-2 hover:bg-muted/30"
+                  >
+                    <p className="text-sm text-foreground leading-relaxed flex-1 min-w-0">
+                      {fact.text}
+                      {fact.context && (
+                        <span className="block text-xs text-muted-foreground italic mt-0.5">
+                          {fact.context}
+                        </span>
+                      )}
+                    </p>
+                    {canView && (
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
+                        onClick={() => {
+                          if (group.factType === "directives") onViewDirective?.(fact.id);
+                          else onViewMemory?.(fact.id);
+                        }}
+                      >
+                        {t("viewArrow")}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type LineKind = "same" | "removed" | "added";
+type LineDiff = { type: LineKind; text: string };
+type TokenSpan = { type: LineKind; text: string };
+type AnnotatedLine = { type: LineKind; spans: TokenSpan[] };
+
+/** Tokenise into words, whitespace, and single punctuation marks so the
+ *  per-character diff aligns on natural boundaries instead of mid-word. */
+function tokenize(s: string): string[] {
+  return s.match(/\s+|[A-Za-z0-9_]+|[^\s\w]/g) || [];
+}
+
+/** Normalize a token for equality: collapse runs of whitespace so that
+ *  reflowing whitespace doesn't show as a diff. */
+function normToken(t: string): string {
+  return /^\s+$/.test(t) ? " " : t;
+}
+
+/** Word-level LCS over two single lines, returning inline spans for
+ *  before/after. Pure-whitespace differences are folded into "same" so
+ *  the diff highlights actual content changes only. */
+function diffTokensInline(a: string, b: string): { left: TokenSpan[]; right: TokenSpan[] } {
+  const aTok = tokenize(a);
+  const bTok = tokenize(b);
+  const m = aTok.length;
+  const n = bTok.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        normToken(aTok[i - 1]) === normToken(bTok[j - 1])
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  const left: TokenSpan[] = [];
+  const right: TokenSpan[] = [];
+  let i = m;
+  let j = n;
+  const leftStack: TokenSpan[] = [];
+  const rightStack: TokenSpan[] = [];
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && normToken(aTok[i - 1]) === normToken(bTok[j - 1])) {
+      leftStack.push({ type: "same", text: aTok[i - 1] });
+      rightStack.push({ type: "same", text: bTok[j - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      // Whitespace-only insertions render as "same" so reflow noise is hidden.
+      const t = bTok[j - 1];
+      rightStack.push({ type: /^\s+$/.test(t) ? "same" : "added", text: t });
+      j--;
+    } else {
+      const t = aTok[i - 1];
+      leftStack.push({ type: /^\s+$/.test(t) ? "same" : "removed", text: t });
+      i--;
+    }
+  }
+  while (leftStack.length) left.push(leftStack.pop()!);
+  while (rightStack.length) right.push(rightStack.pop()!);
+  return { left, right };
+}
+
+function diffLines(a: string, b: string): { left: AnnotatedLine[]; right: AnnotatedLine[] } {
+  const aLines = a.split("\n");
+  const bLines = b.split("\n");
+  const m = aLines.length;
+  const n = bLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        aLines[i - 1] === bLines[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  const ops: LineDiff[] = [];
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && aLines[i - 1] === bLines[j - 1]) {
+      ops.push({ type: "same", text: aLines[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: "added", text: bLines[j - 1] });
+      j--;
+    } else {
+      ops.push({ type: "removed", text: aLines[i - 1] });
+      i--;
+    }
+  }
+  ops.reverse();
+
+  const left: AnnotatedLine[] = [];
+  const right: AnnotatedLine[] = [];
+  let k = 0;
+  while (k < ops.length) {
+    const op = ops[k];
+    if (op.type === "same") {
+      left.push({ type: "same", spans: [{ type: "same", text: op.text }] });
+      right.push({ type: "same", spans: [{ type: "same", text: op.text }] });
+      k++;
+      continue;
+    }
+    // Collect a contiguous run of removed/added lines and pair them up so
+    // we can emit per-token inline diffs for the overlap.
+    const removed: string[] = [];
+    const added: string[] = [];
+    while (k < ops.length && ops[k].type !== "same") {
+      if (ops[k].type === "removed") removed.push(ops[k].text);
+      else added.push(ops[k].text);
+      k++;
+    }
+    const maxLen = Math.max(removed.length, added.length);
+    for (let r = 0; r < maxLen; r++) {
+      const r0 = r < removed.length ? removed[r] : null;
+      const a0 = r < added.length ? added[r] : null;
+      if (r0 !== null && a0 !== null) {
+        const inline = diffTokensInline(r0, a0);
+        // Demote whole-line classification to "same" if every span is
+        // already "same" (purely whitespace-only difference).
+        const leftKind: LineKind = inline.left.some((s) => s.type !== "same") ? "removed" : "same";
+        const rightKind: LineKind = inline.right.some((s) => s.type !== "same") ? "added" : "same";
+        left.push({ type: leftKind, spans: inline.left });
+        right.push({ type: rightKind, spans: inline.right });
+      } else if (r0 !== null) {
+        left.push({ type: "removed", spans: [{ type: "removed", text: r0 }] });
+        right.push({ type: "same", spans: [{ type: "same", text: "" }] });
+      } else if (a0 !== null) {
+        left.push({ type: "same", spans: [{ type: "same", text: "" }] });
+        right.push({ type: "added", spans: [{ type: "added", text: a0 }] });
+      }
+    }
+  }
+  return { left, right };
+}
+
+type DiffPalette = (typeof DIFF_PALETTE)[keyof typeof DIFF_PALETTE];
+
+function renderSpans(spans: TokenSpan[], side: "left" | "right", palette: DiffPalette) {
+  const removedStyle: React.CSSProperties = {
+    backgroundColor: palette.removedWordBg,
+    color: palette.removedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
+  const addedStyle: React.CSSProperties = {
+    backgroundColor: palette.addedWordBg,
+    color: palette.addedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
+  return spans.map((s, i) => {
+    if (s.type === "same") return <span key={i}>{s.text}</span>;
+    return (
+      <span key={i} style={side === "left" ? removedStyle : addedStyle}>
+        {s.text}
+      </span>
+    );
+  });
+}
+
+function SideBySideDiff({ before, after }: { before: string; after: string }) {
+  const t = useTranslations("mentalModelDetailModal");
+  const { theme } = useTheme();
+  const palette = DIFF_PALETTE[theme];
+  const { left, right } = diffLines(before, after);
+  const hasChanges = left.some((l) => l.type !== "same") || right.some((r) => r.type !== "same");
+  if (!hasChanges)
+    return <span className="text-sm text-muted-foreground italic">{t("unchanged")}</span>;
+
+  return (
+    <div
+      className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-[13px] font-mono"
+      style={{ color: palette.body }}
+    >
+      <div>
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          {t("diffBefore")}
+        </div>
+        {left.map((line, idx) => (
+          <div
+            key={idx}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "removed" ? { backgroundColor: palette.removedLineBg } : undefined}
+          >
+            {renderSpans(line.spans, "left", palette)}
+          </div>
+        ))}
+      </div>
+      <div>
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          {t("diffAfter")}
+        </div>
+        {right.map((line, idx) => (
+          <div
+            key={idx}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "added" ? { backgroundColor: palette.addedLineBg } : undefined}
+          >
+            {renderSpans(line.spans, "right", palette)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BasedOnDiff({
+  before,
+  after,
+  onViewMemory,
+  onViewDirective,
+}: {
+  before: Record<string, BasedOnFact[]> | undefined;
+  after: Record<string, BasedOnFact[]> | undefined;
+  onViewMemory: (id: string) => void;
+  onViewDirective: (id: string) => void;
+}) {
+  const t = useTranslations("mentalModelDetailModal");
+  const diff = useMemo(() => {
+    const types = new Set<string>([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
+    const groups: Array<{
+      factType: string;
+      added: BasedOnFact[];
+      removed: BasedOnFact[];
+      kept: BasedOnFact[];
+    }> = [];
+    for (const factType of types) {
+      const b = (before?.[factType] ?? []).filter(Boolean);
+      const a = (after?.[factType] ?? []).filter(Boolean);
+      const bIds = new Set(b.map((f) => f.id));
+      const aIds = new Set(a.map((f) => f.id));
+      const added = a.filter((f) => !bIds.has(f.id));
+      const removed = b.filter((f) => !aIds.has(f.id));
+      const kept = a.filter((f) => bIds.has(f.id));
+      if (added.length === 0 && removed.length === 0 && kept.length === 0) continue;
+      groups.push({ factType, added, removed, kept });
+    }
+    groups.sort((x, y) => {
+      const xi = FACT_TYPE_ORDER.indexOf(x.factType);
+      const yi = FACT_TYPE_ORDER.indexOf(y.factType);
+      return (xi === -1 ? 999 : xi) - (yi === -1 ? 999 : yi);
+    });
+    return groups;
+  }, [before, after]);
+
+  if (diff.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">{t("noBasedOnData")}</p>;
+  }
+
+  const renderFact = (fact: BasedOnFact, factType: string, mode: "added" | "removed" | "kept") => {
+    const canView =
+      (factType === "directives" && !!onViewDirective) ||
+      (factType !== "directives" && factType !== "mental-models" && !!onViewMemory);
+    const rowCls =
+      mode === "added"
+        ? "bg-green-500/15 dark:bg-green-500/10 border-l-2 border-green-600 dark:border-green-500 text-green-950 dark:text-green-100"
+        : mode === "removed"
+          ? "bg-red-500/15 dark:bg-red-500/10 border-l-2 border-red-600 dark:border-red-500 text-red-950 dark:text-red-200 line-through decoration-red-700/70 dark:decoration-red-400/70"
+          : "";
+    const marker = mode === "added" ? "+" : mode === "removed" ? "−" : " ";
+    const markerCls =
+      mode === "added"
+        ? "text-green-700 dark:text-green-400"
+        : mode === "removed"
+          ? "text-red-700 dark:text-red-400"
+          : "text-muted-foreground/40";
+    return (
+      <li key={`${mode}-${fact.id}`} className={`group flex items-start gap-2 px-3 py-2 ${rowCls}`}>
+        <span className={`font-mono text-sm shrink-0 ${markerCls}`}>{marker}</span>
+        <p className="text-sm leading-relaxed flex-1 min-w-0">
+          {fact.text}
+          {fact.context && (
+            <span className="block text-xs text-muted-foreground italic mt-0.5 no-underline">
+              {fact.context}
+            </span>
+          )}
+        </p>
+        {canView && mode !== "removed" && (
+          <button
+            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
+            onClick={() => {
+              if (factType === "directives") onViewDirective(fact.id);
+              else onViewMemory(fact.id);
+            }}
+          >
+            {t("viewArrow")}
+          </button>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      {diff.map((group) => {
+        const display = getFactTypeDisplay(group.factType, t);
+        return (
+          <div key={group.factType} className="rounded-lg border border-border/60 overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b border-border/60">
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${display.color}`}
+              >
+                {display.label}
+              </span>
+              {group.added.length > 0 && (
+                <span className="text-xs text-green-600 dark:text-green-400">
+                  +{group.added.length}
+                </span>
+              )}
+              {group.removed.length > 0 && (
+                <span className="text-xs text-red-600 dark:text-red-400">
+                  −{group.removed.length}
+                </span>
+              )}
+              {group.kept.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {t("keptCount", { count: group.kept.length })}
+                </span>
+              )}
+            </div>
+            <ul className="divide-y divide-border/40">
+              {group.added.map((f) => renderFact(f, group.factType, "added"))}
+              {group.removed.map((f) => renderFact(f, group.factType, "removed"))}
+              {group.kept.map((f) => renderFact(f, group.factType, "kept"))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MentalModelHistoryView({
+  history,
+  currentContent,
+  currentBasedOn,
+  currentTrace,
+  onViewMemory,
+  onViewDirective,
+}: {
+  history: HistoryEntry[];
+  currentContent: string;
+  currentBasedOn: Record<string, BasedOnFact[]> | undefined;
+  currentTrace: MentalModelRefreshTrace | undefined;
+  onViewMemory: (id: string) => void;
+  onViewDirective: (id: string) => void;
+}) {
+  const t = useTranslations("mentalModelDetailModal");
+  const [idx, setIdx] = useState(0);
+  // Failures are not versions — they have no before/after to diff — so they live
+  // on their own Errors tab rather than in this pager.
+  const entry = history[idx];
+  const afterContent = idx === 0 ? currentContent : (history[idx - 1].previous_content ?? "");
+  const beforeBasedOn = entry.previous_reflect_response?.based_on;
+  const afterBasedOn =
+    idx === 0 ? currentBasedOn : history[idx - 1].previous_reflect_response?.based_on;
+  const snapshot = entry.previous_reflect_response ?? null;
+  // The refresh being shown is the one that produced the "after" side: for the
+  // newest entry that is the model's current trace, otherwise the snapshot taken
+  // when the next refresh replaced it.
+  const afterTrace = idx === 0 ? currentTrace : history[idx - 1].previous_reflect_response?.trace;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">v{history.length - idx}</span> →{" "}
+          <span className="font-semibold text-foreground">
+            v{history.length - idx + 1}
+            {idx === 0 ? t("versionCurrent") : ""}
+          </span>{" "}
+          &middot; {t("changedAt", { date: new Date(entry.changed_at).toLocaleString() })}
+          {afterTrace && (
+            <>
+              {" "}
+              &middot; <TraceSummary trace={afterTrace} />
+            </>
+          )}
+        </span>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 p-0"
+            disabled={idx === history.length - 1}
+            onClick={() => setIdx(idx + 1)}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 p-0"
+            disabled={idx === 0}
+            onClick={() => setIdx(idx - 1)}
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <div>
+        <SectionLabel>{t("contentDiff")}</SectionLabel>
+        {entry.previous_content !== null ? (
+          <SideBySideDiff before={entry.previous_content} after={afterContent} />
+        ) : (
+          <div className="border border-border rounded-lg p-3">
+            <span className="text-sm text-muted-foreground italic">
+              {t("previousContentNotAvailable")}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <SectionLabel>{t("basedOnDiff")}</SectionLabel>
+        {snapshot?.based_on ? (
+          <BasedOnDiff
+            before={beforeBasedOn}
+            after={afterBasedOn}
+            onViewMemory={onViewMemory}
+            onViewDirective={onViewDirective}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground italic">{t("basedOnNotCaptured")}</p>
+        )}
+      </div>
+
+      {/* How this version was produced — recorded only when trigger.keep_trace
+          was on for the refresh that wrote it. */}
+      <div>
+        <SectionLabel>{t("refreshTrace")}</SectionLabel>
+        {afterTrace ? (
+          <ExecutionTimeline trace={afterTrace} />
+        ) : (
+          <p className="text-sm text-muted-foreground italic">{t("traceNotCaptured")}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface MentalModelDetailModalProps {
+  mentalModelId: string | null;
+  onClose: () => void;
+  onEdit?: (m: MentalModel) => void;
+  onDelete?: (m: MentalModel) => void;
+  onClear?: (m: MentalModel) => void;
+  onRefreshed?: (m: MentalModel) => void;
+  initialTab?: "content" | "configuration" | "history";
+}
+
+export function MentalModelDetailModal({
+  mentalModelId,
+  onClose,
+  onEdit,
+  onDelete,
+  onClear,
+  onRefreshed,
+  initialTab = "content",
+}: MentalModelDetailModalProps) {
+  const t = useTranslations("mentalModelDetailModal");
+  const { currentBank } = useBank();
+  // Same source the list uses: while the worker still has attempts left the model
+  // is not paused yet, and the two surfaces must not disagree about that (#4532).
+  const refreshAttempts = useRefreshAttempts(currentBank, MODAL_ATTEMPT_POLL_MS);
+  const [mentalModel, setMentalModel] = useState<MentalModel | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"content" | "configuration" | "history">(initialTab);
+  const [refreshing, setRefreshing] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
+  const [viewDirectiveId, setViewDirectiveId] = useState<string | null>(null);
+
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  // Failures are events, not versions: they drive the Errors tab and its dot,
+  // and never appear in the version pager.
+  const failureEntries = useMemo(() => (history ?? []).filter(isFailureEntry), [history]);
+  const versionEntries = useMemo(
+    () => (history ?? []).filter((e) => !isFailureEntry(e)),
+    [history]
+  );
+  const failureGroups = useMemo(() => groupFailures(history ?? []), [history]);
+  // Paused is the end state, not the first failed attempt: while an attempt is
+  // still queued or running the worker has not given up on this model yet.
+  const refreshPaused = Boolean(
+    mentalModel?.last_refresh_failed_at && !refreshAttempts.has(mentalModel.id)
+  );
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<MentalModelDryRunRefreshResult | null>(null);
+
+  useEffect(() => {
+    if (!mentalModelId || !currentBank) return;
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setMentalModel(null);
+      setHistory(null);
+      setActiveTab(initialTab);
+
+      try {
+        const data = await client.getMentalModel(currentBank, mentalModelId);
+        setMentalModel(data);
+      } catch (err) {
+        console.error("Error loading mental model:", err);
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [mentalModelId, currentBank, initialTab]);
+
+  // Loaded as soon as the model is, not only when the Errors or History tab is
+  // opened: the history is where a failed refresh is recorded, and the red dot on
+  // the Errors tab has to be right from the moment the modal opens (#2894). An
+  // earlier revision showed a banner on every tab instead; the dot replaced it.
+  useEffect(() => {
+    if (!mentalModel || !currentBank || history !== null) return;
+
+    const loadHistory = async () => {
+      setLoadingHistory(true);
+      try {
+        const data = await client.getMentalModelHistory(currentBank, mentalModel.id);
+        setHistory(data);
+      } catch (err) {
+        console.error("Error loading mental model history:", err);
+        setHistory([]);
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    loadHistory();
+  }, [mentalModel, currentBank, history]);
+
+  // A dry run changes nothing, so it is an action with a transient result rather
+  // than a tab: run it, show the preview, throw it away.
+  const handleDryRun = async () => {
+    if (!currentBank || !mentalModel) return;
+    setDryRunning(true);
+    try {
+      setDryRunResult(await client.dryRunRefreshMentalModel(currentBank, mentalModel.id));
+    } catch (err) {
+      console.error("Error running mental model dry run:", err);
+    } finally {
+      setDryRunning(false);
+    }
+  };
+
+  const handleReload = async () => {
+    if (!currentBank || !mentalModel) return;
+    setReloading(true);
+    try {
+      const updated = await client.getMentalModel(currentBank, mentalModel.id);
+      setMentalModel(updated);
+      setHistory(null);
+    } catch (err) {
+      console.error("Error reloading mental model:", err);
+    } finally {
+      setReloading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!currentBank || !mentalModel) return;
+    setRefreshing(true);
+    const originalRefreshedAt = mentalModel.last_refreshed_at;
+
+    try {
+      await client.refreshMentalModel(currentBank, mentalModel.id);
+
+      const pollInterval = 1000;
+      const maxAttempts = 120;
+      let attempts = 0;
+
+      const poll = async (): Promise<void> => {
+        attempts++;
+        try {
+          const updated = await client.getMentalModel(currentBank, mentalModel.id);
+          if (updated.last_refreshed_at !== originalRefreshedAt) {
+            setMentalModel(updated);
+            setHistory(null);
+            onRefreshed?.(updated);
+            setRefreshing(false);
+            return;
+          }
+          if (attempts >= maxAttempts) {
+            setRefreshing(false);
+            toast.error(t("refreshTimeoutTitle"), {
+              description: t("refreshTimeoutDescription"),
+            });
+            return;
+          }
+          setTimeout(poll, pollInterval);
+        } catch (err) {
+          console.error("Error polling mental model:", err);
+          setRefreshing(false);
+        }
+      };
+      setTimeout(poll, pollInterval);
+    } catch {
+      setRefreshing(false);
+    }
+  };
+
+  const isOpen = mentalModelId !== null;
+
+  const basedOn = mentalModel?.reflect_response?.based_on as
+    | Record<string, BasedOnFact[]>
+    | undefined;
+  const basedOnCount = basedOn
+    ? Object.values(basedOn).reduce((acc, facts) => acc + (facts?.length ?? 0), 0)
+    : 0;
+
+  return (
+    <>
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="w-[95vw] max-w-[95vw] h-[92vh] sm:max-w-[95vw] flex flex-col overflow-hidden">
+          <DialogHeader className="pr-10">
+            <DialogTitle className="flex items-center gap-2">
+              <span className="truncate">{mentalModel?.name ?? t("mentalModelFallback")}</span>
+              {mentalModel && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 shrink-0"
+                  onClick={handleReload}
+                  disabled={reloading}
+                  title={t("reloadData")}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${reloading ? "animate-spin" : ""}`} />
+                </Button>
+              )}
+              {/* The auto-refresh promise is only true while refreshes work: a model
+                  whose last one failed is skipped by its trigger until one succeeds,
+                  so it says so here instead of showing a green badge (#4532). */}
+              {refreshPaused ? (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-medium">
+                  <AlertTriangle className="w-3 h-3" />
+                  {t("refreshPaused")}
+                </span>
+              ) : (
+                mentalModel?.trigger?.refresh_after_consolidation && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-xs font-medium">
+                    <Zap className="w-3 h-3" />
+                    {t("autoRefresh")}
+                  </span>
+                )
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {loading ? (
+            <div className="flex items-center justify-center flex-1">
+              <Spinner size="lg" variant="jump" />
+            </div>
+          ) : error ? (
+            <div className="flex items-center justify-center flex-1">
+              <div className="text-center text-destructive">
+                <div className="text-sm">{t("errorPrefix", { error })}</div>
+              </div>
+            </div>
+          ) : mentalModel ? (
+            <Tabs
+              value={activeTab}
+              onValueChange={(v) => setActiveTab(v as "content" | "configuration" | "history")}
+              className="flex-1 flex flex-col overflow-hidden"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <TabsList className="grid grid-cols-4 w-full max-w-2xl">
+                  <TabsTrigger value="content" className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" />
+                    {t("tabContent")}
+                  </TabsTrigger>
+                  <TabsTrigger value="configuration" className="flex items-center gap-1.5">
+                    <Settings className="w-3.5 h-3.5" />
+                    {t("tabConfiguration")}
+                  </TabsTrigger>
+                  <TabsTrigger value="history" className="flex items-center gap-1.5">
+                    <HistoryIcon className="w-3.5 h-3.5" />
+                    {t("tabHistory")}
+                  </TabsTrigger>
+                  <TabsTrigger value="errors" className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {t("tabErrors")}
+                    {/* The whole signal that something is wrong: a full alert on
+                        every tab shouted at people reading a document that was
+                        never damaged. */}
+                    {failureEntries.length > 0 && (
+                      <span
+                        className="h-2 w-2 rounded-full bg-red-500"
+                        aria-label={t("errorsPresent")}
+                      />
+                    )}
+                  </TabsTrigger>
+                </TabsList>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 shrink-0"
+                      disabled={refreshing}
+                      aria-label={t("actionsAriaLabel")}
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {onEdit && (
+                      <DropdownMenuItem onClick={() => onEdit(mentalModel)}>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        {t("actionEdit")}
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      {t("actionRefreshManually")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDryRun} disabled={dryRunning}>
+                      <FlaskConical
+                        className={`h-4 w-4 mr-2 ${dryRunning ? "animate-pulse" : ""}`}
+                      />
+                      {dryRunning ? t("actionDryRunRunning") : t("actionDryRun")}
+                    </DropdownMenuItem>
+                    {onClear && (
+                      <DropdownMenuItem onClick={() => onClear(mentalModel)}>
+                        <Eraser className="h-4 w-4 mr-2" />
+                        {t("actionClearContent")}
+                      </DropdownMenuItem>
+                    )}
+                    {onDelete && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => onDelete(mentalModel)}
+                          className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400 focus:bg-red-500/10"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          {t("actionDelete")}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+
+              <div className="flex-1 overflow-y-auto mt-4">
+                <TabsContent value="content" className="mt-0 space-y-6">
+                  <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border bg-muted/50 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span className="font-semibold uppercase tracking-wide">
+                          {t("storedContent")}
+                        </span>
+                        <span className="text-muted-foreground/70">
+                          &middot; {t("charsCount", { count: mentalModel.content.length })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <StalenessBadge
+                          isStale={mentalModel.is_stale}
+                          trigger={mentalModel.trigger}
+                        />
+                        <span
+                          title={formatDateTime(mentalModel.last_refreshed_at)}
+                          className="flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          {t("lastRefreshed", {
+                            time: formatRelativeTime(mentalModel.last_refreshed_at),
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                    <CompactMarkdown className="p-4">{mentalModel.content}</CompactMarkdown>
+                  </div>
+                  {mentalModel.reflect_response?.structured_output && (
+                    <div>
+                      <SectionLabel>{t("structuredOutput")}</SectionLabel>
+                      <pre className="rounded-lg border border-border bg-muted/30 p-4 text-xs font-mono overflow-auto max-h-[400px] whitespace-pre-wrap break-words">
+                        {JSON.stringify(mentalModel.reflect_response.structured_output, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  <div>
+                    <SectionLabel>
+                      {basedOnCount > 0
+                        ? t("basedOnWithCount", { count: basedOnCount })
+                        : t("basedOn")}
+                    </SectionLabel>
+                    {mentalModel.reflect_response ? (
+                      <BasedOnList
+                        based_on={basedOn}
+                        onViewMemory={(id) => setViewMemoryId(id)}
+                        onViewDirective={(id) => setViewDirectiveId(id)}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{t("noSourceData")}</p>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="configuration" className="mt-0">
+                  <ConfigurationTab mentalModel={mentalModel} />
+                </TabsContent>
+
+                <TabsContent value="errors" className="mt-0">
+                  {/* Until the history is in, "no failed refreshes" would be a claim
+                      the UI cannot yet make. */}
+                  {loadingHistory ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Spinner size="md" variant="jump" />
+                    </div>
+                  ) : (
+                    <RefreshErrorTimeline groups={failureGroups} paused={refreshPaused} />
+                  )}
+                </TabsContent>
+
+                <TabsContent value="history" className="mt-0">
+                  {loadingHistory ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Spinner size="md" variant="jump" />
+                    </div>
+                  ) : versionEntries.length > 0 ? (
+                    <MentalModelHistoryView
+                      history={versionEntries}
+                      currentContent={mentalModel.content}
+                      currentBasedOn={basedOn}
+                      currentTrace={
+                        mentalModel.reflect_response?.trace as MentalModelRefreshTrace | undefined
+                      }
+                      onViewMemory={(id) => setViewMemoryId(id)}
+                      onViewDirective={(id) => setViewDirectiveId(id)}
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">
+                      {/* A model that has only ever failed has no versions, and "no history"
+                          read as "nothing ever happened" — point at the tab that has it. */}
+                      {failureGroups.length > 0 ? t("noHistoryOnlyFailures") : t("noHistory")}
+                    </p>
+                  )}
+                </TabsContent>
+              </div>
+            </Tabs>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <MentalModelDryRunDialog
+        result={dryRunResult}
+        mentalModelName={mentalModel?.name ?? ""}
+        currentBasedOn={basedOn as Record<string, unknown[]> | undefined}
+        onClose={() => setDryRunResult(null)}
+        renderPreviewDiff={({ before, after, beforeBasedOn, afterBasedOn }) => (
+          <>
+            <div>
+              <SectionLabel>{t("contentDiff")}</SectionLabel>
+              <SideBySideDiff before={before} after={after} />
+            </div>
+            <div>
+              <SectionLabel>{t("basedOnDiff")}</SectionLabel>
+              <BasedOnDiff
+                before={beforeBasedOn as Record<string, BasedOnFact[]> | undefined}
+                after={afterBasedOn as Record<string, BasedOnFact[]> | undefined}
+                onViewMemory={(id) => setViewMemoryId(id)}
+                onViewDirective={(id) => setViewDirectiveId(id)}
+              />
+            </div>
+          </>
+        )}
+      />
+
+      {viewMemoryId && (
+        <MemoryDetailModal memoryId={viewMemoryId} onClose={() => setViewMemoryId(null)} />
+      )}
+      {viewDirectiveId && (
+        <DirectiveDetailModal
+          directiveId={viewDirectiveId}
+          onClose={() => setViewDirectiveId(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function Metadata({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <SectionLabel>{label}</SectionLabel>
+      <div className="text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function InfoCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {title}
+      </div>
+      <div className="p-4 space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function Pill({ label, color }: { label: string; color?: string }) {
+  return (
+    <span
+      className={`px-2 py-0.5 rounded text-xs ${
+        color ?? "bg-muted text-foreground border border-border/60"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
+  const t = useTranslations("mentalModelDetailModal");
+  const trigger = mentalModel.trigger ?? { refresh_after_consolidation: false };
+  const factTypes = trigger.fact_types ?? [];
+  const tagGroups = trigger.tag_groups ?? [];
+  const excludeIds = trigger.exclude_mental_model_ids ?? [];
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <InfoCard title={t("identityTitle")} icon={<FileText className="w-3.5 h-3.5" />}>
+        <Metadata
+          label={t("labelId")}
+          value={
+            <code className="text-xs font-mono text-muted-foreground break-all">
+              {mentalModel.id}
+            </code>
+          }
+        />
+        <Metadata label={t("labelName")} value={mentalModel.name} />
+        {mentalModel.source_query && (
+          <Metadata
+            label={t("labelSourceQuery")}
+            value={
+              <pre
+                className="text-sm font-mono text-foreground bg-muted/30 border border-border/60 rounded p-2 leading-6 m-0"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
+                }}
+              >
+                {mentalModel.source_query}
+              </pre>
+            }
+          />
+        )}
+        <Metadata
+          label={t("labelTags")}
+          value={
+            mentalModel.tags?.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {mentalModel.tags.map((tag) => (
+                  <TagChip key={tag} tag={tag} />
+                ))}
+              </div>
+            ) : (
+              <span className="text-muted-foreground italic text-sm">{t("noTags")}</span>
+            )
+          }
+        />
+      </InfoCard>
+
+      <InfoCard title={t("timingTitle")} icon={<RefreshCw className="w-3.5 h-3.5" />}>
+        <Metadata label={t("labelCreated")} value={formatDateTime(mentalModel.created_at)} />
+        <Metadata
+          label={t("labelLastRefreshed")}
+          value={
+            <span title={formatDateTime(mentalModel.last_refreshed_at)}>
+              {formatRelativeTime(mentalModel.last_refreshed_at)}
+            </span>
+          }
+        />
+        <Metadata
+          label={t("labelNextRefresh")}
+          value={<NextRefresh trigger={mentalModel.trigger} />}
+        />
+        <Metadata label={t("labelMaxTokens")} value={mentalModel.max_tokens.toLocaleString()} />
+      </InfoCard>
+
+      <InfoCard title={t("refreshTriggerTitle")} icon={<Zap className="w-3.5 h-3.5" />}>
+        <Metadata
+          label={t("labelRefreshMode")}
+          value={
+            trigger.mode === "delta" ? (
+              <Pill
+                label={t("pillDelta")}
+                color="bg-purple-500/10 text-purple-600 dark:text-purple-400"
+              />
+            ) : (
+              <Pill label={t("pillFull")} />
+            )
+          }
+        />
+        <Metadata
+          label={t("labelAutoRefreshAfterConsolidation")}
+          value={
+            trigger.refresh_after_consolidation ? (
+              <Pill
+                label={t("pillEnabled")}
+                color="bg-green-500/10 text-green-600 dark:text-green-400"
+              />
+            ) : (
+              <Pill label={t("pillDisabled")} />
+            )
+          }
+        />
+        <Metadata
+          label={t("labelRefreshCron")}
+          value={
+            trigger.refresh_cron ? (
+              <Pill
+                label={trigger.refresh_cron}
+                color="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+              />
+            ) : (
+              <Pill label={t("pillDisabled")} />
+            )
+          }
+        />
+        {trigger.refresh_cron && <CronSchedulePreview cron={trigger.refresh_cron} />}
+        <Metadata
+          label={t("labelMinRefreshInterval")}
+          value={
+            trigger.min_refresh_interval_seconds != null
+              ? `${trigger.min_refresh_interval_seconds.toLocaleString()}${t("secondsSuffix")}`
+              : t("minRefreshIntervalDefault")
+          }
+        />
+        <Metadata
+          label={t("labelKeepTrace")}
+          value={trigger.keep_trace ? t("valueYes") : t("valueNo")}
+        />
+        <Metadata
+          label={t("labelFactTypes")}
+          value={
+            factTypes.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {factTypes.map((ft) => {
+                  const d = getFactTypeDisplay(ft, t);
+                  return <Pill key={ft} label={d.label} color={d.color} />;
+                })}
+              </div>
+            ) : (
+              <span className="text-muted-foreground italic text-sm">{t("factTypesAll")}</span>
+            )
+          }
+        />
+        <Metadata
+          label={t("labelExcludeMentalModels")}
+          value={trigger.exclude_mental_models ? t("valueYes") : t("valueNo")}
+        />
+        {excludeIds.length > 0 && (
+          <Metadata
+            label={t("labelExcludedIds")}
+            value={
+              <div className="flex flex-wrap gap-1.5">
+                {excludeIds.map((id) => (
+                  <code
+                    key={id}
+                    className="text-xs font-mono px-1.5 py-0.5 rounded bg-muted border border-border/60"
+                  >
+                    {id}
+                  </code>
+                ))}
+              </div>
+            }
+          />
+        )}
+      </InfoCard>
+
+      <InfoCard title={t("reflectParamsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
+        <Metadata
+          label={t("labelIncludeChunks")}
+          value={
+            trigger.include_chunks == null
+              ? t("includeChunksDefault")
+              : trigger.include_chunks
+                ? t("valueYes")
+                : t("valueNo")
+          }
+        />
+        <Metadata
+          label={t("labelRecallMaxTokens")}
+          value={
+            trigger.recall_max_tokens != null
+              ? trigger.recall_max_tokens.toLocaleString()
+              : t("recallMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelRecallChunksMaxTokens")}
+          value={
+            trigger.recall_chunks_max_tokens != null
+              ? trigger.recall_chunks_max_tokens.toLocaleString()
+              : t("recallChunksMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelTagsMatch")}
+          value={trigger.tags_match ? <Pill label={trigger.tags_match} /> : t("tagsMatchDefault")}
+        />
+        <Metadata
+          label={t("labelBudget")}
+          value={trigger.budget ? <Pill label={trigger.budget} /> : t("budgetDefault")}
+        />
+        <Metadata
+          label={t("labelObservationsMaxTokens")}
+          value={
+            trigger.reflect_search_observations_max_tokens != null
+              ? trigger.reflect_search_observations_max_tokens.toLocaleString()
+              : t("observationsMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelObservationEntities")}
+          value={
+            trigger.reflect_search_observations_include_entities == null
+              ? t("observationEntitiesDefault")
+              : trigger.reflect_search_observations_include_entities
+                ? t("valueYes")
+                : t("valueNo")
+          }
+        />
+      </InfoCard>
+
+      {tagGroups.length > 0 && (
+        <div className="md:col-span-2">
+          <InfoCard title={t("tagGroupsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
+            <pre className="text-xs font-mono bg-muted/40 rounded p-3 overflow-x-auto border border-border/60">
+              {JSON.stringify(tagGroups, null, 2)}
+            </pre>
+          </InfoCard>
+        </div>
+      )}
+
+      {trigger.response_schema && (
+        <div className="md:col-span-2">
+          <InfoCard title={t("responseSchemaTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
+            <pre className="text-xs font-mono bg-muted/40 rounded p-3 overflow-x-auto border border-border/60">
+              {JSON.stringify(trigger.response_schema, null, 2)}
+            </pre>
+          </InfoCard>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+      {children}
+    </div>
+  );
+}

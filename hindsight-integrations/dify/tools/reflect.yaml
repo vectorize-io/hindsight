@@ -1,0 +1,51 @@
+identity:
+  name: reflect
+  author: vectorize
+  label:
+    en_US: Reflect
+description:
+  human:
+    en_US: Get an LLM-synthesized answer over a Hindsight bank's memories.
+  llm: Use this tool to ask a synthesizing question over a Hindsight memory bank. Returns a single text answer composed from the relevant memories.
+parameters:
+  - name: bank_id
+    type: string
+    required: true
+    label:
+      en_US: Bank ID
+    human_description:
+      en_US: Memory bank to reflect over.
+    llm_description: Memory bank identifier.
+    form: llm
+  - name: query
+    type: string
+    required: true
+    label:
+      en_US: Query
+    human_description:
+      en_US: Question to answer using the bank's memories.
+    llm_description: The question to answer using stored memories.
+    form: llm
+  - name: budget
+    type: select
+    required: false
+    default: low
+    label:
+      en_US: Budget
+    human_description:
+      en_US: Reflect budget — higher = more thorough, slower, more expensive.
+    llm_description: Budget level for reflection.
+    options:
+      - value: low
+        label:
+          en_US: Low
+      - value: mid
+        label:
+          en_US: Mid
+      - value: high
+        label:
+          en_US: High
+    form: form
+extra:
+  python:
+    source: tools/reflect.py

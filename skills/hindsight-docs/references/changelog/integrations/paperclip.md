@@ -1,0 +1,87 @@
+---
+hide_table_of_contents: true
+---
+
+# Paperclip Integration Changelog
+
+Changelog for [`@vectorize-io/hindsight-paperclip`](https://www.npmjs.com/package/@vectorize-io/hindsight-paperclip).
+
+For the source code, see [`hindsight-integrations/paperclip`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/paperclip).
+
+← [Back to main changelog](../index.md)
+
+## [0.4.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.4.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/paperclip/v0.4.0)
+
+**Improvements**
+
+- The Hindsight request timeout can now be configured for the Paperclip integration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/sdfantini-cs" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@sdfantini-cs</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/82dcec054" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>82dcec054</a>
+
+**Bug Fixes**
+
+- Paperclip now resolves the Hindsight Cloud API key correctly from configured secret references.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/qveys" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@qveys</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ac1962e6f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ac1962e6f</a>
+- The hindsight_recall tool now uses the query provided by the agent.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/sdfantini-cs" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@sdfantini-cs</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/82dcec054" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>82dcec054</a>
+
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.3.0)
+
+**Features**
+
+- Added per-agent enable/disable controls for the Paperclip integration to support staged pilot rollouts.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/parties" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@parties</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0c6d54dc8" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0c6d54dc8</a>
+
+**Improvements**
+
+- Added operational metrics exposing async-operation queue depth and consolidation backlog as gauges.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/MattJackson" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@MattJackson</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b1fe23fbe" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b1fe23fbe</a>
+
+## [0.2.3](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.3)
+
+**Features**
+
+- Added per-user memory isolation for Paperclip by supporting configurable bank granularity.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/beca4b42" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>beca4b42</a>
+
+## [0.2.2](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.2)
+
+**Improvements**
+
+- Updated dependencies to address known security vulnerabilities (npm and pip).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/dcbouius" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@dcbouius</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/26c5028c" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>26c5028c</a>
+
+**Bug Fixes**
+
+- Fixed the Paperclip integration to correctly handle real Paperclip event payloads, improving reliability of event processing.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/amirhmoradi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@amirhmoradi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/be908d5b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>be908d5b</a>
+
+## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.1)
+
+**Breaking Changes**
+
+- Replaced the Paperclip integration with the new Paperclip plugin (v0.2.0), changing how the integration is packaged and used.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c571fac7" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c571fac7</a>
+
+## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.0)
+
+**Breaking Changes**
+
+- Rewritten as a proper Paperclip plugin (installed via `pnpm paperclipai plugin install`). No code changes required — memory hooks run automatically via the event system.
+- Works with all adapter types (Claude, Codex, Cursor, HTTP, Process). Previously required manual `recall()`/`retain()` calls and only supported HTTP adapter agents.
+
+**Features**
+
+- `agent.run.started` hook: auto-recalls context keyed to issue title + description
+- `agent.run.finished` hook: auto-retains agent output with `runId` as document ID
+- `hindsight_recall` and `hindsight_retain` agent tools for mid-run memory access
+- `onValidateConfig`: live connectivity check when operator saves settings
+- Configurable bank granularity (company+agent, company-only, agent-only)
+
+## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.1.2)
+
+**Improvements**
+
+- Paperclip integration now sends an identifying User-Agent on all HTTP requests for better request tracing and compatibility. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
+## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.1.1)
+
+**Features**
+
+- Added the Hindsight Paperclip TypeScript integration. ([`81441ee9`](https://github.com/vectorize-io/hindsight/commit/81441ee9))
+
+**Bug Fixes**
+
+- Fixed issues in the Paperclip integration based on review feedback. ([`7863ffeb`](https://github.com/vectorize-io/hindsight/commit/7863ffeb))

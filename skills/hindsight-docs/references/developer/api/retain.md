@@ -1,0 +1,658 @@
+
+# Ingest Data
+
+Store documents, conversations, and raw content into Hindsight to automatically extract and create memories.
+
+When you **retain** content, Hindsight doesn't just store the raw text—it intelligently analyzes the content to extract meaningful facts, identify entities, and build a connected knowledge graph. This process transforms unstructured information into structured, queryable memories.
+
+{/* Import raw source files */}
+
+> **ℹ️ How Retain Works**
+>
+Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](../retain.md) guide.
+> **💡 Prerequisites**
+>
+Make sure you've completed the [Quick Start](./quickstart.md) to install the client and start the server.
+## Store a Document
+
+A single retain call accepts one or more **items**. Each item is a piece of raw content — a conversation, a document, a note — that Hindsight will analyze and decompose into one or many memories. The content itself is never stored verbatim; what gets stored are the structured facts the LLM extracts from it.
+
+### Python
+
+```python
+client.retain(
+    bank_id="my-bank",
+    content="Alice works at Google as a software engineer"
+)
+```
+
+### Node.js
+
+```javascript
+await client.retain('my-bank', 'Alice works at Google as a software engineer');
+```
+
+### CLI
+
+```bash
+hindsight memory retain my-bank "Alice works at Google as a software engineer"
+```
+
+### Go
+
+```go
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{Content: hindsight.TextContent("Alice works at Google as a software engineer")},
+		},
+	}).Execute()
+```
+
+### Retaining a Conversation
+
+A full conversation should be retained as a single item. The LLM can parse any format — plain text, JSON, Markdown, or any structured representation — as long as it clearly conveys who said what and when. The example below uses a simple `Name (timestamp): text` format.
+
+### Python
+
+```python
+# Retain an entire conversation as a single document.
+# Format each message as "Name (timestamp): text" so the LLM can attribute
+# facts to the right person and resolve temporal references across the thread.
+conversation = "\n".join([
+    "Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?",
+    "Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.",
+    "Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?",
+    "Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.",
+    "Alice (2024-03-15T09:04:00Z): Good to know. We'll avoid peanuts at the team lunch.",
+])
+
+client.retain(
+    bank_id="my-bank",
+    content=conversation,
+    context="team chat",
+    timestamp="2024-03-15T09:04:00Z",
+    document_id="chat-2024-03-15-alice-bob",
+)
+```
+
+### Node.js
+
+```javascript
+// Retain an entire conversation as a single document.
+// Format each message as "Name (timestamp): text" so the LLM can attribute
+// facts to the right person and resolve temporal references across the thread.
+const conversation = [
+    'Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?',
+    'Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.',
+    'Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?',
+    'Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.',
+    'Alice (2024-03-15T09:04:00Z): Good to know. We\'ll avoid peanuts at the team lunch.',
+].join('\n');
+
+await client.retain('my-bank', conversation, {
+    context: 'team chat',
+    timestamp: '2024-03-15T09:04:00Z',
+    documentId: 'chat-2024-03-15-alice-bob',
+});
+```
+
+### CLI
+
+```bash
+# Retain an entire conversation as a single document.
+CONVERSATION="Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?
+Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.
+Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?
+Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.
+Alice (2024-03-15T09:04:00Z): Good to know. We'll avoid peanuts at the team lunch."
+
+hindsight memory retain my-bank "$CONVERSATION" \
+    --context "team chat" \
+    --doc-id "chat-2024-03-15-alice-bob"
+```
+
+### Go
+
+```go
+// Retain an entire conversation as a single document.
+conversation := "Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?\n" +
+	"Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.\n" +
+	"Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?\n" +
+	"Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.\n" +
+	"Alice (2024-03-15T09:04:00Z): Good to know. We'll avoid peanuts at the team lunch."
+
+docID := "chat-2024-03-15-alice-bob"
+context_ := "team chat"
+ts := "2024-03-15T09:04:00Z"
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{
+				Content:    hindsight.TextContent(conversation),
+				Context:    *hindsight.NewNullableString(&context_),
+				DocumentId: *hindsight.NewNullableString(&docID),
+				Timestamp: *hindsight.NewNullableTimestamp(&hindsight.Timestamp{
+					String: &ts,
+				}),
+			},
+		},
+	}).Execute()
+```
+
+When the conversation grows — a new message arrives — just retain again with the full updated content and the same `document_id`. Hindsight will delete the previous version and reprocess from scratch, so memories always reflect the latest state of the conversation.
+
+---
+
+## Parameters
+
+### content
+
+The raw text to store. This is the only required field. Hindsight chunks the content, sends each chunk to the LLM for fact extraction, and stores the resulting structured facts — not the original text. A single `content` value can produce many memories depending on how much information it contains.
+
+### timestamp
+
+When the event described in the content actually occurred. Three forms are accepted:
+
+| Value | Behaviour |
+|-------|-----------|
+| Omitted / `null` | Defaults to the current time at ingestion. |
+| ISO 8601 string (e.g. `"2024-01-15T10:30:00Z"`) | Uses the provided datetime. |
+| `"unset"` | Stores the content **without any timestamp**. Use this for timeless material such as reference documents, books, or fictional content where no real event time exists. |
+
+The timestamp is injected into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. When `"unset"` is passed the prompt shows `Event Date: Unknown`, allowing the model to correctly return `N/A` for the `when` field of every extracted fact. Providing a real timestamp also enables temporal recall queries like "What happened last spring?" to work correctly.
+
+### context
+
+A short label describing the source or situation — for example `"team meeting"`, `"slack"`, or `"support ticket"`. It is injected directly into the LLM prompt, so it actively shapes how facts are extracted. The same sentence can mean something very different depending on context: "the project was terminated" in a `"performance review"` context versus a `"product roadmap"` context produces different memories.
+
+Providing context consistently is one of the highest-leverage things you can do to improve memory quality.
+
+### Python
+
+```python
+client.retain(
+    bank_id="my-bank",
+    content="Alice got promoted to senior engineer",
+    context="career update",
+    timestamp="2024-03-15T10:00:00Z"
+)
+```
+
+### Node.js
+
+```javascript
+await client.retain('my-bank', 'Alice got promoted to senior engineer', {
+    context: 'career update',
+    timestamp: '2024-03-15T10:00:00Z'
+});
+```
+
+### CLI
+
+```bash
+hindsight memory retain my-bank "Alice got promoted" \
+    --context "career update"
+```
+
+### Go
+
+```go
+ctxLabel := "career update"
+ts2 := "2024-03-15T10:00:00Z"
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{
+				Content: hindsight.TextContent("Alice got promoted to senior engineer"),
+				Context: *hindsight.NewNullableString(&ctxLabel),
+				Timestamp: *hindsight.NewNullableTimestamp(&hindsight.Timestamp{
+					String: &ts2,
+				}),
+			},
+		},
+	}).Execute()
+```
+
+### metadata
+
+Arbitrary key-value string pairs that provide context about this item. For example: `{"source": "slack", "channel": "engineering", "thread_id": "T123"}`. Metadata is included in the fact extraction prompt, so the LLM can use it as additional context when extracting facts — for instance, knowing the document title or source can improve accuracy. It is also stored on each memory unit and returned with every recalled memory, letting you do client-side filtering or static enrichment without extra lookups — for example, linking a memory back to its source URL, thread ID, or any application-specific identifier.
+
+Values are stored and returned as strings. A key whose value is `null` is dropped rather than stored, so it will not come back on the recalled memory — send an empty string if you need the key to survive.
+
+### document_id
+
+A caller-supplied string that groups one or more items under a logical document. This field is the key to making retain **idempotent**.
+
+When you provide a `document_id`, Hindsight upserts the document: if a document with that ID already exists in the bank, it and all its associated memories are deleted before the new content is processed and inserted. This means you can safely re-run retain on updated content — for example, a chat thread that grew since last time — without accumulating duplicate memories.
+
+If you omit `document_id`, Hindsight assigns a random UUID per request, so re-ingesting the same content will create duplicate memories.
+
+### update_mode
+
+Controls how Hindsight handles an existing document when you retain with a `document_id` that already exists.
+
+| Value | Behaviour |
+|-------|-----------|
+| `"replace"` *(default)* | Deletes the old document and all its memories, then processes the new content from scratch. This is the standard upsert described above. |
+| `"append"` | Concatenates the new content onto the existing document text and reprocesses the combined document. Delta retain automatically skips unchanged chunks, so only the new portion triggers LLM extraction. |
+
+Append mode requires a `document_id` — without one there is no existing document to append to.
+
+**When to use append**: Use `"append"` for content that grows incrementally — for example, a log file, a journal, or a chat transcript where you receive new messages one at a time. Instead of re-sending the entire history on each update, send only the new content with `update_mode: "append"` and Hindsight will efficiently merge it with what it already has.
+
+```json
+{
+  "items": [
+    {
+      "content": "New entry to add to the existing document.",
+      "document_id": "my-growing-doc",
+      "update_mode": "append"
+    }
+  ]
+}
+```
+
+### entities
+
+A list of entities you want to guarantee are recognized, merged with any entities the LLM extracts automatically. Each entry has a `text` field (the entity name) and an optional `type` (e.g., `"PERSON"`, `"ORG"`, `"CONCEPT"` — defaults to `"CONCEPT"` if omitted).
+
+Use this when you know certain entities are important but the LLM might miss them or refer to them inconsistently across different parts of the content. Providing entities explicitly ensures they are always linked in the knowledge graph.
+
+### resolve_entities
+
+By default the names you pass in `entities` are **resolved** against the entities already in the bank: a name close to an existing one may be matched onto it rather than creating its own entity, based on name similarity plus how strongly it co-occurs with the other names in the same item. That is usually what you want — it is how `Dr. Waller` and `Dr Waller` end up as one entity instead of two.
+
+Set `resolve_entities: false` when the names you are passing are authoritative and must be stored exactly as written. An existing entity is then reused only when its name matches case-insensitively, any other name creates a new entity, and your names are never merged with each other (`Alice` and `Alice Smith` stay two entities).
+
+This applies **only to the entities you supply**. Auto-extracted entities are always resolved, because they are the extractor's guess at a name rather than yours — turning resolution off for them would fill the bank with near-duplicate entities.
+
+The same flag exists on [editing a memory](./memories.md#resolving-entity-names), where it matters most: a correction you type by hand is exactly the case where a similar existing entity should not win.
+
+### tags and document_tags
+
+Tags control **visibility scoping** — which memories are visible during recall. A memory is only returned if its tags intersect with the tags filter provided in the recall request. This makes tags useful when a single memory bank serves multiple users or sessions and each should only see their own memories.
+
+Use consistent naming patterns to keep tag filtering predictable. Common conventions: `user:<id>` for per-user scoping, `session:<id>` for session isolation, `room:<id>` for chat rooms, `topic:<name>` for category filtering. The bank also exposes a list-tags endpoint that returns all tags with their memory counts, useful for UI autocomplete or wildcard expansion.
+
+See [Recall API](./recall.md#tags) for filtering by tags during retrieval.
+
+### observation_scopes
+
+Controls which [observations](../observations.md) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
+
+> **ℹ️ Scope isolation**
+>
+During consolidation, Hindsight uses `all_strict` matching to find existing observations to update — only observations whose tags exactly match the current scope are considered. This keeps scopes isolated: a memory consolidated under `["student:alice"]` will never bleed into an observation tagged `["student:alice", "teacher:bob"]`.
+The examples below use a lesson transcript retained with `tags: ["student:alice", "teacher:bob", "session-id:s1"]`.
+
+#### combined *(default)*
+
+One consolidation pass using all tags together. The resulting observation is tagged with the full set.
+
+- Observations created: `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✗ *"What does Alice struggle with across all her sessions?"* — no match, because no observation was ever built for `student:alice` alone
+- ✗ *"How does Bob teach?"* — no match for `teacher:bob` alone
+- ✓ *"What happened in session s1 with Alice and Bob?"* — exact match
+
+**Use when** the memory is meaningful only as a whole and you never need to query any single tag in isolation.
+
+#### shared
+
+One consolidation pass over a single global, **untagged** scope. The memory's own tags are ignored for observation scoping (they stay on the source facts for recall filtering), so memories with *different* tags all consolidate into the **same** observation.
+
+- Observations created: one untagged observation (`[]`)
+- ✓ Untagged observations match every recall regardless of tag filter
+- Deduplicates across volatile per-call tags: if each session is retained with a unique `session-id:…` tag, `combined` and `per_tag` create a fresh observation every session (the tag never repeats), whereas `shared` folds them all into one.
+
+**Use when** your tags are per-call provenance (e.g. session ids) that you want for recall filtering and debugging but not as a consolidation boundary — keep the tag on `tags` and set `observation_scopes: "shared"`.
+
+> **🚨 `shared` vs `[[]]` vs `[]`**
+>
+`shared` is equivalent to the explicit scope `[[]]` — a list containing one empty scope. Do **not** confuse it with `[]` (an empty list), which declares *zero* scopes and silently falls back to `combined`.
+#### per_tag
+
+One consolidation pass per individual tag. Each tag gets its own isolated observation that grows with every new memory sharing that tag.
+
+- Observations created: `["student:alice"]` · `["teacher:bob"]` · `["session-id:s1"]`
+- ✓ *"What does Alice struggle with across all her sessions?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"What happened in session s1?"*
+- ✗ *"How does Alice perform specifically with Bob?"* — no observation for the `["student:alice", "teacher:bob"]` combination
+- ✗ *"How does Bob teach in online sessions?"* — no observation for `["teacher:bob", "session-id:s1"]`
+
+**Use when** content involves multiple tags that each represent an independent subject — the most common choice for multi-party content like conversations, lessons, or support sessions.
+
+#### all_combinations
+
+One pass per subset of tags — singles, pairs, triples, and so on. For 3 tags that is 7 passes.
+
+- Observations created: all `"per_tag"` scopes above, plus `["student:alice", "teacher:bob"]` · `["student:alice", "session-id:s1"]` · `["teacher:bob", "session-id:s1"]` · `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✓ All questions from `"per_tag"` above
+- ✓ *"How does Alice perform specifically with Bob?"* — matched by `["student:alice", "teacher:bob"]`
+
+**Use when** you need observations at every granularity — per tag, per pair, per group.
+
+#### custom
+
+Pass an explicit list of tag sets. Each inner list is one scope.
+
+```json
+[["student:alice"], ["teacher:bob"], ["teacher:bob", "session-id:s1"]]
+```
+
+- Observations created: exactly those three scopes — nothing more
+- ✓ *"What does Alice struggle with?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"How does Bob teach in session s1 specifically?"*
+- ✗ *"What happened in session s1 regardless of teacher?"* — `["session-id:s1"]` alone was not included
+
+**Use when** you know exactly which combinations are meaningful and want to avoid unnecessary passes.
+
+### Response
+
+The synchronous retain response includes:
+
+- `success` — whether the operation completed without errors
+- `bank_id` — the memory bank that received the content
+- `items_count` — number of items processed
+- `async` — whether processing ran asynchronously
+- `usage` — token usage for the LLM calls (`input_tokens`, `output_tokens`, `total_tokens`), only present for synchronous operations
+
+---
+
+## Batch Ingestion
+
+Multiple items can be submitted in a single request. Batch ingestion is the recommended approach — it reduces network overhead and lets Hindsight optimize extraction across related content.
+
+### Python
+
+```python
+client.retain_batch(
+    bank_id="my-bank",
+    items=[
+        {"content": "Alice works at Google", "context": "career", "document_id": "conversation_001_msg_1"},
+        {"content": "Bob is a data scientist at Meta", "context": "career", "document_id": "conversation_001_msg_2"},
+        {"content": "Alice and Bob are friends", "context": "relationship", "document_id": "conversation_001_msg_3"}
+    ]
+)
+```
+
+### Node.js
+
+```javascript
+await client.retainBatch('my-bank', [
+    { content: 'Alice works at Google', context: 'career', document_id: 'conversation_001_msg_1' },
+    { content: 'Bob is a data scientist at Meta', context: 'career', document_id: 'conversation_001_msg_2' },
+    { content: 'Alice and Bob are friends', context: 'relationship', document_id: 'conversation_001_msg_3' }
+]);
+```
+
+### CLI
+
+```bash
+# Batch ingestion via individual retain calls (CLI processes items one at a time)
+hindsight memory retain my-bank "Alice works at Google" \
+    --context "career" --doc-id "conversation_001_msg_1"
+hindsight memory retain my-bank "Bob is a data scientist at Meta" \
+    --context "career" --doc-id "conversation_001_msg_2"
+hindsight memory retain my-bank "Alice and Bob are friends" \
+    --context "relationship" --doc-id "conversation_001_msg_3"
+```
+
+### Go
+
+```go
+doc1 := "conversation_001_msg_1"
+doc2 := "conversation_001_msg_2"
+doc3 := "conversation_001_msg_3"
+ctx1 := "career"
+ctx2 := "relationship"
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{Content: hindsight.TextContent("Alice works at Google"), Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc1)},
+			{Content: hindsight.TextContent("Bob is a data scientist at Meta"), Context: *hindsight.NewNullableString(&ctx1), DocumentId: *hindsight.NewNullableString(&doc2)},
+			{Content: hindsight.TextContent("Alice and Bob are friends"), Context: *hindsight.NewNullableString(&ctx2), DocumentId: *hindsight.NewNullableString(&doc3)},
+		},
+	}).Execute()
+```
+
+---
+
+## Files
+
+Upload files directly — Hindsight converts them to text and extracts memories automatically. File processing always runs asynchronously and returns operation IDs for tracking.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR support depends on the configured parser), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
+
+### Python
+
+```python
+# Upload files and retain their contents as memories.
+# Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+# Pass file paths — the client reads and uploads them automatically.
+result = client.retain_files(
+    bank_id="my-bank",
+    files=[EXAMPLES_DIR / "sample.pdf"],
+    context="quarterly report",
+)
+print(result.operation_ids)  # Track processing via the operations endpoint
+```
+
+### Node.js
+
+```javascript
+// Upload files and retain their contents as memories.
+// Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pdfBytes = readFileSync(join(__dirname, 'sample.pdf'));
+const result = await client.retainFiles('my-bank', [
+    new File([pdfBytes], 'sample.pdf'),
+], { context: 'quarterly report' });
+console.log(result.operation_ids);  // Track processing via the operations endpoint
+```
+
+### CLI
+
+```bash
+# Upload a single file (PDF, DOCX, PPTX, XLSX, images, audio, and more)
+hindsight memory retain-files my-bank "$SAMPLE_FILE"
+
+# Upload a directory of files
+hindsight memory retain-files my-bank "$SCRIPT_DIR/"
+
+# Queue files for background processing (returns immediately)
+hindsight memory retain-files my-bank "$SCRIPT_DIR/" --async
+```
+
+### Go
+
+```go
+// Open a file and upload it — Hindsight converts it to text and extracts memories.
+// Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+f, err := os.Open("../../hindsight-docs/examples/api/sample.pdf")
+if err != nil {
+	log.Fatalf("Failed to open file: %v", err)
+}
+defer f.Close()
+
+fileResp, _, _ := client.FilesAPI.FileRetain(ctx, "my-bank").
+	Files([]*os.File{f}).
+	Request(`{"files_metadata": [{"context": "quarterly report"}]}`).
+	Execute()
+fmt.Println("Operation IDs:", fileResp.GetOperationIds()) // Track processing via the operations endpoint
+```
+
+The file retain endpoint always returns asynchronously. The response contains `operation_ids` — one per uploaded file — which you can poll via `GET /v1/default/banks/{bank_id}/operations` to track progress.
+
+Upload up to 10 files per request (max 100 MB total). Each file becomes a separate document with optional per-file metadata:
+
+### Python
+
+```python
+# Upload multiple files with per-file metadata (up to 10 files per batch).
+# Each file gets its own context, document_id, and tags.
+result = client.retain_files(
+    bank_id="my-bank",
+    files=[
+        EXAMPLES_DIR / "sample.pdf",
+        EXAMPLES_DIR / "sample.pdf",  # Replace with a second file path
+    ],
+    files_metadata=[
+        {"context": "quarterly report", "document_id": "q1-report", "tags": ["project:alpha"]},
+        {"context": "meeting notes", "document_id": "q1-notes", "tags": ["project:alpha"]},
+    ],
+)
+print(result.operation_ids)  # One operation ID per file
+```
+
+### Node.js
+
+```javascript
+// Upload multiple files with per-file metadata (up to 10 files per request)
+const batchResult = await client.retainFiles('my-bank', [
+    new File([pdfBytes], 'report.pdf'),
+    new File([pdfBytes], 'notes.pdf'),
+], {
+    filesMetadata: [
+        { context: 'quarterly report', document_id: 'q1-report', tags: ['project:alpha'] },
+        { context: 'meeting notes', document_id: 'q1-notes', tags: ['project:alpha'] },
+    ]
+});
+console.log(batchResult.operation_ids);  // One operation ID per file
+```
+
+### CLI
+
+```bash
+# Upload a single file (PDF, DOCX, PPTX, XLSX, images, audio, and more)
+hindsight memory retain-files my-bank "$SAMPLE_FILE"
+
+# Upload a directory of files
+hindsight memory retain-files my-bank "$SCRIPT_DIR/"
+
+# Queue files for background processing (returns immediately)
+hindsight memory retain-files my-bank "$SCRIPT_DIR/" --async
+```
+
+### Go
+
+```go
+// Open a file and upload it — Hindsight converts it to text and extracts memories.
+// Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+f, err := os.Open("../../hindsight-docs/examples/api/sample.pdf")
+if err != nil {
+	log.Fatalf("Failed to open file: %v", err)
+}
+defer f.Close()
+
+fileResp, _, _ := client.FilesAPI.FileRetain(ctx, "my-bank").
+	Files([]*os.File{f}).
+	Request(`{"files_metadata": [{"context": "quarterly report"}]}`).
+	Execute()
+fmt.Println("Operation IDs:", fileResp.GetOperationIds()) // Track processing via the operations endpoint
+```
+
+> **ℹ️ File Storage**
+>
+Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration.md#file-processing) for details.
+---
+
+## Async Ingestion
+
+For large batches, use async ingestion to avoid blocking your application:
+
+### Python
+
+```python
+# Start async ingestion (returns immediately)
+result = client.retain_batch(
+    bank_id="my-bank",
+    items=[
+        {"content": "Large batch item 1", "document_id": "large-doc-1"},
+        {"content": "Large batch item 2", "document_id": "large-doc-2"},
+    ],
+    retain_async=True
+)
+
+# Check if it was processed asynchronously
+print(result.var_async)  # True
+```
+
+### Node.js
+
+```javascript
+// Start async ingestion (returns immediately)
+await client.retainBatch('my-bank', [
+    { content: 'Large batch item 1', document_id: 'large-doc-1' },
+    { content: 'Large batch item 2', document_id: 'large-doc-2' },
+], {
+    async: true
+});
+```
+
+### CLI
+
+```bash
+hindsight memory retain my-bank "Meeting notes" --async
+```
+
+### Go
+
+```go
+// Start async ingestion (returns immediately)
+asyncTrue := true
+largeDoc1 := "large-doc-1"
+largeDoc2 := "large-doc-2"
+retainResp, _, _ := client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{Content: hindsight.TextContent("Large batch item 1"), DocumentId: *hindsight.NewNullableString(&largeDoc1)},
+			{Content: hindsight.TextContent("Large batch item 2"), DocumentId: *hindsight.NewNullableString(&largeDoc2)},
+		},
+		Async: &asyncTrue,
+	}).Execute()
+
+// Check if it was processed asynchronously
+fmt.Println("Async:", retainResp.GetAsync())
+```
+
+When `async: true`, the call returns immediately with an `operation_id`. Processing runs in the background via the worker service. No `usage` metrics are returned for async operations.
+
+### Safe Retries with `operation_id`
+
+If an async retain response is lost or times out, you can't tell whether the operation was created. Retrying blindly risks enqueuing the same work twice — duplicate extraction, embeddings, and provider spend.
+
+Supply your own `operation_id` (any UUID) to make retries safe:
+
+```json
+{
+  "items": [{ "content": "Alice works at Google", "document_id": "conv_123" }],
+  "async": true,
+  "operation_id": "3f2b8c1a-9d4e-4a7b-9c2f-1e6d5a4b3c2d"
+}
+```
+
+- Re-submitting with the same `operation_id` returns the original operation and creates no new work, so a retry after a lost acknowledgement is a no-op.
+- Reusing an `operation_id` that already belongs to a different operation returns HTTP `409`.
+- Omitting `operation_id` keeps the default behavior — each request creates a new operation.
+- Generate the id **before** you send the request and reuse it across retries. `operation_id` is ignored for synchronous retain, and requires all items in the request to resolve to a single strategy.
+
+### Cut Costs 50% with Provider Batch APIs
+
+When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI, Groq, and Gemini all offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
+
+```bash
+export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
+```
+
+Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
+
+> **📝 Note**
+>
+Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI, Groq, or Gemini).

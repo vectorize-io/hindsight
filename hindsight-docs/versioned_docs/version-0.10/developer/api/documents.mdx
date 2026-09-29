@@ -1,0 +1,216 @@
+---
+sidebar_position: 8
+---
+
+# Documents
+
+Track and manage document sources in your memory bank. Documents provide traceability — knowing where memories came from.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import documentsPy from '!!raw-loader!@site/examples/api/documents.py';
+import documentsMjs from '!!raw-loader!@site/examples/api/documents.mjs';
+import documentsSh from '!!raw-loader!@site/examples/api/documents.sh';
+import documentsGo from '!!raw-loader!@site/examples/api/documents.go';
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
+:::
+
+## What Are Documents?
+
+Documents are containers for retained content. They help you:
+
+- **Track sources** — Know which PDF, conversation, or file a memory came from
+- **Update content** — Re-retain a document to update its facts
+- **Delete in bulk** — Remove all memories from a document at once
+- **Organize memories** — Group related facts by source
+
+## Chunks
+
+When you retain content, Hindsight splits it into chunks before extracting facts. These chunks are stored alongside the extracted memories, preserving the original text segments.
+
+**Why chunks matter:**
+- **Context preservation** — Chunks contain the raw text that generated facts, useful when you need the exact wording
+- **Richer recall** — Including chunks in recall provides surrounding context for matched facts
+
+:::tip Include Chunks in Recall
+Use `include_chunks=True` in your recall calls to get the original text chunks alongside fact results. See [Recall](./recall) for details.
+:::
+
+## Retain with Document ID
+
+Associate retained content with a document:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-retain" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-retain" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-retain" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-retain" language="go" />
+</TabItem>
+</Tabs>
+
+## Update Documents
+
+Re-retaining with the same document_id **replaces** the old content:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-update" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-update" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-update" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-update" language="go" />
+</TabItem>
+</Tabs>
+
+## Get Document
+
+Retrieve a document's original text and metadata. This is useful for expanding document context after a recall operation returns memories with document references.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-get" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-get" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-get" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-get" language="go" />
+</TabItem>
+</Tabs>
+
+## Update Document
+
+Update mutable fields on an existing document without re-processing the content. Currently supports updating `tags`.
+
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To remove a single tag, read the document's current tags, drop the one you want gone, and send the rest. Omitting the field entirely is not an update at all and is rejected with a `422`.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-update-tags" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-update-tags" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-update-tags" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-update-tags" language="go" />
+</TabItem>
+</Tabs>
+
+:::info Observations are re-consolidated
+When tags change, any consolidated observations derived from the document's memories are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset.
+
+This is required for correctness rather than incidental: consolidation scopes a memory by its tag set, so an observation built under the old tags is no longer valid, and deleting it would strand every other memory that observation was consolidated from unless those are requeued too. The size of that requeue is the number of memories co-sourced with this document's — on a densely co-sourced bank it can be many times the document's own memory count.
+
+Tags are compared as a **set** against the document's current tags, and an update that leaves the set unchanged — including one that only reorders the array — performs no retag and queues no re-consolidation. A repeatable tag-normalisation sweep therefore only pays the re-consolidation cost on the run that actually changes something.
+:::
+
+## Delete Document
+
+Remove a document and all its associated memories:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-delete" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-delete" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-delete" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-delete" language="go" />
+</TabItem>
+</Tabs>
+
+:::warning
+Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
+:::
+
+## List Documents
+
+List documents in a bank with optional filtering by ID, tags, and time.
+
+`start_date=` and `end_date=` restrict the results to a half-open range `[start, end)` on the timestamp named by `time_field=` — either `created_at` (when the document first arrived) or `updated_at` (its last write, and the default ordering). `time_field` also becomes the sort order, newest first.
+
+Because filtering and ordering follow the same column, `total` counts only the documents inside the window rather than the whole bank. Omit all three parameters to keep the default listing.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-list" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-list" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-list" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-list" language="go" />
+</TabItem>
+</Tabs>
+
+### Filtering Options
+
+| Parameter | Description |
+|---|---|
+| `q` | Case-insensitive substring match on document ID. `report` matches `report-2024`, `annual-report`, etc. |
+| `tags` | Filter by document tags. Accepts multiple values. |
+| `tags_match` | How to match tags (default: `any_strict`). See below. |
+| `limit` / `offset` | Pagination. Default limit is 100. |
+
+**`tags_match` modes:**
+
+| Mode | Behaviour |
+|---|---|
+| `any_strict` *(default)* | Document must have **at least one** of the specified tags. Untagged docs excluded. |
+| `any` | Same as `any_strict` but also includes untagged documents. |
+| `all_strict` | Document must have **all** specified tags. Untagged docs excluded. |
+| `all` | Same as `all_strict` but also includes untagged documents. |
+
+## Document Response Format
+
+```json
+{
+  "id": "meeting-2024-03-15",
+  "bank_id": "my-bank",
+  "original_text": "Alice presented the Q4 roadmap...",
+  "content_hash": "abc123def456",
+  "memory_unit_count": 12,
+  "nodes_by_fact_type": {
+    "world": 5,
+    "experience": 4,
+    "observation": 3
+  },
+  "created_at": "2024-03-15T14:00:00Z",
+  "updated_at": "2024-03-15T14:00:00Z"
+}
+```
+
+## Next Steps
+
+- [**Operations**](./operations) — Monitor background tasks
+- [**Memory Banks**](./memory-banks) — Configure bank settings

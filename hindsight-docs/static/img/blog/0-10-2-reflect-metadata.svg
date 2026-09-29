@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="687.4" height="307" viewBox="0 0 687.4 307" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":72,"children":[{"id":"bank","label":"Memory bank","direction":"column","gap":20,"children":[{"id":"hb","label":"Handbook","shape":"store","sub":"source=handbook"},{"id":"chat","label":"Chat thread","shape":"store","sub":"source=slack"}]},{"id":"reflect","label":"Reflect","sub":"mission: trust the handbook"},{"id":"answer","label":"Answer"}]},"edges":[{"id":"h","from":"hb","to":"reflect"},{"id":"c","from":"chat","to":"reflect"},{"id":"a","from":"reflect","to":"answer"}],"steps":[{"label":"Reflect sees where a fact came from","flow":[{"edges":["h","c"],"show":{"reflect":[{"tag":"handbook","tone":"green","text":"PRs need two approvals"},{"tag":"slack","tone":"gray","text":"One approval is enough","meta":"newer"}]},"say":"Two facts disagree. Without their source, the newer one used to win."},{"edges":{"edge":"a","data":"two approvals"},"ms":2800,"show":{"answer":[{"text":"A PR needs two approvals","meta":"from the handbook","mark":"cited"}]},"say":"Now the document's metadata reaches reflect, and the mission decides."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,25.6% { stroke: var(--accent) } 25.6%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 6.2s infinite step-end; }
+@keyframes a1 { 0%,25.6% { stroke: var(--accent); fill: var(--card-on) } 25.6%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 6.2s infinite step-end; }
+@keyframes a2 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 1 } }
+.a2 { animation: a2 6.2s infinite step-end; }
+@keyframes a3 { 0%,25.6% { stroke: var(--border) } 25.6%,100% { stroke: var(--accent) } }
+.a3 { animation: a3 6.2s infinite step-end; }
+@keyframes a4 { 0%,25.6% { stroke: var(--border); fill: var(--surface) } 25.6%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a4 { animation: a4 6.2s infinite step-end; }
+@keyframes a5 { 0%,25.6% { opacity: 0 } 25.6%,100% { opacity: 1 } }
+.a5 { animation: a5 6.2s infinite step-end; }
+@keyframes a6 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.a6 { animation: a6 6.2s infinite step-end; }
+@keyframes a7 { 0%,25.6% { stroke: var(--accent); stroke-width: 2 } 25.6%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a7 { animation: a7 6.2s infinite step-end; }
+@keyframes a8 { 0%,25.6% { stroke: var(--muted); stroke-width: 1.25 } 25.6%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a8 { animation: a8 6.2s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.p0 { animation: p0 6.2s infinite step-end; }
+@keyframes p1 { 0%,0% { opacity: 0 } 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.p1 { animation: p1 6.2s infinite step-end; }
+@keyframes p2 { 0%,25.6% { opacity: 0 } 25.7%,61.5% { opacity: 1 } 61.5%,100% { opacity: 0 } }
+.p2 { animation: p2 6.2s infinite step-end; }
+@keyframes a9 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 1 } }
+.a9 { animation: a9 6.2s infinite step-end; }
+@keyframes a10 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.a10 { animation: a10 6.2s infinite step-end; }
+@keyframes a11 { 0%,25.6% { opacity: 0 } 25.6%,100% { opacity: 1 } }
+.a11 { animation: a11 6.2s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="24" width="163.4" height="209" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="42" y="44" class="frame">MEMORY BANK</text>
+<path d="M42 73 a 63.7 12 0 0 1 127.4 0 v 43 a 63.7 12 0 0 1 -127.4 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M42 73 a 63.7 12 0 0 0 127.4 0" fill="none" stroke="var(--border)" class="a0"/><text x="105.7" y="98" class="label">Handbook</text><text x="105.7" y="113" class="sub">source=handbook</text>
+<path d="M48.9 160 a 56.8 12 0 0 1 113.6 0 v 43 a 56.8 12 0 0 1 -113.6 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M48.9 160 a 56.8 12 0 0 0 113.6 0" fill="none" stroke="var(--border)" class="a0"/><text x="105.7" y="185" class="label">Chat thread</text><text x="105.7" y="200" class="sub">source=slack</text>
+<rect x="259.4" y="52.5" width="166" height="152" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="342.4" y="75.5" class="label">Reflect</text><text x="342.4" y="90.5" class="sub">mission: trust the handbook</text><rect x="269.4" y="103.5" width="146" height="91" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="277.4" y="110.5" width="46.2" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="300.5" y="121" class="tag" fill="#10b981">HANDBOOK</text><text x="277.4" y="135.5" class="row">PRs need two approvals</text><rect x="277.4" y="144.5" width="31.9" height="14" rx="4" fill="#8b949e" fill-opacity="0.15"/><text x="293.3" y="155" class="tag" fill="#8b949e">SLACK</text><text x="277.4" y="169.5" class="row">One approval is enough</text><text x="277.4" y="184.5" class="row">· newer</text></g>
+<rect x="497.4" y="77" width="166" height="103" rx="10" fill="var(--bg)" stroke="var(--border)" class="a3"/><text x="580.4" y="100" class="label">Answer</text><rect x="507.4" y="113" width="146" height="57" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a4"/><g opacity="0" class="a5"><text x="645.4" y="130" class="mark">cited</text><text x="515.4" y="130" class="row">A PR needs two</text><text x="515.4" y="145" class="row">approvals · from</text><text x="515.4" y="160" class="row">the handbook</text></g><text x="515.4" y="130" opacity="0" class="row muted a6">—</text>
+<path id="p-h" d="M 169.4 94.5 C 214.39999999999998 94.5, 214.39999999999998 103.16666666666666, 259.4 103.16666666666666" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-c" d="M 162.51 181.5 C 210.95499999999998 181.5, 210.95499999999998 153.83333333333331, 259.4 153.83333333333331" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-a" d="M 425.4 128.5 C 461.4 128.5, 461.4 128.5, 497.4 128.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a8"/>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="6.2s" repeatCount="indefinite" keyTimes="0;0;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-h" xlink:href="#p-h"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="6.2s" repeatCount="indefinite" keyTimes="0;0;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-c" xlink:href="#p-c"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-48.6" y="-35" width="97.2" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">two approvals</text><animateMotion dur="6.2s" repeatCount="indefinite" keyTimes="0;0.3;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-a" xlink:href="#p-a"/></animateMotion></g>
+</g>
+<text x="343.7" y="273" opacity="0" class="steplabel a9">Reflect sees where a fact came from</text>
+<g opacity="0" class="a10"><text x="343.7" y="299" class="caption">Two facts disagree. Without their source, the newer one used to win.</text></g>
+<g opacity="0" class="a11"><text x="343.7" y="299" class="caption">Now the document's metadata reaches reflect, and the mission decides.</text></g>
+</svg>

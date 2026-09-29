@@ -1,0 +1,90 @@
+# Hindsight API deployment with Nginx reverse proxy (API-only)
+#
+# This example deploys Hindsight API under the path /hindsight with:
+# - Hindsight standalone image (API + Control Plane + embedded pg0)
+# - Nginx reverse proxy (API only)
+#
+# Quick Start:
+#   docker-compose -f docker/docker-compose/nginx/docker-compose.yml up
+#
+# Access:
+#   API (via nginx):         http://localhost:8080/hindsight/docs
+#   Control Plane (direct):  http://localhost:9999
+#
+# For full stack deployment (API + Control Plane both under /hindsight):
+#   See README.md in this directory for instructions on building with basePath.
+#
+# Note: This configuration uses the published image (no build required).
+#       Control Plane is served directly because Next.js basePath requires
+#       build-time configuration. See README.md for the full stack option.
+
+services:
+  # Hindsight (API + Control Plane + embedded pg0)
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    ports:
+      - "9999:9999"  # Control Plane (direct access, not proxied)
+    environment:
+      # API base path for reverse proxy
+      HINDSIGHT_API_BASE_PATH: /hindsight
+
+      # LLM configuration
+      # Using mock provider for testing (no API key needed)
+      # For production, set OPENAI_API_KEY or ANTHROPIC_API_KEY and use a real provider
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-mock}
+      HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY:-not-needed-for-mock}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_API_LLM_MODEL:-mock-model}
+
+      # Production examples (uncomment and set appropriate API key):
+      # HINDSIGHT_API_LLM_PROVIDER: openai
+      # HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY}
+      # HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
+
+      # HINDSIGHT_API_LLM_PROVIDER: anthropic
+      # HINDSIGHT_API_LLM_API_KEY: ${ANTHROPIC_API_KEY}
+      # HINDSIGHT_API_LLM_MODEL: claude-sonnet-4-20250514
+
+      # Server config
+      HINDSIGHT_API_HOST: 0.0.0.0
+      HINDSIGHT_API_PORT: 8888
+      HINDSIGHT_API_LOG_LEVEL: info
+
+      # Control Plane config
+      HINDSIGHT_CP_DATAPLANE_API_URL: http://localhost:8888
+      # Optional: Require a shared access key for Control Plane UI access
+      # HINDSIGHT_CP_ACCESS_KEY: your-secret-key
+    volumes:
+      # Persist embedded pg0 database
+      - hindsight_data:/app/data
+    # Note: Ports not exposed - access via Nginx at localhost:8080/hindsight/
+    # To debug directly, uncomment these ports:
+    # ports:
+    #   - "8888:8888"  # API
+    #   - "9999:9999"  # Control Plane
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/hindsight/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - hindsight
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      hindsight:
+        condition: service_healthy
+    networks:
+      - hindsight
+
+volumes:
+  hindsight_data:
+
+networks:
+  hindsight:

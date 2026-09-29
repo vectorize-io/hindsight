@@ -1,0 +1,2472 @@
+/**
+ * Client for calling Control Plane API routes (which proxy to the dataplane via SDK)
+ * This should be used in client components, not the SDK directly
+ */
+
+import { toast } from "sonner";
+import { bankApi, bankStatsApi, chunkApi, documentApi, memoryApi } from "./bank-url";
+import { stripBasePath, withBasePath } from "./base-path";
+
+/**
+ * Reduce an API error `details` value to a string safe to render in a toast.
+ * Endpoints may return a plain string or a structured object (e.g. a Memory
+ * Defense block returns `{violations: [{message}]}`); objects cannot be passed
+ * to sonner/React directly.
+ */
+function describeErrorDetails(details: unknown): string | undefined {
+  if (details == null) return undefined;
+  if (typeof details === "string") return details;
+  if (typeof details === "object") {
+    const detail = (details as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    const nestedDetails = (details as { details?: unknown }).details;
+    if (typeof nestedDetails === "string") return nestedDetails;
+    const violations = (details as { violations?: Array<{ message?: string }> }).violations;
+    if (Array.isArray(violations)) {
+      const messages = violations.map((v) => v?.message).filter(Boolean);
+      if (messages.length > 0) return messages.join("; ");
+    }
+    return JSON.stringify(details);
+  }
+  return String(details);
+}
+
+/**
+ * One element of a multimodal retain item's content.
+ *
+ * Retain accepts either a plain string or an ordered list of these, so an
+ * attachment can sit inline where it actually appears and the extractor reads it
+ * alongside the prose that refers to it.
+ *
+ * `image` and `file` are separate because the providers separate them —
+ * Anthropic has image and document blocks, OpenAI has image_url and file parts.
+ */
+export type RetainAttachmentSource = {
+  type: "base64";
+  media_type: string;
+  data: string;
+};
+
+export type RetainContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: RetainAttachmentSource }
+  | { type: "file"; source: RetainAttachmentSource; filename?: string };
+
+export interface WebhookHttpConfig {
+  method: string;
+  timeout_seconds: number;
+  headers: Record<string, string>;
+  params: Record<string, string>;
+}
+
+export interface KnowledgeNode {
+  id: string;
+  kind: "folder" | "page";
+  name: string;
+  parent_id: string | null;
+  mental_model_id: string | null;
+  managed: boolean;
+  description: string | null;
+  tags: string[];
+  timestamp: string | null;
+  is_stale: boolean | null;
+  /** Pages only: when the last refresh failed. Set = the page no longer rebuilds itself. */
+  last_refresh_failed_at?: string | null;
+  /** Pages only: when the page rebuilds itself and over which facts. Null on folders. */
+  trigger: MentalModel["trigger"] | null;
+  children: KnowledgeNode[];
+}
+
+export interface Webhook {
+  id: string;
+  bank_id: string | null;
+  url: string;
+  event_types: string[];
+  enabled: boolean;
+  http_config: WebhookHttpConfig;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string | null;
+  url: string;
+  event_type: string;
+  status: string;
+  attempts: number;
+  next_retry_at: string | null;
+  last_error: string | null;
+  last_response_status: number | null;
+  last_response_body: string | null;
+  last_attempt_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  transport: string;
+  bank_id: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  request: Record<string, unknown> | null;
+  response: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditLogsResponse {
+  bank_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: AuditLogEntry[];
+}
+
+export interface AuditStatsBucket {
+  time: string;
+  actions: Record<string, number>;
+  total: number;
+}
+
+export interface AuditStatsResponse {
+  bank_id: string;
+  period: string;
+  trunc: string;
+  start: string;
+  buckets: AuditStatsBucket[];
+}
+
+export interface LLMRequestEntry {
+  id: string;
+  bank_id: string | null;
+  operation: string | null;
+  scope: string | null;
+  trace_id: string | null;
+  span_id: string | null;
+  parent_span_id: string | null;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  thoughts_tokens: number | null;
+  cached_tokens: number | null;
+  total_tokens: number | null;
+  input: unknown | null;
+  output: unknown | null;
+  error: string | null;
+  llm_info: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface LLMRequestsResponse {
+  bank_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: LLMRequestEntry[];
+}
+
+export interface LLMRequestTokenSums {
+  input: number;
+  output: number;
+  // Absent on a server predating reasoning usage; the generated schema is
+  // nullable for the same reason.
+  thoughts: number | null;
+  cached: number;
+  total: number;
+}
+
+export interface LLMRequestStatsBucket {
+  time: string;
+  statuses: Record<string, number>;
+  total: number;
+  tokens: LLMRequestTokenSums;
+}
+
+export interface LLMRequestStatsResponse {
+  bank_id: string;
+  period: string;
+  trunc: string;
+  start: string;
+  buckets: LLMRequestStatsBucket[];
+}
+
+/**
+ * Last-known progress snapshot for a long-running async operation (consolidation,
+ * batch retain). Written at coarse phase/batch boundaries by the worker; null until
+ * the operation reaches its first checkpoint. `processed`/`total` advancing across
+ * polls (with a moving `at`) means healthy; frozen numbers mean worth investigating.
+ */
+export interface OperationProgress {
+  stage: string;
+  at: string;
+  processed?: number | null;
+  total?: number | null;
+  detail?: Record<string, number> | null;
+}
+
+export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
+
+// Time axes the two list endpoints can filter and order by. The chosen axis does
+// both, and rows with no value on it are excluded — see the dataplane's
+// engine/time_filter.py.
+export type MemoryTimeField =
+  | "created_at"
+  | "updated_at"
+  | "mentioned_at"
+  | "occurred_start"
+  | "occurred_end";
+export type DocumentTimeField = "created_at" | "updated_at";
+
+export type TagResolution = "exact" | "fuzzy";
+
+export type TagGroup =
+  | { tags: string[]; match?: TagsMatch; resolve?: TagResolution }
+  | { and: TagGroup[] }
+  | { or: TagGroup[] }
+  | { not: TagGroup };
+
+export interface MentalModel {
+  id: string;
+  bank_id: string;
+  name: string;
+  source_query: string;
+  content: string;
+  tags: string[];
+  max_tokens: number;
+  trigger: {
+    mode?: "full" | "delta";
+    refresh_after_consolidation: boolean;
+    refresh_cron?: string | null;
+    min_refresh_interval_seconds?: number | null;
+    fact_types?: Array<"world" | "experience" | "observation">;
+    exclude_mental_models?: boolean;
+    exclude_mental_model_ids?: string[];
+    tags_match?: TagsMatch;
+    tag_groups?: TagGroup[];
+    include_chunks?: boolean;
+    recall_max_tokens?: number;
+    recall_chunks_max_tokens?: number;
+    budget?: "low" | "mid" | "high";
+    reflect_search_observations_max_tokens?: number;
+    reflect_search_observations_include_entities?: boolean;
+    response_schema?: Record<string, unknown>;
+    keep_trace?: boolean;
+  };
+  last_refreshed_at: string;
+  /** Newest in-scope memory this model has seen. Staleness compares against this. */
+  last_memory_seen_at: string | null;
+  created_at: string;
+  reflect_response?: any;
+  is_stale?: boolean | null;
+  /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
+  last_refresh_failed_at?: string | null;
+}
+
+/** How a refresh resolved full-vs-delta, and why it did not stay in delta. */
+export type RefreshMode = "full" | "delta";
+
+export type ModeFallbackReason =
+  | "no_baseline_content"
+  | "source_query_changed"
+  | "structured_doc_unreadable"
+  | "delta_ops_failed"
+  | "delta_ops_all_skipped";
+
+export type RefreshOutcome =
+  | "content_written"
+  | "content_preserved_no_new_facts"
+  | "refresh_failed_empty_candidate"
+  | "refresh_failed_delta_not_applied";
+
+/** Why a refresh refused to write, as recorded on the model's own history. */
+export type RefreshFailureReason =
+  | "empty_candidate"
+  | "structured_doc_unreadable"
+  | "delta_ops_failed"
+  | "delta_ops_all_skipped"
+  | "delta_not_applied"
+  | "structured_output_failed"
+  | "retrieval_failed"
+  | "no_answer"
+  | "unexpected_error";
+
+export interface MentalModelRefreshScope {
+  tags?: string[] | null;
+  tags_match: TagsMatch;
+  tag_groups?: TagGroup[] | null;
+  fact_types?: string[] | null;
+  exclude_mental_models: boolean;
+  exclude_mental_model_ids: string[];
+}
+
+export interface MentalModelRefreshWindow {
+  created_after?: string | null;
+  created_before: string;
+  watermark?: string | null;
+}
+
+export interface MentalModelFactCounts {
+  retrieved: Record<string, number>;
+  used: Record<string, number>;
+}
+
+export interface MentalModelDeltaOperations {
+  applied: Array<Record<string, any>>;
+  skipped: Array<Record<string, any>>;
+}
+
+/**
+ * Shaped like reflect's trace: the calls the agent made plus the refresh
+ * decision. The evidence lives in reflect_response.based_on, and the resolved
+ * scope and window are returned by the dry run rather than persisted.
+ */
+export interface MentalModelRefreshTrace {
+  recorded_at?: string | null;
+  effective_mode: RefreshMode;
+  mode_fallback_reason?: ModeFallbackReason | null;
+  outcome: RefreshOutcome;
+  tool_calls: Array<{
+    tool: string;
+    reason?: string | null;
+    input: Record<string, any>;
+    /** Only present on a dry run; the persisted trace keeps result_count instead. */
+    output?: Record<string, any> | null;
+    /** The delta watermark given to this call; null when the tool applies no time bound. */
+    updated_at?: string | null;
+    result_count?: number | null;
+    duration_ms: number;
+    iteration: number;
+  }>;
+  llm_calls: Array<{ scope: string; duration_ms: number }>;
+  delta_operations?: MentalModelDeltaOperations | null;
+  usage?: { input_tokens: number; output_tokens: number; total_tokens: number } | null;
+  duration_ms: number;
+  warnings: string[];
+}
+
+export interface MentalModelDryRunRefreshResult {
+  mental_model_id: string;
+  name: string;
+  requested_mode: RefreshMode;
+  effective_mode: RefreshMode;
+  mode_fallback_reason?: ModeFallbackReason | null;
+  outcome: RefreshOutcome;
+  would_persist: boolean;
+  scope: MentalModelRefreshScope;
+  window: MentalModelRefreshWindow;
+  facts: MentalModelFactCounts;
+  based_on: Record<string, Array<Record<string, unknown>>>;
+  current_content: string;
+  candidate_content: string;
+  preview_content: string;
+  diff: string;
+  delta_operations?: MentalModelDeltaOperations | null;
+  trace: MentalModelRefreshTrace;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+  duration_ms: number;
+  warnings: string[];
+}
+
+export interface BankTemplateImportResponse {
+  bank_id: string;
+  config_applied: boolean;
+  mental_models_created: string[];
+  mental_models_updated: string[];
+  operation_ids: string[];
+  dry_run: boolean;
+}
+
+export interface BankAliasEntry {
+  alias: string;
+  /** Shown in place of the bank's own id. At most one per bank; often none. */
+  primary: boolean;
+}
+
+export interface BankAliasesResponse {
+  /** The bank's own id, which an alias never replaces. */
+  bank_id: string;
+  aliases: BankAliasEntry[];
+}
+
+export class ControlPlaneClient {
+  private async fetchApi<T>(
+    path: string,
+    options?: RequestInit,
+    // Bulk callers loop over many requests and report the failures themselves; one
+    // toast per failed item would bury the screen.
+    { suppressErrorToast = false }: { suppressErrorToast?: boolean } = {}
+  ): Promise<T> {
+    try {
+      const response = await fetch(withBasePath(path), {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...options?.headers,
+        },
+      });
+
+      if (!response.ok) {
+        const isClientError = response.status >= 400 && response.status < 500;
+        // Redirect to login on 401 (session expired or not authenticated)
+        const currentPath = stripBasePath(`${window.location.pathname}${window.location.search}`);
+        if (response.status === 401 && !currentPath.startsWith("/login")) {
+          window.location.href = withBasePath(`/login?returnTo=${encodeURIComponent(currentPath)}`);
+          throw new Error("Unauthorized");
+        }
+
+        // Try to parse error response
+        let errorMessage = `HTTP ${response.status}`;
+        let errorDetails: unknown;
+
+        try {
+          const errorData = await response.json();
+          if (isClientError) {
+            errorMessage = errorData.error || errorMessage;
+            errorDetails = errorData.details ?? errorData.detail ?? errorData.upstream?.detail;
+          }
+        } catch {
+          if (isClientError) {
+            // If JSON parse fails, try to get text
+            try {
+              const errorText = await response.text();
+              if (errorText) {
+                errorDetails = errorText;
+              }
+            } catch {
+              // Ignore text parse errors
+            }
+          }
+        }
+
+        // Coerce details into a string for the toast. Some endpoints return a
+        // structured detail object — e.g. a Memory Defense block responds with
+        // {violations: [{message, ...}]} — and React/sonner cannot render an
+        // object as a child (it throws "Objects are not valid as a React child").
+        const description = describeErrorDetails(errorDetails) || errorMessage;
+        const status = response.status;
+
+        if (!suppressErrorToast) {
+          if (isClientError) {
+            // Client errors (4xx) - validation, bad request, etc. - show as warning
+            toast.warning("Client Error", {
+              description,
+              duration: 5000,
+            });
+          } else if (status >= 500) {
+            // Server errors (5xx) - show as error
+            toast.error("Server Error", {
+              description,
+              duration: 5000,
+            });
+          } else {
+            // Other HTTP errors - show as error
+            toast.error("API Error", {
+              description,
+              duration: 5000,
+            });
+          }
+        }
+
+        // Still throw error for callers that want to handle it
+        const error = new Error(description || errorMessage);
+        (error as any).status = response.status;
+        (error as any).details = errorDetails;
+        throw error;
+      }
+
+      return response.json();
+    } catch (error) {
+      // If it's not a response error (network error, etc.), show toast
+      if (!(error as any).status && !suppressErrorToast) {
+        toast.error("Network Error", {
+          description: error instanceof Error ? error.message : "Failed to connect to server",
+          duration: 5000,
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * List one page of banks, most recently written first.
+   */
+  async listBanks(params?: { q?: string; limit?: number; offset?: number }) {
+    const search = new URLSearchParams();
+    if (params?.q) search.set("q", params.q);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    return this.fetchApi<{ banks: any[]; total: number; limit: number; offset: number }>(
+      `/api/banks${query ? `?${query}` : ""}`,
+      { cache: "no-store" as RequestCache }
+    );
+  }
+
+  /**
+   * Create a new bank
+   */
+  async createBank(bankId: string) {
+    return this.fetchApi<{ bank_id: string }>("/api/banks", {
+      method: "POST",
+      body: JSON.stringify({ bank_id: bankId }),
+    });
+  }
+
+  /**
+   * Import a bank template manifest
+   */
+  async importBankTemplate(bankId: string, manifest: Record<string, unknown>, dryRun = false) {
+    const params = dryRun ? "?dry_run=true" : "";
+    return this.fetchApi<BankTemplateImportResponse>(bankApi(bankId, `/import${params}`), {
+      method: "POST",
+      body: JSON.stringify(manifest),
+    });
+  }
+
+  /**
+   * Export a bank as a template manifest
+   */
+  async exportBankTemplate(bankId: string) {
+    return this.fetchApi<Record<string, unknown>>(bankApi(bankId, "/export"));
+  }
+
+  /**
+   * Clone a bank into a new one.
+   *
+   * Returns the id of the background operation, which is recorded against the
+   * *source* bank — the target does not exist yet when the clone is submitted.
+   * A flag left undefined is not sent, so the server's default decides.
+   */
+  async cloneBank(
+    bankId: string,
+    targetBankId: string,
+    options?: {
+      includeData?: boolean;
+      includeBankConfig?: boolean;
+      includeHistory?: boolean;
+    }
+  ) {
+    return this.fetchApi<{ operation_id: string; status: string }>(bankApi(bankId, "/clone"), {
+      method: "POST",
+      body: JSON.stringify({
+        target_bank_id: targetBankId,
+        ...(options?.includeData !== undefined ? { include_data: options.includeData } : {}),
+        ...(options?.includeBankConfig !== undefined
+          ? { include_bank_config: options.includeBankConfig }
+          : {}),
+        ...(options?.includeHistory !== undefined
+          ? { include_history: options.includeHistory }
+          : {}),
+      }),
+    });
+  }
+
+  /**
+   * Recall memories
+   */
+  async recall(params: {
+    query: string;
+    types?: string[];
+    prefer_observations?: boolean;
+    bank_id: string;
+    budget?: string;
+    max_tokens?: number;
+    trace?: boolean;
+    include?: {
+      entities?: { max_tokens: number } | null;
+      chunks?: { max_tokens: number } | null;
+      source_facts?: { max_tokens?: number } | null;
+    };
+    query_timestamp?: string;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    tag_groups?: TagGroup[];
+    min_scores?: {
+      semantic?: number | null;
+      keyword?: number | null;
+      reranker?: number | null;
+      final?: number | null;
+    };
+    /** Window for the temporal retrieval arm, used instead of extracting dates from the query text. Ranks memories dated inside it higher; does not drop memories dated outside it. */
+    temporal_window?: { start: string; end: string };
+  }) {
+    return this.fetchApi("/api/recall", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Reflect and generate answer
+   */
+  async reflect(params: {
+    query: string;
+    bank_id: string;
+    budget?: string;
+    max_tokens?: number;
+    include_facts?: boolean;
+    include_tool_calls?: boolean;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    tag_groups?: TagGroup[];
+    apply_all_directives?: boolean;
+    fact_types?: Array<"world" | "experience" | "observation">;
+    exclude_mental_models?: boolean;
+    exclude_mental_model_ids?: string[];
+    response_schema?: Record<string, unknown>;
+    reflect_search_observations_max_tokens?: number;
+    reflect_search_observations_include_entities?: boolean;
+  }) {
+    return this.fetchApi("/api/reflect", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Retain memories (batch)
+   */
+  async retain(params: {
+    bank_id: string;
+    items: Array<{
+      /**
+       * Raw content: a plain string, or ordered blocks so an image sits inline
+       * where it appears. The block form needs a vision-capable retain LLM.
+       */
+      content: string | Array<RetainContentBlock>;
+      timestamp?: string;
+      context?: string;
+      document_id?: string;
+      metadata?: Record<string, string>;
+      entities?: Array<{ text: string; type?: string }>;
+      tags?: string[];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
+      strategy?: string;
+    }>;
+    document_id?: string;
+    async?: boolean;
+  }) {
+    const endpoint = params.async ? "/api/memories/retain_async" : "/api/memories/retain";
+    return this.fetchApi<{ message?: string }>(endpoint, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Get bank statistics
+   */
+  async getBankStats(bankId: string) {
+    return this.fetchApi(bankStatsApi(bankId));
+  }
+
+  async getMemoriesTimeseries(
+    bankId: string,
+    period: string,
+    timeField: "created_at" | "mentioned_at" | "occurred_start" = "created_at"
+  ) {
+    return this.fetchApi<{
+      bank_id: string;
+      period: string;
+      trunc: string;
+      time_field: string;
+      buckets: Array<{
+        time: string;
+        world: number;
+        experience: number;
+        observation: number;
+      }>;
+    }>(
+      bankStatsApi(
+        bankId,
+        `/memories-timeseries?period=${encodeURIComponent(period)}&time_field=${encodeURIComponent(timeField)}`
+      )
+    );
+  }
+
+  /**
+   * Get graph data
+   */
+  async getGraph(params: {
+    bank_id: string;
+    type?: string;
+    limit?: number;
+    q?: string;
+    tags?: string[];
+    tags_match?: string;
+    document_id?: string;
+    chunk_id?: string;
+  }) {
+    const queryParams = new URLSearchParams();
+    queryParams.append("bank_id", params.bank_id);
+    if (params.type) queryParams.append("type", params.type);
+    if (params.limit) queryParams.append("limit", params.limit.toString());
+    if (params.q) queryParams.append("q", params.q);
+    if (params.tags && params.tags.length > 0) {
+      params.tags.forEach((tag) => queryParams.append("tags", tag));
+    }
+    // Forward the match mode explicitly (e.g. "exact" for observation-scope
+    // filtering). With tags_match=exact and no tags, the dataplane treats it as
+    // the global/untagged scope.
+    if (params.tags_match) queryParams.append("tags_match", params.tags_match);
+    if (params.document_id) queryParams.append("document_id", params.document_id);
+    if (params.chunk_id) queryParams.append("chunk_id", params.chunk_id);
+    return this.fetchApi(`/api/graph?${queryParams}`);
+  }
+
+  /**
+   * List operations with optional filtering and pagination
+   */
+  async listOperations(
+    bankId: string,
+    options?: {
+      status?: string;
+      type?: string;
+      limit?: number;
+      offset?: number;
+      excludeParents?: boolean;
+    }
+  ) {
+    const params = new URLSearchParams();
+    if (options?.status) params.append("status", options.status);
+    if (options?.type) params.append("type", options.type);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    if (options?.excludeParents) params.append("exclude_parents", "true");
+    const query = params.toString();
+    return this.fetchApi<{
+      bank_id: string;
+      total: number;
+      limit: number;
+      offset: number;
+      operations: Array<{
+        id: string;
+        task_type: string;
+        items_count: number;
+        document_id: string | null;
+        filename?: string | null;
+        /** The model a refresh operation belongs to; null on every other type. */
+        mental_model_id?: string | null;
+        created_at: string;
+        updated_at?: string | null;
+        status: string;
+        error_message: string | null;
+        /** For a pending operation, a value in the future means the worker is
+         *  holding it back until then — a mental-model refresh waiting out
+         *  min_refresh_interval_seconds, or an extension deferring the task. */
+        next_retry_at?: string | null;
+        progress?: OperationProgress | null;
+      }>;
+    }>(`/api/operations/${encodeURIComponent(bankId)}${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Cancel a pending or in-flight operation
+   */
+  async cancelOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(
+      `/api/operations/${encodeURIComponent(bankId)}?operation_id=${encodeURIComponent(operationId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  /**
+   * Retry a failed operation
+   */
+  async retryOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(bankApi(bankId, `/operations/${encodeURIComponent(operationId)}`), {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Delete a terminal (failed/cancelled/completed) operation record
+   */
+  async deleteOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(bankApi(bankId, `/operations/${encodeURIComponent(operationId)}`), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * List entities
+   */
+  async listEntities(params: { bank_id: string; limit?: number; offset?: number }) {
+    const queryParams = new URLSearchParams();
+    queryParams.append("bank_id", params.bank_id);
+    if (params.limit) queryParams.append("limit", params.limit.toString());
+    if (params.offset) queryParams.append("offset", params.offset.toString());
+    return this.fetchApi<{
+      items: any[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/api/entities?${queryParams}`);
+  }
+
+  /**
+   * Get entity co-occurrence graph
+   */
+  async getEntityGraph(params: { bank_id: string; limit?: number; min_count?: number }) {
+    const queryParams = new URLSearchParams();
+    queryParams.append("bank_id", params.bank_id);
+    if (params.limit) queryParams.append("limit", params.limit.toString());
+    if (params.min_count !== undefined)
+      queryParams.append("min_count", params.min_count.toString());
+    return this.fetchApi<{
+      nodes: Array<{ data: { id: string; label: string; mentionCount: number; color: string } }>;
+      edges: Array<{
+        data: {
+          id: string;
+          source: string;
+          target: string;
+          linkType: string;
+          weight: number;
+          color: string;
+          lineStyle: string;
+          lastCooccurred: string | null;
+        };
+      }>;
+      total_entities: number;
+      total_edges: number;
+      limit: number;
+    }>(`/api/entities/graph?${queryParams}`);
+  }
+
+  /**
+   * Get the knowledge base as a nested folder/page tree.
+   */
+  async getKnowledgeTree(bankId: string) {
+    return this.fetchApi<{ roots: KnowledgeNode[] }>(
+      `/api/knowledge-base/tree?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * Hybrid search (BM25 + vector) across a bank's knowledge pages.
+   */
+  async searchKnowledgePages(bankId: string, q: string, limit = 10) {
+    return this.fetchApi<{
+      results: Array<{
+        id: string;
+        name: string;
+        mental_model_id: string | null;
+        snippet: string;
+        score: number;
+        updated_at: string | null;
+      }>;
+      total: number;
+    }>(
+      `/api/knowledge-base/search?bank_id=${encodeURIComponent(bankId)}&q=${encodeURIComponent(q)}&limit=${limit}`
+    );
+  }
+
+  /**
+   * Get a single knowledge page rendered as a markdown document.
+   */
+  async getKnowledgePage(bankId: string, pageId: string) {
+    return this.fetchApi<{
+      id: string;
+      name: string;
+      type: string;
+      description: string | null;
+      tags: string[];
+      timestamp: string | null;
+      body: string | null;
+      markdown: string;
+    }>(
+      `/api/knowledge-base/pages/${encodeURIComponent(pageId)}?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * Create a folder, optionally under a parent folder.
+   */
+  async createKnowledgeFolder(bankId: string, body: { name: string; parent_id?: string | null }) {
+    return this.fetchApi<KnowledgeNode>(
+      `/api/knowledge-base/folders?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Create a page (mental model + tree node). Content is generated asynchronously.
+   */
+  async createKnowledgePage(
+    bankId: string,
+    body: {
+      name: string;
+      source_query: string;
+      parent_id?: string | null;
+      /** Scopes which memories build the page — see `trigger.tags_match`, which defaults
+       *  to `all_strict` (every tag required, untagged memories excluded). */
+      tags?: string[];
+      /** Refresh settings. Applied as a patch over the knowledge-page defaults, so sending
+       *  one field does not reset the rest. */
+      trigger?: { tags_match?: TagsMatch };
+    }
+  ) {
+    return this.fetchApi<{ page_id: string; mental_model_id: string; operation_id: string | null }>(
+      `/api/knowledge-base/pages?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Rename/move a node and/or update a page's options. Pass `parent_id: null`
+   * to move to the root. Changing `source_query` rebuilds the page's content.
+   */
+  async updateKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    body: {
+      name?: string;
+      parent_id?: string | null;
+      source_query?: string;
+      tags?: string[];
+      max_tokens?: number;
+      /** Refresh settings to change. Applied as a patch: the fields sent are updated and the
+       *  rest keep the page's current values, so setting a schedule doesn't reset the rest. */
+      trigger?: {
+        mode?: "full" | "delta";
+        refresh_after_consolidation?: boolean;
+        refresh_cron?: string | null;
+        min_refresh_interval_seconds?: number | null;
+        fact_types?: Array<"world" | "experience" | "observation">;
+        exclude_mental_models?: boolean;
+        tags_match?: TagsMatch;
+      };
+    }
+  ) {
+    return this.fetchApi<KnowledgeNode>(
+      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Delete a node and its whole subtree.
+   */
+  async deleteKnowledgeNode(bankId: string, nodeId: string) {
+    return this.fetchApi<{ status: string }>(
+      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  /**
+   * Export the knowledge base as a portable markdown bundle (markdown files).
+   */
+  async exportKnowledgeBase(bankId: string) {
+    return this.fetchApi<{ files: Array<{ path: string; content: string }> }>(
+      `/api/knowledge-base/export?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * Get entity details
+   */
+  async getEntity(entityId: string, bankId: string) {
+    return this.fetchApi(
+      `/api/entities/${encodeURIComponent(entityId)}?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * List documents
+   */
+  async listDocuments(params: {
+    bank_id: string;
+    q?: string;
+    tags?: string[];
+    tags_match?: TagsMatch;
+    /** Time axis to filter and order by; `updated_at` is the default ordering. */
+    time_field?: DocumentTimeField;
+    /** ISO-8601, inclusive. */
+    start_date?: string;
+    /** ISO-8601, exclusive. */
+    end_date?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const queryParams = new URLSearchParams();
+    queryParams.append("bank_id", params.bank_id);
+    if (params.q) queryParams.append("q", params.q);
+    for (const tag of params.tags ?? []) queryParams.append("tags", tag);
+    if (params.tags?.length && params.tags_match) {
+      queryParams.append("tags_match", params.tags_match);
+    }
+    if (params.time_field) queryParams.append("time_field", params.time_field);
+    if (params.start_date) queryParams.append("start_date", params.start_date);
+    if (params.end_date) queryParams.append("end_date", params.end_date);
+    if (params.limit) queryParams.append("limit", params.limit.toString());
+    if (params.offset) queryParams.append("offset", params.offset.toString());
+    return this.fetchApi(`/api/documents?${queryParams}`);
+  }
+
+  /**
+   * Get document
+   */
+  async getDocument(documentId: string, bankId: string) {
+    return this.fetchApi(documentApi(documentId, bankId));
+  }
+
+  /**
+   * Update tags on a document and its associated memory units
+   */
+  async updateDocument(documentId: string, bankId: string, tags: string[]) {
+    return this.fetchApi<{ success: boolean }>(documentApi(documentId, bankId), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+    });
+  }
+
+  /**
+   * List chunks for a document
+   */
+  async listDocumentChunks(params: {
+    document_id: string;
+    bank_id: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const queryParams = new URLSearchParams({
+      limit: String(params.limit ?? 100),
+      offset: String(params.offset ?? 0),
+    });
+    return this.fetchApi<{
+      items: Array<{
+        chunk_id: string;
+        document_id: string;
+        bank_id: string;
+        chunk_index: number;
+        chunk_text: string;
+        created_at: string;
+      }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`${documentApi(params.document_id, params.bank_id, "/chunks")}&${queryParams}`);
+  }
+
+  /**
+   * Reprocess a document (re-run retain with existing content)
+   */
+  async reprocessDocument(documentId: string, bankId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      operation_id: string;
+      items_count: number;
+    }>(documentApi(documentId, bankId, "/reprocess"), {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Delete document and all its associated memory units
+   */
+  async deleteDocument(documentId: string, bankId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      document_id: string;
+      memory_units_deleted: number;
+    }>(documentApi(documentId, bankId), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Delete an entire memory bank and all its data
+   */
+  async deleteBank(bankId: string, options?: { suppressErrorToast?: boolean }) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      deleted_count: number;
+    }>(
+      bankApi(bankId),
+      {
+        method: "DELETE",
+      },
+      { suppressErrorToast: options?.suppressErrorToast }
+    );
+  }
+
+  /**
+   * Clear all observations for a bank
+   */
+  async clearObservations(bankId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      deleted_count: number;
+    }>(bankApi(bankId, "/observations"), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Trigger consolidation for a bank
+   */
+  async triggerConsolidation(bankId: string) {
+    return this.fetchApi<{
+      operation_id: string;
+      deduplicated: boolean;
+    }>(bankApi(bankId, "/consolidate"), {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Recover failed consolidation for a bank (reset memories marked consolidation_failed_at)
+   */
+  async recoverConsolidation(bankId: string) {
+    return this.fetchApi<{
+      retried_count: number;
+    }>(bankApi(bankId, "/consolidation-recover"), {
+      method: "POST",
+    });
+  }
+
+  /**
+   * List memory units for a bank with optional filters.
+   */
+  async listMemories(
+    bankId: string,
+    options?: {
+      type?: string;
+      q?: string;
+      consolidationState?: "failed" | "pending" | "done";
+      state?: "valid" | "invalidated";
+      documentId?: string;
+      entityId?: string;
+      /**
+       * Time axis to filter and order by. Also drops memories with no value on it,
+       * so `total` counts the window rather than the bank.
+       */
+      timeField?: MemoryTimeField;
+      /** ISO-8601, inclusive. */
+      startDate?: string;
+      /** ISO-8601, exclusive. */
+      endDate?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ) {
+    const params = new URLSearchParams({ bank_id: bankId });
+    if (options?.type) params.set("type", options.type);
+    if (options?.q) params.set("q", options.q);
+    if (options?.consolidationState) params.set("consolidation_state", options.consolidationState);
+    if (options?.state) params.set("state", options.state);
+    if (options?.documentId) params.set("document_id", options.documentId);
+    if (options?.entityId) params.set("entity_id", options.entityId);
+    if (options?.timeField) params.set("time_field", options.timeField);
+    if (options?.startDate) params.set("start_date", options.startDate);
+    if (options?.endDate) params.set("end_date", options.endDate);
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.offset !== undefined) params.set("offset", String(options.offset));
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        text: string;
+        context: string;
+        date: string;
+        fact_type: string;
+        mentioned_at: string | null;
+        occurred_start: string | null;
+        occurred_end: string | null;
+        entities: string;
+        chunk_id: string | null;
+        proof_count: number;
+        tags: string[];
+        consolidated_at: string | null;
+        consolidation_failed_at: string | null;
+        state: "valid" | "invalidated";
+        invalidation_reason: string | null;
+        invalidated_at: string | null;
+        edited_at: string | null;
+      }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/api/list?${params.toString()}`);
+  }
+
+  /**
+   * Curate a memory unit: edit its text and/or change its state
+   * (invalidate / revert). Only world/experience facts can be curated.
+   */
+  async updateMemory(
+    memoryId: string,
+    bankId: string,
+    update: {
+      text?: string;
+      context?: string;
+      occurredStart?: string;
+      occurredEnd?: string;
+      factType?: "world" | "experience";
+      entities?: string[];
+      resolveEntities?: boolean;
+      state?: "valid" | "invalidated";
+      reason?: string;
+    }
+  ) {
+    const body: Record<string, unknown> = { bank_id: bankId };
+    if (update.text !== undefined) body.text = update.text;
+    if (update.context !== undefined) body.context = update.context;
+    if (update.occurredStart !== undefined) body.occurred_start = update.occurredStart;
+    if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
+    if (update.factType !== undefined) body.fact_type = update.factType;
+    if (update.entities !== undefined) body.entities = update.entities;
+    if (update.resolveEntities !== undefined) body.resolve_entities = update.resolveEntities;
+    if (update.state !== undefined) body.state = update.state;
+    if (update.reason !== undefined) body.reason = update.reason;
+    return this.fetchApi(memoryApi(memoryId, bankId), {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Get chunk
+   */
+  async getChunk(chunkId: string) {
+    return this.fetchApi(chunkApi(chunkId));
+  }
+
+  /**
+   * Get a single memory by ID
+   */
+  async getMemory(memoryId: string, bankId: string) {
+    return this.fetchApi<{
+      id: string;
+      text: string;
+      context: string;
+      date: string;
+      type: string;
+      mentioned_at: string | null;
+      occurred_start: string | null;
+      occurred_end: string | null;
+      entities: string[];
+      document_id: string | null;
+      chunk_id: string | null;
+      tags: string[];
+      // Inherited from the source document at retain time (so a memory knows
+      // which coding agent wrote it without fetching the document).
+      metadata: Record<string, unknown> | null;
+      observation_scopes: string | string[][] | null;
+      state: "valid" | "invalidated";
+      invalidation_reason: string | null;
+      invalidated_at: string | null;
+      edited_at: string | null;
+      history?: {
+        previous_text: string;
+        previous_tags: string[];
+        previous_occurred_start: string | null;
+        previous_occurred_end: string | null;
+        previous_mentioned_at: string | null;
+        changed_at: string;
+        new_source_memory_ids: string[];
+      }[];
+    }>(memoryApi(memoryId, bankId));
+  }
+
+  /**
+   * Get the history of an observation with resolved source facts
+   */
+  async getObservationHistory(memoryId: string, bankId: string) {
+    return this.fetchApi<
+      {
+        previous_text: string;
+        previous_tags: string[];
+        previous_occurred_start: string | null;
+        previous_occurred_end: string | null;
+        previous_mentioned_at: string | null;
+        changed_at: string;
+        new_source_memory_ids: string[];
+        source_facts: {
+          id: string;
+          text: string | null;
+          type: string | null;
+          context: string | null;
+          is_new: boolean;
+        }[];
+      }[]
+    >(memoryApi(memoryId, bankId, "/history"));
+  }
+
+  /**
+   * Get a bank's profile: its display name, disposition traits and reflect mission.
+   *
+   * There is no profile endpoint any more — the traits and the mission are bank
+   * configuration, and the display name lives on the bank listing — so this composes
+   * the two reads. The name lookup is best-effort: a bank past the first page of a
+   * large deployment still resolves because the list is filtered by id, but if it
+   * cannot be found the id itself is the label.
+   */
+  async getBankProfile(bankId: string) {
+    const [configResp, banksResp] = await Promise.all([
+      this.getBankConfig(bankId),
+      this.listBanks({ q: bankId, limit: 100 }).catch(() => ({ banks: [] as any[] })),
+    ]);
+    const config = configResp.config ?? {};
+    const trait = (key: string) => Number(config[key] ?? 3);
+    const listed = banksResp.banks.find((bank) => bank.bank_id === bankId);
+    return {
+      bank_id: bankId,
+      name: (listed?.name as string | undefined) || bankId,
+      disposition: {
+        skepticism: trait("disposition_skepticism"),
+        literalism: trait("disposition_literalism"),
+        empathy: trait("disposition_empathy"),
+      },
+      mission: (config.reflect_mission as string | undefined) ?? "",
+    };
+  }
+
+  /**
+   * List the extra ids this bank also answers to.
+   *
+   * `bank_id` in the response is the bank's own id, which an alias never
+   * replaces — so a request made *through* an alias still reports the real one.
+   */
+  async listBankAliases(bankId: string) {
+    return this.fetchApi<BankAliasesResponse>(bankApi(bankId, "/aliases"));
+  }
+
+  /**
+   * Add an id that also reaches this bank. Rejected with 409 if the name is
+   * already a bank or another alias.
+   */
+  async createBankAlias(bankId: string, alias: string) {
+    return this.fetchApi<BankAliasesResponse>(bankApi(bankId, "/aliases"), {
+      method: "POST",
+      body: JSON.stringify({ alias }),
+    });
+  }
+
+  /**
+   * Show this bank under one of its aliases, or (with false) under its own id
+   * again. Display only — `bank_id` stays the bank's identity everywhere else.
+   */
+  async setBankAliasPrimary(bankId: string, alias: string, primary: boolean) {
+    return this.fetchApi<BankAliasesResponse>(
+      bankApi(bankId, `/aliases/${encodeURIComponent(alias)}`),
+      { method: "PATCH", body: JSON.stringify({ primary }) }
+    );
+  }
+
+  /**
+   * Stop an id reaching this bank. The bank and its memories are untouched.
+   */
+  async deleteBankAlias(bankId: string, alias: string) {
+    return this.fetchApi<BankAliasesResponse>(
+      bankApi(bankId, `/aliases/${encodeURIComponent(alias)}`),
+      { method: "DELETE" }
+    );
+  }
+
+  /**
+   * List directives for a bank
+   */
+  async listDirectives(
+    bankId: string,
+    tags?: string[],
+    tagsMatch?: string,
+    options: { limit?: number; offset?: number } = {}
+  ) {
+    const params = new URLSearchParams();
+    if (tags && tags.length > 0) {
+      tags.forEach((t) => params.append("tags", t));
+    }
+    if (tagsMatch) {
+      params.append("tags_match", tagsMatch);
+    }
+    if (options.limit !== undefined) {
+      params.append("limit", String(options.limit));
+    }
+    if (options.offset !== undefined) {
+      params.append("offset", String(options.offset));
+    }
+    const query = params.toString();
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        name: string;
+        content: string;
+        priority: number;
+        is_active: boolean;
+        tags: string[];
+        created_at: string;
+        updated_at: string;
+      }>;
+      /** Every directive matching the filter, not just this page. */
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/directives${query ? `?${query}` : ""}`));
+  }
+
+  /**
+   * List every directive for a bank, paging until `total` is reached.
+   */
+  async listAllDirectives(bankId: string, tags?: string[], tagsMatch?: string) {
+    const PAGE_SIZE = 1000;
+    const items: Awaited<ReturnType<typeof this.listDirectives>>["items"] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await this.listDirectives(bankId, tags, tagsMatch, { limit: PAGE_SIZE, offset });
+      items.push(...(page.items || []));
+      if (items.length >= page.total || !page.items?.length) break;
+    }
+    return items;
+  }
+
+  /**
+   * Create a directive
+   */
+  async createDirective(
+    bankId: string,
+    params: {
+      name: string;
+      content: string;
+      priority?: number;
+      is_active?: boolean;
+      tags?: string[];
+    }
+  ) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      name: string;
+      content: string;
+      priority: number;
+      is_active: boolean;
+      tags: string[];
+      created_at: string;
+      updated_at: string;
+    }>(bankApi(bankId, "/directives"), {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Get a directive
+   */
+  async getDirective(bankId: string, directiveId: string) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      name: string;
+      content: string;
+      priority: number;
+      is_active: boolean;
+      tags: string[];
+      created_at: string;
+      updated_at: string;
+    }>(bankApi(bankId, `/directives/${encodeURIComponent(directiveId)}`));
+  }
+
+  /**
+   * Delete a directive
+   */
+  async deleteDirective(bankId: string, directiveId: string) {
+    return this.fetchApi(bankApi(bankId, `/directives/${encodeURIComponent(directiveId)}`), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Update a directive
+   */
+  async updateDirective(
+    bankId: string,
+    directiveId: string,
+    params: {
+      name?: string;
+      content?: string;
+      priority?: number;
+      is_active?: boolean;
+      tags?: string[];
+    }
+  ) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      name: string;
+      content: string;
+      priority: number;
+      is_active: boolean;
+      tags: string[];
+      created_at: string;
+      updated_at: string;
+    }>(bankApi(bankId, `/directives/${encodeURIComponent(directiveId)}`), {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Get operation status
+   */
+  async getOperationStatus(
+    bankId: string,
+    operationId: string,
+    opts?: { includePayload?: boolean }
+  ) {
+    const qs = opts?.includePayload ? "?include_payload=true" : "";
+    return this.fetchApi<{
+      operation_id: string;
+      status: "pending" | "completed" | "failed" | "not_found";
+      operation_type: string | null;
+      created_at: string | null;
+      updated_at: string | null;
+      completed_at: string | null;
+      error_message: string | null;
+      next_retry_at?: string | null;
+      progress?: OperationProgress | null;
+      result_metadata?: {
+        items_count?: number;
+        total_tokens?: number;
+        num_sub_batches?: number;
+        is_parent?: boolean;
+        [key: string]: any;
+      } | null;
+      /** Typed, per-operation-type outcome payload, discriminated by its own
+       *  operation_type. Null for types that report none and for operations
+       *  still in flight. */
+      details?: {
+        operation_type: "refresh_mental_model";
+        outcome: string;
+        failure_reason?: string | null;
+      } | null;
+      child_operations?: Array<{
+        operation_id: string;
+        status: string;
+        sub_batch_index: number | null;
+        items_count: number | null;
+        error_message: string | null;
+      }> | null;
+      task_payload?: Record<string, unknown> | null;
+    }>(bankApi(bankId, `/operations/${encodeURIComponent(operationId)}${qs}`));
+  }
+
+  // ============= OBSERVATIONS (auto-consolidated, read-only) =============
+
+  /**
+   * List observations for a bank (auto-consolidated knowledge)
+   */
+  async listObservations(bankId: string, tags?: string[], tagsMatch?: string) {
+    const params = new URLSearchParams();
+    if (tags && tags.length > 0) {
+      tags.forEach((t) => params.append("tags", t));
+    }
+    if (tagsMatch) {
+      params.append("tags_match", tagsMatch);
+    }
+    const query = params.toString();
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        text: string;
+        proof_count: number;
+        history: Array<{
+          previous_text: string;
+          changed_at: string;
+          reason: string;
+        }>;
+        tags: string[];
+        source_memory_ids: string[];
+        source_memories: Array<{
+          id: string;
+          text: string;
+          type: string;
+          context?: string;
+          occurred_start?: string;
+          mentioned_at?: string;
+        }>;
+        created_at: string;
+        updated_at: string;
+      }>;
+    }>(bankApi(bankId, `/observations${query ? `?${query}` : ""}`));
+  }
+
+  /**
+   * List the distinct observation scopes for a bank.
+   *
+   * Each observation lives under a "scope": the exact set of tags it was
+   * consolidated with. Returns every distinct scope (tag order normalized) with
+   * the number of observations in it; the empty tag list is the global scope.
+   */
+  /** Which existing observation scopes each draft consolidation strategy would
+   *  apply to — computed by the server with consolidation's own matching. */
+  async previewConsolidationStrategies(
+    bankId: string,
+    strategies: Record<string, unknown>[],
+    sampleLimit = 5
+  ) {
+    return this.fetchApi<ConsolidationStrategiesPreview>(
+      bankApi(bankId, "/consolidation-strategies/preview"),
+      { method: "POST", body: JSON.stringify({ strategies, sample_limit: sampleLimit }) },
+      // Runs as the user types; a transient failure must not toast on every keystroke.
+      { suppressErrorToast: true }
+    );
+  }
+
+  async listObservationScopes(bankId: string, params?: { limit?: number; offset?: number }) {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
+    return this.fetchApi<{
+      scopes: Array<{ tags: string[]; count: number }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/observations/scopes${query.toString() ? `?${query}` : ""}`));
+  }
+
+  // ============= TAGS =============
+
+  /**
+   * List unique tags in a bank with usage counts. Supports wildcard '*' in q.
+   * Pass `source: "mental_models"` to read tags from mental_models instead of memory_units.
+   */
+  async listTags(
+    bankId: string,
+    q?: string,
+    limit?: number,
+    source?: "memories" | "mental_models"
+  ) {
+    const params = new URLSearchParams();
+    if (q) params.append("q", q);
+    if (limit != null) params.append("limit", String(limit));
+    if (source) params.append("source", source);
+    const query = params.toString();
+    return this.fetchApi<{
+      items: Array<{ tag: string; count: number }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/tags${query ? `?${query}` : ""}`));
+  }
+
+  // ============= MENTAL MODELS (stored reflect responses) =============
+
+  /**
+   * List mental models for a bank
+   */
+  async listMentalModels(
+    bankId: string,
+    options: {
+      tags?: string[];
+      tagsMatch?: string;
+      /** Trim the payload: "metadata" drops content and the stored reflect response. */
+      detail?: "metadata" | "content" | "full";
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) {
+    const params = new URLSearchParams();
+    if (options.tags && options.tags.length > 0) {
+      options.tags.forEach((t) => params.append("tags", t));
+    }
+    if (options.tagsMatch) {
+      params.append("tags_match", options.tagsMatch);
+    }
+    if (options.detail) {
+      params.append("detail", options.detail);
+    }
+    if (options.limit !== undefined) {
+      params.append("limit", String(options.limit));
+    }
+    if (options.offset !== undefined) {
+      params.append("offset", String(options.offset));
+    }
+    const query = params.toString();
+    // Shape of detail="full"; the endpoint DEFAULTS to "metadata", which omits
+    // source_query/content/max_tokens/trigger (they come back null), so pass
+    // detail explicitly when you need any of the fields below last_refreshed_at.
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        name: string;
+        source_query: string;
+        content: string;
+        tags: string[];
+        max_tokens: number;
+        trigger: {
+          mode?: "full" | "delta";
+          refresh_after_consolidation: boolean;
+          refresh_cron?: string | null;
+          min_refresh_interval_seconds?: number | null;
+          fact_types?: Array<"world" | "experience" | "observation">;
+          exclude_mental_models?: boolean;
+          exclude_mental_model_ids?: string[];
+          tags_match?: TagsMatch;
+          tag_groups?: TagGroup[];
+          include_chunks?: boolean;
+          recall_max_tokens?: number;
+          recall_chunks_max_tokens?: number;
+          budget?: "low" | "mid" | "high";
+          reflect_search_observations_max_tokens?: number;
+          reflect_search_observations_include_entities?: boolean;
+          response_schema?: Record<string, unknown>;
+          keep_trace?: boolean;
+        };
+        last_refreshed_at: string;
+        last_memory_seen_at: string | null;
+        /** Whether a memory in this model's own scope has been written since it last read them. */
+        is_stale: boolean | null;
+        /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
+        last_refresh_failed_at?: string | null;
+        created_at: string;
+        reflect_response?: {
+          text: string;
+          based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
+        };
+      }>;
+      /** Every mental model matching the filter, not just this page. */
+      total: number;
+      limit: number;
+      offset: number;
+    }>(bankApi(bankId, `/mental-models${query ? `?${query}` : ""}`));
+  }
+
+  /**
+   * List every mental model for a bank, paging until `total` is reached.
+   *
+   * The endpoint caps a response at 1000 models, so anything that needs the
+   * whole set (the list view, the freshness card) has to page.
+   */
+  async listAllMentalModels(
+    bankId: string,
+    options: { tags?: string[]; tagsMatch?: string; detail?: "metadata" | "content" | "full" } = {}
+  ) {
+    const PAGE_SIZE = 1000;
+    const items: Awaited<ReturnType<typeof this.listMentalModels>>["items"] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await this.listMentalModels(bankId, { ...options, limit: PAGE_SIZE, offset });
+      items.push(...(page.items || []));
+      if (items.length >= page.total || !page.items?.length) break;
+    }
+    return items;
+  }
+
+  /**
+   * Create a mental model (async - content auto-generated in background)
+   * Returns operation_id to track progress
+   */
+  async createMentalModel(
+    bankId: string,
+    params: {
+      id?: string;
+      name: string;
+      source_query: string;
+      tags?: string[];
+      max_tokens?: number;
+      trigger?: {
+        mode?: "full" | "delta";
+        refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
+        min_refresh_interval_seconds?: number | null;
+        fact_types?: Array<"world" | "experience" | "observation"> | null;
+        exclude_mental_models?: boolean;
+        exclude_mental_model_ids?: string[];
+        tags_match?: TagsMatch;
+        tag_groups?: TagGroup[];
+        include_chunks?: boolean;
+        recall_max_tokens?: number;
+        recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
+        reflect_search_observations_max_tokens?: number;
+        reflect_search_observations_include_entities?: boolean;
+        response_schema?: Record<string, unknown>;
+        keep_trace?: boolean;
+      };
+    }
+  ) {
+    return this.fetchApi<{
+      operation_id: string;
+    }>(bankApi(bankId, "/mental-models"), {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Get a mental model
+   */
+  async getMentalModel(bankId: string, mentalModelId: string): Promise<MentalModel> {
+    return this.fetchApi<MentalModel>(
+      bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`)
+    );
+  }
+
+  /**
+   * Update a mental model
+   */
+  async updateMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    params: {
+      name?: string;
+      source_query?: string;
+      max_tokens?: number;
+      tags?: string[];
+      trigger?: {
+        mode?: "full" | "delta";
+        refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
+        min_refresh_interval_seconds?: number | null;
+        fact_types?: Array<"world" | "experience" | "observation"> | null;
+        exclude_mental_models?: boolean;
+        exclude_mental_model_ids?: string[];
+        tags_match?: TagsMatch;
+        tag_groups?: TagGroup[];
+        include_chunks?: boolean;
+        recall_max_tokens?: number;
+        recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
+        reflect_search_observations_max_tokens?: number;
+        reflect_search_observations_include_entities?: boolean;
+        response_schema?: Record<string, unknown>;
+        keep_trace?: boolean;
+      };
+    }
+  ) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      name: string;
+      source_query: string;
+      content: string;
+      tags: string[];
+      max_tokens: number;
+      trigger: {
+        refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
+        min_refresh_interval_seconds?: number | null;
+        fact_types?: Array<"world" | "experience" | "observation">;
+        exclude_mental_models?: boolean;
+        exclude_mental_model_ids?: string[];
+        tags_match?: TagsMatch;
+        tag_groups?: TagGroup[];
+        include_chunks?: boolean;
+        recall_max_tokens?: number;
+        recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
+        reflect_search_observations_max_tokens?: number;
+        reflect_search_observations_include_entities?: boolean;
+        response_schema?: Record<string, unknown>;
+        keep_trace?: boolean;
+      };
+      last_refreshed_at: string;
+      last_memory_seen_at: string | null;
+      created_at: string;
+      reflect_response?: {
+        text: string;
+        based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
+      };
+    }>(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`), {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Delete a mental model
+   */
+  async deleteMentalModel(bankId: string, mentalModelId: string) {
+    return this.fetchApi(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Refresh a mental model (re-run source query) - async operation
+   */
+  async refreshMentalModel(bankId: string, mentalModelId: string) {
+    return this.fetchApi<{
+      operation_id: string;
+    }>(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`), {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Preview a refresh without changing the model - the production refresh
+   * pipeline with the content and watermark writes skipped. Synchronous, and
+   * costs the same LLM tokens as a real refresh.
+   */
+  async dryRunRefreshMentalModel(
+    bankId: string,
+    mentalModelId: string
+  ): Promise<MentalModelDryRunRefreshResult> {
+    return this.fetchApi<MentalModelDryRunRefreshResult>(
+      bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/dry-run-refresh`),
+      { method: "POST" }
+    );
+  }
+
+  /**
+   * Clear a mental model's content. The next refresh re-synthesizes from scratch.
+   */
+  async clearMentalModel(bankId: string, mentalModelId: string) {
+    return this.fetchApi<MentalModel>(
+      bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/clear`),
+      { method: "POST" }
+    );
+  }
+
+  /**
+   * Get the refresh history of a mental model
+   */
+  async getMentalModelHistory(bankId: string, mentalModelId: string) {
+    return this.fetchApi<
+      {
+        previous_content: string | null;
+        previous_reflect_response: {
+          text?: string;
+          based_on?: Record<
+            string,
+            { id: string; text: string; type: string; context?: string | null }[]
+          >;
+          mental_models?: unknown[];
+        } | null;
+        changed_at: string;
+        /** Present only on failure records: a refresh that refused to write.
+         *  Absent (undefined) on the version snapshots a successful refresh
+         *  writes, which is every row written before failures were recorded. */
+        kind?: "refresh_failed";
+        failure_reason?: RefreshFailureReason;
+        error_message?: string;
+      }[]
+    >(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/history`));
+  }
+
+  /**
+   * Get API version and feature flags
+   * Use this to check which capabilities are available in the dataplane
+   */
+  async getVersion() {
+    return this.fetchApi<{
+      api_version: string;
+      features: {
+        observations: boolean;
+        mcp: boolean;
+        worker: boolean;
+        bank_config_api: boolean;
+        file_upload_api: boolean;
+        document_export_api: boolean;
+        document_import_api: boolean;
+        audit_log: boolean;
+        llm_trace: boolean;
+        store_document_text: boolean;
+      };
+    }>("/api/version");
+  }
+
+  /**
+   * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
+   * Pass documentIds to export specific documents, or omit to export the whole bank.
+   * Set includeObservations to also carry consolidated observations. Set
+   * includeKnowledgeBase to carry Mental Models and Knowledge Pages.
+   * Returns the raw zip Blob so callers can trigger a download.
+   */
+  async exportDocuments(
+    bankId: string,
+    documentIds?: string[],
+    includeObservations = false,
+    includeKnowledgeBase = false
+  ): Promise<Blob> {
+    const params = new URLSearchParams({ bank_id: bankId });
+    (documentIds || []).forEach((id) => params.append("document_id", id));
+    if (includeObservations) params.set("include_observations", "true");
+    if (includeKnowledgeBase) params.set("include_knowledge_base", "true");
+    // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.blob();
+  }
+
+  /**
+   * Submit a transfer ZIP archive for async import into a bank. Facts are
+   * re-embedded with the target bank's model and entities re-resolved — no LLM.
+   * Returns an operation_id; poll getOperationStatus for the result counts.
+   */
+  async importDocuments(
+    bankId: string,
+    zipFile: File,
+    onConflict: "skip" | "replace" | "new-id" = "skip"
+  ): Promise<{ operation_id: string; status: string }> {
+    const formData = new FormData();
+    formData.append("file", zipFile);
+    const params = new URLSearchParams({ bank_id: bankId, on_conflict: onConflict });
+    // Direct fetch for multipart/form-data; browser sets the boundary header.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`), {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /**
+   * Upload files for retain (uses file conversion API)
+   * Requires file_upload_api feature flag to be enabled
+   * Converter is configured server-side via HINDSIGHT_API_FILE_CONVERTER
+   */
+  async uploadFiles(params: {
+    bank_id: string;
+    files: File[];
+    document_tags?: string[];
+    async?: boolean;
+    files_metadata?: Array<{
+      document_id?: string;
+      context?: string;
+      metadata?: Record<string, any>;
+      tags?: string[];
+      timestamp?: string;
+      strategy?: string;
+    }>;
+  }) {
+    const formData = new FormData();
+
+    // Add files
+    params.files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    // Add request JSON (including bank_id)
+    const requestData: any = {
+      bank_id: params.bank_id,
+      async: params.async ?? true,
+    };
+    if (params.document_tags) requestData.document_tags = params.document_tags;
+    if (params.files_metadata) requestData.files_metadata = params.files_metadata;
+
+    formData.append("request", JSON.stringify(requestData));
+
+    // Use fetch directly for multipart/form-data
+    const response = await fetch(withBasePath("/api/files/retain"), {
+      method: "POST",
+      body: formData,
+      // Don't set Content-Type - browser will set it with boundary
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get bank configuration (resolved with hierarchy)
+   */
+  async getBankConfig(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(bankApi(bankId, "/config"));
+  }
+
+  /**
+   * Probe the LLMs this bank uses (retain/consolidation/reflect). Deliberate action
+   * (makes a real provider call) — do NOT poll this. Status only; never the API key.
+   */
+  async testBankLlm(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      operations: {
+        operation: "retain" | "consolidation" | "reflect";
+        ok: boolean;
+        status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+        latency_ms: number | null;
+      }[];
+    }>(bankApi(bankId, "/health/llm"), { method: "POST" });
+  }
+
+  /**
+   * Render the prompts an operation would send for this bank — no LLM call, no writes.
+   *
+   * Everything that shapes the prompt is read from the bank, so what comes back is
+   * the bank's *saved* configuration — there is nothing to override. Both messages
+   * come back, in send order, because a mission is not always in the system prompt:
+   * retain and consolidation keep theirs bank-agnostic and put the mission in the
+   * user message. Each message arrives as the `blocks` it is built from — the active
+   * ones concatenate back to its text — and each names the setting behind it,
+   * including settings that are currently switched off.
+   */
+  async previewPrompt(
+    bankId: string,
+    operation: "retain" | "consolidation" | "reflect",
+    strategy?: string | null
+  ) {
+    return this.fetchApi<{
+      messages: {
+        role: "system" | "user";
+        /** Active blocks concatenate to the message exactly as sent. */
+        blocks: {
+          text: string;
+          source: "config" | "builtin";
+          /** Config field behind the block; empty when no single field owns it. */
+          field: string;
+          /** Slug for a part no field owns: bank_identity, disposition, directives. */
+          section: string;
+          /** The heading the prompt text carries here, extracted from the prompt itself. */
+          heading: string;
+          /** False for a setting that is switched off, shown where it would land. */
+          active: boolean;
+          value?: string | null;
+          kind: "text" | "boolean" | "choice" | "complex";
+          choices?: string[] | null;
+          /** False for server-level fields, which shape the prompt but cannot be set per bank. */
+          editable: boolean;
+        }[];
+      }[];
+      /** The retain strategy these prompts were rendered under, if any. */
+      strategy?: string | null;
+      /** The bank's retain strategy names, so a picker needs no second call. */
+      strategies?: string[];
+      /** Settings that shape the run without appearing in the prompt, such as chunk sizes. */
+      run_settings?: {
+        field: string;
+        value?: string | null;
+        kind: "text" | "boolean" | "choice" | "complex";
+        editable: boolean;
+      }[];
+      response_schema?: Record<string, unknown> | null;
+      /** Set when the configuration means no prompt is sent at all (chunks mode). */
+      skipped_reason?: string | null;
+    }>(bankApi(bankId, "/prompts/preview"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation, strategy: strategy ?? null }),
+    });
+  }
+
+  /**
+   * Extract facts from sample text (and optional attachments) without storing anything — a real LLM call.
+   *
+   * The paid half of the prompt tester: `previewPrompt` shows what would be sent,
+   * this shows what comes back. Runs under the same strategy-resolved config a real
+   * retain would, so what it extracts is what retain would extract.
+   */
+  async dryRunExtract(
+    bankId: string,
+    content: string | RetainContentBlock[],
+    strategy?: string | null
+  ) {
+    return this.fetchApi<{
+      facts: {
+        text: string;
+        fact_type: string;
+        entities: string[];
+        occurred_start?: string | null;
+        occurred_end?: string | null;
+        /** Index into `chunks` of the chunk this fact came from. */
+        chunk_index?: number | null;
+        /** The input blocks (by position in `content`) the model read this fact off. */
+        attachments?: { block_index: number; type: string; media_type: string }[];
+      }[];
+      /** The chunks the input was cut into before extraction. */
+      chunks?: { text: string; fact_count: number }[];
+      usage?: Record<string, unknown> | null;
+    }>(bankApi(bankId, "/memories/dry-run-extract"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, strategy: strategy ?? null }),
+    });
+  }
+
+  /**
+   * Update bank configuration overrides
+   */
+  async updateBankConfig(bankId: string, updates: Record<string, any>) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(bankApi(bankId, "/config"), {
+      method: "PATCH",
+      body: JSON.stringify({ updates }),
+    });
+  }
+
+  /**
+   * Reset bank configuration to defaults
+   */
+  async resetBankConfig(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(bankApi(bankId, "/config"), {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * List webhooks for a bank
+   */
+  async listWebhooks(
+    bankId: string,
+    params?: { limit?: number; offset?: number }
+  ): Promise<{ items: Webhook[]; total: number; limit: number; offset: number }> {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.append("limit", String(params.limit));
+    if (params?.offset !== undefined) query.append("offset", String(params.offset));
+    return this.fetchApi<{ items: Webhook[]; total: number; limit: number; offset: number }>(
+      bankApi(bankId, `/webhooks${query.toString() ? `?${query}` : ""}`)
+    );
+  }
+
+  /**
+   * Create a webhook
+   */
+  async createWebhook(
+    bankId: string,
+    params: {
+      url: string;
+      secret?: string;
+      event_types?: string[];
+      enabled?: boolean;
+      http_config?: WebhookHttpConfig;
+    }
+  ): Promise<Webhook> {
+    return this.fetchApi<Webhook>(bankApi(bankId, "/webhooks"), {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Update a webhook (PATCH — only provided fields are changed)
+   */
+  async updateWebhook(
+    bankId: string,
+    webhookId: string,
+    params: {
+      url?: string;
+      secret?: string | null;
+      event_types?: string[];
+      enabled?: boolean;
+      http_config?: WebhookHttpConfig;
+    }
+  ): Promise<Webhook> {
+    return this.fetchApi<Webhook>(bankApi(bankId, `/webhooks/${encodeURIComponent(webhookId)}`), {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Delete a webhook
+   */
+  async deleteWebhook(bankId: string, webhookId: string): Promise<{ success: boolean }> {
+    return this.fetchApi<{ success: boolean }>(
+      bankApi(bankId, `/webhooks/${encodeURIComponent(webhookId)}`),
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  /**
+   * List webhook deliveries
+   */
+  async listWebhookDeliveries(
+    bankId: string,
+    webhookId: string,
+    limit?: number,
+    cursor?: string
+  ): Promise<{ items: WebhookDelivery[]; next_cursor: string | null }> {
+    const params = new URLSearchParams();
+    if (limit) params.append("limit", limit.toString());
+    if (cursor) params.append("cursor", cursor);
+    const query = params.toString();
+    return this.fetchApi<{ items: WebhookDelivery[]; next_cursor: string | null }>(
+      bankApi(
+        bankId,
+        `/webhooks/${encodeURIComponent(webhookId)}/deliveries${query ? `?${query}` : ""}`
+      )
+    );
+  }
+
+  /**
+   * List audit logs for a bank
+   */
+  async listAuditLogs(
+    bankId: string,
+    options?: {
+      action?: string;
+      transport?: string;
+      start_date?: string;
+      end_date?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<AuditLogsResponse> {
+    const params = new URLSearchParams();
+    if (options?.action) params.append("action", options.action);
+    if (options?.transport) params.append("transport", options.transport);
+    if (options?.start_date) params.append("start_date", options.start_date);
+    if (options?.end_date) params.append("end_date", options.end_date);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    const query = params.toString();
+    return this.fetchApi<AuditLogsResponse>(
+      bankApi(bankId, `/audit-logs${query ? `?${query}` : ""}`)
+    );
+  }
+
+  async getAuditLogStats(
+    bankId: string,
+    options?: { action?: string; period?: string }
+  ): Promise<AuditStatsResponse> {
+    const params = new URLSearchParams();
+    if (options?.action) params.append("action", options.action);
+    if (options?.period) params.append("period", options.period);
+    const query = params.toString();
+    return this.fetchApi<AuditStatsResponse>(
+      bankApi(bankId, `/audit-logs/stats${query ? `?${query}` : ""}`)
+    );
+  }
+
+  /**
+   * List traced LLM requests for a bank
+   */
+  async listLLMRequests(
+    bankId: string,
+    options?: {
+      status?: string;
+      operation?: string;
+      scope?: string;
+      provider?: string;
+      trace_id?: string;
+      document_id?: string;
+      memory_id?: string;
+      group?: boolean;
+      start_date?: string;
+      end_date?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<LLMRequestsResponse> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append("status", options.status);
+    if (options?.operation) params.append("operation", options.operation);
+    if (options?.scope) params.append("scope", options.scope);
+    if (options?.provider) params.append("provider", options.provider);
+    if (options?.trace_id) params.append("trace_id", options.trace_id);
+    if (options?.document_id) params.append("document_id", options.document_id);
+    if (options?.memory_id) params.append("memory_id", options.memory_id);
+    if (options?.group) params.append("group", "true");
+    if (options?.start_date) params.append("start_date", options.start_date);
+    if (options?.end_date) params.append("end_date", options.end_date);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    const query = params.toString();
+    return this.fetchApi<LLMRequestsResponse>(
+      bankApi(bankId, `/llm-requests${query ? `?${query}` : ""}`)
+    );
+  }
+
+  async getLLMRequestStats(
+    bankId: string,
+    options?: { operation?: string; period?: string }
+  ): Promise<LLMRequestStatsResponse> {
+    const params = new URLSearchParams();
+    if (options?.operation) params.append("operation", options.operation);
+    if (options?.period) params.append("period", options.period);
+    const query = params.toString();
+    return this.fetchApi<LLMRequestStatsResponse>(
+      bankApi(bankId, `/llm-requests/stats${query ? `?${query}` : ""}`)
+    );
+  }
+}
+
+// Export singleton instance
+export const client = new ControlPlaneClient();
+
+// ============= CONSOLIDATION STRATEGY PREVIEW =============
+
+export interface StrategyScopePreview {
+  tags: string[];
+  count: number;
+  /** Index of the strategy that actually applies, or null for Default. */
+  handled_by: number | null;
+}
+
+export interface StrategyRulePreview {
+  match_count: number;
+  taken_count: number;
+  observation_count: number;
+  samples: StrategyScopePreview[];
+}
+
+export interface ConsolidationStrategiesPreview {
+  strategies: { active: boolean; claimed_count: number; rules: StrategyRulePreview[] }[];
+  default: { match_count: number; observation_count: number; samples: StrategyScopePreview[] };
+  scopes_scanned: number;
+  complete: boolean;
+}

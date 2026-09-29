@@ -1,0 +1,1464 @@
+"""Tests for the database abstraction layer (db + sql modules).
+
+Unit tests that verify the abstraction interfaces work correctly
+without requiring a live database connection.
+"""
+
+import asyncio
+from datetime import datetime
+from unittest.mock import AsyncMock, patch
+
+import asyncpg
+import pytest
+
+from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
+from hindsight_api.engine.db.ops import UpdatedWindow
+from hindsight_api.engine.db import postgresql as pg_backend
+from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
+from hindsight_api.engine.db.result import DictResultRow as ResultRow
+from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
+from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
+
+# A recall with no created_after/created_before — the graph-expansion CTEs must
+# then render exactly as they did before the window existed.
+_UNBOUNDED_WINDOW = UpdatedWindow(after=None, before=None, first_param_index=4)
+
+# ---------------------------------------------------------------------------
+# ResultRow tests
+# ---------------------------------------------------------------------------
+
+
+class TestResultRow:
+    def test_dict_access(self):
+        row = ResultRow({"id": 1, "name": "test"})
+        assert row["id"] == 1
+        assert row["name"] == "test"
+
+    def test_attr_access(self):
+        row = ResultRow({"id": 1, "name": "test"})
+        assert row.id == 1
+        assert row.name == "test"
+
+    def test_get_with_default(self):
+        row = ResultRow({"id": 1})
+        assert row.get("id") == 1
+        assert row.get("missing") is None
+        assert row.get("missing", "default") == "default"
+
+    def test_keys(self):
+        row = ResultRow({"a": 1, "b": 2})
+        assert set(row.keys()) == {"a", "b"}
+
+    def test_values(self):
+        row = ResultRow({"a": 1, "b": 2})
+        assert set(row.values()) == {1, 2}
+
+    def test_items(self):
+        row = ResultRow({"a": 1, "b": 2})
+        assert set(row.items()) == {("a", 1), ("b", 2)}
+
+    def test_contains(self):
+        row = ResultRow({"id": 1})
+        assert "id" in row
+        assert "missing" not in row
+
+    def test_len(self):
+        row = ResultRow({"a": 1, "b": 2, "c": 3})
+        assert len(row) == 3
+
+    def test_bool_delegates_to_data(self):
+        row = ResultRow({"id": 1})
+        assert bool(row)
+        empty_row = ResultRow({})
+        assert not bool(empty_row)
+
+    def test_repr(self):
+        row = ResultRow({"id": 1})
+        assert "ResultRow" in repr(row)
+
+    def test_missing_attr_raises(self):
+        row = ResultRow({"id": 1})
+        with pytest.raises(AttributeError):
+            _ = row.missing
+
+
+# ---------------------------------------------------------------------------
+# Factory tests
+# ---------------------------------------------------------------------------
+
+
+class TestFactories:
+    def test_create_postgresql_backend(self):
+        backend = create_database_backend("postgresql")
+        assert isinstance(backend, PostgreSQLBackend)
+        assert isinstance(backend, DatabaseBackend)
+
+    def test_create_unknown_backend_raises(self):
+        with pytest.raises(ValueError, match="Unknown database backend"):
+            create_database_backend("mysql")
+
+    def test_create_postgresql_dialect(self):
+        dialect = create_sql_dialect("postgresql")
+        assert isinstance(dialect, PostgreSQLDialect)
+        assert isinstance(dialect, SQLDialect)
+
+    def test_create_unknown_dialect_raises(self):
+        with pytest.raises(ValueError, match="Unknown SQL dialect"):
+            create_sql_dialect("mysql")
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQLDialect tests
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLDialect:
+    @pytest.fixture()
+    def d(self):
+        return PostgreSQLDialect()
+
+    def test_param(self, d):
+        assert d.param(1) == "$1"
+        assert d.param(3) == "$3"
+
+    def test_cast(self, d):
+        assert d.cast("$1", "jsonb") == "$1::jsonb"
+        assert d.cast("$2", "uuid[]") == "$2::uuid[]"
+
+    def test_vector_distance(self, d):
+        assert d.vector_distance("embedding", "$1") == "embedding <=> $1::vector"
+
+    def test_vector_similarity(self, d):
+        assert d.vector_similarity("embedding", "$1") == "1 - (embedding <=> $1::vector)"
+
+    def test_json_extract_text(self, d):
+        assert d.json_extract_text("col", "key") == "col ->> 'key'"
+
+    def test_json_contains(self, d):
+        assert d.json_contains("col", "$1") == "col @> $1::jsonb"
+
+    def test_json_merge(self, d):
+        assert d.json_merge("col", "$1") == "col || $1::jsonb"
+
+    def test_text_search_score_bm25(self, d):
+        result = d.text_search_score("text", "$1", index_name="idx_test")
+        assert "to_bm25query" in result
+
+    def test_text_search_score_tsvector(self, d):
+        result = d.text_search_score("text", "$1")
+        assert "ts_rank_cd" in result
+
+    def test_similarity(self, d):
+        assert d.similarity("col", "$1") == "similarity(col, $1)"
+
+    def test_upsert_do_nothing(self, d):
+        sql = d.upsert("t", ["a", "b"], ["a"], [])
+        assert "ON CONFLICT (a) DO NOTHING" in sql
+
+    def test_upsert_do_update(self, d):
+        sql = d.upsert("t", ["a", "b"], ["a"], ["b"])
+        assert "ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b" in sql
+
+    def test_bulk_unnest(self, d):
+        result = d.bulk_unnest([("$1", "text[]"), ("$2", "uuid[]")])
+        assert result == "unnest($1::text[], $2::uuid[])"
+
+    def test_limit_offset(self, d):
+        assert d.limit_offset("$1", "$2") == "LIMIT $1 OFFSET $2"
+
+    def test_returning(self, d):
+        assert d.returning(["id", "name"]) == "RETURNING id, name"
+
+    def test_ilike(self, d):
+        assert d.ilike("col", "$1") == "col ILIKE $1"
+
+    def test_array_any(self, d):
+        assert d.array_any("$1") == "= ANY($1)"
+
+    def test_array_all(self, d):
+        assert d.array_all("$1") == "!= ALL($1)"
+
+    def test_array_contains(self, d):
+        assert d.array_contains("tags", "$1") == "tags @> $1::varchar[]"
+
+    def test_for_update_skip_locked(self, d):
+        assert d.for_update_skip_locked() == "FOR UPDATE SKIP LOCKED"
+
+    def test_generate_uuid(self, d):
+        assert d.generate_uuid() == "gen_random_uuid()"
+
+    def test_greatest(self, d):
+        assert d.greatest("a", "b") == "GREATEST(a, b)"
+
+    def test_current_timestamp(self, d):
+        assert d.current_timestamp() == "now()"
+
+    def test_array_agg(self, d):
+        assert d.array_agg("col") == "array_agg(col)"
+
+    def test_build_semantic_arm(self, d):
+        arm = d.build_semantic_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            embedding_param="$1",
+            bank_id_param="$2",
+            fetch_limit=100,
+            min_similarity=0.58,
+        )
+        assert "1 - (embedding <=> $1::vector)" in arm
+        assert ">= 0.58" in arm
+        assert "fact_type = 'world'" in arm
+        assert "LIMIT 100" in arm
+        assert "'semantic' AS source" in arm
+
+    def test_build_bm25_arm_native(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+        )
+        assert "ts_rank_cd" in arm
+        assert "to_tsquery" in arm
+        assert "'bm25' AS source" in arm
+        assert "LIMIT $3" in arm
+        # Default language is english when bm25_language is not specified
+        assert "to_tsquery('english', $4)" in arm
+
+    def test_build_bm25_arm_native_uses_configured_language(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            bm25_language="french",
+        )
+        # Both the score and the WHERE filter must use the configured dictionary
+        assert "to_tsquery('french', $4)" in arm
+        assert "to_tsquery('english'" not in arm
+
+    def test_build_bm25_arm_vchord(self, d):
+        arm = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="vchord",
+        )
+        assert "to_bm25query" in arm
+        assert "tokenize" in arm
+
+    def test_build_bm25_arm_vchord_gates_zero_score_by_default(self, d):
+        """VectorChord ranks every doc, so a score gate must filter non-matches.
+
+        The negated `<&>` score is BM25 (>= 0); the default 0 floor keeps only
+        rows with a genuine query-term match, mirroring native tsvector's `@@`.
+        """
+        arm = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="vchord",
+        )
+        assert (
+            "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+        )
+
+    def test_build_bm25_arm_vchord_honors_custom_min_score(self, d):
+        arm = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="vchord",
+            bm25_min_score=2.5,
+        )
+        # Inclusive (`>=`), matching the documented `min_scores` contract and the
+        # semantic arm's `>= min_similarity`. This was `>` until #3882: the same
+        # parameter served as both vchord's structural match gate and the caller's
+        # floor, and the gate's `>` leaked into the public contract.
+        assert ">= 2.5" in arm
+
+    def test_build_bm25_arm_pg_textsearch_scores_each_row(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_textsearch",
+        )
+        expected_distance = "text <@> to_bm25query($4, 'idx_memory_units_text_search')"
+        assert f"-({expected_distance}) AS bm25_score" in arm
+        assert f"ORDER BY {expected_distance} ASC" in arm
+        assert "$4 <@>" not in arm
+
+    def test_build_bm25_arm_pgroonga(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pgroonga",
+        )
+        # pgroonga uses the &@~ operator + pgroonga_score for ranking with inline
+        # pgroonga_tokenize aggregation.
+        assert "&@~ (SELECT string_agg(pgroonga_query_escape(elem->>'value'), ' OR ')" in arm
+        assert "pgroonga_tokenize($4, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')" in arm
+        assert "pgroonga_score(tableoid, ctid)" in arm
+        assert "to_tsquery" not in arm
+
+    def test_build_bm25_arm_pgroonga_ignores_bm25_language(self, d):
+        """pgroonga's tokenizer is fixed at index creation; bm25_language must not leak in."""
+        arm = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pgroonga",
+            bm25_language="french",
+        )
+        assert "french" not in arm
+
+    def test_build_bm25_arm_pg_search(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+        )
+        assert "paradedb.score(id)" in arm
+        # @@@ on the key_field requires a field-qualified query, so we
+        # fan the bind param out across all indexed text fields.
+        assert "id @@@ paradedb.boolean(should =>" in arm
+        assert "paradedb.match('text', $4)" in arm
+        assert "paradedb.match('text_signals', $4)" in arm
+        # `context` multiplies the postings scanned for little signal (#4313).
+        assert "'context'" not in arm
+        assert "paradedb.score(id) DESC" in arm
+        assert "'bm25' AS source" in arm
+        assert "LIMIT $3" in arm
+
+    def test_build_bm25_arm_pg_search_tokenizer_prunes_to_terms(self, d):
+        """With a configured tokenizer the query becomes capped exact term queries (#4313)."""
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="jieba",
+            max_query_terms=16,
+        )
+        assert "unnest($4::text::pdb.jieba::text[])" in arm
+        assert "paradedb.term(f, t)" in arm
+        assert "LIMIT 16" in arm
+        assert "paradedb.match(" not in arm
+
+        uncapped = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="lindera(chinese)",
+        )
+        assert "pdb.lindera(chinese)::text[]" in uncapped
+        assert "min(o) LIMIT" not in uncapped
+
+    def test_build_bm25_arm_pg_search_ngram_keeps_raw_match(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_tokenizer="ngram(2,3)",
+            max_query_terms=16,
+        )
+        assert "paradedb.match('text', $4)" in arm
+        assert "term(" not in arm
+
+    def test_build_bm25_arm_pg_search_custom_schema(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
+            text_search_extension="pg_search",
+            pg_search_function_schema="pgsearch",
+        )
+        assert "pgsearch.score(id)" in arm
+        assert "id @@@ pgsearch.boolean(should =>" in arm
+        assert "pgsearch.match('text', $4)" in arm
+        assert "pgsearch.match('text_signals', $4)" in arm
+        assert "pgsearch.score(id) DESC" in arm
+        assert "'bm25' AS source" in arm
+        assert "LIMIT $3" in arm
+
+    def test_prepare_bm25_text_native(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world")
+        assert result == "hello | world"
+
+    def test_prepare_bm25_text_vchord(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="vchord")
+        assert result == "hello world"
+
+    def test_prepare_bm25_text_pgroonga(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pgroonga")
+        assert result == "hello world"
+
+        result = d.prepare_bm25_text(["网关计划任务"], "网关计划任务", text_search_extension="pgroonga")
+        assert result == "网关计划任务"
+
+    def test_prepare_bm25_text_pg_search(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pg_search")
+        assert result == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# OracleDialect tests (no oracledb dependency needed)
+# ---------------------------------------------------------------------------
+
+
+class TestOracleDialect:
+    @pytest.fixture()
+    def d(self):
+        from hindsight_api.engine.sql.oracle import OracleDialect
+
+        return OracleDialect()
+
+    def test_param(self, d):
+        assert d.param(1) == ":1"
+        assert d.param(3) == ":3"
+
+    def test_vector_distance(self, d):
+        assert "VECTOR_DISTANCE" in d.vector_distance("embedding", ":1")
+        assert "COSINE" in d.vector_distance("embedding", ":1")
+
+    def test_ilike(self, d):
+        assert "UPPER" in d.ilike("col", ":1")
+
+    def test_upsert(self, d):
+        sql = d.upsert("t", ["a", "b"], ["a"], ["b"])
+        assert "MERGE INTO" in sql
+
+    def test_limit_offset(self, d):
+        result = d.limit_offset(":1", ":2")
+        assert "FETCH FIRST" in result
+        assert "OFFSET" in result
+
+    def test_returning(self, d):
+        result = d.returning(["id"])
+        assert "RETURNING" in result
+        assert "INTO" in result
+
+    def test_generate_uuid(self, d):
+        assert d.generate_uuid() == "SYS_GUID()"
+
+    def test_current_timestamp(self, d):
+        assert d.current_timestamp() == "SYSTIMESTAMP"
+
+    def test_build_semantic_arm(self, d):
+        arm = d.build_semantic_arm(
+            table="memory_units",
+            cols="id, text",
+            fact_type="world",
+            embedding_param=":1",
+            bank_id_param=":2",
+            fetch_limit=100,
+            min_similarity=0.58,
+        )
+        assert "VECTOR_DISTANCE" in arm
+        assert ">= 0.58" in arm
+        assert "fact_type = 'world'" in arm
+        assert "FETCH FIRST 100 ROWS ONLY" in arm
+        assert "'semantic' AS source" in arm
+
+    def test_build_bm25_arm(self, d):
+        arm = d.build_bm25_arm(
+            table="memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
+            arm_index=0,
+        )
+        assert "CONTAINS" in arm
+        assert "SCORE(10)" in arm
+        assert "'bm25' AS source" in arm
+        assert "FETCH FIRST :3 ROWS ONLY" in arm
+
+    def test_build_bm25_arm_unique_labels(self, d):
+        """Each arm_index produces a unique SCORE label to avoid conflicts in UNION ALL."""
+        arm0 = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
+            arm_index=0,
+        )
+        arm1 = d.build_bm25_arm(
+            table="t",
+            cols="id",
+            fact_type="experience",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
+            arm_index=1,
+        )
+        assert "SCORE(10)" in arm0
+        assert "SCORE(11)" in arm1
+
+    def test_prepare_bm25_text(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world")
+        assert result == "hello OR world"
+
+    def test_prepare_bm25_text_special_chars_filtered(self, d):
+        result = d.prepare_bm25_text(["hello", "$special", "world"], "hello $special world")
+        assert "$special" not in result
+        assert "hello" in result
+
+
+# ---------------------------------------------------------------------------
+# Oracle query rewriter tests
+# ---------------------------------------------------------------------------
+
+
+class TestOracleQueryRewriter:
+    """Tests for _rewrite_pg_to_oracle which returns (query, has_returning, returning_cols)."""
+
+    def test_param_rewrite(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT $1 FROM t")
+        assert ":1" in query
+        query2, _, _ = _rewrite_pg_to_oracle("WHERE a = $1 AND b = $2")
+        assert ":2" in query2
+
+    def test_cast_removal(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("$1::jsonb")
+        assert "::jsonb" not in query
+        assert ":1" in query
+
+    def test_multiple_casts(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("$1::text, $2::uuid, $3::varchar[]")
+        assert "::text" not in query
+        assert "::uuid" not in query
+        assert "::varchar[]" not in query
+
+    def test_jsonb_merge_returns_clob(self):
+        # Without RETURNING CLOB, JSON_MERGEPATCH returns VARCHAR2(4000) with
+        # NULL ON ERROR, so large merged documents silently become NULL.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("UPDATE banks SET config = config || $1::jsonb WHERE bank_id = $2")
+        assert "JSON_MERGEPATCH(config, :1 RETURNING CLOB)" in query
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "UPDATE banks SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE bank_id = $2"
+        )
+        assert "JSON_MERGEPATCH(COALESCE(config, TO_CLOB('{}')), :1 RETURNING CLOB)" in query
+
+    def test_jsonb_merge_returning_clob_is_not_a_returning_clause(self):
+        # The function-level RETURNING CLOB must not be mistaken for a PG RETURNING clause.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, returning_cols = _rewrite_pg_to_oracle(
+            "UPDATE banks SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb, updated_at = now() WHERE bank_id = $2"
+        )
+        assert returning_cols is None
+        assert " INTO " not in query
+        assert query.rstrip().endswith("WHERE bank_id = :2")
+
+        query, _, returning_cols = _rewrite_pg_to_oracle(
+            "UPDATE async_operations SET result_metadata = result_metadata || $1::jsonb WHERE operation_id = $2 RETURNING status"
+        )
+        assert returning_cols == ["status"]
+        assert query.rstrip().endswith("RETURNING status INTO :ret_0")
+
+    def test_set_local_is_a_noop(self):
+        # PG-only session GUCs must not reach Oracle (ORA-00922).
+        from unittest.mock import MagicMock
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        raw = MagicMock()
+        conn = OracleConnection(raw)
+        for q in ("SET LOCAL enable_seqscan = off", "  set local lock_timeout = '5s'"):
+            assert asyncio.run(conn.execute(q)) == "SET"
+        raw.cursor.assert_not_called()
+
+    def test_not_jsonb_contains_is_parent_literal(self):
+        # list_operations(exclude_parents=True) filter: a jsonb literal, not a bind param.
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "SELECT id FROM async_operations WHERE NOT (result_metadata::jsonb @> '{\"is_parent\": true}'::jsonb)"
+        )
+        assert "@>" not in query
+        assert "result_metadata IS NOT NULL" in query
+        assert "JSON_VALUE(result_metadata, '$.is_parent') = 'true'" in query
+
+    def test_connect_params_host_port_service(self):
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        params = _oracle_connect_params("oracle://u:p@db:1522/SVC")
+        assert params == {"user": "u", "password": "p", "dsn": "db:1522/SVC"}
+
+    def test_connect_params_decode_credentials(self):
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        params = _oracle_connect_params("oracle+oracledb://ADMIN:Pa%23ss%40w0rd@db/SVC")
+        assert params["user"] == "ADMIN"
+        assert params["password"] == "Pa#ss@w0rd"
+
+    def test_connect_params_full_descriptor(self):
+        from urllib.parse import quote
+
+        from hindsight_api.engine.db.oracle import _oracle_connect_params
+
+        desc = "(description=(address=(protocol=tcps)(port=1522)(host=adb.example.com))(connect_data=(service_name=x_low)))"
+        params = _oracle_connect_params(f"oracle://u:p@/?dsn={quote(desc)}")
+        assert params["dsn"] == desc
+
+    def test_now_to_systimestamp(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("updated_at > NOW()")
+        assert "SYSTIMESTAMP" in query
+        assert "NOW()" not in query
+
+    def test_gen_random_uuid(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("gen_random_uuid()")
+        assert "SYS_GUID()" in query
+
+    def test_combined_rewrite(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, ignore_dup, returning_cols = _rewrite_pg_to_oracle(
+            "INSERT INTO t (id, data) VALUES ($1::uuid, $2::jsonb) RETURNING id"
+        )
+        assert ":1" in query
+        assert ":2" in query
+        assert "::uuid" not in query
+        assert "::jsonb" not in query
+        assert not ignore_dup
+        assert returning_cols == ["id"]
+        assert "RETURNING id INTO :ret_0" in query
+
+    def test_no_rewrite_needed(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query = "SELECT 1 FROM DUAL"
+        result_query, ignore_dup, returning_cols = _rewrite_pg_to_oracle(query)
+        assert result_query == query
+        assert not ignore_dup
+        assert returning_cols is None
+
+    def test_jsonb_boolean_rewrite(self):
+        """Verify JSONB ->> boolean comparison is rewritten to JSON_VALUE."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("WHERE (trigger->>'refresh_after_consolidation')::boolean = true")
+        assert "JSON_VALUE" in query
+        assert "'true'" in query
+
+    def test_jsonb_has_key_rewrite_on_reserved_word_column(self):
+        """`trigger ? 'key'` must become JSON_EXISTS even though the reserved-word
+        column is quoted before the JSON operators are rewritten."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("WHERE trigger ? 'tag_groups'")
+        assert """JSON_EXISTS("trigger", '$.tag_groups')""" in query
+        assert "?" not in query
+        assert "->>" not in query
+
+    def test_for_no_key_update_rewrite(self):
+        """FOR NO KEY UPDATE (PG-only) maps to plain FOR UPDATE on Oracle."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT 1 FROM banks WHERE bank_id = $1 FOR NO KEY UPDATE")
+        assert "FOR UPDATE" in query
+        assert "NO KEY" not in query
+
+    def test_jsonb_arrow_text_quoted(self):
+        """Verify ->> works with quoted column names."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("ORDER BY (result_metadata->>'sub_batch_index')::int")
+        assert "JSON_VALUE" in query
+        assert "->>" not in query
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQLBackend unit tests (no live DB)
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLBackendUnit:
+    def test_uninitialized_acquire_raises(self):
+        backend = PostgreSQLBackend()
+        with pytest.raises(RuntimeError, match="not initialized"):
+            backend.get_pool()
+
+    def test_uninitialized_get_pool_raises(self):
+        backend = PostgreSQLBackend()
+        with pytest.raises(RuntimeError, match="not initialized"):
+            backend.get_pool()
+
+    def test_is_ready_false_before_initialize(self):
+        assert PostgreSQLBackend().is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_is_ready_false_for_whole_shutdown(self):
+        """is_ready must flip before the (awaited, non-instant) pool close, so
+        best-effort writers skip instead of racing a closing pool."""
+        backend = PostgreSQLBackend()
+        ready_during_close = None
+
+        class _SlowClosingPool:
+            async def close(self):
+                nonlocal ready_during_close
+                ready_during_close = backend.is_ready
+                await asyncio.sleep(0)
+
+        backend._pool = _SlowClosingPool()
+        assert backend.is_ready is True
+        await backend.shutdown()
+        assert ready_during_close is False
+        assert backend.is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_init_callback_also_passed_as_setup(self):
+        # asyncpg runs RESET ALL when a connection is released back to the pool,
+        # which wipes the session GUCs the init callback SET. The same callback
+        # must also be wired as setup= so it re-applies on every acquire.
+        backend = PostgreSQLBackend()
+
+        async def cb(conn):
+            return None
+
+        with patch(
+            "hindsight_api.engine.db.postgresql.asyncpg.create_pool",
+            new=AsyncMock(return_value=object()),
+        ) as create_pool:
+            await backend.initialize("postgresql://localhost/test", init_callback=cb)
+
+        kwargs = create_pool.call_args.kwargs
+        assert kwargs["init"] is cb
+        assert kwargs["setup"] is cb
+
+
+class _RecordingConnection:
+    """Captures every statement, optionally failing the first (batched) one."""
+
+    def __init__(
+        self,
+        fail_batched: bool = False,
+        reject: str | None = None,
+        reject_error: type[Exception] = asyncpg.exceptions.UndefinedObjectError,
+    ) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+        self._fail_batched = fail_batched
+        self._reject = reject
+        self._reject_error = reject_error
+
+    async def execute(self, query: str, *args) -> None:
+        self.calls.append((query, args))
+        if self._fail_batched and len(self.calls) == 1:
+            raise self._reject_error("unrecognized configuration parameter")
+        if self._reject is not None and self._reject in args:
+            raise self._reject_error("unrecognized configuration parameter")
+
+
+class TestApplySessionSettings:
+    """The pool's setup callback runs on every acquire — it must be one round trip (#3499)."""
+
+    @pytest.fixture(autouse=True)
+    def _forget_rejected_settings(self):
+        """The rejected-GUC memo is process-wide, so it must not leak between tests."""
+        pg_backend._unsupported_settings.clear()
+        yield
+        pg_backend._unsupported_settings.clear()
+
+    _SETTINGS = [
+        ("hnsw.ef_search", "200"),
+        ("statement_timeout", "600s"),
+        ("pg_trgm.similarity_threshold", "0.3"),
+    ]
+
+    @pytest.mark.asyncio
+    async def test_all_settings_applied_in_one_statement(self):
+        conn = _RecordingConnection()
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1, f"expected one round trip, got {len(conn.calls)}: {conn.calls}"
+        query, args = conn.calls[0]
+        assert query.startswith("SELECT set_config(")
+        # Values are bound, not interpolated, and ordered name/value per setting.
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s", "pg_trgm.similarity_threshold", "0.3")
+        # `false` = session-scoped, so the GUC survives past the current transaction.
+        assert ", false)" in query
+
+    @pytest.mark.asyncio
+    async def test_no_statement_when_nothing_to_set(self):
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, [])
+        assert conn.calls == []
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_individual_settings_when_batch_fails(self):
+        # An extension GUC the cluster doesn't know fails the whole batched
+        # statement; the rest must still be applied.
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        applied = [args[0] for query, args in conn.calls[1:]]
+        assert applied == ["hnsw.ef_search", "statement_timeout", "pg_trgm.similarity_threshold"]
+        # The rejected one raised and was skipped rather than aborting setup.
+        assert len(conn.calls) == 1 + len(self._SETTINGS)
+
+    @pytest.mark.asyncio
+    async def test_a_setting_the_server_rejects_is_not_sent_again(self):
+        """Otherwise every acquire re-pays a failed batch plus one statement per setting.
+
+        Reached by any GUC the cluster does not define — pg_trgm when the extension is
+        absent, or hnsw.iterative_scan on a pgvector older than 0.8, which reserves the
+        "hnsw." prefix and so rejects it rather than accepting a placeholder.
+        """
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+        await apply_session_settings(conn, self._SETTINGS)
+
+        # Next acquire: one batched statement again, carrying only what the server took.
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1
+        _, args = conn.calls[0]
+        assert "pg_trgm.similarity_threshold" not in args
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s")
+
+    @pytest.mark.asyncio
+    async def test_invalid_name_rejection_is_remembered_like_undefined_object(self):
+        """A reserved-prefix GUC rejection (InvalidNameError) must also be permanent.
+
+        The docstring above assumes an old server answers "unrecognized configuration
+        parameter" (UndefinedObjectError, 42704). PG16 + pgvector 0.6.0 answers
+        `invalid configuration parameter name "hnsw.iterative_scan"` instead —
+        InvalidNameError (42602), because the loaded extension reserves the "hnsw."
+        prefix but predates the GUC. If only UndefinedObjectError is remembered,
+        the name never reaches the unsupported-set, ``setting_rejected_by_server``
+        keeps answering False, and retain's link probing sends the GUC via SET LOCAL
+        inside its own transaction — aborting the whole link computation on every
+        retain (observed in production on PG16 + pgvector 0.6.0, 2026-08-26).
+        """
+        conn = _RecordingConnection(
+            fail_batched=True,
+            reject="hnsw.ef_search",
+            reject_error=asyncpg.exceptions.InvalidNameError,
+        )
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert pg_backend.setting_rejected_by_server("hnsw.ef_search")
+
+        # Next acquire must not re-send the rejected name.
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+        assert len(conn.calls) == 1
+        _, args = conn.calls[0]
+        assert "hnsw.ef_search" not in args
+
+    @pytest.mark.asyncio
+    async def test_a_transient_failure_does_not_disable_a_setting(self):
+        """Only "unrecognized configuration parameter" is permanent; anything else retries."""
+
+        class _FlakyConnection(_RecordingConnection):
+            async def execute(self, query: str, *args) -> None:
+                self.calls.append((query, args))
+                if len(self.calls) == 1:
+                    raise asyncpg.exceptions.UndefinedObjectError("unrecognized configuration parameter")
+                if "hnsw.ef_search" in args:
+                    raise asyncpg.exceptions.DeadlockDetectedError("transient")
+
+        await apply_session_settings(_FlakyConnection(), self._SETTINGS)
+
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+        assert "hnsw.ef_search" in conn.calls[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Config integration test
+# ---------------------------------------------------------------------------
+
+
+class TestConfig:
+    def test_database_backend_field_exists(self):
+        # Verify the field exists on the dataclass
+        import dataclasses
+
+        from hindsight_api.config import HindsightConfig
+
+        field_names = {f.name for f in dataclasses.fields(HindsightConfig)}
+        assert "database_backend" in field_names
+
+    def test_default_database_backend(self):
+        from hindsight_api.config import DEFAULT_DATABASE_BACKEND
+
+        assert DEFAULT_DATABASE_BACKEND == "postgresql"
+
+
+# ---------------------------------------------------------------------------
+# Entity expansion CTE tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ops_module", "ops_class", "limit_clause"),
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", "LIMIT 7"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", "FETCH FIRST 7 ROWS ONLY"),
+    ],
+)
+def test_entity_expansion_filters_fact_type_before_per_entity_cap(
+    ops_module: str, ops_class: str, limit_clause: str
+) -> None:
+    """The cap is per entity *and target fact type*, preventing mixed types from
+    exhausting a target type's candidate budget before the outer query sees it.
+    """
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, _UNBOUNDED_WINDOW)
+
+    lateral_start = cte.index("CROSS JOIN LATERAL")
+    lateral_end = cte.index(") t", lateral_start)
+    lateral_query = cte[lateral_start:lateral_end]
+
+    assert "mu_target.fact_type = $2" in lateral_query
+    assert lateral_query.index("mu_target.fact_type = $2") < lateral_query.index(limit_clause)
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class,limit_clause",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", "LIMIT 7"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", "FETCH FIRST 7 ROWS ONLY"),
+    ],
+)
+def test_entity_expansion_applies_updated_window_before_per_entity_cap(
+    ops_module: str, ops_class: str, limit_clause: str
+) -> None:
+    """Recall's time window bounds the entity fan-out, not just the graph seeds.
+
+    Placement matters as much as presence: filtering after the cap would let
+    out-of-window neighbours eat an entity's bounded budget and starve the
+    in-window ones.
+    """
+    from importlib import import_module
+
+    from hindsight_api.engine.db.ops import UpdatedWindow
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    window = UpdatedWindow(after=datetime(2026, 1, 1), before=datetime(2026, 2, 1), first_param_index=4)
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, window)
+
+    lateral_start = cte.index("CROSS JOIN LATERAL")
+    lateral_query = cte[lateral_start : cte.index(") t", lateral_start)]
+
+    assert "mu_target.updated_at > $4" in lateral_query
+    assert "mu_target.updated_at < $5" in lateral_query
+    assert lateral_query.index("mu_target.updated_at > $4") < lateral_query.index(limit_clause)
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps"),
+    ],
+)
+def test_semantic_causal_expansion_applies_updated_window(ops_module: str, ops_class: str) -> None:
+    """All three link-expansion arms honour the window — both semantic directions
+    (the kNN graph is not symmetric, so each is a separate scan) and causal."""
+    from importlib import import_module
+
+    from hindsight_api.engine.db.ops import UpdatedWindow
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    window = UpdatedWindow(after=datetime(2026, 1, 1), before=None, first_param_index=4)
+    cte = ops.build_semantic_causal_cte("memory_links", "memory_units", window)
+
+    assert cte.count("mu.updated_at > $4") == 3
+    assert "updated_at <" not in cte
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps"),
+    ],
+)
+def test_expansion_ctes_omit_window_when_unbounded(ops_module: str, ops_class: str) -> None:
+    """An unbounded recall must emit the pre-existing SQL verbatim — no dangling
+    placeholders, since every backend binds params positionally and Oracle rejects
+    a query that references a bind it was not given."""
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+
+    entity_cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, _UNBOUNDED_WINDOW)
+    sem_causal_cte = ops.build_semantic_causal_cte("memory_links", "memory_units", _UNBOUNDED_WINDOW)
+
+    assert "updated_at" not in entity_cte
+    assert "updated_at" not in sem_causal_cte
+    assert "$4" not in entity_cte + sem_causal_cte
+
+
+# ---------------------------------------------------------------------------
+# OracleOps unit tests (mock DatabaseConnection, no live DB)
+# ---------------------------------------------------------------------------
+
+
+class TestOracleOpsInsertFactsBatch:
+    """Verify insert_facts_batch uses executemany with client-side UUIDs
+    and correctly maps all input columns to the SQL statement."""
+
+    @pytest.fixture()
+    def ops(self):
+        from hindsight_api.engine.db.ops_oracle import OracleOps
+
+        return OracleOps()
+
+    @pytest.fixture()
+    def mock_conn(self):
+        conn = AsyncMock(spec=DatabaseConnection)
+        conn.executemany = AsyncMock()
+        return conn
+
+    def _make_batch(self, n: int = 2) -> dict:
+        """Build a realistic batch of N facts with distinct values per column."""
+        from datetime import datetime, timezone
+
+        dates = [datetime(2024, 1, i + 1, tzinfo=timezone.utc) for i in range(n)]
+        fact_type_cycle = ["world", "experience"]
+        return dict(
+            bank_id="bank-1",
+            fact_texts=[f"fact-{i}" for i in range(n)],
+            embeddings=[f"[0.{i}]" for i in range(n)],
+            event_dates=dates,
+            occurred_starts=[None] * n,
+            occurred_ends=[None] * n,
+            mentioned_ats=[None] * n,
+            contexts=[f"ctx-{i}" for i in range(n)],
+            fact_types=[fact_type_cycle[i % 2] for i in range(n)],
+            metadata_jsons=['{"key": "val"}'] * n,
+            chunk_ids=[f"chunk-{i}" for i in range(n)],
+            document_ids=[f"doc-{i}" for i in range(n)],
+            attachment_ids_list=["[]"] * n,
+            tags_list=[f'["tag-{i}"]' for i in range(n)],
+            observation_scopes_list=[None] * n,
+            text_signals_list=[None] * n,
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_executemany_not_row_by_row(self, ops, mock_conn):
+        """Must use one executemany call (batch), never fetchval (row-by-row)."""
+        batch = self._make_batch(3)
+        result = await ops.insert_facts_batch(conn=mock_conn, **batch)
+
+        mock_conn.executemany.assert_called_once()
+        mock_conn.fetchval.assert_not_called()
+        assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_returned_ids_are_valid_unique_uuids(self, ops, mock_conn):
+        """Each returned ID must be a valid UUID and all must be distinct."""
+        import uuid as _uuid
+
+        batch = self._make_batch(5)
+        result = await ops.insert_facts_batch(conn=mock_conn, **batch)
+
+        parsed = [_uuid.UUID(r) for r in result]  # Raises ValueError if invalid
+        assert len(set(parsed)) == 5, "UUIDs must be unique"
+
+    @pytest.mark.asyncio
+    async def test_returned_ids_match_rows_sent_to_db(self, ops, mock_conn):
+        """The UUIDs returned to the caller must be the same ones sent to the DB."""
+        batch = self._make_batch(2)
+        result = await ops.insert_facts_batch(conn=mock_conn, **batch)
+
+        _, rows_data = mock_conn.executemany.call_args.args
+        ids_in_rows = [row[0] for row in rows_data]
+        assert result == ids_in_rows
+
+    @pytest.mark.asyncio
+    async def test_column_values_correctly_mapped(self, ops, mock_conn):
+        """Every input column must land in the correct position in the row tuple.
+
+        This is the critical correctness test — a column ordering bug here would
+        silently insert data into the wrong columns.
+        """
+        from datetime import datetime, timezone
+
+        dt = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        result = await ops.insert_facts_batch(
+            conn=mock_conn,
+            bank_id="bank-42",
+            fact_texts=["The sky is blue"],
+            embeddings=["[0.1, 0.2, 0.3]"],
+            event_dates=[dt],
+            occurred_starts=[dt],
+            occurred_ends=[dt],
+            mentioned_ats=[dt],
+            contexts=["weather"],
+            fact_types=["world"],
+            metadata_jsons=['{"source": "obs"}'],
+            chunk_ids=["chunk-99"],
+            document_ids=["doc-55"],
+            tags_list=['["nature", "sky"]'],
+            observation_scopes_list=["global"],
+            text_signals_list=["positive"],
+            attachment_ids_list=["[]"],
+        )
+
+        query, rows_data = mock_conn.executemany.call_args.args
+        assert len(rows_data) == 1
+        row = rows_data[0]
+
+        # Verify column order matches: id, bank_id, text, embedding, event_date,
+        # occurred_start, occurred_end, mentioned_at, context, fact_type, metadata,
+        # chunk_id, document_id, tags, observation_scopes, text_signals
+        assert row[0] == result[0], "row[0] should be the generated UUID"
+        assert row[1] == "bank-42", "row[1] should be bank_id"
+        assert row[2] == "The sky is blue", "row[2] should be text"
+        assert row[3] == "[0.1, 0.2, 0.3]", "row[3] should be embedding"
+        assert row[4] == dt, "row[4] should be event_date"
+        assert row[5] == dt, "row[5] should be occurred_start"
+        assert row[6] == dt, "row[6] should be occurred_end"
+        assert row[7] == dt, "row[7] should be mentioned_at"
+        assert row[8] == "weather", "row[8] should be context"
+        assert row[9] == "world", "row[9] should be fact_type"
+        assert row[10] == '{"source": "obs"}', "row[10] should be metadata JSON string"
+        assert row[11] == "chunk-99", "row[11] should be chunk_id"
+        assert row[12] == "doc-55", "row[12] should be document_id"
+        assert row[13] == ["nature", "sky"], "row[13] should be decoded tags list"
+        assert row[14] == "global", "row[14] should be observation_scopes"
+        assert row[15] == "positive", "row[15] should be text_signals"
+
+    @pytest.mark.asyncio
+    async def test_sql_column_count_matches_values(self, ops, mock_conn):
+        """Columns, placeholders and bound values must all agree.
+
+        Counted against each other rather than against a literal, because the
+        literal is what goes stale: adding a column to `memory_units` bumps all
+        three together and a hardcoded number then fails for the wrong reason,
+        telling you nothing about whether they still match.
+        """
+        batch = self._make_batch(1)
+        await ops.insert_facts_batch(conn=mock_conn, **batch)
+
+        query, rows_data = mock_conn.executemany.call_args.args
+        columns = query[query.index("(") + 1 : query.index(")")].split(",")
+        placeholders = query.count("$")
+
+        assert len(columns) == placeholders, (
+            f"INSERT names {len(columns)} columns but binds {placeholders} placeholders"
+        )
+        assert len(rows_data[0]) == placeholders, f"{placeholders} placeholders but {len(rows_data[0])} values per row"
+
+    @pytest.mark.asyncio
+    async def test_tags_json_decoded_to_list(self, ops, mock_conn):
+        """Tags JSON strings must be decoded to Python lists, not passed as strings."""
+        await ops.insert_facts_batch(conn=mock_conn, **{**self._make_batch(1), "tags_list": ['["tag1", "tag2"]']})
+        _, rows_data = mock_conn.executemany.call_args.args
+        assert rows_data[0][13] == ["tag1", "tag2"]
+        assert isinstance(rows_data[0][13], list)
+
+    @pytest.mark.asyncio
+    async def test_empty_tags_becomes_empty_list(self, ops, mock_conn):
+        """Empty/falsy tags string must become [], not crash or pass empty string."""
+        await ops.insert_facts_batch(conn=mock_conn, **{**self._make_batch(1), "tags_list": [""]})
+        _, rows_data = mock_conn.executemany.call_args.args
+        assert rows_data[0][13] == []
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL search_vector handling (insert). Since the curation archive drops
+# search_vector (#2503), the insert is the single place it is populated, and
+# pg_search_vector_expr is its one source of truth (shared with revert recompute).
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLSearchVector:
+    @staticmethod
+    def _cfg(ext: str, lang: str = "english"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(text_search_extension=ext, text_search_extension_native_language=lang)
+
+    @pytest.mark.parametrize(
+        "ext,needle",
+        [
+            ("native", "to_tsvector('english'::regconfig,"),
+            ("vchord", "::bm25_catalog.bm25vector"),
+        ],
+    )
+    def test_expr_builds_vector_for_vector_backends(self, ext, needle):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg(ext))
+        assert expr is not None and needle in expr
+        # Always built from the same three carried columns.
+        assert "COALESCE(text, '')" in expr and "COALESCE(text_signals, '')" in expr
+
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    def test_expr_none_for_base_column_backends(self, ext):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        # These index the base text columns directly; search_vector stays empty.
+        assert pg_search_vector_expr(self._cfg(ext)) is None
+
+    def test_expr_accepts_custom_column_refs(self):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg("native"), text_col="mu.text", context_col="mu.context")
+        assert "COALESCE(mu.text, '')" in expr and "COALESCE(mu.context, '')" in expr
+
+    async def _insert_query(self, ext: str) -> str:
+        from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+        conn = AsyncMock(spec=DatabaseConnection)
+        conn.fetch = AsyncMock(return_value=[{"id": "00000000-0000-0000-0000-000000000001"}])
+        batch = dict(
+            bank_id="b",
+            fact_texts=["t"],
+            embeddings=["[0.1]"],
+            event_dates=[None],
+            occurred_starts=[None],
+            occurred_ends=[None],
+            mentioned_ats=[None],
+            contexts=["c"],
+            fact_types=["world"],
+            metadata_jsons=["{}"],
+            chunk_ids=[None],
+            document_ids=[None],
+            tags_list=[""],
+            observation_scopes_list=[None],
+            text_signals_list=[None],
+            attachment_ids_list=["[]"],
+        )
+        with patch("hindsight_api.config.get_config", return_value=self._cfg(ext)):
+            await PostgreSQLOps().insert_facts_batch(conn=conn, **batch)
+        return conn.fetch.call_args.args[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["native", "vchord"])
+    async def test_insert_includes_search_vector_column(self, ext):
+        assert "search_vector" in await self._insert_query(ext)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    async def test_insert_omits_search_vector_column(self, ext):
+        assert "search_vector" not in await self._insert_query(ext)
+
+
+# ---------------------------------------------------------------------------
+# normalize_schema tests
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeSchema:
+    """Verify Backend.normalize_schema() returns correct schema for each backend."""
+
+    def test_postgresql_passes_through(self):
+        backend = PostgreSQLBackend()
+        assert backend.normalize_schema("public") == "public"
+        assert backend.normalize_schema("tenant_abc") == "tenant_abc"
+        assert backend.normalize_schema(None) is None
+
+    def test_oracle_maps_public_to_none(self):
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        backend = OracleBackend()
+        assert backend.normalize_schema("public") is None
+        assert backend.normalize_schema("tenant_abc") == "tenant_abc"
+        assert backend.normalize_schema(None) is None
+
+
+# ---------------------------------------------------------------------------
+# OracleBackend._set_session_schema regression
+# ---------------------------------------------------------------------------
+
+
+class TestOracleSetSessionSchema:
+    """Regression coverage for _set_session_schema (no live Oracle required)."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_await_synchronous_cursor_close(self):
+        """A non-public schema is applied without awaiting the sync cursor.close().
+
+        oracledb's AsyncCursor.close() is synchronous (returns None), so
+        ``await cursor.close()`` raised "object NoneType can't be used in
+        'await' expression" on every acquire() under a non-public schema —
+        breaking the DB health check and all memory operations on Oracle.
+        Reproduced with a fake cursor whose close() is synchronous, exactly
+        like oracledb: this test fails (TypeError) against the buggy code and
+        passes once the erroneous await is removed.
+        """
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            async def fetchone(self):
+                # SESSION_USER lookup used to cache the connection's default schema.
+                return ("APP_USER",)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
+        class _FakeConn:
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("TENANT_X")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_X"' in s for s in executed)
+
+    @pytest.mark.asyncio
+    async def test_public_schema_resets_to_default_schema(self):
+        """The default ``public`` schema resets a pooled Oracle session to its default.
+
+        Oracle pooled connections retain ``CURRENT_SCHEMA`` across checkouts, so a
+        connection previously used for a tenant schema would still point at that
+        tenant unless the ``public`` acquisition explicitly resets it (#2708). The
+        reset applies ``ALTER SESSION SET CURRENT_SCHEMA`` to the cached SESSION_USER,
+        and the synchronous ``cursor.close()`` is not awaited.
+        """
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            async def fetchone(self):
+                return ("APP_USER",)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
+        class _FakeConn:
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("public")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"' in s for s in executed)
+
+
+# ---------------------------------------------------------------------------
+# Oracle session setup and CLOB binding (#4630, #4632)
+# ---------------------------------------------------------------------------
+
+
+class TestOracleSessionAndClobBinding:
+    """No live Oracle required."""
+
+    @pytest.mark.asyncio
+    async def test_new_session_disables_parallel_dml(self):
+        from hindsight_api.engine.db.oracle import _disable_parallel_dml
+
+        executed: list[str] = []
+        closed: list[bool] = []
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed.append(True)
+
+        class _FakeConn:
+            def cursor(self) -> _FakeAsyncCursor:
+                return _FakeAsyncCursor()
+
+        await _disable_parallel_dml(_FakeConn(), None)
+        assert executed == ["ALTER SESSION DISABLE PARALLEL DML"]
+        assert closed == [True]
+
+    def test_clob_bind_covers_json_and_values_past_4000_bytes(self):
+        from hindsight_api.engine.db.oracle import _needs_clob_bind
+
+        assert _needs_clob_bind("[]")
+        assert _needs_clob_bind('{"a": 1}')
+        assert _needs_clob_bind("x" * 4001)
+        # 1500 characters, but 4500 bytes in UTF-8.
+        assert _needs_clob_bind("é" * 1500 + "x" * 1500)
+        assert not _needs_clob_bind("x" * 4000)
+        assert not _needs_clob_bind("é" * 2000)  # exactly 4000 bytes
+        assert not _needs_clob_bind("")
+        assert not _needs_clob_bind(None)
+        assert not _needs_clob_bind(42)

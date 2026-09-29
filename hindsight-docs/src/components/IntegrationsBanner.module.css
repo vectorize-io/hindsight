@@ -1,0 +1,82 @@
+.banner {
+  width: 100%;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
+  padding: 7px 0;
+  /* Color cascades down to all items; dark mode is handled by Docusaurus on the html element */
+  color: #555;
+  mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+[data-theme='dark'] .banner {
+  color: #e0e0e0;
+  border-color: var(--ifm-color-emphasis-300);
+}
+
+.track {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  width: max-content;
+  animation: scrollLeft 60s linear infinite;
+}
+
+@keyframes scrollLeft {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.itemLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.itemLink:hover .item {
+  color: #0074d9;
+  border-color: #0074d9;
+  background: rgba(0, 116, 217, 0.08);
+}
+
+[data-theme='dark'] .itemLink:hover .item {
+  color: #60aaff;
+  background: rgba(96, 170, 255, 0.12);
+  border-color: rgba(96, 170, 255, 0.5);
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  margin: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  background: var(--ifm-background-color);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: inherit;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+[data-theme='dark'] .item {
+  border-color: var(--ifm-color-emphasis-400);
+  background: var(--ifm-background-surface-color);
+}
+
+.itemIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.itemIcon img {
+  display: block;
+}
+
+.itemLabel {
+  line-height: 1;
+}

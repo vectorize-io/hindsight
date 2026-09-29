@@ -1,0 +1,282 @@
+"""
+Test search tracing functionality.
+"""
+
+from datetime import datetime, timezone
+
+import pytest
+
+# These read `result.trace["retrieval_results"]` and assert an entry per ARM (method_name ==
+# "graph"). That structure is produced by the engine running the arms itself; a store that answers
+# a whole recall in one hop runs them internally and reports phases ("arms", "fuse", "trim"), not
+# one entry per arm -- so there is nothing here to assert against for such a store, and the arm
+# behaviour is covered by the extension's own recall suite instead.
+pytestmark = pytest.mark.memory_backend_incompatible
+
+from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.search.tracer import SearchTracer
+
+
+def test_rrf_trace_preserves_flattened_source_ranks():
+    """Source ranks flattened by the recall pipeline remain visible in traces."""
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100)
+
+    tracer.add_rrf_merged(
+        [
+            (
+                "memory-1",
+                {"text": "alpha"},
+                {"rrf_score": 0.1, "semantic_rank": 1, "bm25_rank": 2},
+            )
+        ]
+    )
+
+    assert tracer.rrf_merged[0].source_ranks == {"semantic_rank": 1, "bm25_rank": 2}
+
+
+def test_trace_timestamp_records_the_query_anchor():
+    """The trace reports the as-of anchor the ranking used, not when it was built (#4217)."""
+    anchor = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100, query_timestamp=anchor)
+    tracer.start()
+
+    trace = tracer.finalize([])
+
+    assert trace.query.timestamp == anchor
+
+
+def test_trace_timestamp_falls_back_to_now_without_an_anchor():
+    """With no caller anchor the trace still reports a usable execution time."""
+    before = datetime.now(timezone.utc)
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100)
+    tracer.start()
+
+    trace = tracer.finalize([])
+
+    assert before <= trace.query.timestamp <= datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_search_with_trace(memory, request_context):
+    """Test that search with enable_trace=True returns a valid SearchTrace."""
+    # Generate a unique agent ID for this test
+    bank_id = f"test_trace_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Store some test memories
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google in Mountain View",
+            context="test context",
+            request_context=request_context,
+        )
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob also works at Google but in New York",
+            context="test context",
+            request_context=request_context,
+        )
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Charlie founded a startup called TechCorp",
+            context="test context",
+            request_context=request_context,
+        )
+
+        # Search with tracing enabled, anchored to an explicit as-of date
+        question_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        search_result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Who works at Google?",
+            fact_type=["world"],
+            budget=Budget.LOW,  # 20,
+            max_tokens=512,
+            enable_trace=True,
+            question_date=question_date,
+            request_context=request_context,
+        )
+
+        # Verify results
+        assert len(search_result.results) > 0, "Should have search results"
+
+        # Verify trace object
+        assert search_result.trace is not None, "Trace should not be None when enable_trace=True"
+        # Trace is now a dict
+        trace = search_result.trace
+
+        # Verify query info
+        assert trace["query"]["query_text"] == "Who works at Google?"
+        assert trace["query"]["budget"] == 100  # Budget.LOW = 100
+        assert trace["query"]["max_tokens"] == 512
+        # The anchor the caller asked for, not the moment the trace was built (#4217)
+        assert trace["query"]["timestamp"] == question_date
+        assert len(trace["query"]["query_embedding"]) > 0, "Query embedding should be populated"
+
+        # Verify entry points
+        assert len(trace["entry_points"]) > 0, "Should have entry points"
+        for ep in trace["entry_points"]:
+            assert ep["node_id"], "Entry point should have node_id"
+            assert ep["text"], "Entry point should have text"
+            assert 0.0 <= ep["similarity_score"] <= 1.0, "Similarity should be in [0, 1]"
+
+        # Verify visits
+        assert len(trace["visits"]) > 0, "Should have visited nodes"
+        for visit in trace["visits"]:
+            assert visit["node_id"], "Visit should have node_id"
+            assert visit["text"], "Visit should have text"
+            assert visit["weights"]["final_weight"] >= 0, "Weight should be non-negative"
+
+        # Retrieval is parallel and fused, so the trace carries no traversal
+        # vocabulary: link-follow counters and pruning decisions were removed
+        # rather than reported as a constant zero (issue #3817).
+        summary_keys = set(trace["summary"])
+        assert not summary_keys & {
+            "total_nodes_pruned",
+            "temporal_links_followed",
+            "semantic_links_followed",
+            "entity_links_followed",
+        }, "Structurally-zero counters should be gone from the summary"
+        assert "pruned" not in trace
+        for visit in trace["visits"]:
+            assert not set(visit) & {"parent_node_id", "link_type", "link_weight", "neighbors_explored"}
+
+        # Verify summary
+        assert trace["summary"]["total_nodes_visited"] == len(trace["visits"])
+        assert trace["summary"]["results_returned"] == len(search_result.results)
+        assert trace["summary"]["budget_used"] <= trace["query"]["budget"]
+        assert trace["summary"]["total_duration_seconds"] > 0
+
+        # Verify phase metrics
+        assert len(trace["summary"]["phase_metrics"]) > 0, "Should have phase metrics"
+        phase_names = {pm["phase_name"] for pm in trace["summary"]["phase_metrics"]}
+        assert "generate_query_embedding" in phase_names
+        assert "parallel_retrieval" in phase_names  # New modular architecture
+        assert "rrf_merge" in phase_names  # New modular architecture
+        assert "reranking" in phase_names  # New modular architecture
+
+        print("\n✓ Search trace test passed!")
+        print(f"  - Query: {trace['query']['query_text']}")
+        print(f"  - Entry points: {len(trace['entry_points'])}")
+        print(f"  - Nodes visited: {trace['summary']['total_nodes_visited']}")
+        print(f"  - Results returned: {trace['summary']['results_returned']}")
+        print(f"  - Duration: {trace['summary']['total_duration_seconds']:.3f}s")
+
+    finally:
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_trace_phase_coverage(memory, request_context):
+    """Phase metrics should account for (nearly) all of total_duration_seconds.
+
+    Regression guard for issue #2361: before the fix the named phases summed to
+    ~10-15% of total because backend acquisition, combined scoring, chunk/source/
+    entity enrichment and result serialization were un-instrumented.
+
+    The per-method ``retrieval_*`` splits and the pool-wait / finalize phases are
+    flagged ``details.diagnostic`` because they overlap (or sit outside) the
+    timeline; only the non-diagnostic phases partition it, so only those are summed.
+    """
+    bank_id = f"test_trace_cov_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google in Mountain View and joined in 2019.",
+            context="test context",
+            request_context=request_context,
+        )
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob also works at Google but in New York, on the search team.",
+            context="test context",
+            request_context=request_context,
+        )
+
+        # Exercise the enrichment paths (chunks + entities) so their phases fire.
+        search_result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Who works at Google?",
+            fact_type=["world"],
+            budget=Budget.LOW,
+            max_tokens=512,
+            enable_trace=True,
+            include_chunks=True,
+            include_entities=True,
+            request_context=request_context,
+        )
+
+        trace = search_result.trace
+        assert trace is not None
+        phase_metrics = trace["summary"]["phase_metrics"]
+        total = trace["summary"]["total_duration_seconds"]
+
+        # The blocks the issue called out must now each have a phase.
+        phase_names = {pm["phase_name"] for pm in phase_metrics}
+        for expected in (
+            "backend_acquisition",
+            "combined_scoring",
+            "chunk_fetch",
+            "result_serialization",
+            "entity_build",
+        ):
+            assert expected in phase_names, f"missing phase metric: {expected}"
+
+        # Non-diagnostic phases partition the timeline; sum and compare to total.
+        timeline = [pm for pm in phase_metrics if not pm["details"].get("diagnostic")]
+        timeline_sum = sum(pm["duration_seconds"] for pm in timeline)
+
+        # No phase double-counts: the named partition never exceeds the wall clock.
+        assert timeline_sum <= total + 0.01, (
+            f"phase sum {timeline_sum:.4f}s exceeds total {total:.4f}s — likely double counting"
+        )
+        # Coverage: only tiny sync gaps between phases should be unaccounted.
+        # (finalize/to_dict serialization runs after the total snapshot, so it cannot
+        # be inside this total — it is reported as the diagnostic trace_finalize phase.)
+        gap = total - timeline_sum
+        assert gap <= 0.15 * total + 0.02, (
+            f"unaccounted recall time {gap:.4f}s of {total:.4f}s total — phases sum to "
+            f"only {timeline_sum / total:.0%}; an un-instrumented block likely regressed"
+        )
+
+        print(f"\n✓ Phase coverage: {timeline_sum / total:.0%} of {total:.3f}s accounted")
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_search_without_trace(memory, request_context):
+    """Test that search with enable_trace=False returns None for trace."""
+    bank_id = f"test_no_trace_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Store a test memory
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Test memory without trace",
+            context="test",
+            request_context=request_context,
+        )
+
+        # Search without tracing
+        search_result = await memory.recall_async(
+            bank_id=bank_id,
+            query="test",
+            fact_type=["world"],
+            budget=Budget.LOW,  # 10,
+            max_tokens=512,
+            enable_trace=False,
+            request_context=request_context,
+        )
+
+        # Verify trace is None
+        assert search_result.trace is None, "Trace should be None when enable_trace=False"
+        assert isinstance(search_result.results, list), "Results should still be a list"
+
+        print("\n✓ Search without trace test passed!")
+
+    finally:
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)

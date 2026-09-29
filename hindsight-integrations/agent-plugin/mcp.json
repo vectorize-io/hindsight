@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "hindsight": {
+      "type": "streamable-http",
+      "url": "https://api.hindsight.vectorize.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${HINDSIGHT_API_KEY}",
+        "X-Bank-Id": "${HINDSIGHT_BANK_ID}"
+      }
+    }
+  }
+}

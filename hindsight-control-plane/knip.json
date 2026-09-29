@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/app/**/{page,layout,route,loading,error,not-found,template,default,global-error,sitemap,robots,manifest,opengraph-image,icon}.{ts,tsx}",
+    "next.config.{js,mjs,ts}",
+    "tailwind.config.{js,ts}",
+    "postcss.config.{js,mjs}"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignoreDependencies": [
+    "eslint",
+    "eslint-config-next",
+    "@eslint/eslintrc",
+    "autoprefixer",
+    "tailwindcss-animate",
+    "postcss-load-config",
+    "react-is",
+    "react-dom",
+    "@types/react-dom",
+    "@vectorize-io/hindsight-client",
+    "prettier",
+    "tsx"
+  ]
+}

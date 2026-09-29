@@ -1,0 +1,85 @@
+"""Regression tests for Codex reasoning-effort request serialization."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from hindsight_api.engine.providers.codex_llm import CodexLLM
+from tests.codex_stream_stub import stub_codex_stream
+
+
+def build_llm(reasoning_effort: str | None = "high") -> CodexLLM:
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
+    ):
+        return CodexLLM(
+            provider="openai-codex",
+            api_key="ignored",
+            base_url="https://chatgpt.com/backend-api",
+            model="gpt-5.6-luna",
+            reasoning_effort=reasoning_effort,
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_sends_reasoning_effort_separately_from_summary() -> None:
+    llm = build_llm("high")
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+
+    with (
+        stub_codex_stream(llm, response) as mock_stream,
+        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+    ):
+        await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
+
+    assert mock_stream.call_args.kwargs["json"]["reasoning"] == {
+        "effort": "high",
+        "summary": "detailed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_with_tools_sends_reasoning_effort_separately_from_summary() -> None:
+    llm = build_llm("low")
+    response = MagicMock()
+    response.status_code = 200
+    response.raise_for_status.return_value = None
+
+    with (
+        stub_codex_stream(llm, response) as mock_stream,
+        patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+    ):
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            max_retries=0,
+        )
+
+    assert mock_stream.call_args.kwargs["json"]["reasoning"] == {
+        "effort": "low",
+        "summary": "concise",
+    }
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_reasoning_effort_is_omitted_from_the_payload() -> None:
+    """Unset means the Codex backend picks the effort, not Hindsight.
+
+    The config layer used to resolve unset to "low", so every Codex deployment sent an
+    effort nobody had configured. The summary is presentation and stays — only the
+    effort is the operator's to set (issue #3449).
+    """
+    llm = build_llm(None)
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+
+    with (
+        stub_codex_stream(llm, response) as mock_stream,
+        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+    ):
+        await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
+
+    # "auto" is the neutral summary an unrecognised level already mapped to.
+    assert mock_stream.call_args.kwargs["json"]["reasoning"] == {"summary": "auto"}

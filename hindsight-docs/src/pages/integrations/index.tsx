@@ -1,0 +1,289 @@
+import React, {useMemo, useState} from 'react';
+import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import Layout from '@theme/Layout';
+import {usePluginData} from '@docusaurus/useGlobalData';
+import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
+import {integrationsSorted, CATEGORY_LABELS, groupByCategory} from '@site/src/lib/integrations';
+// Agents covered by the Coding Agents plugin, drawn on its card: the whole pitch of that package
+// is "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
+// Shared with the sidebar preview so the two cannot drift.
+import {CODING_AGENT_HARNESSES} from '@site/src/lib/coding-agent-harnesses';
+import styles from './index.module.css';
+
+/**
+ * Pinned above the grid. These three are the ones we want a first-time visitor to see: the umbrella
+ * coding-agent plugin, and the two agent harnesses that ship Hindsight as a first-class memory
+ * provider — Hermes lists it in its own plugin catalog, so `hermes plugins install hindsight` is
+ * the whole setup.
+ */
+const FEATURED_IDS = ['coding-agents', 'hermes', 'openclaw'];
+
+const INTEGRATIONS_JSON_URL =
+  'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';
+
+type IntegrationType = 'official' | 'community';
+
+interface Integration {
+  id: string;
+  name: string;
+  description: string;
+  type: IntegrationType;
+  by: string;
+  category: string;
+  link: string;
+  icon?: string;
+}
+
+/**
+ * The gallery is a browse surface, not a reading surface: 60 three-line cards with a repeated
+ * "Hindsight Team" byline made the page long enough that scanning it meant scrolling past what you
+ * were looking for. This is the same row the changelog listing uses — icon, name, two lines of
+ * description — grouped by category so the shape of the catalogue is visible at a glance.
+ *
+ * Featured uses the same row, tinted and spanning wider tracks, so the page reads as one list with
+ * three entries lifted out of it rather than two competing card designs. The coding-agents card
+ * keeps its harness strip: "one install, every agent" is a claim a single icon cannot make.
+ */
+function IntegrationCard({
+  integration,
+  changelogSlug,
+  featured = false,
+}: {
+  integration: Integration;
+  changelogSlug?: string;
+  featured?: boolean;
+}) {
+  const harnessBase = useBaseUrl('/img/harness/');
+  const iconSrc = useBaseUrl(integration.icon ?? '');
+  const isExternal = integration.link.startsWith('http');
+
+  return (
+    <div className={`${styles.compactCard} ${featured ? styles.compactCardFeatured : ''}`}>
+      <div className={styles.compactHeader}>
+        {integration.icon && <img src={iconSrc} alt="" className={styles.compactIcon} aria-hidden />}
+        <Link
+          to={integration.link}
+          className={styles.compactName}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {integration.name}
+        </Link>
+        {integration.type === 'community' && (
+          <img
+            src={`https://github.com/${integration.by}.png?size=40`}
+            alt={`Community integration by @${integration.by}`}
+            title={`Community integration by @${integration.by}`}
+            className={styles.compactAuthor}
+            loading="lazy"
+          />
+        )}
+      </div>
+
+      <p className={styles.compactDescription}>{integration.description}</p>
+
+      {featured && integration.id === 'coding-agents' && (
+        <div className={styles.harnessStrip} aria-label="Supported coding agents">
+          {CODING_AGENT_HARNESSES.map((h) => (
+            <img
+              key={h.id}
+              src={`${harnessBase}${h.file}`}
+              alt={h.label}
+              title={h.label}
+              className={styles.harnessLogo}
+              loading="lazy"
+            />
+          ))}
+        </div>
+      )}
+
+      <div className={styles.compactActions}>
+        <Link
+          to={integration.link}
+          className={styles.actionPill}
+          {...(isExternal ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
+          {isExternal ? 'Site ↗' : 'Docs'}
+        </Link>
+        {/* Only integrations that publish a package have a changelog; the rest would link to a 404. */}
+        {changelogSlug && (
+          <Link to={`/changelog/integrations/${changelogSlug}`} className={styles.actionPill}>
+            Changelog
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function IntegrationsHub(): React.ReactElement {
+  const [search, setSearch] = useState('');
+  const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
+
+  // Which integrations have a changelog page, from the same build-time index the /changelog
+  // listing uses — so a card grows a Changelog button the release after its first release,
+  // with nothing here to update.
+  const {entries: changelogEntries} = usePluginData('integration-changelogs') as {
+    entries: {id: string; slug: string}[];
+  };
+  const changelogSlugs = useMemo(
+    () => new Map(changelogEntries.map((e) => [e.id, e.slug])),
+    [changelogEntries],
+  );
+
+  // Superseded pages stay published and linked from the docs sidebar, but the gallery is where
+  // people come to CHOOSE an integration — offering something we are actively migrating them off
+  // would be pointing them at a dead end.
+  const integrations = (integrationsSorted as unknown as Integration[]).filter(
+    (i) => i.category !== 'legacy',
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return integrations.filter((i) => {
+      if (selectedType !== 'all' && i.type !== selectedType) return false;
+      if (q && !i.name.toLowerCase().includes(q) && !i.description.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [integrations, search, selectedType]);
+
+  // Featured only makes sense on the unfiltered view: once someone searches or filters, pinned
+  // cards would sit above results that don't match them and read as noise.
+  const showFeatured = !search.trim() && selectedType === 'all';
+  const featured = useMemo(
+    () =>
+      FEATURED_IDS.map((id) => integrations.find((i) => i.id === id)).filter(
+        (i): i is Integration => Boolean(i),
+      ),
+    [integrations],
+  );
+  const rest = useMemo(
+    () => (showFeatured ? filtered.filter((i) => !FEATURED_IDS.includes(i.id)) : filtered),
+    [filtered, showFeatured],
+  );
+
+  const officialCount = integrations.filter((i) => i.type === 'official').length;
+  const communityCount = integrations.filter((i) => i.type === 'community').length;
+
+  return (
+    <Layout title="Integrations Hub" description="Browse official and community integrations for Hindsight agent memory">
+
+      {/* Full-width hero with its own background */}
+      <div className={styles.heroSection}>
+        <h1 className={styles.heroTitle}>Integrations Hub</h1>
+        <p className={styles.heroSubtitle}>
+          Connect Hindsight to your stack. Browse official integrations and community-built connectors.
+        </p>
+
+        <div className={styles.searchWrapper}>
+          <input
+            type="text"
+            className={styles.searchInput}
+            placeholder="Search integrations…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search integrations"
+            autoComplete="off"
+          />
+          {search && (
+            <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">
+              ×
+            </button>
+          )}
+        </div>
+
+        <div className={styles.heroStats}>
+          <span className={styles.stat}><strong>{officialCount}</strong> official</span>
+          <span className={styles.statDivider}>·</span>
+          <span className={styles.stat}><strong>{communityCount}</strong> community</span>
+        </div>
+      </div>
+
+      {/* Scrolling banner */}
+      <IntegrationsBanner />
+
+      {/* Main content */}
+      <div className={styles.page}>
+        <div className={styles.toolbar}>
+          <div className={styles.filterGroup}>
+            {(['all', 'official', 'community'] as const).map((t) => (
+              <button
+                key={t}
+                className={`${styles.filterPill} ${selectedType === t ? styles.filterPillActive : ''}`}
+                onClick={() => setSelectedType(t)}>
+                {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          <span className={styles.resultCount}>{filtered.length} integration{filtered.length !== 1 ? 's' : ''}</span>
+        </div>
+
+        {showFeatured && featured.length > 0 && (
+          <section className={styles.featuredSection}>
+            <h2 className={styles.featuredTitle}>Featured</h2>
+            <div className={styles.featuredGrid}>
+              {featured.map((integration) => (
+                <IntegrationCard
+                  key={integration.id}
+                  integration={integration}
+                  changelogSlug={changelogSlugs.get(integration.id)}
+                  featured
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {showFeatured && (
+          <>
+            <hr className={styles.sectionDivider} />
+            <h2 className={styles.sectionTitle}>All integrations</h2>
+          </>
+        )}
+
+        {filtered.length === 0 ? (
+          <div className={styles.empty}>
+            <p>No integrations match your search.</p>
+            <button className={styles.resetButton} onClick={() => { setSearch(''); setSelectedType('all'); }}>
+              Reset filters
+            </button>
+          </div>
+        ) : (
+          <div className={styles.groups}>
+            {groupByCategory(rest).map(([category, items]) => (
+              <section key={category} className={styles.group}>
+                <h3 className={styles.groupTitle}>
+                  {CATEGORY_LABELS[category] ?? category}
+                  <span className={styles.groupCount}>{items.length}</span>
+                </h3>
+                <div className={styles.compactGrid}>
+                  {items.map((integration) => (
+                    <IntegrationCard
+                      key={integration.id}
+                      integration={integration}
+                      changelogSlug={changelogSlugs.get(integration.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+
+        <div className={styles.submitBanner}>
+          <div className={styles.submitBannerContent}>
+            <h2 className={styles.submitBannerTitle}>Built something with Hindsight?</h2>
+            <p className={styles.submitBannerText}>
+              Share your integration with the community. Open a pull request and add your entry to the integrations list.
+            </p>
+            <Link
+              href={INTEGRATIONS_JSON_URL}
+              className={styles.submitButton}
+              target="_blank"
+              rel="noopener noreferrer">
+              Submit an integration →
+            </Link>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
+}

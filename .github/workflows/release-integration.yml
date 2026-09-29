@@ -1,0 +1,205 @@
+name: Release Integration
+
+on:
+  push:
+    tags:
+      - 'integrations/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # for PyPI trusted publishing + build-provenance attestations
+      attestations: write  # for actions/attest-build-provenance (Obsidian assets)
+      # No `contents: write`: we never create releases in this repo. The Obsidian
+      # plugin's distribution release is pushed to its dedicated repo using
+      # OBSIDIAN_DIST_TOKEN (see the "Mirror Obsidian plugin" step below).
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Extract integration info
+      id: info
+      run: |
+        # refs/tags/integrations/litellm/v0.1.0 → integration=litellm, version=0.1.0
+        TAG="${GITHUB_REF#refs/tags/}"
+        INTEGRATION=$(echo "$TAG" | cut -d'/' -f2)
+        VERSION=$(echo "$TAG" | cut -d'/' -f3 | sed 's/^v//')
+        echo "integration=$INTEGRATION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "Integration: $INTEGRATION, Version: $VERSION"
+
+    - name: Detect integration type
+      id: type
+      run: |
+        if [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/pyproject.toml" ]; then
+          echo "type=python" >> $GITHUB_OUTPUT
+        elif [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/package.json" ]; then
+          echo "type=typescript" >> $GITHUB_OUTPUT
+        else
+          echo "type=plugin" >> $GITHUB_OUTPUT
+        fi
+
+    # ── Python integrations (litellm, pydantic-ai, crewai) ──────────────────
+
+    - name: Install uv
+      if: steps.type.outputs.type == 'python'
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      if: steps.type.outputs.type == 'python'
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build Python package
+      if: steps.type.outputs.type == 'python'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: uv build --out-dir dist
+
+    - name: Publish Python package to PyPI
+      if: steps.type.outputs.type == 'python'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-integrations/${{ steps.info.outputs.integration }}/dist
+        skip-existing: true
+
+    # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
+
+    # ── Plugin integrations (claude-code) — no package to publish ───────────
+
+    - name: Plugin release
+      if: steps.type.outputs.type == 'plugin'
+      run: |
+        echo "Plugin integration ${{ steps.info.outputs.integration }} v${{ steps.info.outputs.version }} — no package to publish."
+        echo "Users install via: claude plugin marketplace add vectorize-io/hindsight"
+
+    # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
+
+    - name: Set up Node.js
+      if: steps.type.outputs.type == 'typescript'
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Check integration lockfile
+      if: steps.type.outputs.type == 'typescript'
+      run: ./scripts/check-integration-lockfiles.sh
+
+    # Some integrations depend on workspace packages (hindsight-client,
+    # hindsight-all, hindsight-agent-sdk) via file: refs. Install from root
+    # so npm resolves them, then build the workspace deps before the integration.
+    - name: Install root workspace dependencies
+      if: steps.type.outputs.type == 'typescript'
+      run: npm ci
+
+    - name: Build workspace deps (hindsight-client, hindsight-all, hindsight-agent-sdk)
+      if: steps.type.outputs.type == 'typescript'
+      run: |
+        npm run build --workspace=hindsight-clients/typescript
+        npm run build --workspace=hindsight-all-npm
+        npm run build --workspace=hindsight-tools/hindsight-agent-sdk
+
+    - name: Install integration dependencies
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: npm ci
+
+    - name: Build TypeScript package
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: npm run build
+
+    # Build-provenance attestations for the Obsidian release assets (community-store
+    # recommendation). Runs after the build so main.js exists. The assets are
+    # released in the dedicated repo while the build runs here, so users verify at
+    # owner scope: `gh attestation verify main.js --owner vectorize-io`.
+    - name: Attest Obsidian plugin build provenance
+      if: steps.type.outputs.type == 'typescript' && steps.info.outputs.integration == 'obsidian'
+      uses: actions/attest-build-provenance@v2
+      with:
+        subject-path: |
+          hindsight-integrations/obsidian/main.js
+          hindsight-integrations/obsidian/styles.css
+
+    # ── Obsidian plugin — mirror to its dedicated repo + cut the BRAT release ──
+    # We do NOT create a GitHub Release in this monorepo: per-integration
+    # releases pollute the repo's release list (it's for the core product) and
+    # steal the "Latest" badge, and BRAT / the community store read a repo's
+    # *latest* release — not a tag — so they can't target a tag in a monorepo.
+    #
+    # Instead this monorepo stays the source of truth, and on each obsidian
+    # release we mirror hindsight-integrations/obsidian/ → the *root* of
+    # github.com/vectorize-io/hindsight-obsidian (git subtree, history
+    # preserved) and cut the BRAT / community-store release *there*.
+    #
+    # Requires secret OBSIDIAN_DIST_TOKEN — a token with `contents: write` on
+    # vectorize-io/hindsight-obsidian (fine-grained PAT or app installation
+    # token). The dedicated repo is generated; never edit it directly.
+    - name: Mirror Obsidian plugin to its dedicated repo
+      if: steps.type.outputs.type == 'typescript' && steps.info.outputs.integration == 'obsidian'
+      env:
+        DIST_TOKEN: ${{ secrets.OBSIDIAN_DIST_TOKEN }}
+      run: |
+        set -euo pipefail
+        VERSION="${{ steps.info.outputs.version }}"
+        DIST_REPO="vectorize-io/hindsight-obsidian"
+        OBS_DIR="hindsight-integrations/obsidian"
+
+        # `git subtree split` needs full history; the default checkout is shallow.
+        git fetch --unshallow 2>/dev/null || true
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        # The runner injects the default GITHUB_TOKEN as an http.extraheader via
+        # an *included* config file (/home/runner/work/_temp/git-credentials-*.config),
+        # so `git config --local --unset-all` can't remove it and it authenticates
+        # the push as github-actions[bot] (no access to the dedicated repo → 403).
+        # The documented way to drop an inherited extraheader is to RESET the list
+        # with an empty value: since command-line `-c` is read last, the empty
+        # value clears the accumulated headers (including the included one) at
+        # request-build time. The dist token then comes from the push URL → a
+        # single Authorization header.
+        git subtree split --prefix="$OBS_DIR" -b _obs_dist
+        git -c "http.https://github.com/.extraheader=" \
+          push "https://x-access-token:${DIST_TOKEN}@github.com/${DIST_REPO}.git" _obs_dist:main
+
+        # Cut the BRAT / community-store release. Bare version tag (e.g. 0.1.0)
+        # to match manifest.json — idempotent so re-runs just refresh the assets.
+        export GH_TOKEN="$DIST_TOKEN"
+        ASSETS="$OBS_DIR/main.js $OBS_DIR/manifest.json $OBS_DIR/styles.css"
+        NOTES="Hindsight for Obsidian v${VERSION}. Install via BRAT (add ${DIST_REPO}) or copy main.js/manifest.json/styles.css into <vault>/.obsidian/plugins/hindsight/."
+        if gh release view "$VERSION" --repo "$DIST_REPO" >/dev/null 2>&1; then
+          gh release upload "$VERSION" $ASSETS --repo "$DIST_REPO" --clobber
+        else
+          gh release create "$VERSION" $ASSETS --repo "$DIST_REPO" --title "$VERSION" --notes "$NOTES"
+        fi
+
+    - name: Publish TypeScript package to npm
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public --provenance 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          # Treat "already published" as success so re-pointed-tag re-runs stay green.
+          # "cannot publish over" = the version exists. TLOG_CREATE_ENTRY_ERROR / 409
+          # "equivalent entry already exists in the transparency log" = the identical
+          # --provenance artifact was already logged on a prior run (Sigstore tlog is
+          # idempotent); the package is published, so this is benign.
+          if echo "$OUTPUT" | grep -qE "cannot publish over|TLOG_CREATE_ENTRY_ERROR|already exists in the transparency log"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

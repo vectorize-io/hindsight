@@ -1,0 +1,52 @@
+.frame {
+  position: relative;
+  cursor: zoom-in;
+  margin-bottom: var(--ifm-leading);
+}
+
+.frame > img,
+.frame > video {
+  display: block;
+}
+
+.zoom {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.4rem;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.frame:hover .zoom,
+.zoom:focus-visible {
+  opacity: 1;
+}
+
+/* Touch screens have no hover, so the button would never appear. */
+@media (hover: none) {
+  .zoom {
+    opacity: 1;
+  }
+}
+
+/* Letterbox the media in fullscreen instead of stretching or cropping it. */
+.frame > img:fullscreen,
+.frame > video:fullscreen {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  border-radius: 0 !important;
+  cursor: auto;
+}

@@ -1,0 +1,796 @@
+"""Profile management for hindsight-embed.
+
+Handles creation, deletion, and management of configuration profiles.
+Each profile has its own config, daemon lock, log file, and port.
+"""
+
+import hashlib
+import json
+import logging
+import math
+import os
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import IO, Optional
+
+logger = logging.getLogger(__name__)
+
+# ==============================================================================
+# Cross-platform file locking implementation
+# ==============================================================================
+# Why not use a library like portalocker or fasteners?
+#
+# 1. Minimal dependency: Our use case is narrow — exclusive locking for
+#    metadata persistence and daemon-start serialization. Adding a new
+#    dependency for that is unnecessary.
+#
+# 2. Portability: We only need to support the two major platforms (Unix and
+#    Windows), both of which expose a non-blocking exclusive lock primitive
+#    that we drive from one shared retry loop below.
+#
+# 3. Maintainability: The code is straightforward and has no external
+#    dependencies to track or update. The locking logic is localized here,
+#    making it easy to understand and modify if needed.
+#
+# Locks are acquired with a bounded wait, never an unbounded blocking call:
+# the Windows `msvcrt.LK_LOCK` mode retries internally exactly 10 times and
+# then raises, which made concurrent daemon starts for the same profile fail
+# non-deterministically (issue #3100). Both platforms now take the
+# non-blocking mode in a retry loop with exponential backoff, and time out
+# with an error naming the lock file and its recorded holder.
+# ==============================================================================
+
+ENV_LOCK_TIMEOUT = "HINDSIGHT_EMBED_LOCK_TIMEOUT"
+# The daemon-start path holds the profile lock for the whole startup sequence
+# (up to HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT, 180s by default), so the wait
+# budget has to comfortably exceed that or a legitimate concurrent start would
+# time out waiting for the winner.
+DEFAULT_LOCK_TIMEOUT = 300.0
+_LOCK_RETRY_INITIAL = 0.01
+_LOCK_RETRY_MAX = 0.25
+
+
+class ProfileLockTimeout(TimeoutError):
+    """Raised when an exclusive lock could not be acquired within the timeout."""
+
+
+def _default_lock_timeout() -> float:
+    """Lock wait budget in seconds, overridable via HINDSIGHT_EMBED_LOCK_TIMEOUT."""
+    raw = os.getenv(ENV_LOCK_TIMEOUT)
+    if raw is None:
+        return DEFAULT_LOCK_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    # Reject nan/inf/non-positive: an unbounded wait is the bug being fixed.
+    if not math.isfinite(value) or value <= 0:
+        logger.warning("Invalid %s=%r; using %s", ENV_LOCK_TIMEOUT, raw, DEFAULT_LOCK_TIMEOUT)
+        return DEFAULT_LOCK_TIMEOUT
+    return value
+
+
+if sys.platform != "win32":
+    import fcntl
+
+    def _try_lock(file_obj: IO[str]) -> bool:
+        try:
+            fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _release_lock(file_obj: IO[str]) -> None:
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+else:
+    import msvcrt
+
+    # msvcrt.locking(fd, mode, N) locks N bytes starting at the *current* file
+    # position, and LK_UNLCK must be called with the file pointer positioned
+    # at the start of the same region. Callers typically lock immediately
+    # after `open(..., "w")` (position 0), then write JSON (advancing the
+    # position), then unlock — at which point the unlock request targets a
+    # byte past the data and Windows returns EACCES. Seek to 0 on both sides
+    # so lock and unlock always act on byte 0.
+    def _try_lock(file_obj: IO[str]) -> bool:
+        file_obj.seek(0)
+        try:
+            msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _release_lock(file_obj: IO[str]) -> None:
+        file_obj.seek(0)
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _owner_path(file_obj: IO[str]) -> Optional[Path]:
+    """Sidecar file recording the PID currently holding `file_obj`'s lock.
+
+    The lock file itself is opened with mode "w" by callers, so a waiter
+    truncates it before it ever tries to lock — the holder's identity cannot
+    live there. The sidecar is only ever written by the lock holder.
+    """
+    name = getattr(file_obj, "name", None)
+    if not isinstance(name, str):
+        return None
+    return Path(name + ".owner")
+
+
+def _record_lock_owner(file_obj: IO[str]) -> None:
+    path = _owner_path(file_obj)
+    if path is None:
+        return
+    try:
+        path.write_text(str(os.getpid()))
+    except OSError:
+        logger.debug("Could not record lock owner for %s", path, exc_info=True)
+
+
+def _clear_lock_owner(file_obj: IO[str]) -> None:
+    path = _owner_path(file_obj)
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Could not clear lock owner for %s", path, exc_info=True)
+
+
+def _describe_lock_holder(file_obj: IO[str]) -> str:
+    path = _owner_path(file_obj)
+    if path is None:
+        return ""
+    try:
+        holder = path.read_text().strip()
+    except OSError:
+        return ""
+    return f" (held by PID {holder})" if holder else ""
+
+
+def lock_file(file_obj: IO[str], timeout: Optional[float] = None) -> None:
+    """Acquire an exclusive lock on `file_obj`, waiting up to `timeout` seconds.
+
+    Raises:
+        ProfileLockTimeout: if the lock is still held when the budget expires.
+    """
+    budget = _default_lock_timeout() if timeout is None else timeout
+    deadline = time.monotonic() + max(budget, 0.0)
+    delay = _LOCK_RETRY_INITIAL
+    while True:
+        if _try_lock(file_obj):
+            _record_lock_owner(file_obj)
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            name = getattr(file_obj, "name", "<unknown>")
+            raise ProfileLockTimeout(
+                f"Timed out after {budget:g}s waiting for the lock on {name}{_describe_lock_holder(file_obj)}. "
+                f"Set {ENV_LOCK_TIMEOUT} to wait longer, or remove the lock file if the holder is gone."
+            )
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, _LOCK_RETRY_MAX)
+
+
+def unlock_file(file_obj: IO[str]) -> None:
+    """Release a lock acquired with lock_file()."""
+    _clear_lock_owner(file_obj)
+    _release_lock(file_obj)
+
+
+from ._http_probe import probe_get
+
+# Configuration paths
+CONFIG_DIR = Path.home() / ".hindsight"
+PROFILES_DIR = CONFIG_DIR / "profiles"
+METADATA_FILE = PROFILES_DIR / "metadata.json"
+ACTIVE_PROFILE_FILE = CONFIG_DIR / "active_profile"
+
+# Port allocation
+DEFAULT_PORT = 8888
+PROFILE_PORT_BASE = 8889
+PROFILE_PORT_RANGE = 1000  # 8889-9888
+
+
+# UI port offset from daemon port (e.g., daemon 8888 -> UI 18888)
+UI_PORT_OFFSET = 10000
+
+# Ports are stored in the profile's .env (source of truth) so they're editable
+# from the control center. The API port is allocated-then-persisted; the UI port
+# is optional and defaults to API + UI_PORT_OFFSET when unset.
+ENV_API_PORT = "HINDSIGHT_API_PORT"
+ENV_CP_PORT = "HINDSIGHT_EMBED_CP_PORT"
+
+
+@dataclass
+class _PortOverrides:
+    """API/UI ports read from a profile's .env (None when not set)."""
+
+    api: Optional[int] = None
+    ui: Optional[int] = None
+
+
+@dataclass
+class _ResolvedPorts:
+    """The effective API and UI ports for a profile."""
+
+    api: int
+    ui: int
+
+
+@dataclass
+class ProfilePaths:
+    """Paths and port for a profile."""
+
+    config: Path
+    lock: Path
+    log: Path
+    port: int
+    ui_log: Path = None  # type: ignore[assignment]
+    ui_port: int = 0  # 0 → derive as port + UI_PORT_OFFSET
+
+    def __post_init__(self):
+        if self.ui_log is None:
+            self.ui_log = self.log.parent / self.log.name.replace(".log", ".ui.log")
+        if not self.ui_port:
+            self.ui_port = self.port + UI_PORT_OFFSET
+
+
+@dataclass
+class ProfileInfo:
+    """Profile information including metadata."""
+
+    name: str
+    port: int
+    created_at: str
+    last_used: Optional[str] = None
+    is_active: bool = False
+    daemon_running: bool = False
+
+
+@dataclass
+class ProfileMetadata:
+    """Metadata for all profiles."""
+
+    version: int = 1
+    profiles: dict[str, dict] = field(default_factory=dict)
+
+
+class ProfileManager:
+    """Manages configuration profiles for hindsight-embed."""
+
+    def __init__(self):
+        """Initialize the profile manager."""
+        self._ensure_directories()
+
+    def _get_config_dir(self) -> Path:
+        """Get config directory path dynamically (supports testing with temp HOME)."""
+        return Path.home() / ".hindsight"
+
+    def _get_profiles_dir(self) -> Path:
+        """Get profiles directory path dynamically."""
+        return self._get_config_dir() / "profiles"
+
+    def _get_metadata_file(self) -> Path:
+        """Get metadata file path dynamically."""
+        return self._get_profiles_dir() / "metadata.json"
+
+    def _get_active_profile_file(self) -> Path:
+        """Get active profile file path dynamically."""
+        return self._get_config_dir() / "active_profile"
+
+    def _ensure_directories(self):
+        """Ensure profile directories exist."""
+        self._get_profiles_dir().mkdir(parents=True, exist_ok=True)
+
+    def list_profiles(self) -> list[ProfileInfo]:
+        """List all profiles with their status.
+
+        Returns:
+            List of ProfileInfo objects with daemon status.
+        """
+        metadata = self._load_metadata()
+        active_profile = self.get_active_profile()
+        profiles = []
+
+        # Add default profile if config exists
+        default_config = self._get_config_dir() / "embed"
+        if default_config.exists():
+            default_port = self.resolve_profile_paths("").port
+            profiles.append(
+                ProfileInfo(
+                    name="",  # Empty name = default
+                    port=default_port,
+                    created_at="",  # Don't track for default
+                    last_used=None,
+                    is_active=active_profile == "",
+                    daemon_running=self._check_daemon_running(default_port),
+                )
+            )
+
+        # Add named profiles. The port now lives in each profile's .env, so
+        # resolve it rather than reading the (port-less) metadata entry.
+        for name, info in metadata.profiles.items():
+            port = self.resolve_profile_paths(name).port
+            profiles.append(
+                ProfileInfo(
+                    name=name,
+                    port=port,
+                    created_at=info.get("created_at", ""),
+                    last_used=info.get("last_used"),
+                    is_active=active_profile == name,
+                    daemon_running=self._check_daemon_running(port),
+                )
+            )
+
+        return sorted(profiles, key=lambda p: (p.name != "", p.name))
+
+    def profile_exists(self, name: str) -> bool:
+        """Check if a profile exists.
+
+        Args:
+            name: Profile name (empty string for default).
+
+        Returns:
+            True if profile exists.
+        """
+        if not name:
+            # Default profile exists if config file exists
+            return (self._get_config_dir() / "embed").exists()
+
+        # Named profile exists if config file exists
+        config_path = self._get_profiles_dir() / f"{name}.env"
+        return config_path.exists()
+
+    def get_profile(self, name: str) -> Optional[ProfileInfo]:
+        """Get profile information.
+
+        Args:
+            name: Profile name (empty string for default).
+
+        Returns:
+            ProfileInfo if profile exists, None otherwise.
+        """
+        profiles = self.list_profiles()
+        for profile in profiles:
+            if profile.name == name:
+                return profile
+        return None
+
+    def create_profile(self, name: str, port_or_config: int | dict[str, str], config: dict[str, str] | None = None):
+        """Create or update a profile.
+
+        Args:
+            name: Profile name.
+            port_or_config: Port number (int) or configuration dict. For backward compatibility,
+                            if this is a dict, it's treated as config and port is auto-allocated.
+            config: Configuration dict (KEY=VALUE pairs). Only used if port_or_config is an int.
+
+        Raises:
+            ValueError: If profile name is invalid or port is invalid.
+        """
+        # Handle backward compatibility - allow (name, config) or (name, port, config)
+        if isinstance(port_or_config, dict):
+            # Called with (name, config) - auto-allocate port
+            port = None
+            config = port_or_config
+        else:
+            # Called with (name, port, config)
+            port = port_or_config
+            if config is None:
+                raise ValueError("Config must be provided when port is specified")
+
+        if not name:
+            raise ValueError("Profile name cannot be empty")
+
+        if not name.replace("-", "").replace("_", "").isalnum():
+            raise ValueError(f"Invalid profile name '{name}'. Use alphanumeric chars, hyphens, and underscores.")
+
+        if port is not None and (port < 1024 or port > 65535):
+            raise ValueError(f"Invalid port {port}. Must be between 1024-65535.")
+
+        # Ensure profile directory exists
+        self._ensure_directories()
+
+        # Load metadata to check if profile already exists
+        metadata = self._load_metadata()
+
+        config_path = self._get_profiles_dir() / f"{name}.env"
+
+        # The API port lives in the .env (source of truth), not metadata. Use the
+        # explicit port if given; otherwise keep whatever the caller already
+        # carries in the config, else resolve from the existing .env / legacy
+        # metadata / a fresh allocation (so legacy profiles migrate without
+        # changing port).
+        config = dict(config)
+        if port is None and ENV_API_PORT not in config:
+            port = self._resolve_ports(name, config_path, None).api
+        if port is not None:
+            config[ENV_API_PORT] = str(port)
+
+        # Write config file, seeded from the bundled .env.example template so
+        # the profile carries the full documented option set as comments.
+        from .env_template import render_config
+
+        config_path.write_text(render_config(config), encoding="utf-8")
+
+        # Metadata now only tracks discovery + timestamps; the port moved to .env.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if name in metadata.profiles:
+            metadata.profiles[name]["last_used"] = now_iso
+            metadata.profiles[name].pop("port", None)  # migrate away from metadata port
+        else:
+            metadata.profiles[name] = {"created_at": now_iso, "last_used": now_iso}
+
+        self._save_metadata(metadata)
+
+    def delete_profile(self, name: str):
+        """Delete a profile.
+
+        Args:
+            name: Profile name.
+
+        Raises:
+            ValueError: If profile name is invalid or doesn't exist.
+        """
+        if not name:
+            raise ValueError("Cannot delete default profile")
+
+        if not self.profile_exists(name):
+            raise ValueError(f"Profile '{name}' does not exist")
+
+        # Remove config file
+        config_path = self._get_profiles_dir() / f"{name}.env"
+        if config_path.exists():
+            config_path.unlink()
+
+        # Remove the lock file and the sidecar recording its holder (a crash
+        # while holding the lock leaves the sidecar behind).
+        lock_path = self._get_profiles_dir() / f"{name}.lock"
+        lock_path.unlink(missing_ok=True)
+        lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
+
+        # Remove the active log and any retained rotation backups. A log that
+        # cannot be removed (still held open on Windows, say) must not abort the
+        # delete and leave the profile half-registered in metadata below.
+        log_path = self._get_profiles_dir() / f"{name}.log"
+        for stale_log in [log_path, *log_path.parent.glob(f"{log_path.name}.*")]:
+            try:
+                stale_log.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Could not remove log %s while deleting profile '%s': %s", stale_log, name, exc)
+
+        # Update metadata
+        metadata = self._load_metadata()
+        if name in metadata.profiles:
+            del metadata.profiles[name]
+            self._save_metadata(metadata)
+
+        # Clear active profile if it was deleted
+        if self.get_active_profile() == name:
+            self.set_active_profile(None)
+
+    def set_active_profile(self, name: Optional[str]):
+        """Set the active profile.
+
+        Args:
+            name: Profile name to activate, or None to clear.
+
+        Raises:
+            ValueError: If profile doesn't exist.
+        """
+        if name and not self.profile_exists(name):
+            raise ValueError(f"Profile '{name}' does not exist")
+
+        active_file = self._get_active_profile_file()
+        if name:
+            active_file.write_text(name, encoding="utf-8")
+        else:
+            # Clear active profile
+            if active_file.exists():
+                active_file.unlink()
+
+    def get_active_profile(self) -> str:
+        """Get the currently active profile name.
+
+        Returns:
+            Profile name, or empty string if no active profile.
+        """
+        active_file = self._get_active_profile_file()
+        if active_file.exists():
+            return active_file.read_text(encoding="utf-8").strip()
+        return ""
+
+    def resolve_profile_paths(self, name: str) -> ProfilePaths:
+        """Resolve paths for a profile.
+
+        Args:
+            name: Profile name (empty string for default).
+
+        Returns:
+            ProfilePaths with config, lock, log, and port.
+        """
+        # Use dynamic path resolution to support testing with temporary HOME directories
+        config_dir = Path.home() / ".hindsight"
+        profiles_dir = config_dir / "profiles"
+
+        if not name:
+            # Default profile — port also overridable via its .env (~/.hindsight/embed).
+            config_path = config_dir / "embed"
+            ports = self._resolve_ports("", config_path, DEFAULT_PORT)
+            return ProfilePaths(
+                config=config_path,
+                lock=config_dir / "daemon.lock",
+                log=config_dir / "daemon.log",
+                port=ports.api,
+                ui_port=ports.ui,
+            )
+
+        # Named profile
+        config_path = profiles_dir / f"{name}.env"
+        ports = self._resolve_ports(name, config_path, None)
+
+        return ProfilePaths(
+            config=config_path,
+            lock=profiles_dir / f"{name}.lock",
+            log=profiles_dir / f"{name}.log",
+            port=ports.api,
+            ui_port=ports.ui,
+        )
+
+    def _read_port_overrides(self, config_path: Path) -> _PortOverrides:
+        """Parse a profile's .env for the API/UI port keys (no recursion into
+        load_profile_config, which itself resolves paths)."""
+        ov = _PortOverrides()
+        if not config_path.exists():
+            return ov
+        for line in config_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[7:]
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip()
+            try:
+                if key == ENV_API_PORT:
+                    ov.api = int(value)
+                elif key == ENV_CP_PORT:
+                    ov.ui = int(value)
+            except ValueError:
+                continue
+        return ov
+
+    def _resolve_ports(self, name: str, config_path: Path, default_api: Optional[int]) -> _ResolvedPorts:
+        """Resolve the effective API/UI ports for a profile.
+
+        Priority for the API port: explicit ``.env`` value → ``default_api`` (the
+        default profile's fixed 8888) → legacy metadata port → fresh allocation.
+        The UI port uses its ``.env`` value, else API + UI_PORT_OFFSET.
+        """
+        ov = self._read_port_overrides(config_path)
+        if ov.api is not None:
+            api_port = ov.api
+        elif default_api is not None:
+            api_port = default_api
+        else:
+            # Legacy profiles stored the port in metadata; otherwise allocate.
+            legacy = self._load_metadata().profiles.get(name, {}).get("port")
+            api_port = legacy if legacy else self._allocate_port(name)
+        ui_port = ov.ui if ov.ui is not None else api_port + UI_PORT_OFFSET
+        return _ResolvedPorts(api=api_port, ui=ui_port)
+
+    def load_profile_config(self, name: str) -> dict[str, str]:
+        """Load configuration from a profile's .env file.
+
+        Args:
+            name: Profile name (empty string for default).
+
+        Returns:
+            Dictionary of environment variable key-value pairs from the profile's
+            .env file, under their own names.
+
+            This used to also inject lowercase aliases ('llm_base_url' for
+            'HINDSIGHT_API_LLM_BASE_URL', and five others). Every consumer then
+            had to strip them back out before writing a profile, and the alias
+            table was a second place a setting had to be listed to be seen at
+            all — which is how HINDSIGHT_API_LLM_BASE_URL went missing (issue
+            #4094). Callers now read the environment variable names directly.
+        """
+        paths = self.resolve_profile_paths(name)
+        config = {}
+
+        if not paths.config.exists():
+            return config
+
+        # Parse .env file
+        with open(paths.config, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith("#"):
+                    continue
+                # Handle 'export VAR=value' format
+                if line.startswith("export "):
+                    line = line[7:]
+                # Parse KEY=VALUE
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    config[key.strip()] = value.strip()
+
+        return config
+
+    def _allocate_port(self, name: str) -> int:
+        """Allocate a port for a profile using hash-based strategy.
+
+        Args:
+            name: Profile name.
+
+        Returns:
+            Port number (8889-9888).
+        """
+        # Hash profile name to get consistent port
+        hash_val = int(hashlib.sha256(name.encode()).hexdigest(), 16)
+        port = PROFILE_PORT_BASE + (hash_val % PROFILE_PORT_RANGE)
+
+        # Ports now live in the .env files, so scan those (plus legacy metadata)
+        # to find what's already taken.
+        allocated_ports = self._allocated_api_ports()
+
+        # If collision, find next available port
+        attempt = 0
+        while port in allocated_ports and attempt < PROFILE_PORT_RANGE:
+            port = PROFILE_PORT_BASE + ((hash_val + attempt) % PROFILE_PORT_RANGE)
+            attempt += 1
+
+        if attempt >= PROFILE_PORT_RANGE:
+            # Fallback: find first available port
+            for p in range(PROFILE_PORT_BASE, PROFILE_PORT_BASE + PROFILE_PORT_RANGE):
+                if p not in allocated_ports:
+                    return p
+            raise RuntimeError("No available ports for profile")
+
+        return port
+
+    def _allocated_api_ports(self) -> set[int]:
+        """API ports already taken by other profiles (from their .env files,
+        plus any legacy metadata ports not yet migrated)."""
+        ports: set[int] = set()
+        for env_path in self._get_profiles_dir().glob("*.env"):
+            api = self._read_port_overrides(env_path).api
+            if api is not None:
+                ports.add(api)
+        # Legacy: profiles whose port still lives in metadata (pre-migration).
+        for info in self._load_metadata().profiles.values():
+            if info.get("port"):
+                ports.add(info["port"])
+        return ports
+
+    def _check_daemon_running(self, port: int) -> bool:
+        """Check if daemon is running on a port.
+
+        Args:
+            port: Port number to check.
+
+        Returns:
+            True if daemon is responding.
+        """
+        response = probe_get(f"http://127.0.0.1:{port}/health", read_timeout=1.0)
+        return response is not None and response.status_code == 200
+
+    def _load_metadata(self) -> ProfileMetadata:
+        """Load profile metadata from disk.
+
+        Returns:
+            ProfileMetadata object.
+        """
+        metadata_file = self._get_metadata_file()
+        if not metadata_file.exists():
+            return ProfileMetadata()
+
+        try:
+            with open(metadata_file) as f:
+                data = json.load(f)
+                return ProfileMetadata(version=data.get("version", 1), profiles=data.get("profiles", {}))
+        except (json.JSONDecodeError, IOError) as e:
+            print(
+                f"Warning: Failed to load metadata: {e}. Using empty metadata.",
+                file=sys.stderr,
+            )
+            # Backup corrupted metadata
+            backup_path = metadata_file.with_suffix(".json.bak")
+            if metadata_file.exists():
+                metadata_file.rename(backup_path)
+            return ProfileMetadata()
+
+    def _save_metadata(self, metadata: ProfileMetadata):
+        """Save profile metadata to disk with file locking.
+
+        Args:
+            metadata: ProfileMetadata to save.
+        """
+        self._ensure_directories()
+
+        # Use atomic write with temp file
+        metadata_file = self._get_metadata_file()
+        temp_file = metadata_file.with_suffix(".json.tmp")
+
+        with open(temp_file, "w") as f:
+            # Acquire exclusive lock (cross-platform)
+            lock_file(f)
+            try:
+                json.dump(
+                    {"version": metadata.version, "profiles": metadata.profiles},
+                    f,
+                    indent=2,
+                )
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                unlock_file(f)
+
+        # Atomic replace. `.rename()` fails on Windows when the destination
+        # exists (WinError 183); `.replace()` is the cross-platform atomic
+        # rename added in Python 3.3 exactly for this pattern.
+        temp_file.replace(metadata_file)
+
+
+def resolve_active_profile() -> str:
+    """Resolve which profile to use based on priority.
+
+    Priority (highest to lowest):
+    1. HINDSIGHT_EMBED_PROFILE environment variable
+    2. CLI --profile flag (from global context)
+    3. Active profile from file
+    4. Default (empty string)
+
+    Returns:
+        Profile name to use (empty string for default).
+    """
+    # 1. Environment variable
+    if env_profile := os.getenv("HINDSIGHT_EMBED_PROFILE"):
+        return env_profile
+
+    # 2. CLI flag (set by caller before invoking commands)
+    from . import cli
+
+    if cli_profile := cli.get_cli_profile_override():
+        return cli_profile
+
+    # 3. Active profile file
+    pm = ProfileManager()
+    if active_profile := pm.get_active_profile():
+        return active_profile
+
+    # 4. Default
+    return ""
+
+
+def validate_profile_exists(profile: str):
+    """Validate that a profile exists, exit if not.
+
+    Args:
+        profile: Profile name to validate.
+
+    Exits:
+        If profile doesn't exist, prints error and exits.
+    """
+    if not profile:
+        # Default profile - always valid
+        return
+
+    pm = ProfileManager()
+    if not pm.profile_exists(profile):
+        print(
+            f"Error: Profile '{profile}' not found.",
+            file=sys.stderr,
+        )
+        print(
+            f"Create it with: hindsight-embed configure --profile {profile}",
+            file=sys.stderr,
+        )
+        sys.exit(1)

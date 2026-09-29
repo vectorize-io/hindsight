@@ -1,0 +1,70 @@
+identity:
+  name: recall
+  author: vectorize
+  label:
+    en_US: Recall
+description:
+  human:
+    en_US: Search a Hindsight memory bank for memories relevant to a query.
+  llm: Use this tool to search Hindsight long-term memory for memories relevant to a query. Returns the top matching memories.
+parameters:
+  - name: bank_id
+    type: string
+    required: true
+    label:
+      en_US: Bank ID
+    human_description:
+      en_US: Memory bank to search.
+    llm_description: Memory bank identifier to search.
+    form: llm
+  - name: query
+    type: string
+    required: true
+    label:
+      en_US: Query
+    human_description:
+      en_US: Natural-language query.
+    llm_description: Natural-language query describing what to recall.
+    form: llm
+  - name: budget
+    type: select
+    required: false
+    default: mid
+    label:
+      en_US: Budget
+    human_description:
+      en_US: Recall budget — higher = more thorough, slower, more expensive.
+    llm_description: Recall budget level. Use "low" for quick lookups, "mid" for balanced, "high" for thorough.
+    options:
+      - value: low
+        label:
+          en_US: Low
+      - value: mid
+        label:
+          en_US: Mid
+      - value: high
+        label:
+          en_US: High
+    form: form
+  - name: max_tokens
+    type: number
+    required: false
+    default: 4096
+    label:
+      en_US: Max Tokens
+    human_description:
+      en_US: Cap on tokens returned.
+    llm_description: Maximum tokens to return in the result set.
+    form: form
+  - name: tags
+    type: string
+    required: false
+    label:
+      en_US: Tags Filter
+    human_description:
+      en_US: Optional comma-separated tags to filter memories by.
+    llm_description: Optional comma-separated tags to filter memories.
+    form: llm
+extra:
+  python:
+    source: tools/recall.py

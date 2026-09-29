@@ -1,0 +1,149 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hindsight.fullname" . }}-worker
+  labels:
+    {{- include "hindsight.worker.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "hindsight.fullname" . }}-worker
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hindsight.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if not .Values.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "hindsight.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "hindsight.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.worker.extraInitContainers }}
+      initContainers:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      containers:
+      - name: worker
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default .Values.version | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+        command: ["hindsight-worker"]
+        ports:
+        - name: http
+          containerPort: {{ .Values.worker.service.targetPort }}
+          protocol: TCP
+        {{- if .Values.existingSecret }}
+        envFrom:
+        - secretRef:
+            name: {{ .Values.existingSecret }}
+        {{- end }}
+        env:
+        {{- /* POSTGRES_PASSWORD must be defined before DATABASE_URL for $(VAR) interpolation */}}
+        {{- if not .Values.postgresql.enabled }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "hindsight.secretName" . }}
+              key: postgres-password
+        {{- end }}
+        - name: HINDSIGHT_API_DATABASE_URL
+          value: {{ include "hindsight.databaseUrl" . | quote }}
+        {{- /* Worker ID uses pod name (StatefulSet provides stable names like worker-0, worker-1) */}}
+        - name: HINDSIGHT_API_WORKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        {{- /* Explicitly set port to override K8s service discovery env var (HINDSIGHT_API_PORT) */}}
+        - name: HINDSIGHT_API_PORT
+          value: {{ .Values.worker.service.targetPort | quote }}
+        {{- /* Inherit LLM config from api.env, then apply worker-specific env.
+               Merge (worker.env wins) so a key set in both does not emit a
+               duplicate env entry, which server-side apply rejects. */}}
+        {{- range $key, $value := merge (deepCopy (.Values.worker.env | default dict)) (.Values.api.env | default dict) }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- /* Only use secrets when not using existingSecret */}}
+        {{- if not .Values.existingSecret }}
+        {{- /* Inherit secrets from api.secrets */}}
+        {{- range $key, $value := .Values.api.secrets }}
+        - name: {{ $key }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "hindsight.secretName" $ }}
+              key: {{ $key }}
+        {{- end }}
+        {{- /* Worker-specific secrets (can override api.secrets) */}}
+        {{- range $key, $value := .Values.worker.secrets }}
+        - name: {{ $key }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "hindsight.secretName" $ }}
+              key: {{ $key }}
+        {{- end }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.worker.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.worker.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.worker.resources | nindent 10 }}
+        {{- if or .Values.worker.persistence.modelCache.enabled .Values.worker.extraVolumeMounts }}
+        volumeMounts:
+        {{- if .Values.worker.persistence.modelCache.enabled }}
+        - name: model-cache
+          mountPath: /home/hindsight/.cache
+        {{- end }}
+        {{- with .Values.worker.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.worker.extraContainers }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (.Values.worker.affinity | default .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.extraVolumes }}
+      volumes:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  {{- if .Values.worker.persistence.modelCache.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: model-cache
+      {{- with .Values.worker.persistence.modelCache.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        {{- toYaml .Values.worker.persistence.modelCache.accessModes | nindent 8 }}
+      {{- if .Values.worker.persistence.modelCache.storageClass }}
+      storageClassName: {{ .Values.worker.persistence.modelCache.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.worker.persistence.modelCache.size }}
+  {{- end }}
+{{- end }}

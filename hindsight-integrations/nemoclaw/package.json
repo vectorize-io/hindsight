@@ -1,0 +1,56 @@
+{
+  "name": "@vectorize-io/hindsight-nemoclaw",
+  "version": "0.1.2",
+  "description": "Setup CLI for hindsight-openclaw on NemoClaw sandboxes — installs the plugin, configures external API mode, and applies the OpenShell network policy",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "hindsight-nemoclaw": "dist/cli.js"
+  },
+  "keywords": [
+    "nemoclaw",
+    "openclaw",
+    "memory",
+    "ai",
+    "agent",
+    "hindsight",
+    "openshell",
+    "nvidia"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/nemoclaw"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"const f='dist/cli.js',s=require('fs');s.writeFileSync(f,'#!/usr/bin/env node\\n'+s.readFileSync(f,'utf8'));s.chmodSync(f,0o755)\"",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5",
+    "postcss": ">=8.5.23 <9.0.0"
+  }
+}

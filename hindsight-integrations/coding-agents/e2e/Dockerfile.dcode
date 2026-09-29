@@ -1,0 +1,10 @@
+FROM hindsight-coding-agents-e2e-base
+ARG VERSION=latest
+# Dcode ships as a uv tool, not an npm package, so it is installed through its own script rather
+# than `npm install --global` like the other harnesses. The script provisions uv (and the Python it
+# needs) itself; DEEPAGENTS_CODE_YES accepts the install without a prompt in a non-TTY build.
+RUN if [ "${VERSION}" = "latest" ]; then \
+        curl -LsSf https://langch.in/dcode | DEEPAGENTS_CODE_YES=1 bash; \
+    else \
+        curl -LsSf https://langch.in/dcode | DEEPAGENTS_CODE_YES=1 bash -s -- "${VERSION}"; \
+    fi

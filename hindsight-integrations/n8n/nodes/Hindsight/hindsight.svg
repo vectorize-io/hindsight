@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="hindsightGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#009296"/>
+      <stop offset="84%" stop-color="#0079CE"/>
+      <stop offset="100%" stop-color="#0074D9"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="12" fill="url(#hindsightGrad)"/>
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#fff" stroke-width="2.5"/>
+  <circle cx="32" cy="32" r="7" fill="#fff"/>
+</svg>

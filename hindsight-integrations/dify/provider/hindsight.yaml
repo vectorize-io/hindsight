@@ -1,0 +1,37 @@
+identity:
+  author: vectorize
+  name: hindsight
+  label:
+    en_US: Hindsight
+  description:
+    en_US: Persistent long-term memory for AI agents and workflows.
+  icon: icon.png
+  tags:
+    - utilities
+credentials_for_provider:
+  api_url:
+    type: text-input
+    required: true
+    default: https://api.hindsight.vectorize.io
+    label:
+      en_US: API URL
+    placeholder:
+      en_US: https://api.hindsight.vectorize.io
+    help:
+      en_US: "Hindsight API base URL. Use https://api.hindsight.vectorize.io for Hindsight Cloud, or your self-hosted URL (e.g., http://localhost:8888)."
+  api_key:
+    type: secret-input
+    required: false
+    label:
+      en_US: API Key
+    placeholder:
+      en_US: hsk_...
+    help:
+      en_US: "Hindsight API key (starts with 'hsk_'). Required for Hindsight Cloud; optional for unauthenticated self-hosted instances."
+tools:
+  - tools/retain.yaml
+  - tools/recall.yaml
+  - tools/reflect.yaml
+extra:
+  python:
+    source: provider/hindsight.py

@@ -1,0 +1,523 @@
+# Default values for hindsight
+
+# Global version override - use this to set a consistent image tag across all components
+# If not set, defaults to Chart.appVersion from Chart.yaml
+# version: ""
+
+# Use an existing secret instead of creating one from values
+# When set, all keys from this secret are injected as environment variables via envFrom
+# Required keys:
+#   - postgres-password: PostgreSQL password (when postgresql.enabled=false)
+# Optional keys (any key becomes an env var):
+#   - HINDSIGHT_API_LLM_API_KEY: API key for LLM provider
+#   - Any other env vars you want to inject
+# existingSecret: "my-hindsight-secret"
+
+# Image settings for api
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/vectorize-io/hindsight-api
+    pullPolicy: IfNotPresent
+    # tag defaults to .Values.version if not specified
+
+  service:
+    type: ClusterIP
+    port: 8888
+    targetPort: 8888
+
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  # Liveness and readiness probes.
+  # Liveness uses /health/live, which performs no database access: a slow or
+  # unreachable database must gate traffic (readiness), never restart pods.
+  # Needs an image from this chart's appVersion or newer — older ones serve
+  # /health only, and would fail this probe with a 404.
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8888
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Readiness checks the database, so a pod that cannot reach it is pulled out
+  # of the Service and put back once the database recovers.
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8888
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
+
+  # Persistent volume for local model cache (reranker, embeddings)
+  # Models are downloaded to /home/hindsight/.cache on first use.
+  # Without persistence, models are re-downloaded on every pod restart.
+  #
+  # For production, prefer baking models into a custom image instead of
+  # enabling this PVC: image layers are pulled once per node and cached
+  # for free, while a PVC adds storage cost, pins pods to a node
+  # (ReadWriteOnce), and needs lifecycle management on uninstall/upgrade.
+  # See docs: developer/installation#bundling-custom-models-in-a-custom-image
+  persistence:
+    modelCache:
+      enabled: false
+      size: 5Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      annotations: {}
+
+  # Extra volume mounts for the api container
+  # e.g.
+  # extraVolumeMounts:
+  #   - name: my-volume
+  #     mountPath: /mnt/my-volume
+  extraVolumeMounts: []
+
+  # Extra volumes for the api pod
+  # e.g.
+  # extraVolumes:
+  #   - name: my-volume
+  #     configMap:
+  #       name: my-configmap
+  extraVolumes: []
+
+  # Extra sidecar containers for the api pod
+  # e.g.
+  # extraContainers:
+  #   - name: cloud-sql-proxy
+  #     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+  #     args:
+  #       - --port=5432
+  #       - my-project:us-west1:my-instance
+  extraContainers: []
+
+  # Extra init containers for the api pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-db
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z postgresql 5432; do sleep 1; done"]
+  extraInitContainers: []
+
+  # Environment variables
+  env:
+    #HINDSIGHT_API_LLM_PROVIDER: "groq"
+    HINDSIGHT_API_LLM_MODEL: "openai/gpt-oss-120b"
+
+  # Secret environment variables
+  secrets:
+    # HINDSIGHT_API_LLM_API_KEY: "your-api-key"
+    # HINDSIGHT_API_LLM_BASE_URL: "https://api.groq.com/openai/v1"
+
+# Worker settings (distributed task processing)
+# When enabled, dedicated worker pods process tasks and the API's internal worker is disabled
+worker:
+  enabled: false
+  replicaCount: 2
+  image:
+    repository: ghcr.io/vectorize-io/hindsight-api
+    pullPolicy: IfNotPresent
+    # tag: ""  # defaults to .Values.version, then Chart.appVersion if not specified
+
+  service:
+    # Service for metrics scraping (headless for StatefulSet)
+    port: 8889
+    targetPort: 8889
+
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  # Liveness and readiness probes.
+  # Liveness uses /health/live, which performs no database access. Restarting a
+  # worker whose database is merely slow requeues its claimed operations with
+  # retry_count incremented, so DB checks must stay out of liveness.
+  # Needs an image from this chart's appVersion or newer — older ones serve
+  # /health only, and would fail this probe with a 404.
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8889
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8889
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Worker-specific environment variables
+  env:
+    # Poll interval in milliseconds (how often to check for new tasks)
+    HINDSIGHT_API_WORKER_POLL_INTERVAL_MS: "500"
+    # Number of tasks to claim per poll cycle
+    HINDSIGHT_API_WORKER_BATCH_SIZE: "10"
+    # Max retries before marking a task as failed
+    HINDSIGHT_API_WORKER_MAX_RETRIES: "3"
+    # HTTP port for metrics/health (matches service.targetPort)
+    HINDSIGHT_API_WORKER_HTTP_PORT: "8889"
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
+
+  # Persistent volume for local model cache (reranker, embeddings)
+  # Uses volumeClaimTemplates since worker is a StatefulSet — one PVC per
+  # replica. For production, prefer baking models into a custom image; see
+  # api.persistence.modelCache above and docs:
+  # developer/installation#bundling-custom-models-in-a-custom-image
+  persistence:
+    modelCache:
+      enabled: false
+      size: 5Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      annotations: {}
+
+  # Extra volume mounts for the worker container
+  # e.g.
+  # extraVolumeMounts:
+  #   - name: my-volume
+  #     mountPath: /mnt/my-volume
+  extraVolumeMounts: []
+
+  # Extra volumes for the worker pod
+  # e.g.
+  # extraVolumes:
+  #   - name: my-volume
+  #     configMap:
+  #       name: my-configmap
+  extraVolumes: []
+
+  # Extra sidecar containers for the worker pod
+  # e.g.
+  # extraContainers:
+  #   - name: cloud-sql-proxy
+  #     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.24.1
+  #     args:
+  #       - --port=5432
+  #       - my-project:us-west1:my-instance
+  extraContainers: []
+
+  # Extra init containers for the worker pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-db
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z postgresql 5432; do sleep 1; done"]
+  extraInitContainers: []
+
+  # Secret environment variables (inherited from api.secrets if not specified)
+  secrets: {}
+
+# Image settings for control plane
+controlPlane:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/vectorize-io/hindsight-control-plane
+    pullPolicy: IfNotPresent
+    # tag defaults to .Values.version if not specified
+
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+  # Liveness and readiness probes (TCP check)
+  livenessProbe:
+    tcpSocket:
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    tcpSocket:
+      port: 3000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
+
+  # Extra sidecar containers for the control plane pod
+  # e.g.
+  # extraContainers:
+  #   - name: oauth2-proxy
+  #     image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+  #     args:
+  #       - --upstream=http://127.0.0.1:3000
+  extraContainers: []
+
+  # Extra init containers for the control plane pod
+  # e.g.
+  # extraInitContainers:
+  #   - name: wait-for-api
+  #     image: busybox:1.37
+  #     command: ["sh", "-c", "until nc -z hindsight-api 8888; do sleep 1; done"]
+  extraInitContainers: []
+
+  # Environment variables
+  env:
+    NODE_ENV: "production"
+    HINDSIGHT_CP_HOSTNAME: "0.0.0.0"
+    HINDSIGHT_CP_PORT: "3000"
+
+# PostgreSQL configuration
+postgresql:
+  # Set to true to deploy PostgreSQL as part of this chart
+  enabled: true
+
+  image:
+    repository: ankane/pgvector
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  auth:
+    username: "hindsight"
+    password: "hindsight"
+    database: "hindsight"
+
+  service:
+    port: 5432
+
+  persistence:
+    enabled: true
+    size: 8Gi
+    # storageClass: ""
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # External PostgreSQL connection details
+  # Only used if postgresql.enabled is false
+  external:
+    host: "postgresql"
+    port: 5432
+    database: "hindsight"
+    username: "hindsight"
+    # password: ""
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+  hosts:
+    - host: hindsight.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: controlPlane
+        # The data API serves /v1/*. Don't route /api here: /api/* is the control
+        # plane's own Next.js handlers (banks, recall, auth), and the longer /api
+        # prefix would steal them from the "/" rule above (#4741).
+        - path: /v1
+          pathType: Prefix
+          service: api
+
+  tls: []
+  #  - secretName: hindsight-tls
+  #    hosts:
+  #      - hindsight.example.com
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity (applied to all components unless overridden per-component)
+affinity: {}
+
+# TEI (Text Embeddings Inference) - optional standalone deployments
+# for reranking and/or embedding models
+tei:
+  reranker:
+    enabled: false
+    replicaCount: 1
+    image:
+      repository: ghcr.io/huggingface/text-embeddings-inference
+      tag: cpu-1.8.3
+      pullPolicy: IfNotPresent
+    model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    port: 8090
+    args:
+      - "--auto-truncate"
+    env:
+      PAYLOAD_LIMIT: "10000000"
+      MAX_CLIENT_BATCH_SIZE: "256"
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8090
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8090
+      initialDelaySeconds: 15
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  embedding:
+    enabled: false
+    replicaCount: 1
+    image:
+      repository: ghcr.io/huggingface/text-embeddings-inference
+      tag: cpu-1.8.3
+      pullPolicy: IfNotPresent
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    port: 8091
+    args: []
+    env:
+      PAYLOAD_LIMIT: "10000000"
+      MAX_CLIENT_BATCH_SIZE: "256"
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8091
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8091
+      initialDelaySeconds: 15
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+# Autoscaling
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Metrics scraping via Prometheus Operator ServiceMonitors.
+# Requires the prometheus-operator CRDs (monitoring.coreos.com/v1) and a
+# Prometheus instance whose serviceMonitorSelector matches the labels below —
+# e.g. kube-prometheus-stack selects release: <stack-release-name> by default.
+# The api and worker containers serve Prometheus format at /metrics on their
+# service ports; the control plane (Next.js) does not expose metrics.
+metrics:
+  serviceMonitor:
+    enabled: false
+    # Labels added to the ServiceMonitor for Prometheus operator selection,
+    # e.g. { release: kube-prometheus-stack }
+    labels: {}
+    # Endpoints shared by the api and worker monitors
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s

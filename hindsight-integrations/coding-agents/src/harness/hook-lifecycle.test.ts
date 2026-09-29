@@ -1,0 +1,319 @@
+import { describe, expect, it } from "vitest";
+import { HOOK_HARNESSES, type HookHarnessName } from "./hook-lifecycle";
+import { DEFAULT_REFLECT_TIMEOUT_MS } from "../core/config";
+
+// Derived, not hand-listed: a hand-written roster silently stops covering the newest harness, which
+// is exactly the sibling it most needs to cover. (It had already fallen behind — devin-cli was
+// missing.)
+const HOOK_HARNESS_NAMES = Object.keys(HOOK_HARNESSES) as HookHarnessName[];
+
+describe("HOOK_HARNESSES lifecycle contract", () => {
+  it("uses the hook working directory when Devin omits its project variable", () => {
+    const devin = HOOK_HARNESSES["devin-cli"];
+    const original = process.env.DEVIN_PROJECT_DIR;
+    const event = { session_id: "s1", prompt: "hello" };
+
+    try {
+      for (const value of ["/explicit/project", "", undefined]) {
+        if (value === undefined) delete process.env.DEVIN_PROJECT_DIR;
+        else process.env.DEVIN_PROJECT_DIR = value;
+
+        const expected = value || process.cwd();
+        expect(devin.sessionStart.parse(event).cwd).toBe(expected);
+        expect(devin.prompt.parse(event).cwd).toBe(expected);
+        expect(devin.retain.parse(event).cwd).toBe(expected);
+      }
+    } finally {
+      if (original === undefined) delete process.env.DEVIN_PROJECT_DIR;
+      else process.env.DEVIN_PROJECT_DIR = original;
+    }
+  });
+
+  it("declares every lifecycle once for every hook-based harness", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      expect(Object.keys(HOOK_HARNESSES[harness].install).sort()).toEqual([
+        "prompt",
+        "sessionStart",
+        "stop",
+      ]);
+      expect(HOOK_HARNESSES[harness].sessionStart.harness).toBe(harness);
+      expect(HOOK_HARNESSES[harness].prompt.harness).toBe(harness);
+      expect(HOOK_HARNESSES[harness].retain.harness).toBe(harness);
+    }
+  });
+
+  /**
+   * Family guard for the Stop-event reply recovery. A harness that reads `last_assistant_message`
+   * off its Stop event MUST also say how to decode it, because the field is not always prose:
+   * Dcode sends `str(content)`, a serialized content-block list. Retaining that undecoded stores
+   * the provider's reasoning payload as if the assistant had said it, AND makes the
+   * already-flushed compare fail so a duplicate turn is appended every turn.
+   *
+   * Asserted over the whole family rather than for Dcode alone: the next harness to surface this
+   * field is by definition the one with no test of its own.
+   */
+  it("makes every harness that reads a Stop-event reply declare how to decode it", () => {
+    const probe = {
+      session_id: "s",
+      transcript_path: "/t",
+      cwd: "/c",
+      last_assistant_message: "[{'type': 'text', 'text': 'hi'}]",
+    };
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness].retain;
+      if (spec.parse(probe).lastAssistantMessage === undefined) continue;
+      expect(
+        spec.readLastMessage,
+        `${harness} reads last_assistant_message but never decodes it`
+      ).toBeDefined();
+      // And the decoder must actually reduce a block list to its text, not pass the repr through.
+      expect(spec.readLastMessage!(probe.last_assistant_message)).toBe("hi");
+    }
+  });
+
+  it("keeps the runtime schema and installed event names in the same host declaration", () => {
+    const cursor = HOOK_HARNESSES["cursor-cli"];
+    expect(cursor.install).toMatchObject({
+      sessionStart: { event: "sessionStart", entry: "cursor-sessionstart-hook.js" },
+      prompt: { event: "beforeSubmitPrompt", entry: "cursor-hook.js" },
+      stop: { event: "stop", entry: "cursor-stop-hook.js" },
+    });
+    expect(
+      cursor.sessionStart.emit({ systemMessage: "visible", additionalContext: "context" })
+    ).toEqual({
+      additional_context: "context",
+    });
+    expect(cursor.prompt.emit("context", "visible")).toEqual({
+      continue: true,
+      additional_context: "context",
+    });
+
+    const claude = HOOK_HARNESSES["claude-code"];
+    expect(claude.install.prompt.event).toBe("UserPromptSubmit");
+    expect(claude.sessionStart.emit({ additionalContext: "context" })).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: "context",
+      },
+    });
+
+    const antigravity = HOOK_HARNESSES["antigravity-cli"];
+    expect(antigravity.prompt.requireCwd).toBe(true);
+    expect(antigravity.install).toMatchObject({
+      sessionStart: { event: "PreInvocation", entry: "antigravity-hook.js", timeout: 30 },
+      prompt: { event: "PreInvocation", entry: "antigravity-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "antigravity-stop-hook.js", timeout: 30 },
+    });
+    expect(antigravity.prompt.emit("context")).toEqual({
+      injectSteps: [{ ephemeralMessage: "context" }],
+    });
+
+    const copilot = HOOK_HARNESSES["copilot-cli"];
+    expect(copilot.install).toMatchObject({
+      sessionStart: { event: "sessionStart", entry: "copilot-sessionstart-hook.js" },
+      prompt: { event: "userPromptTransformed", entry: "copilot-hook.js" },
+      stop: { event: "agentStop", entry: "copilot-stop-hook.js" },
+    });
+    expect(copilot.prompt.emit("context", undefined, { transformedPrompt: "original" })).toEqual({
+      modifiedTransformedPrompt: "original\n\ncontext",
+    });
+
+    const grok = HOOK_HARNESSES["grok-build"];
+    expect(grok.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "grok-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "grok-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "grok-stop-hook.js", timeout: 60 },
+    });
+    expect(grok.prompt.emit("context")).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: "context",
+      },
+    });
+
+    const dcode = HOOK_HARNESSES.dcode;
+    expect(dcode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "dcode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "dcode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "dcode-stop-hook.js", timeout: 60 },
+    });
+    expect(dcode.prompt.parse({ prompt: "hello", cwd: "/repo", session_id: "s1" })).toEqual({
+      prompt: "hello",
+      cwd: "/repo",
+      sessionId: "s1",
+    });
+    expect(dcode.prompt.emit("context")).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: "context",
+      },
+    });
+    expect(
+      dcode.retain.parse({
+        session_id: "s1",
+        transcript_path: "/tmp/s1.jsonl",
+        cwd: "/repo",
+        last_assistant_message: "done",
+      })
+    ).toEqual({
+      sessionId: "s1",
+      transcriptPath: "/tmp/s1.jsonl",
+      cwd: "/repo",
+      lastAssistantMessage: "done",
+    });
+
+    const droid = HOOK_HARNESSES["factory-droid"];
+    expect(droid.additionalHooks).toEqual([
+      { event: "Notification", entry: "droid-stop-hook.js", timeout: 60 },
+    ]);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "idle_prompt",
+      })
+    ).toBe(true);
+    expect(
+      droid.retain.accept?.({
+        hook_event_name: "Notification",
+        notification_type: "permission_prompt",
+      })
+    ).toBe(false);
+    expect(droid.retain.accept?.({ hook_event_name: "Stop" })).toBe(true);
+
+    const zcode = HOOK_HARNESSES.zcode;
+    expect(zcode.configStyle).toBe("process");
+    expect(zcode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "zcode-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "zcode-stop-hook.js", timeout: 60_000 },
+    });
+    // ZCode sends `session_id` on UserPromptSubmit and BOTH spellings on Stop.
+    expect(zcode.prompt.parse({ prompt: "hi", cwd: "/repo", session_id: "s1" }).sessionId).toBe(
+      "s1"
+    );
+    expect(zcode.retain.parse({ sessionId: "s1", cwd: "/repo" }).sessionId).toBe("s1");
+    // The reply falls back through the ephemeral transcript to the TRUNCATED preview.
+    expect(zcode.retain.journal?.assistantText({ responseText: " full reply " })).toBe(
+      "full reply"
+    );
+    expect(
+      zcode.retain.journal?.assistantText({ responseText: "", responsePreview: "trunc" })
+    ).toBe("trunc");
+    expect(zcode.retain.journal?.assistantText({})).toBe("");
+
+    const traecode = HOOK_HARNESSES.traecode;
+    expect(traecode.configStyle).toBe("nested");
+    expect(traecode.install).toMatchObject({
+      sessionStart: { event: "SessionStart", entry: "traecode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "traecode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "traecode-stop-hook.js", timeout: 60 },
+    });
+    expect(traecode.prompt.parse({ prompt: "hi", cwd: "/repo", session_id: "s1" })).toEqual({
+      prompt: "hi",
+      cwd: "/repo",
+      sessionId: "s1",
+    });
+    // The Stop payload carries the full reply, and the journal closes the turn with it.
+    expect(traecode.retain.journal?.assistantText({ last_assistant_message: " reply " })).toBe(
+      "reply"
+    );
+    expect(traecode.retain.journal?.assistantText({})).toBe("");
+
+    // Payloads captured from the real @moonshot-ai/kimi-code 2.1.1 CLI. Its prompt is a BLOCK ARRAY,
+    // not a string: reading it as a string made runHook throw on `.trim()` and recall never ran.
+    const kimi = HOOK_HARNESSES["kimi-code"];
+    expect(kimi.configStyle).toBe("toml-array");
+    expect(
+      kimi.prompt.parse({
+        hook_event_name: "UserPromptSubmit",
+        session_id: "session_413e",
+        cwd: "/repo",
+        client_type: "kimi_code_cli",
+        prompt: [
+          { type: "text", text: "which statuses" },
+          { type: "image_url", image_url: { url: "data:" } },
+          { type: "text", text: "are retryable?" },
+        ],
+        is_steer: false,
+      })
+    ).toEqual({
+      prompt: "which statuses\nare retryable?",
+      cwd: "/repo",
+      sessionId: "session_413e",
+    });
+    expect(kimi.prompt.parse({ prompt: "not blocks" }).prompt).toBe("");
+    // `message` is Kimi's only injection channel; SessionStart output is dropped by the host.
+    expect(kimi.prompt.emit("context", "visible")).toEqual({ message: "context" });
+    expect(kimi.prompt.emit("", "visible")).toEqual({ message: "visible" });
+    expect(kimi.sessionStart.emit({ systemMessage: "s", additionalContext: "c" })).toEqual({});
+  });
+
+  /**
+   * Family guard for the journal harnesses. The two halves live in different processes and
+   * different specs: the prompt hook writes the user turn, the Stop hook writes the reply and
+   * retains the file. Declare only the Stop half and every session is retained assistant-only —
+   * a bank of replies with nothing they were replying to, and no error anywhere to say so.
+   */
+  it("pairs every journal-retaining harness with a prompt hook that fills the journal", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      expect(
+        Boolean(spec.prompt.journalPrompt),
+        `${harness}: journalPrompt and retain.journal must be declared together`
+      ).toBe(Boolean(spec.retain.journal));
+      if (!spec.retain.journal) continue;
+      // A journal harness must not ALSO claim a host transcript or a Stop-event reply. Both would
+      // be applied ON TOP of the journal it already holds: the path would be ignored (a lie about
+      // where the conversation comes from), and `lastAssistantMessage` would append the reply a
+      // SECOND time, since buildRetain adds it after the reader has run. Not hypothetical — ZCode's
+      // own Stop payload carries `last_assistant_message`, so parsing it is one line away.
+      const probe = {
+        transcript_path: "/tmp/host.jsonl",
+        transcriptPath: "/tmp/host.jsonl",
+        last_assistant_message: "done",
+        lastAssistantMessage: "done",
+      };
+      expect(
+        spec.retain.parse(probe).transcriptPath,
+        `${harness} retains from its journal, so it must not parse a host transcript path`
+      ).toBeUndefined();
+      expect(
+        spec.retain.parse(probe).lastAssistantMessage,
+        `${harness} closes its turn via journal.assistantText, so it must not ALSO parse a reply`
+      ).toBeUndefined();
+    }
+  });
+
+  // The prompt hook must outlive the once-per-session reflect, or the FIRST prompt of every
+  // session is killed mid-flight and recall silently degrades to nothing. Nothing coupled these
+  // two numbers before: qwen-code's timeouts are MILLISECONDS while every other harness's are
+  // SECONDS, so a bare `>= 20_000` would pass vacuously for the seven seconds-based harnesses and
+  // a bare `>= 20` would pass vacuously for qwen. Normalising through the declared unit is what
+  // makes this catch a mutation in EITHER direction.
+  it("gives every prompt hook a budget above the default once-per-session reflect", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      const raw = spec.install.prompt.timeout;
+      if (raw === undefined) continue; // cursor-cli deliberately omits it — the host default applies
+      const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
+      expect(
+        ms,
+        `${harness} prompt timeout (${raw} ${spec.timeoutUnit ?? "seconds"})`
+      ).toBeGreaterThan(DEFAULT_REFLECT_TIMEOUT_MS);
+    }
+  });
+
+  // hostTimeoutSec is SECONDS for every harness, including qwen-code where the installed values
+  // are milliseconds. They describe the same budget, so they must agree once normalised.
+  it("keeps the installed stop timeout consistent with hostTimeoutSec", () => {
+    for (const harness of HOOK_HARNESS_NAMES) {
+      const spec = HOOK_HARNESSES[harness];
+      const raw = spec.install.stop.timeout;
+      if (raw === undefined) continue;
+      const ms = spec.timeoutUnit === "milliseconds" ? raw : raw * 1000;
+      expect(ms, `${harness} stop timeout vs hostTimeoutSec`).toBe(
+        spec.retain.hostTimeoutSec * 1000
+      );
+    }
+  });
+});

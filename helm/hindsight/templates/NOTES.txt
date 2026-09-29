@@ -1,0 +1,2 @@
+Hindsight installed. Access the control plane:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "hindsight.fullname" . }}-control-plane 3000:3000

@@ -1,0 +1,86 @@
+[project]
+name = "hindsight-litellm"
+version = "0.5.4"
+description = "Universal LLM memory integration via LiteLLM - works with 100+ providers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "llm",
+    "litellm",
+    "openai",
+    "anthropic",
+    "groq",
+    "langchain",
+    "agents",
+    "hindsight",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "hindsight-client>=0.4.0",  # provides both hindsight_client and hindsight_client_api
+    # 1.82.7/1.82.8 supply-chain fix plus GHSA-jjhc-v7c2-5hh6 /
+    # GHSA-53mr-6c8q-9789 / GHSA-qrc4-49gv-mv9m / GHSA-wpfp-gwwc-vwq6 /
+    # GHSA-4xpc-pv4p-pm3w. Floor raised to 1.93.0 for Python 3.14: earlier
+    # releases publish no cp314 wheel and their bundled Rust extension fails to
+    # build (PyO3 0.23.5 supports 3.13 at most).
+    "litellm>=1.93.0; sys_platform != 'darwin'",
+    # macOS: litellm publishes no macOS wheels for any release >= 1.92.0, so the
+    # floor above is unsatisfiable there. Mirrors the same carve-out in
+    # hindsight-api-slim; without it, anything depending on both packages (e.g.
+    # a downstream app pulling in api-slim and this integration) cannot resolve
+    # on darwin at all.
+    "litellm>=1.91.3,<1.92; sys_platform == 'darwin'",
+    # Transitive dependency security fixes
+    "aiohttp>=3.14.3",  # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
+    "filelock>=3.20.3",  # TOCTOU race condition
+    "urllib3>=2.6.3",  # Decompression-bomb safeguards bypass
+    "requests>=2.33.0",  # Insecure temp file reuse in extract_zipped_paths()
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/litellm"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_litellm"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "requires_real_llm: end-to-end test that needs live external services (a running Hindsight server and/or real LLM provider keys). Excluded from the deterministic PR-CI bucket via -m 'not requires_real_llm'; run on its own via -m requires_real_llm.",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+]

@@ -1,0 +1,687 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildSessionStartContext, runSessionStartHook } from "./session-start";
+import { resolveConfig } from "./config";
+import { repoNameOf } from "./git";
+import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
+import type { RawConfig } from "./config";
+
+/** The SessionStart event `runSessionStartHook` reads from fd 0; every other read stays real. */
+let stdin = "";
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: (target: unknown, ...rest: unknown[]) =>
+      target === 0 ? stdin : (actual.readFileSync as (...a: unknown[]) => unknown)(target, ...rest),
+  };
+});
+
+/** Unset = the real config loader; set = what `runSessionStartHook` resolves for this test. */
+let rawConfig: RawConfig | undefined;
+vi.mock("./config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config")>();
+  return {
+    ...actual,
+    loadConfig: (...a: Parameters<typeof actual.loadConfig>) =>
+      rawConfig ? actual.resolveConfig(rawConfig) : actual.loadConfig(...a),
+  };
+});
+
+/** Default roster the mock client returns; asserted on by name below. */
+const listPagesOk = async () => ({ items: [{ id: "p1", name: "Component map" }] });
+
+describe("buildSessionStartContext", () => {
+  it("warns in the user-visible banner when the old Claude Code plugin is still active", async () => {
+    const client = { listDocumentIds: async () => new Set(["git:a"]), listPages: listPagesOk };
+    const detectLegacyPlugin = vi.fn().mockReturnValue("hindsight-memory@hindsight");
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      detectLegacyPlugin,
+    });
+    expect(detectLegacyPlugin).toHaveBeenCalledWith("/repo/dir");
+    expect(out.systemMessage).toContain("bank-1");
+    expect(out.systemMessage).toContain("claude plugin uninstall hindsight-memory@hindsight");
+    expect(out.additionalContext).not.toContain("hindsight-memory@hindsight");
+  });
+
+  it("no warning when the old plugin is absent", async () => {
+    const client = { listDocumentIds: async () => new Set(["git:a"]), listPages: listPagesOk };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(out.systemMessage).not.toContain("plugin uninstall");
+  });
+
+  it("cold git repo + autoSeed on -> seeds + surveys, note in systemMessage (user-visible) + roster in additionalContext (model)", async () => {
+    const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
+    const startSeed = vi.fn();
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => true,
+      startSeed,
+      startSurvey,
+    });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
+    expect(startSurvey).toHaveBeenCalledWith("/repo/dir", {
+      harness: "claude-code",
+      model: "haiku",
+      budgetUsd: 2,
+    });
+    // The learning note is USER-VISIBLE (systemMessage), not buried in model context.
+    expect(out.systemMessage).toContain("is learning");
+    expect(out.systemMessage).toContain("bank-1");
+    // The knowledge preamble is model context, lists live pages, and drops the old static mission.
+    expect(out.additionalContext).toContain("<hindsight_knowledge>");
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
+    expect(out.additionalContext).not.toContain("agent_knowledge_list_pages");
+    // The banner must NOT be duplicated into model context. (The tool guide legitimately
+    // contains a "🧠 From Hindsight memory" attribution example, so match on banner text.)
+    expect(out.additionalContext).not.toContain("memory bank");
+    expect(out.additionalContext).not.toContain("is learning this repo");
+    expect(out.deferInitialReflect).toBe(true);
+  });
+
+  it("threads the ASKING harness to the background seed (not the config loader's default) — #3247", async () => {
+    // Regression: the seed used to fire without a harness, so deepen.js fell back to the config
+    // loader's "opencode" default and misfiled a non-opencode session's survey + git history into
+    // an `opencode::<project>` bank. The seed must receive the harness that asked.
+    const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
+    const startSeed = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      harness: "codex",
+      hasGit: () => true,
+      startSeed,
+      startSurvey: vi.fn().mockResolvedValue(true),
+    });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "codex" });
+  });
+
+  it("cold git repo + codebaseSurvey:false -> starts the seed but NOT the survey", async () => {
+    const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
+    const startSeed = vi.fn();
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ codebaseSurvey: false }),
+      client,
+      hasGit: () => true,
+      startSeed,
+      startSurvey,
+    });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(out.systemMessage).toContain("is learning");
+  });
+
+  it("non-git dir -> no seed, listDocumentIds not called, roster preamble only (no learning note)", async () => {
+    const startSeed = vi.fn();
+    let called = false;
+    const client = {
+      listDocumentIds: async () => {
+        called = true;
+        return new Set<string>();
+      },
+      listPages: listPagesOk,
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => false,
+      startSeed,
+    });
+    expect(startSeed).not.toHaveBeenCalled();
+    expect(called).toBe(false);
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
+    // banner shows on EVERY session now; non-cold paths use the "remembering" wording
+    expect(out.systemMessage).toContain("is tracking the decisions");
+    expect(out.deferInitialReflect).toBe(false);
+  });
+
+  it("an empty but reachable page roster defers first reflect even when git documents already exist", async () => {
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client: {
+        listDocumentIds: async () => new Set(["git:abc"]),
+        listPages: async () => ({ items: [] }),
+      },
+      hasGit: () => true,
+      startSeed: vi.fn(),
+    });
+    expect(out.deferInitialReflect).toBe(true);
+  });
+
+  // The old "declined state -> no seed" test is gone with the seed-state file itself: the live
+  // bank is the ONLY state now, so there is no client-side declined flag to consult. Opting a
+  // repo out of memory is `disabled` in project config.
+
+  it("cold-check-wins: EMPTY live bank -> (re)seeds — the bank is the only state", async () => {
+    const startSeed = vi.fn();
+    let called = false;
+    const client = {
+      listDocumentIds: async () => {
+        called = true;
+        return new Set<string>(); // bank is empty (fresh, or user cleared it)
+      },
+      listPages: listPagesOk,
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => true,
+      startSeed,
+    });
+    // The live bank is consulted, and an empty bank seeds — no client-side flag can contradict it.
+    expect(called).toBe(true);
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
+    expect(out.systemMessage).toContain("is learning");
+  });
+
+  it("warm bank (non-empty doc set) -> deepen engine fires, but no survey/note", async () => {
+    const startSeed = vi.fn();
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const client = { listDocumentIds: async () => new Set(["git:abc"]), listPages: listPagesOk };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => true,
+      startSeed,
+      startSurvey,
+    });
+    // The engine is idempotent, so every warm session start re-fires it to pick up missing work.
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
+    // The cold-only extras stay off: no survey, no user-facing learning note.
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
+    // banner shows on EVERY session now; non-cold paths use the "remembering" wording
+    expect(out.systemMessage).toContain("is tracking the decisions");
+  });
+
+  it("does not report git in sync from another repository's same-HEAD document", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "hs-session-start-shared-bank-"));
+    try {
+      execFileSync("git", ["-C", repo, "init", "-q"]);
+      execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+      execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repo, "commit", "--allow-empty", "-m", "initial"]);
+      const listDocumentIds = vi.fn(async (tag: string, _match?: "all" | "all_strict") =>
+        tag === "source:git" ? new Set(["git:existing"]) : new Set(["gitlog:foreign-repo"])
+      );
+
+      const out = await buildSessionStartContext({
+        cwd: repo,
+        bankId: "shared-bank",
+        cfg: resolveConfig({ codebaseSurvey: false }),
+        client: { listDocumentIds, listPages: listPagesOk },
+        hasGit: () => true,
+        startSeed: vi.fn(),
+      });
+
+      expect(out.systemMessage).toContain("catching up on new commits");
+      expect(out.systemMessage).not.toContain("git in sync");
+      expect(listDocumentIds.mock.calls[1][0]).toMatch(/^gitlog-head:/);
+      expect(listDocumentIds.mock.calls[1][1]).toBe("all_strict");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  describe("git note against a git-log document written at another commit", () => {
+    /** A repo with two commits, the git-log document recorded at `writtenAt`, HEAD at `head`. */
+    async function banner(writtenAt: "first" | "second", head: "first" | "second") {
+      const repo = mkdtempSync(join(tmpdir(), "hs-session-start-written-at-"));
+      try {
+        execFileSync("git", ["-C", repo, "init", "-q"]);
+        execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+        const sha: Record<string, string> = {};
+        for (const name of ["first", "second"]) {
+          execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", name]);
+          sha[name] = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim();
+        }
+        execFileSync("git", ["-C", repo, "checkout", "-q", "--detach", sha[head]]);
+        const documentTags = vi.fn(async (_id: string) => [
+          "source:git-log",
+          `gitlog-head:${sha[writtenAt]}`,
+        ]);
+        const out = await buildSessionStartContext({
+          cwd: repo,
+          bankId: "bank-1",
+          cfg: resolveConfig({ codebaseSurvey: false }),
+          client: {
+            // Only the cold check finds anything: no document carries HEAD's own tag.
+            listDocumentIds: async (tag: string) =>
+              tag === "source:git" ? new Set(["git:existing"]) : new Set<string>(),
+            documentTags,
+            listPages: listPagesOk,
+          },
+          hasGit: () => true,
+          startSeed: vi.fn(),
+        });
+        return { out, documentTags, canonical: `gitlog:${repoNameOf(repo)}` };
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    }
+
+    it("reports git in sync from a worktree behind that commit, as the deepen engine skips it (#4661)", async () => {
+      const { out, documentTags, canonical } = await banner("second", "first");
+
+      expect(out.systemMessage).toContain("git in sync");
+      expect(documentTags).toHaveBeenCalledWith(canonical);
+    });
+
+    it("still reports catching up when HEAD has a commit the document lacks", async () => {
+      const { out } = await banner("first", "second");
+
+      expect(out.systemMessage).toContain("catching up on new commits");
+    });
+  });
+
+  it("listDocumentIds throws (server unreachable) -> no seed, roster preamble only", async () => {
+    const startSeed = vi.fn();
+    const client = {
+      listDocumentIds: async () => {
+        throw new Error("network down");
+      },
+      listPages: listPagesOk,
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => true,
+      startSeed,
+    });
+    expect(startSeed).not.toHaveBeenCalled();
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
+    // banner shows on EVERY session now; non-cold paths use the "remembering" wording
+    expect(out.systemMessage).toContain("is tracking the decisions");
+  });
+
+  it("listPages rejects -> fail-open: empty-state preamble, seed still starts, note still visible (cold repo)", async () => {
+    const startSeed = vi.fn();
+    const client = {
+      listDocumentIds: async () => new Set<string>(),
+      listPages: async () => {
+        throw new Error("pages endpoint down");
+      },
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client,
+      hasGit: () => true,
+      startSeed,
+    });
+    // Seeding is unaffected by a listPages failure.
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
+    // Empty-state roster preamble still renders (no page names, no throw).
+    expect(out.additionalContext).toContain("<hindsight_knowledge>");
+    expect(out.additionalContext).toContain("No knowledge pages yet");
+    expect(out.additionalContext).not.toContain("(p1)");
+    // The background-learning note is still user-visible.
+    expect(out.systemMessage).toContain("is learning");
+  });
+
+  it("autoSeed:false -> skips the whole seed branch (no listDocumentIds call), roster preamble only", async () => {
+    const startSeed = vi.fn();
+    let called = false;
+    const client = {
+      listDocumentIds: async () => {
+        called = true;
+        return new Set<string>();
+      },
+      listPages: listPagesOk,
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      hasGit: () => true,
+      startSeed,
+    });
+    expect(startSeed).not.toHaveBeenCalled();
+    expect(called).toBe(false);
+    expect(out.additionalContext).toContain("deliberately NOT listed here");
+    // banner shows on EVERY session now; non-cold paths use the "remembering" wording
+    expect(out.systemMessage).toContain("is tracking the decisions");
+  });
+});
+
+describe("runSessionStartHook anti-recursion guard", () => {
+  const ORIGINAL = process.env.HINDSIGHT_DISABLE_HOOKS;
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.HINDSIGHT_DISABLE_HOOKS;
+    else process.env.HINDSIGHT_DISABLE_HOOKS = ORIGINAL;
+  });
+
+  it("HINDSIGHT_DISABLE_HOOKS set -> returns immediately, never reads stdin or builds a client", async () => {
+    process.env.HINDSIGHT_DISABLE_HOOKS = "1";
+    const makeClient = vi.fn();
+    // No stdin is provided/mocked here — if the guard didn't return before `readFileSync(0, ...)`,
+    // this call would attempt to read the real process stdin. Resolving without calling makeClient
+    // proves the guard fired first.
+    await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, makeClient);
+    expect(makeClient).not.toHaveBeenCalled();
+  });
+});
+
+/** A host's per-repo MCP registration (TraeCode's) runs only once memory is live for the repo, and
+ *  its hint reaches the user through the session banner. */
+describe("runSessionStartHook host MCP registration", () => {
+  let repo: string;
+  const run = async (cfg: RawConfig) => {
+    rawConfig = { autoSeed: false, autoUpdate: false, ...cfg };
+    stdin = JSON.stringify({ cwd: repo, session_id: `sess-${repo.split("/").pop()}` });
+    const ensureMcpRegistration = vi.fn(() => "enable workspace MCP");
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await runSessionStartHook(
+        { ...HOOK_HARNESSES.traecode.sessionStart, ensureMcpRegistration },
+        () => ({ listPages: listPagesOk }) as never
+      );
+      return { ensureMcpRegistration, out: write.mock.calls.map((c) => String(c[0])).join("") };
+    } finally {
+      write.mockRestore();
+    }
+  };
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "hs-ss-mcp-"));
+    execFileSync("git", ["init", "-q", repo]);
+  });
+  afterEach(() => {
+    rawConfig = undefined;
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("registers for a live repo and shows the hint in the banner", async () => {
+    const { ensureMcpRegistration, out } = await run({});
+    expect(ensureMcpRegistration).toHaveBeenCalledWith(repo);
+    expect(JSON.parse(out).systemMessage).toContain("enable workspace MCP");
+  });
+
+  it("does not register for a repo that is not opted in", async () => {
+    const { ensureMcpRegistration } = await run({ optInOnly: true });
+    expect(ensureMcpRegistration).not.toHaveBeenCalled();
+  });
+});
+
+// Periodic re-survey (Option A): the survey baseline lives in the bank as `survey-baseline:<sha>`
+// marker docs. Warm sessions re-survey when the MIN reachable `<sha>..HEAD` count >= threshold.
+describe("buildSessionStartContext — periodic re-survey (bank-stored commit count)", () => {
+  // A warm bank: source:git non-empty; source:survey-baseline returns the given marker ids.
+  // findings present by default so the crashed-survey retry path stays quiet in cadence tests.
+  const warmClient = (
+    baselineIds: string[],
+    retain = vi.fn(),
+    uploads: string[] = ["repository-component-map"]
+  ) => ({
+    listDocumentIds: async (tag: string) =>
+      tag === "source:survey-baseline"
+        ? new Set(baselineIds)
+        : tag === "source:upload"
+          ? new Set(uploads)
+          : new Set(["git:abc"]),
+    listPages: listPagesOk,
+    retain,
+  });
+  const marker = (sha: string) => [
+    expect.stringContaining(sha.slice(0, 12)), // human-readable content carrying the sha
+    expect.any(String),
+    `survey-baseline:${sha}`,
+    ["source:survey-baseline"],
+    "survey", // survey-lifecycle strategy (marker rule: zero extraction)
+    // Opts are always passed now; with no retainMetadata configured the stamp is empty, and
+    // `retain` only sets metadata when truthy, so nothing reaches the API.
+    { metadata: undefined },
+  ];
+
+  it(">= threshold since the latest reachable baseline -> re-surveys + records a new baseline", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+      client: warmClient(["survey-baseline:oldsha"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "newsha",
+      commitsSince: () => 25,
+    });
+    expect(startSurvey).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ harness: "claude-code" })
+    );
+    expect(retain).toHaveBeenCalledWith(...marker("newsha"));
+  });
+
+  it("applies retain attribution to survey baseline markers", async () => {
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({
+        surveyRefreshCommits: 20,
+        retainTags: ["project:{project}"],
+        retainMetadata: { bank: "{bankId}" },
+      }),
+      client: warmClient(["survey-baseline:oldsha"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey: vi.fn().mockResolvedValue(true),
+      headSha: () => "newsha",
+      commitsSince: () => 25,
+    });
+
+    expect(retain).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "survey-baseline:newsha",
+      ["project:repo", "source:survey-baseline"],
+      "survey",
+      { metadata: { bank: "bank-1" } }
+    );
+  });
+
+  it("< threshold -> no re-survey, no new baseline", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+      client: warmClient(["survey-baseline:oldsha"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "newsha",
+      commitsSince: () => 5,
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(retain).not.toHaveBeenCalled();
+  });
+
+  it("no baseline yet (upgrade from a pre-feature bank) -> records HEAD as baseline, does NOT survey", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+      client: warmClient([], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "headnow",
+      commitsSince: () => 999, // must not fire on the very first (baseline) encounter
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(retain).toHaveBeenCalledWith(...marker("headnow"));
+  });
+
+  it("all markers unreachable (rebase/gc) -> re-baselines to HEAD, does NOT survey", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+      client: warmClient(["survey-baseline:gone1", "survey-baseline:gone2"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "newhead",
+      commitsSince: () => null, // none reachable from HEAD
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(retain).toHaveBeenCalledWith(...marker("newhead"));
+  });
+
+  it("takes the MIN reachable count (newest survey), ignoring older + dead-branch markers", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const counts: Record<string, number | null> = { old1: 50, old2: 10, dead: null };
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+      client: warmClient(["survey-baseline:old1", "survey-baseline:old2", "survey-baseline:dead"]),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "head",
+      commitsSince: (_d: string, sha: string) => counts[sha] ?? null,
+    });
+    expect(startSurvey).not.toHaveBeenCalled(); // min reachable (old2 = 10) < 20
+  });
+
+  it("surveyRefreshCommits=0 disables re-survey even far past threshold", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 0 }),
+      client: warmClient(["survey-baseline:old"]),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "newsha",
+      commitsSince: () => 999,
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+  });
+
+  it("cold seed records the survey baseline", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig(),
+      client: { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk, retain },
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "seedhead",
+      commitsSince: () => 0,
+    });
+    expect(startSurvey).toHaveBeenCalled();
+    expect(retain).toHaveBeenCalledWith(...marker("seedhead"));
+  });
+});
+
+describe("buildSessionStartContext — crashed-survey retry (baseline without findings)", () => {
+  it("re-fires the survey when a baseline exists but NO findings docs ever arrived", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn();
+    const client = {
+      listDocumentIds: async (tag: string) =>
+        tag === "source:survey-baseline"
+          ? new Set(["survey-baseline:aaa"])
+          : tag === "source:upload"
+            ? new Set<string>() // survey died before ingesting anything
+            : new Set(["git:abc"]),
+      listPages: async () => ({ items: [] }),
+      retain,
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/tmp/x",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 50 }),
+      client,
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "bbb",
+      commitsSince: () => 1, // far below the cadence threshold — retry must fire anyway
+    });
+    expect(startSurvey).toHaveBeenCalledTimes(1);
+    expect(out).toBeTruthy();
+  });
+});
+
+describe("survey launch admission", () => {
+  it.each([false, true])(
+    "does not advance a %s warm/cold baseline when launch is skipped or fails",
+    async (warm) => {
+      const retain = vi.fn();
+      const startSurvey = vi.fn().mockResolvedValue(false);
+      await buildSessionStartContext({
+        cwd: "/repo",
+        bankId: "bank-1",
+        cfg: resolveConfig({ surveyRefreshCommits: 20 }),
+        client: {
+          listDocumentIds: async (tag) =>
+            tag === "source:survey-baseline"
+              ? new Set(["survey-baseline:oldsha"])
+              : new Set(warm ? ["git:old"] : []),
+          listPages: listPagesOk,
+          retain,
+        },
+        hasGit: () => true,
+        startSeed: vi.fn(),
+        startSurvey,
+        headSha: () => "newsha",
+        commitsSince: () => 25,
+      });
+      expect(startSurvey).toHaveBeenCalledOnce();
+      expect(retain).not.toHaveBeenCalled();
+    }
+  );
+});

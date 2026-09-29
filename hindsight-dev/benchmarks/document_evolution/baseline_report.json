@@ -1,0 +1,68 @@
+{
+  "left": "main",
+  "right": "branch-v2",
+  "structural": {
+    "main": {
+      "rounds": 45,
+      "collapsed_tables": 3,
+      "table_rows_lost": 9,
+      "nesting_lost": 6,
+      "hard_breaks_lost": 5,
+      "fences_lost": 0,
+      "quotes_lost": 0,
+      "headings_lost": 0,
+      "damaged_rounds": 6,
+      "drifted_sections": 14,
+      "delta_applied_rounds": 45,
+      "failed_rounds": 0,
+      "ops_skipped": 0,
+      "median_ms": 12935
+    },
+    "branch-v2": {
+      "rounds": 45,
+      "collapsed_tables": 0,
+      "table_rows_lost": 0,
+      "nesting_lost": 0,
+      "hard_breaks_lost": 0,
+      "fences_lost": 0,
+      "quotes_lost": 0,
+      "headings_lost": 0,
+      "damaged_rounds": 0,
+      "drifted_sections": 0,
+      "delta_applied_rounds": 45,
+      "failed_rounds": 0,
+      "ops_skipped": 0,
+      "median_ms": 12940
+    }
+  },
+  "content": {
+    "api-reference": {
+      "main_recall": 1.0,
+      "branch-v2_recall": 1.0,
+      "main_staleness": 0.0,
+      "branch-v2_staleness": 0.0,
+      "preference": "main=1, branch-v2=0, tie=2",
+      "main_mean_bytes": 1368,
+      "branch-v2_mean_bytes": 1165.6666666666667
+    },
+    "onboarding-playbook": {
+      "main_recall": 1.0,
+      "branch-v2_recall": 1.0,
+      "main_staleness": 0.0,
+      "branch-v2_staleness": 0.0,
+      "preference": "main=1, branch-v2=0, tie=2",
+      "main_mean_bytes": 1432.6666666666667,
+      "branch-v2_mean_bytes": 1274.3333333333333
+    },
+    "release-runbook": {
+      "main_recall": 1.0,
+      "branch-v2_recall": 1.0,
+      "main_staleness": 0.0,
+      "branch-v2_staleness": 0.0,
+      "preference": "main=0, branch-v2=3, tie=0",
+      "main_mean_bytes": 1209.6666666666667,
+      "branch-v2_mean_bytes": 1124.3333333333333
+    }
+  },
+  "_about": "Baseline run for PR #3622: main (400fd3684) vs the branch, 3 repetitions of 3 cases, 45 refresh rounds per build, identical authored seeds, gemini-3.1-flash-lite for both the pipeline and the judge. Regenerate with: run once per build, then compare."
+}

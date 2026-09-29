@@ -1,0 +1,53 @@
+{
+  "version": "1",
+  "bank": {
+    "reflect_mission": "You are helping a support agent remember its customers. Recall each customer's history, open and past issues, account context, and how they prefer to be treated, so every interaction feels informed and personal.",
+    "retain_mission": "Extract customer issues and their resolutions, sentiment, account and plan details, product context, promises and commitments made, and any preferences. Ignore greetings and pleasantries.",
+    "enable_observations": true,
+    "observations_mission": "Track stable facts per customer: their account and plan, recurring issues, product usage, preferences, and how their sentiment trends over time.",
+    "disposition_empathy": 5,
+    "disposition_literalism": 4,
+    "disposition_skepticism": 2
+  },
+  "mental_models": [
+    {
+      "id": "customer-profile",
+      "name": "Customer Profile",
+      "source_query": "Who is this customer? What is their account, plan, product usage, and how do they prefer to be supported?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "issue-history",
+      "name": "Issue & Resolution History",
+      "source_query": "What issues has this customer reported, and how were they resolved? What is still open or unresolved?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "sentiment-overview",
+      "name": "Sentiment Overview",
+      "source_query": "What is the customer's overall sentiment and how has it trended across interactions? What frustrates or delights them?",
+      "max_tokens": 1024,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ],
+  "directives": [
+    {
+      "name": "Never re-ask known details",
+      "content": "Use the customer's recalled account and history instead of asking them to repeat information they've already given. Re-asking known details erodes trust.",
+      "priority": 10
+    },
+    {
+      "name": "Lead with empathy",
+      "content": "Acknowledge the customer's situation and sentiment before jumping to a solution, especially when the recalled history shows repeated or unresolved issues.",
+      "priority": 8
+    }
+  ]
+}

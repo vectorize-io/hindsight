@@ -1,0 +1,87 @@
+{
+  "name": "hindsight",
+  "private": true,
+  "workspaces": [
+    "hindsight-clients/typescript",
+    "hindsight-control-plane",
+    "hindsight-docs",
+    "hindsight-interfig",
+    "hindsight-all-npm",
+    "hindsight-tools/hindsight-agent-sdk"
+  ],
+  "scripts": {
+    "prepare": "./scripts/setup-hooks.sh"
+  },
+  "overrides": {
+    "qs": ">=6.16.0 <7.0.0",
+    "fast-xml-parser": ">=5.5.6",
+    "serialize-javascript": "^7.0.5",
+    "minimatch": "^3.1.4",
+    "undici": ">=7.29.1 <8.0.0",
+    "flatted": ">=3.4.2",
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "yaml": ">=1.10.3",
+    "svgo": ">=4.1.0",
+    "dompurify": ">=3.4.13",
+    "@redocly/openapi-core": {
+      "minimatch": "^5.1.8"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^9.0.7"
+    },
+    "ajv-formats": {
+      "ajv": "^8.18.0"
+    },
+    "handlebars": ">=4.7.9",
+    "path-to-regexp": ">=0.1.13",
+    "brace-expansion": ">=1.1.18 <2.0.0 || >=2.1.4 <3.0.0",
+    "lodash-es": ">=4.18.1",
+    "mermaid": ">=11.16.1",
+    "websocket-driver": ">=0.7.5",
+    "http-proxy-middleware": ">=2.0.10 <3",
+    "next": ">=16.3.3 <17",
+    "fast-uri": ">=3.1.6 <4",
+    "sharp": ">=0.35.4",
+    "shell-quote": ">=1.9.0",
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^3.15.2"
+    },
+    "gray-matter": {
+      "js-yaml": "^3.15.2"
+    },
+    "sockjs": {
+      "uuid": "^11.1.1"
+    },
+    "postcss": ">=8.5.23",
+    "js-yaml": ">=3.15.2 <4.0.0 || >=4.3.2 <5.0.0",
+    "nanoid": ">=3.3.18 <4.0.0",
+    "webpack-dev-server": ">=5.2.6 <6.0.0",
+    "esbuild": ">=0.28.1 <0.29.0",
+    "body-parser": ">=1.20.6 <2.0.0",
+    "browserslist": ">=4.28.7 <5.0.0",
+    "postcss-selector-parser": ">=7.1.3 <8.0.0",
+    "postcss-calc": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "postcss-discard-unused": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "postcss-merge-rules": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "postcss-minify-selectors": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "postcss-unique-selectors": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "stylehacks": {
+      "postcss-selector-parser": "^6.1.3"
+    },
+    "@tailwindcss/typography": {
+      "postcss-selector-parser": "6.0.10"
+    },
+    "colord": ">=2.9.4 <3.0.0",
+    "joi": ">=17.13.6 <18.0.0"
+  }
+}

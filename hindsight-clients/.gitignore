@@ -1,0 +1,15 @@
+# Build artifacts
+python/dist/
+python/build/
+python/*.egg-info/
+python/.ruff_cache/
+typescript/dist/
+typescript/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated code is tracked in git to see API changes

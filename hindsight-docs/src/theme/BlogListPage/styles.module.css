@@ -1,0 +1,347 @@
+.blogPage {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem 2rem 6rem;
+}
+
+@media (max-width: 640px) {
+  .blogPage {
+    padding: 1.5rem 1.25rem 4rem;
+  }
+}
+
+/* ── Controls (categories + search) ──────────────── */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 2.5rem;
+}
+
+.categoryStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Don't rename to anything containing "searchInput": custom.css strips all
+   borders from [class*="searchInput"] (!important) to restyle the navbar
+   search widget, and CSS-module hashed names keep the substring. */
+.postFilterInput {
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: var(--ifm-font-color-base);
+  min-width: 220px;
+  transition: border-color 0.15s ease;
+}
+
+.postFilterInput:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+}
+
+.postFilterInput::placeholder {
+  color: var(--ifm-color-emphasis-500);
+}
+
+@media (max-width: 640px) {
+  .controls {
+    margin-bottom: 2rem;
+  }
+
+  .postFilterInput {
+    order: -1;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .categoryStrip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+    padding: 0 1.25rem 0.5rem;
+    scrollbar-width: thin;
+    width: 100vw;
+  }
+}
+
+.categoryPill {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-700);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+
+.categoryPill:hover {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+}
+
+.categoryPillActive,
+.categoryPillActive:hover {
+  background: #0074d9;
+  border-color: #0074d9;
+  color: #ffffff;
+}
+
+.emptyState {
+  text-align: center;
+  color: var(--ifm-color-emphasis-600);
+  padding: 3rem 0;
+  font-size: 0.95rem;
+}
+
+/* ── Tag archive header ──────────────────────────── */
+.header {
+  margin-bottom: 2.5rem;
+}
+
+.headerTitle {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+  color: var(--ifm-heading-color);
+}
+
+.headerSubtitle {
+  font-size: 1rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* ── Section ─────────────────────────────────────── */
+.section {
+  margin-bottom: 4rem;
+}
+
+.sectionHeader {
+  margin-bottom: 2rem;
+}
+
+.sectionHeaderRow {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.sectionTitle {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--ifm-heading-color);
+  letter-spacing: -0.02em;
+}
+
+.sectionViewAll {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ifm-color-primary);
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.sectionViewAll:hover {
+  text-decoration: underline !important;
+}
+
+.sectionSubtitle {
+  font-size: 0.95rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* ── Grid ────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+}
+
+@media (max-width: 996px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+}
+
+/* ── Card ────────────────────────────────────────── */
+.card {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none !important;
+  color: inherit;
+  border-radius: 0;
+  background: transparent;
+  transition: opacity 0.2s ease;
+}
+
+.card:hover {
+  text-decoration: none !important;
+  color: inherit;
+  opacity: 0.9;
+}
+
+.card:hover .cardImage {
+  transform: none;
+}
+
+/* ── Card image ──────────────────────────────────── */
+.cardImageWrapper {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  width: 100%;
+  border-radius: 4px;
+  background: #111;
+}
+
+.cardImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s ease;
+}
+
+.cardImagePlaceholder {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  opacity: 0.35;
+}
+
+/* ── Card body ───────────────────────────────────── */
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 1rem 0 0;
+  gap: 0.5rem;
+}
+
+.cardBadge {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-primary);
+  border: 1px solid var(--ifm-color-primary);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+
+.cardTitle {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0;
+  color: var(--ifm-heading-color);
+  letter-spacing: -0.02em;
+}
+
+.cardDescription {
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
+  color: var(--ifm-color-emphasis-500);
+  line-height: 1.65;
+  margin: 0;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.cardDate {
+  font-size: 0.78rem;
+  color: var(--ifm-color-emphasis-400);
+  font-weight: 500;
+}
+
+.cardReadTime {
+  font-size: 0.78rem;
+  color: var(--ifm-color-emphasis-400);
+}
+
+.cardReadTime::before {
+  content: '·';
+  margin-right: 0.35rem;
+}
+
+/* ── Compact horizontal cards on mobile ──────────── */
+@media (max-width: 640px) {
+  .card {
+    flex-direction: row;
+    gap: 0.9rem;
+    align-items: flex-start;
+  }
+
+  .cardImageWrapper {
+    width: 120px;
+    flex-shrink: 0;
+    aspect-ratio: 4 / 3;
+  }
+
+  .cardBody {
+    padding: 0;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+
+  .cardTitle {
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+
+  .cardBadge {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.5rem;
+  }
+
+  .cardDescription {
+    display: none;
+  }
+
+  .cardFooter {
+    margin-top: 0.15rem;
+  }
+}
+
+/* ── Infinite scroll sentinel ────────────────────── */
+.scrollSentinel {
+  height: 1px;
+}

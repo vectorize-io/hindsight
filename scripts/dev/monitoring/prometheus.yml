@@ -1,0 +1,36 @@
+# Prometheus configuration for Grafana LGTM with Hindsight API scraping
+---
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  scrape_native_histograms: true
+
+# OTLP receiver configuration (from LGTM default)
+otlp:
+  keep_identifying_resource_attributes: true
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - service.namespace
+    - service.version
+    - deployment.environment
+    - deployment.environment.name
+    - host.name
+
+storage:
+  tsdb:
+    out_of_order_time_window: 10m
+
+# Scrape configs for pulling metrics from Hindsight API
+scrape_configs:
+  - job_name: 'hindsight-api'
+    static_configs:
+      - targets: ['host.docker.internal:8888']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+  - job_name: 'hindsight-worker'
+    static_configs:
+      # Dedicated workers (helm: worker.enabled, port 8889). Harmless 404-less
+      # no-op when no worker runs on the host.
+      - targets: ['host.docker.internal:8889']
+    metrics_path: '/metrics'

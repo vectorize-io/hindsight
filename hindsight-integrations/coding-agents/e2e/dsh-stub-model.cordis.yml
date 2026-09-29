@@ -1,0 +1,26 @@
+# E2E-only overlay: point DeepSeek Harness at the runner's local echo model instead of DeepSeek's
+# API, so the harness E2E needs no account (the same role `stubModelEnv` plays for the CLIs that
+# take a base URL as an environment variable).
+#
+# dsh selects its model through composition, not environment, so the route is declared here and the
+# ONE value that cannot be known at build time — the stub's ephemeral port — is read from the
+# environment the runner passes in. `hindsight-stub` is a hand-declared route: pi-ai ships no such
+# provider, so the profile supplies its whole definition.
+- id: llm-pi-ai
+  config:
+    providers:
+      hindsight-stub:
+        displayName: Hindsight E2E stub
+        apiKeyEnv: HINDSIGHT_STUB_KEY
+        api: openai-completions
+        baseURL: !!js process.env.HINDSIGHT_STUB_BASE_URL
+        models:
+          - id: stub-model
+            name: Hindsight E2E stub
+            contextWindow: 65536
+            maxTokens: 4096
+
+- id: agent-default-model
+  config:
+    provider: hindsight-stub
+    model: stub-model

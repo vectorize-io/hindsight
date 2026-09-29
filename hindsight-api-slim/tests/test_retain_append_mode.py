@@ -1,0 +1,424 @@
+"""
+Tests for retain update_mode='append' — appends new content to existing documents.
+"""
+
+import json
+import logging
+from datetime import datetime, timezone
+
+import pytest
+
+from hindsight_api.engine.memory_engine import Budget
+
+logger = logging.getLogger(__name__)
+
+
+def _ts():
+    return datetime.now(timezone.utc).timestamp()
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_append_mode_concatenates_content(memory, request_context):
+    """
+    When update_mode='append', new content should be appended to the existing
+    document and the full document should be reprocessed. Facts from both
+    old and new content should be recallable.
+    """
+    bank_id = f"test_append_{_ts()}"
+    document_id = "conversation-append"
+
+    try:
+        # First retain — initial content
+        v1_units = await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google as a software engineer.",
+            context="team info",
+            document_id=document_id,
+            request_context=request_context,
+        )
+        assert len(v1_units) > 0, "v1 should create facts"
+
+        doc_v1 = await memory.get_document(document_id, bank_id, request_context=request_context)
+        v1_text = doc_v1["original_text"]
+        assert "Alice works at Google" in v1_text
+
+        # Second retain with append — add new content
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Bob works at Microsoft as a data scientist.",
+                    "context": "team info",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        # Verify document now contains both old and new content
+        doc_v2 = await memory.get_document(document_id, bank_id, request_context=request_context)
+        v2_text = doc_v2["original_text"]
+        assert "Alice works at Google" in v2_text, "Original content should be preserved"
+        assert "Bob works at Microsoft" in v2_text, "New content should be appended"
+
+        # Verify facts from both old and new content are recallable
+        result_alice = await memory.recall_async(
+            bank_id=bank_id,
+            query="Where does Alice work?",
+            budget=Budget.MID,
+            max_tokens=1000,
+            request_context=request_context,
+        )
+        assert len(result_alice.results) > 0, "Should recall facts about Alice"
+
+        result_bob = await memory.recall_async(
+            bank_id=bank_id,
+            query="Where does Bob work?",
+            budget=Budget.MID,
+            max_tokens=1000,
+            request_context=request_context,
+        )
+        assert len(result_bob.results) > 0, "Should recall facts about Bob"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_mode_metadata_consistent_for_unchanged_and_new_units(memory, request_context):
+    """Append metadata should become authoritative for old and new facts."""
+    bank_id = f"test_append_meta_{_ts()}"
+    document_id = "append-metadata"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Alice works at Google as a software engineer.",
+                    "document_id": document_id,
+                    "metadata": {"source": "email"},
+                }
+            ],
+            request_context=request_context,
+        )
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Bob works at Microsoft as a data scientist.",
+                    "document_id": document_id,
+                    "metadata": {"source": "crm"},
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] == {"source": "crm"}
+
+        listing = await memory.list_memory_units(bank_id, document_id=document_id, request_context=request_context)
+        rows = listing["items"]
+
+        assert rows
+        for row in rows:
+            # list_memory_units already parses the JSON metadata into a dict.
+            assert row["metadata"] == {"source": "crm"}
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_mode_no_existing_document(memory, request_context):
+    """
+    When update_mode='append' but no existing document exists,
+    it should behave like a normal retain (no content to prepend).
+    """
+    bank_id = f"test_append_new_{_ts()}"
+    document_id = "new-doc-append"
+
+    try:
+        units = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Charlie is a product manager at Stripe.",
+                    "context": "team info",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        assert len(units) > 0, "Should create facts even with no existing document"
+        # Flatten if nested
+        flat_units = units[0] if units and isinstance(units[0], list) else units
+        assert len(flat_units) > 0
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert "Charlie is a product manager" in doc["original_text"]
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_mode_requires_document_id(memory, request_context):
+    """update_mode='append' without document_id should raise ValueError."""
+    bank_id = f"test_append_no_docid_{_ts()}"
+
+    with pytest.raises(ValueError, match="update_mode='append' requires a document_id"):
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Some content",
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+
+@pytest.mark.asyncio
+async def test_append_mode_multiple_appends(memory, request_context):
+    """Multiple appends should accumulate content over successive retains."""
+    bank_id = f"test_multi_append_{_ts()}"
+    document_id = "multi-append-doc"
+
+    try:
+        # Initial retain
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Day 1: Alice joined the team.",
+            context="journal",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # First append
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Day 2: Alice completed her onboarding.",
+                    "context": "journal",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        # Second append
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Day 3: Alice shipped her first feature.",
+                    "context": "journal",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        # Verify all content is present
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        text = doc["original_text"]
+        assert "Day 1" in text, "Original content should be present"
+        assert "Day 2" in text, "First append should be present"
+        assert "Day 3" in text, "Second append should be present"
+
+        # All days should be recallable
+        result = await memory.recall_async(
+            bank_id=bank_id,
+            query="What happened on Alice's first days?",
+            budget=Budget.MID,
+            max_tokens=1000,
+            request_context=request_context,
+        )
+        assert len(result.results) > 0, "Should recall facts from all appends"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_replace_mode_is_default(memory, request_context):
+    """Without update_mode (or update_mode='replace'), retain should replace content."""
+    bank_id = f"test_replace_default_{_ts()}"
+    document_id = "replace-doc"
+
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="team info",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Retain again without update_mode — should replace
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Bob works at Microsoft.",
+                    "context": "team info",
+                    "document_id": document_id,
+                }
+            ],
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        text = doc["original_text"]
+        # With replace, only new content should remain
+        assert "Bob works at Microsoft" in text, "New content should be present"
+        assert "Alice works at Google" not in text, "Old content should be replaced"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_mode_conversation_arrays_produce_valid_json(memory, request_context):
+    """When conversation-format JSON arrays are appended, original_text
+    must remain a valid flat JSON array after multiple append cycles.
+
+    Regression test for #2409: without the merge fix, original_text
+    becomes newline-joined arrays which breaks conversation-aware chunking.
+    """
+    bank_id = f"test_append_conv_{_ts()}"
+    document_id = "conversation-json-append"
+
+    try:
+        # First retain - JSON conversation array
+        turn1 = json.dumps(
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]
+        )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": turn1,
+                    "context": "conversation",
+                    "document_id": document_id,
+                }
+            ],
+            request_context=request_context,
+        )
+
+        # Second retain - append more turns
+        turn2 = json.dumps(
+            [
+                {"role": "user", "content": "How are you"},
+                {"role": "assistant", "content": "Doing well"},
+            ]
+        )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": turn2,
+                    "context": "conversation",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        # Verify original_text is valid JSON (not newline-joined arrays)
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        text = doc["original_text"]
+
+        parsed = json.loads(text)
+        assert isinstance(parsed, list), "original_text must be a JSON array"
+        assert all(isinstance(e, dict) for e in parsed), (
+            "original_text must be a flat array of dicts, not nested arrays"
+        )
+        assert len(parsed) == 4, "Should contain all 4 messages from both retains"
+
+        # Third retain - append again, verify no degradation
+        turn3 = json.dumps(
+            [
+                {"role": "user", "content": "What is new"},
+                {"role": "assistant", "content": "Not much"},
+            ]
+        )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": turn3,
+                    "context": "conversation",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        text = doc["original_text"]
+
+        parsed = json.loads(text)
+        assert isinstance(parsed, list), "original_text must remain a JSON array after 3rd append"
+        assert all(isinstance(e, dict) for e in parsed), (
+            "original_text must remain a flat array of dicts after 3rd append"
+        )
+        assert len(parsed) == 6, "Should contain all 6 messages from three retains"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_append_keeps_caller_fields_in_retain_params(memory, request_context):
+    """An append must record the caller's own fields on the document.
+
+    `_build_retain_params` reads `contents_dicts[0]`, and an append onto an EXISTING
+    document makes that element a synthetic item holding the stored body. A field that
+    item does not carry is a field the document never records, so the reprocess replays
+    under the bank default instead of what the caller asked for (#4590).
+    """
+    bank_id = f"test_append_retain_params_{_ts()}"
+    document_id = "conversation-append-strategy"
+
+    try:
+        for content in (
+            "Alice works at Google as a software engineer.",
+            "Bob works at Microsoft as a data scientist.",
+        ):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[
+                    {
+                        "content": content,
+                        "context": "team info",
+                        "document_id": document_id,
+                        "update_mode": "append",
+                        "strategy": "conversation",
+                    }
+                ],
+                request_context=request_context,
+            )
+            doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+            params = doc.get("retain_params") or {}
+            assert params.get("strategy") == "conversation", f"append dropped the strategy: {params!r}"
+            assert params.get("context") == "team info", f"append dropped the context: {params!r}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

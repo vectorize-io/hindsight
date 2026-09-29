@@ -1,0 +1,57 @@
+{
+  "name": "@vectorize-io/hindsight-all",
+  "version": "0.10.2",
+  "description": "Node.js programmatic lifecycle manager for Hindsight — embeds a local hindsight daemon in a Node application. Pair with @vectorize-io/hindsight-client for memory operations.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "hindsight",
+    "hindsight-all",
+    "memory",
+    "ai",
+    "agent",
+    "long-term-memory",
+    "llm",
+    "embedded-server"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-all-npm"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "rollup": "^4.59.0",
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5"
+  }
+}

@@ -1,0 +1,262 @@
+---
+hide_table_of_contents: true
+---
+
+import PageHero from '@site/src/components/PageHero';
+
+<PageHero title="OpenClaw Changelog" subtitle="@vectorize-io/hindsight-openclaw — Hindsight memory plugin for OpenClaw." />
+
+[← OpenClaw integration](../../sdks/integrations/openclaw.md)
+
+## [0.13.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.13.0)
+
+**Features**
+
+- Adds agentBankMap support for assigning separate Hindsight memory banks to individual agents.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a2d95f9ef" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a2d95f9ef</a>
+
+**Bug Fixes**
+
+- Prevents recall work from a previous service generation from affecting current requests.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/Tosko4" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@Tosko4</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/bcf1eb3d1" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>bcf1eb3d1</a>
+- Ensures recall requests honor caller deadlines through the client transport.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/Tosko4" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@Tosko4</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/54226f62a" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>54226f62a</a>
+- Makes knowledge-tool response payloads available as details when using Code Mode.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/L4XB" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@L4XB</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c4b73f957" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c4b73f957</a>
+- Correctly handles transcript session-end records during memory processing.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/L4XB" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@L4XB</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/567fa1c40" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>567fa1c40</a>
+- Makes the OpenClaw smoke test fail whenever Hindsight doctor reports a diagnostic issue.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/945b74144" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>945b74144</a>
+
+## [0.12.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.12.0)
+
+**Features**
+
+- Add configurable minimum recall score thresholds (“score floors”) to improve control over which memories are returned.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/koriyoshi2041" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@koriyoshi2041</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1bbae3f66" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1bbae3f66</a>
+
+**Bug Fixes**
+
+- Fix incorrect agent identity being shown/used for dashboard sessions.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7868fe4bf" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7868fe4bf</a>
+- Restore compatibility with OpenClaw 2026.8.1 and newer.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/3292c96af" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>3292c96af</a>
+- Prevent the daemon from timing out while a request is still in progress.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d7d137fa1" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d7d137fa1</a>
+
+## [0.11.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.1)
+
+**Bug Fixes**
+
+- Fixed conversation history being lost when the plugin runs its own local Hindsight daemon: every restart of the OpenClaw host replaced the documents retained before it, so long-running sessions kept only the most recent stretch of their history. Retains that fail while the daemon is unavailable are now queued and retried instead of dropped.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d97b560e2" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d97b560e2</a>
+
+## [0.11.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.11.0)
+
+**Features**
+
+- Added GitHub Copilot as a supported subscription provider for LLM usage.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/dudujuju828" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@dudujuju828</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1d9a6a381" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1d9a6a381</a>
+
+**Improvements**
+
+- Auto-recalled memories now include document provenance tags (e.g., "[doc:&lt;document_id&gt;]") to make sources clearer.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/xiaoxiaoHe-E" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@xiaoxiaoHe-E</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0eee31b63" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0eee31b63</a>
+
+**Bug Fixes**
+
+- Retain requests are now idempotent when queued, preventing duplicate retains from repeated submissions.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/3d7f7930b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>3d7f7930b</a>
+- Recall and retain results no longer include the operator-configured display-name prefix, improving consistent naming in returned memories.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/chethanuk" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@chethanuk</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/e62ce26ef" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>e62ce26ef</a>
+
+## [0.10.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.10.0)
+
+**Features**
+
+- Added a recall option to prefer returning observations when retrieving memories.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d19f54c77" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d19f54c77</a>
+
+**Bug Fixes**
+
+- Fixed recalled memories being injected into the wrong context by default (now goes to user context).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/Sanderhoff-alt" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@Sanderhoff-alt</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/79c9f4afe" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>79c9f4afe</a>
+- Prevented retention appends unless there is stored text to append, avoiding incorrect/empty retention updates.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/xmh1011" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@xmh1011</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/5ab6bdc9b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>5ab6bdc9b</a>
+
+## [0.9.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.9.0)
+
+**Improvements**
+
+- Remove runtime metadata from stored memory content so saved memories are cleaner and more consistent.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/de1tydev" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@de1tydev</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/aa308ad20" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>aa308ad20</a>
+
+**Bug Fixes**
+
+- Prevent synthetic tool-result messages from affecting how recent conversation turns are sliced and grouped.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/kumaxs" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@kumaxs</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/3b7d18d47" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>3b7d18d47</a>
+- Ensure dynamic memory banks correctly inherit and use the configured default settings.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/devinkuhn" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@devinkuhn</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ef2e8ab7f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ef2e8ab7f</a>
+- Retained documents are now always scoped to the current session to avoid unintended cross-session carryover.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a5f4d30ea" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a5f4d30ea</a>
+
+## [0.8.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.8.0)
+
+**Improvements**
+
+- Openclaw now defaults recall types to include only observations, reducing unexpected memory recall behavior out of the box.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4b19a0fb" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4b19a0fb</a>
+- Injected memory context now labels the “Current time” value as UTC for clearer, consistent time interpretation.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/dc41f6a5" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>dc41f6a5</a>
+
+**Bug Fixes**
+
+- Ensures any un-retained conversation turns are flushed and saved when a session ends, preventing missing memories.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7a4400e0" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7a4400e0</a>
+- Fixes dispatch being silently skipped in synthetic-main + static-banking configurations, restoring expected memory processing.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/09c9cecf" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>09c9cecf</a>
+
+## [0.7.7](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.7)
+
+**Features**
+
+- Retained transcripts now include a session-context block at the beginning to preserve important session details.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/kryptt" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@kryptt</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/be696b0d" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>be696b0d</a>
+
+**Bug Fixes**
+
+- Setup wizard now correctly backfills the plugin allowlist to include hindsight-openclaw, preventing the integration from being unintentionally blocked after setup.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4088af36" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4088af36</a>
+
+## [0.7.6](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.6)
+
+**Bug Fixes**
+
+- Setup wizard now preserves your existing OpenClaw token and URL when re-running setup, preventing unnecessary reconfiguration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ef600683" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ef600683</a>
+
+## [0.7.5](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.5)
+
+**Bug Fixes**
+
+- Setup wizard now correctly saves the “Allow conversation access” setting for OpenClaw.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/abf84872" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>abf84872</a>
+
+## [0.7.4](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.4)
+
+**Bug Fixes**
+
+- Fixes OpenClaw integration configuration so the knowledge tools toggle is correctly honored.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c95206e0" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c95206e0</a>
+
+## [0.7.3](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.3)
+
+**Improvements**
+
+- Added optional performance timing debug output for the OpenClaw integration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/d37940a9" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>d37940a9</a>
+
+**Bug Fixes**
+
+- Fixed mission handling semantics and corrected the allowed configuration options (including retainQueue).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/aca03832" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>aca03832</a>
+- Prevented duplicate OpenClaw registration across multiple API instances to avoid repeated handlers or side effects.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vernmic" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@vernmic</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0ce9f333" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0ce9f333</a>
+
+## [0.7.2](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.2)
+
+*This release contains internal maintenance and infrastructure changes only.*
+
+## [0.7.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.1)
+
+**Bug Fixes**
+
+- Fix OpenClaw integration upgrades by using the published agent-sdk dependency and updating the plugin configuration schema.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c1924e9d" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c1924e9d</a>
+
+## [0.7.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.0)
+
+**Features**
+
+- Added initial support for self-driving agents in the OpenClaw integration for Hindsight.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7f30dcc7" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7f30dcc7</a>
+
+## [0.6.6](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.6)
+
+**Bug Fixes**
+
+- Retention is now applied correctly for default agent main:main sessions instead of being silently skipped.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/70677457" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>70677457</a>
+
+## [0.6.5](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.5)
+
+**Bug Fixes**
+
+- Fix per-session memory retention so saving a new turn no longer overwrites earlier turns in the same session.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1f897314" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1f897314</a>
+- Improve direct-execution detection by correctly resolving full symlink chains, preventing incorrect behavior when invoked through symlinked paths.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/D2758695161" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@D2758695161</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7ceaa22a" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7ceaa22a</a>
+
+## [0.6.4](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.4)
+
+**Features**
+
+- Openclaw now uses a session-scoped document ID and records structured timestamps for each message, improving session consistency and message ordering. ([`33645e08`](https://github.com/vectorize-io/hindsight/commit/33645e08))
+
+## [0.6.3](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.3)
+
+**Features**
+
+- Inline retain tags are now merged with default retain tags, improving consistency of retention behavior without extra configuration. ([`b79ab2b7`](https://github.com/vectorize-io/hindsight/commit/b79ab2b7))
+
+**Improvements**
+
+- All HTTP requests now include an identifying User-Agent, improving request attribution and compatibility with stricter endpoints. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
+**Bug Fixes**
+
+- Per-agent banking now respects identity skip-filter configuration, preventing incorrect identity filtering. ([`90a22016`](https://github.com/vectorize-io/hindsight/commit/90a22016))
+
+## [0.6.2](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.2)
+
+**Features**
+
+- OpenClaw conversations are now stored in an Anthropic-style JSON format, preserving tool_use/tool_result blocks for more faithful replay and analysis. ([`adc85129`](https://github.com/vectorize-io/hindsight/commit/adc85129))
+
+**Bug Fixes**
+
+- Improved session consistency and reduced noise by stabilizing session identity and skipping non-user operational turns. ([`2ff805d6`](https://github.com/vectorize-io/hindsight/commit/2ff805d6))
+- Fixed intermittent missing behavior by ensuring agent hooks are registered on every plugin invocation. ([`1be5ff33`](https://github.com/vectorize-io/hindsight/commit/1be5ff33))
+
+## [0.6.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.1)
+
+**Bug Fixes**
+
+- Openclaw setup wizard now prompts for the actual token value instead of an environment variable name. ([`9679d813`](https://github.com/vectorize-io/hindsight/commit/9679d813))
+
+## [0.6.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.0)
+
+**Breaking Changes**
+
+- Configuration is now read from the plugin configuration instead of environment variables, requiring updates to existing deployments. ([`e22ae05f`](https://github.com/vectorize-io/hindsight/commit/e22ae05f))
+
+**Features**
+
+- Adds an interactive setup wizard with Cloud, API, and Embedded configuration modes. ([`87322396`](https://github.com/vectorize-io/hindsight/commit/87322396))
+- Adds a daemon lifecycle package for running the Hindsight "all" daemon. ([`576016f5`](https://github.com/vectorize-io/hindsight/commit/576016f5))
+- Adds a configuration-aware CLI to backfill historical data into Hindsight memory. ([`72fd3d59`](https://github.com/vectorize-io/hindsight/commit/72fd3d59))
+- Adds session pattern filtering to ignore or treat certain sessions as stateless. ([`5a61ac50`](https://github.com/vectorize-io/hindsight/commit/5a61ac50))
+- Adds configurable tags for retained memories. ([`b0e8ac0f`](https://github.com/vectorize-io/hindsight/commit/b0e8ac0f))
+- Adds support for bankId when using static banks. ([`0e81d1a2`](https://github.com/vectorize-io/hindsight/commit/0e81d1a2))
+
+**Improvements**
+
+- Improves startup resilience and enriches retained memory metadata. ([`1f1716bd`](https://github.com/vectorize-io/hindsight/commit/1f1716bd))
+- Adds a JSONL-backed retain queue to improve reliability when the external API is unavailable. ([`087545cc`](https://github.com/vectorize-io/hindsight/commit/087545cc))
+- Reduces CLI startup time by deferring heavy initialization until the service starts. ([`41025c3b`](https://github.com/vectorize-io/hindsight/commit/41025c3b))
+
+**Bug Fixes**
+
+- Avoids misrouting by ignoring ctx.channelId when it contains a provider name. ([`d4b8b354`](https://github.com/vectorize-io/hindsight/commit/d4b8b354))
+
+## [0.5.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.5.1)
+
+**Bug Fixes**
+
+- Fixed JSON manifest formatting issues in the OpenClaw plugin to prevent manifest parsing/loading problems. ([`704e41fa`](https://github.com/vectorize-io/hindsight/commit/704e41fa))
+
+## [0.5.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.5.0)
+
+**Breaking Changes**
+
+- Removed hardcoded default model settings from integrations so model/provider must be configured explicitly. ([`58e68f3e`](https://github.com/vectorize-io/hindsight/commit/58e68f3e))
+
+**Features**
+
+- Added configurable, structured logging for the OpenClaw integration. ([`d441ab81`](https://github.com/vectorize-io/hindsight/commit/d441ab81))
+- Added an auto-recall toggle and support for excluding specific providers from recall/retention. ([`3f9eb27c`](https://github.com/vectorize-io/hindsight/commit/3f9eb27c))
+- Added configuration to skip recall/retention for selected providers. ([`fb7be3ec`](https://github.com/vectorize-io/hindsight/commit/fb7be3ec))
+- Added dynamic per-channel memory banks to isolate memory across channels. ([`9a776e9f`](https://github.com/vectorize-io/hindsight/commit/9a776e9f))
+- Added support for using an external Hindsight API backend. ([`6b346925`](https://github.com/vectorize-io/hindsight/commit/6b346925))
+- Added plugin configuration options to select the LLM provider and model. ([`8564135b`](https://github.com/vectorize-io/hindsight/commit/8564135b))
+
+**Improvements**
+
+- Added control over where recalled memories are injected to better preserve prompt caching. ([`200bab23`](https://github.com/vectorize-io/hindsight/commit/200bab23))
+- Improved recall/retention controls and scalability, and added Gemini safety settings support. ([`d425e93c`](https://github.com/vectorize-io/hindsight/commit/d425e93c))
+- Memory retention now periodically keeps recent conversation turns (default every 10 turns) to improve continuity. ([`ad1660b3`](https://github.com/vectorize-io/hindsight/commit/ad1660b3))
+- Improved OpenClaw and embedding parameters for better integration behavior and configuration. ([`749478d9`](https://github.com/vectorize-io/hindsight/commit/749478d9))
+- Improved OpenClaw configuration setup and initialization behavior. ([`27498f99`](https://github.com/vectorize-io/hindsight/commit/27498f99))
+
+**Bug Fixes**
+
+- Added a configurable auto-recall timeout to prevent recalls from hanging or taking too long. ([`cd4d449f`](https://github.com/vectorize-io/hindsight/commit/cd4d449f))
+- Recalled memories are now injected as system context for more reliable behavior. ([`b17f338e`](https://github.com/vectorize-io/hindsight/commit/b17f338e))
+- Health check requests now include the auth token to avoid unauthorized failures. ([`40b02645`](https://github.com/vectorize-io/hindsight/commit/40b02645))
+- Improved stability and safety with better shell handling, HTTP mode support, lazy reinitialization, and per-user memory banks. ([`c4610130`](https://github.com/vectorize-io/hindsight/commit/c4610130))
+- Fixed failures when ingesting very large content (E2BIG). ([`6bad6673`](https://github.com/vectorize-io/hindsight/commit/6bad6673))
+- Prevented memory retention from recursing indefinitely. ([`4f112101`](https://github.com/vectorize-io/hindsight/commit/4f112101))
+- Prevented user memories from being wiped on every new session. ([`981cf605`](https://github.com/vectorize-io/hindsight/commit/981cf605))
+- Improved shell argument escaping to prevent command failures with special characters. ([`63e2964a`](https://github.com/vectorize-io/hindsight/commit/63e2964a))
+- Renamed the OpenClaw binary to the correct name to avoid invocation/config mismatches. ([`b364bc34`](https://github.com/vectorize-io/hindsight/commit/b364bc34))

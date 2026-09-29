@@ -1,0 +1,19 @@
+{
+  "identities": [
+    {
+      "name": "hindsight",
+      "credentials": [
+        {
+          "accessKey": "hindsight_s3_key",
+          "secretKey": "hindsight_s3_secret"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "Write",
+        "List"
+      ]
+    }
+  ]
+}

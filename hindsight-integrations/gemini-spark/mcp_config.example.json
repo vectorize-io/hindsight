@@ -1,0 +1,11 @@
+{
+  "_comment": "Drop this entry into ~/.gemini/antigravity/mcp_config.json. For Hindsight Cloud, use the Cloud URL with a Bearer token. For self-hosted with the OAuth proxy, use your proxy URL.",
+  "mcpServers": {
+    "hindsight": {
+      "serverUrl": "https://api.hindsight.vectorize.io/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_HINDSIGHT_API_KEY"
+      }
+    }
+  }
+}

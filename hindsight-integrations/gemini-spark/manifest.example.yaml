@@ -1,0 +1,19 @@
+# Example Antigravity 2.0 / Gemini Spark agent manifest snippet.
+#
+# Drop the `tools.mcp_servers` block into your existing antigravity.yaml.
+# This format follows the shape shown in the I/O 2026 developer guide; once
+# Google publishes the formal schema it may need adjusting.
+#
+# For Hindsight Cloud: use https://api.hindsight.vectorize.io/mcp
+# For self-hosted:     use your cloudflare-oauth-proxy URL
+
+tools:
+  mcp_servers:
+    - name: hindsight
+      endpoint: https://api.hindsight.vectorize.io/mcp
+      auth: bearer
+      description: >
+        Long-term memory across sessions. Call recall whenever the user
+        references past work, decisions, or preferences from earlier
+        conversations. Call retain whenever the user shares a fact,
+        preference, or decision worth remembering.

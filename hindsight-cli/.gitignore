@@ -1,0 +1,20 @@
+# Rust
+/target/
+Cargo.lock
+
+# Distribution
+/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak

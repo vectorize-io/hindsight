@@ -1,0 +1,17 @@
+{{- if .Values.tei.embedding.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hindsight.fullname" . }}-tei-embedding
+  labels:
+    {{- include "hindsight.tei.embedding.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: {{ .Values.tei.embedding.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "hindsight.tei.embedding.selectorLabels" . | nindent 4 }}
+{{- end }}

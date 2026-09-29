@@ -1,0 +1,76 @@
+{{- if .Values.tei.embedding.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hindsight.fullname" . }}-tei-embedding
+  labels:
+    {{- include "hindsight.tei.embedding.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.tei.embedding.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hindsight.tei.embedding.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hindsight.tei.embedding.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "hindsight.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: tei-embedding
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ .Values.tei.embedding.image.repository }}:{{ .Values.tei.embedding.image.tag }}"
+        imagePullPolicy: {{ .Values.tei.embedding.image.pullPolicy }}
+        args:
+          - "--model-id"
+          - {{ .Values.tei.embedding.model | quote }}
+          - "--hostname"
+          - "0.0.0.0"
+          {{- range .Values.tei.embedding.args }}
+          - {{ . | quote }}
+          {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.tei.embedding.port }}
+          protocol: TCP
+        env:
+        - name: PORT
+          value: {{ .Values.tei.embedding.port | quote }}
+        {{- range $key, $value := .Values.tei.embedding.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.tei.embedding.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.tei.embedding.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.tei.embedding.resources | nindent 10 }}
+        volumeMounts:
+        - name: model-cache
+          mountPath: /data
+      volumes:
+      - name: model-cache
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

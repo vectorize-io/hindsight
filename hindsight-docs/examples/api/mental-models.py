@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""
+Mental Models API examples for Hindsight.
+Run: python examples/api/mental-models.py
+"""
+import os
+import time
+
+HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
+BANK_ID = "mental-models-demo-bank"
+
+# =============================================================================
+# Setup (not shown in docs)
+# =============================================================================
+from hindsight_client import Hindsight
+
+client = Hindsight(base_url=HINDSIGHT_URL)
+
+# Create bank and seed some data
+client.create_bank(bank_id=BANK_ID, name="Mental Models Demo")
+client.retain(bank_id=BANK_ID, content="The team prefers async communication via Slack")
+client.retain(bank_id=BANK_ID, content="For urgent issues, use the #incidents channel")
+client.retain(bank_id=BANK_ID, content="Weekly syncs happen every Monday at 10am")
+
+# Wait for data to be processed
+time.sleep(2)
+
+# =============================================================================
+# Doc Examples
+# =============================================================================
+
+# [docs:create-mental-model]
+# Create a mental model (runs reflect in background)
+result = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Team Communication Preferences",
+    source_query="How does the team prefer to communicate?",
+    tags=["team", "communication"]
+)
+
+# Returns an operation_id - check operations endpoint for completion
+print(f"Operation ID: {result.operation_id}")
+# [/docs:create-mental-model]
+
+# [docs:create-mental-model-with-id]
+# Create a mental model with a specific custom ID
+result_with_id = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Communication Policy",
+    source_query="What are the team's communication guidelines?",
+    id="communication-policy"
+)
+
+print(f"Created with custom ID: {result_with_id.operation_id}")
+# [/docs:create-mental-model-with-id]
+
+# Wait for the mental model to be created
+time.sleep(5)
+
+# [docs:create-mental-model-with-trigger]
+# Create a mental model with automatic refresh enabled
+result = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Project Status",
+    source_query="What is the current project status?",
+    trigger={"refresh_cron": "0 3 * * *"}
+)
+
+# This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
+print(f"Operation ID: {result.operation_id}")
+# [/docs:create-mental-model-with-trigger]
+
+# [docs:create-mental-model-tags-match]
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
+# use "any" when your memories are tagged narrowly (one topic each), so the
+# refresh reads any memory carrying at least one of the model's tags.
+result = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Current Projects",
+    source_query="Which projects is the user currently working on?",
+    tags=["projects", "mental-model"],
+    trigger={"tags_match": "any"}
+)
+
+print(f"Operation ID: {result.operation_id}")
+# [/docs:create-mental-model-tags-match]
+
+# Wait for the mental model to be created
+time.sleep(5)
+
+# [docs:list-mental-models]
+# List all mental models in a bank. The list returns metadata by default;
+# detail="content" adds source_query/content/trigger.
+mental_models = client.list_mental_models(bank_id=BANK_ID, detail="content")
+
+for mental_model in mental_models.items:
+    print(f"- {mental_model.name}: {mental_model.source_query}")
+# [/docs:list-mental-models]
+
+# Get the mental model ID for subsequent examples
+mental_model_id = mental_models.items[0].id if mental_models.items else None
+
+if mental_model_id:
+    # [docs:get-mental-model]
+    # Get a specific mental model
+    mental_model = client.get_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    print(f"Name: {mental_model.name}")
+    print(f"Content: {mental_model.content}")
+    print(f"Last refreshed: {mental_model.last_refreshed_at}")
+    # [/docs:get-mental-model]
+
+
+    # [docs:refresh-mental-model]
+    # Refresh a mental model to update with current knowledge
+    result = client.refresh_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    print(f"Refresh operation ID: {result.operation_id}")
+    # [/docs:refresh-mental-model]
+
+
+    # [docs:clear-mental-model]
+    # Clear a mental model's content, then refresh for a full re-synthesis
+    client.clear_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    # Trigger a fresh full rebuild
+    result = client.refresh_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    print(f"Full refresh operation ID: {result.operation_id}")
+    # [/docs:clear-mental-model]
+
+
+    # [docs:update-mental-model]
+    # Update a mental model's metadata
+    updated = client.update_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id,
+        name="Updated Team Communication Preferences",
+        trigger={"refresh_after_consolidation": True}  # Enable auto-refresh
+    )
+
+    print(f"Updated name: {updated.name}")
+    # [/docs:update-mental-model]
+
+
+    # [docs:get-mental-model-history]
+    # Get the change history of a mental model
+    history = client.get_mental_model_history(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    for entry in history:
+        print(f"Changed at: {entry['changed_at']}")
+        print(f"Previous content: {entry['previous_content']}")
+    # [/docs:get-mental-model-history]
+
+    # [docs:mental-model-detail]
+    # List: metadata only, the default (smallest response)
+    client.list_mental_models(bank_id=BANK_ID)
+
+    # List with content but without provenance chains (opt-in)
+    client.list_mental_models(bank_id=BANK_ID, detail="content")
+
+    # Get one model — full detail is the default here
+    client.get_mental_model(bank_id=BANK_ID, mental_model_id=mental_model_id)
+    # [/docs:mental-model-detail]
+
+    # [docs:dry-run-refresh]
+    # Preview what a refresh would do, without writing anything
+    preview = client.dry_run_refresh_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    print(f"Mode: {preview.effective_mode}, would persist: {preview.would_persist}")
+    print(preview.diff)
+    # [/docs:dry-run-refresh]
+
+    # [docs:keep-trace]
+    # Record how every refresh (scheduled ones too) reached its result
+    client.update_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id,
+        trigger={"mode": "delta", "keep_trace": True}
+    )
+    # [/docs:keep-trace]
+
+    # [docs:delete-mental-model]
+    # Delete a mental model
+    client.delete_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+    # [/docs:delete-mental-model]
+
+
+# =============================================================================
+# Cleanup (not shown in docs)
+# =============================================================================
+client.delete_bank(bank_id=BANK_ID)
+
+print("mental-models.py: All examples passed")

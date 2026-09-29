@@ -1,0 +1,453 @@
+"""
+Command-line interface for Hindsight Worker.
+
+Run the worker with:
+    hindsight-worker
+
+Stop with Ctrl+C (graceful shutdown).
+"""
+
+import argparse
+import asyncio
+import atexit
+import logging
+import os
+import signal
+import socket
+import sys
+import warnings
+from collections.abc import Callable
+
+from ..config import get_config, load_dotenv_for_entrypoint
+from ..engine.task_backend import WorkerTaskBackend
+from .poller import WorkerPoller
+
+# Filter deprecation warnings from third-party libraries
+warnings.filterwarnings("ignore", message="websockets.legacy is deprecated")
+warnings.filterwarnings("ignore", message="websockets.server.WebSocketServerProtocol is deprecated")
+
+# Disable tokenizers parallelism to avoid warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+logger = logging.getLogger(__name__)
+
+
+def _install_shutdown_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    handler: Callable[[], None],
+) -> bool:
+    """Register SIGINT/SIGTERM handlers on the asyncio loop.
+
+    Returns True when handlers were installed via ``loop.add_signal_handler``.
+    Returns False on platforms (Windows ProactorEventLoop) where asyncio
+    does not implement signal handlers; the caller falls back to Python's
+    default SIGINT behavior, which still terminates the process on Ctrl+C
+    but loses the in-loop two-stage graceful shutdown.
+    """
+    try:
+        loop.add_signal_handler(signal.SIGINT, handler)
+        loop.add_signal_handler(signal.SIGTERM, handler)
+    except NotImplementedError:
+        return False
+    return True
+
+
+def create_worker_app(poller: WorkerPoller, memory):
+    """Create a minimal FastAPI app for worker metrics and health."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse, Response
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    from ..liveness import WorkerLivenessResponse, worker_liveness_response
+    from ..metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
+
+    app = FastAPI(
+        title="Hindsight Worker",
+        description="Worker process for distributed task execution",
+    )
+
+    # Initialize OpenTelemetry metrics
+    try:
+        prometheus_reader = initialize_metrics(service_name="hindsight-worker", service_version="1.0.0")
+        create_metrics_collector()
+        app.state.prometheus_reader = prometheus_reader
+        logger.info("Metrics initialized - available at /metrics endpoint")
+    except Exception as e:
+        logger.warning(f"Failed to initialize metrics: {e}. Metrics will be disabled.")
+        app.state.prometheus_reader = None
+
+    # Set up DB pool metrics if available
+    metrics_collector = get_metrics_collector()
+    if memory._pool is not None and hasattr(metrics_collector, "set_db_pool"):
+        metrics_collector.set_db_pool(memory._pool)
+        logger.info("DB pool metrics configured")
+
+    async def _readiness_response() -> JSONResponse:
+        """Shared body of /health and /health/ready: 200 if healthy, 503 if not."""
+        health = await memory.health_check()
+        health["worker_id"] = poller.worker_id
+        health["is_shutdown"] = poller.is_shutdown
+        status_code = 200 if health.get("status") == "healthy" else 503
+        return JSONResponse(content=health, status_code=status_code)
+
+    @app.get(
+        "/health",
+        summary="Health check endpoint",
+        description="Readiness check: returns worker health status including database "
+        "connectivity. Alias of /health/ready. Use /health/live for liveness probes.",
+        tags=["Monitoring"],
+    )
+    async def health_endpoint():
+        """Health check endpoint."""
+        return await _readiness_response()
+
+    @app.get(
+        "/health/ready",
+        summary="Readiness probe",
+        description="Returns 200 when the worker can reach the database, 503 otherwise. "
+        "Identical to /health, which stays supported as its alias.",
+        tags=["Monitoring"],
+    )
+    async def readiness_endpoint():
+        """Readiness probe that verifies database connectivity."""
+        return await _readiness_response()
+
+    @app.get(
+        "/health/live",
+        response_model=WorkerLivenessResponse,
+        summary="Liveness probe",
+        description="Returns 200 whenever the worker process can serve a request. Performs "
+        "no database access, so a slow database never restarts the worker and never "
+        "requeues its claimed operations. Point livenessProbe here.",
+        tags=["Monitoring"],
+    )
+    async def liveness_endpoint() -> WorkerLivenessResponse:
+        """Liveness probe: in-process only, never touches the database.
+
+        ``seconds_since_last_poll`` exposes poller progress for alerting; it never
+        changes the status code, because a stalled poll cycle under database
+        pressure is precisely the case where restarting makes things worse.
+        """
+        return worker_liveness_response(
+            worker_id=poller.worker_id,
+            is_shutdown=poller.is_shutdown,
+            seconds_since_last_poll=poller.seconds_since_last_poll,
+        )
+
+    @app.get(
+        "/metrics",
+        summary="Prometheus metrics endpoint",
+        description="Exports metrics in Prometheus format for scraping",
+        tags=["Monitoring"],
+    )
+    async def metrics_endpoint():
+        """Return Prometheus metrics."""
+        # Render off the event loop, same as the API's /metrics: generate_latest() is synchronous
+        # and its cost scales with registry size. Inline, a large scrape freezes this loop -- and
+        # this app also serves /health/live, so a stalled probe gets the worker restarted and its
+        # claimed operations requeued. See the longer note in api/http.py's metrics_endpoint.
+        metrics_data = await asyncio.to_thread(generate_latest)
+        return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
+
+    @app.get(
+        "/",
+        summary="Worker info",
+        description="Basic worker information",
+        tags=["Info"],
+    )
+    async def root():
+        """Return basic worker info."""
+        return {
+            "service": "hindsight-worker",
+            "worker_id": poller.worker_id,
+            "is_shutdown": poller.is_shutdown,
+        }
+
+    return app
+
+
+def main():
+    """Main entry point for the hindsight-worker CLI."""
+    load_dotenv_for_entrypoint()
+
+    # Load configuration from environment
+    config = get_config()
+
+    parser = argparse.ArgumentParser(
+        prog="hindsight-worker",
+        description="Hindsight Worker - distributed task processor",
+    )
+
+    # Worker options
+    parser.add_argument(
+        "--worker-id",
+        default=config.worker_id,
+        help="Worker identifier (default: hostname, env: HINDSIGHT_API_WORKER_ID)",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=config.worker_poll_interval_ms,
+        help=f"Poll interval in milliseconds (default: {config.worker_poll_interval_ms}, env: HINDSIGHT_API_WORKER_POLL_INTERVAL_MS)",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=config.worker_max_retries,
+        help=f"Max retries before marking failed (default: {config.worker_max_retries}, env: HINDSIGHT_API_WORKER_MAX_RETRIES)",
+    )
+
+    # HTTP server options
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=config.worker_http_port,
+        help=f"HTTP port for metrics/health endpoints (default: {config.worker_http_port}, env: HINDSIGHT_API_WORKER_HTTP_PORT)",
+    )
+    parser.add_argument(
+        "--http-host",
+        default="0.0.0.0",
+        help="HTTP host to bind (default: 0.0.0.0)",
+    )
+
+    # Logging options
+    parser.add_argument(
+        "--log-level",
+        default=config.log_level,
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        help=f"Log level (default: {config.log_level}, env: HINDSIGHT_API_LOG_LEVEL)",
+    )
+
+    args = parser.parse_args()
+
+    # Configure logging
+    config.configure_logging()
+
+    # Initialize OpenTelemetry tracing if enabled. The worker runs consolidation,
+    # batch retain and mental-model refresh, so without this the LLM-heaviest half
+    # of a deployment emits no spans at all (issue #3614). Done after logging setup
+    # so the "Tracing initialized" line is visible.
+    from ..tracing import initialize_tracing_from_config
+
+    initialize_tracing_from_config(config, default_service_name="hindsight-worker")
+
+    from ..utils import warn_if_container_default_worker_id
+
+    warn_if_container_default_worker_id(args.worker_id)
+    worker_id = args.worker_id or socket.gethostname()
+    worker_id_source = "HINDSIGHT_API_WORKER_ID/--worker-id" if args.worker_id else "hostname (default)"
+    logger.info(f"Worker id: {worker_id} (source: {worker_id_source})")
+
+    # Import MemoryEngine here to avoid circular imports
+    from .. import MemoryEngine
+
+    print(f"Starting Hindsight Worker: {worker_id}")
+    print(f"  Poll interval: {args.poll_interval}ms")
+    print(f"  Max retries: {args.max_retries}")
+    print(f"  Max slots: {config.worker_max_slots}")
+    reservations = config.worker_slot_reservations
+    reservations_str = ", ".join(f"{k}={v}" for k, v in reservations.items()) if reservations else "none"
+    shared_pool = max(0, config.worker_max_slots - sum(reservations.values()))
+    print(f"  Slot reservations: {reservations_str}")
+    print(f"  Shared pool: {shared_pool}")
+    if config.operation_retention_days == 0:
+        print("  Operation retention: disabled (terminal rows and payloads are kept)")
+    else:
+        print(f"  Operation retention: {config.operation_retention_days} days (terminal rows, payloads, and metadata)")
+        print(f"  Operation cleanup batch: {config.operation_cleanup_batch_size} rows/schema/cycle")
+    print(f"  HTTP server: {args.http_host}:{args.http_port}")
+    print()
+
+    # Global references for cleanup
+    memory = None
+    poller = None
+
+    async def run():
+        nonlocal memory, poller
+        import uvicorn
+
+        from ..extensions import OperationValidatorExtension, TenantExtension, load_extension
+
+        # Load tenant extension BEFORE creating MemoryEngine so it can
+        # set correct schema context during task execution. Without this,
+        # _authenticate_tenant sees no extension and resets schema to "public",
+        # causing worker writes to land in the wrong schema.
+        tenant_extension = load_extension("TENANT", TenantExtension)
+
+        # Load operation validator so workers can record usage metering
+        # for async operations (e.g. refresh_mental_model after consolidation)
+        operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
+        if operation_validator:
+            logger.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
+
+        # Initialize MemoryEngine
+        # Workers use WorkerTaskBackend: submit_task is a no-op because the
+        # row already exists in async_operations.  Child tasks (e.g. consolidation
+        # triggered by retain) will be picked up by the poller on the next cycle
+        # instead of being executed inline, which avoids blocking the parent task.
+        memory = MemoryEngine(
+            run_migrations=False,  # Workers don't run migrations
+            task_backend=WorkerTaskBackend(),
+            tenant_extension=tenant_extension,
+            operation_validator=operation_validator,
+        )
+
+        await memory.initialize()
+
+        print(f"Database connected: {config.database_url}")
+
+        if tenant_extension:
+            print("Tenant extension loaded - schemas will be discovered dynamically on each poll")
+        else:
+            print(f"No tenant extension configured, using schema: {config.database_schema}")
+
+        # Check if the backend supports the async worker/poller.
+        if not memory._backend.supports_worker_poller:
+            print("ERROR: Standalone worker is not supported on this database backend.")
+            print("Operations run synchronously within the API process.")
+            sys.exit(1)
+
+        # Create a single poller that handles all schemas dynamically
+        # Convert default schema to None for SQL compatibility (no schema prefix)
+        from hindsight_api.config import DEFAULT_DATABASE_SCHEMA
+
+        schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
+        poller = WorkerPoller(
+            backend=memory._backend,
+            worker_id=worker_id,
+            executor=memory.execute_task,
+            poll_interval_ms=args.poll_interval,
+            schema=schema,
+            tenant_extension=tenant_extension,
+            max_slots=config.worker_max_slots,
+            slot_reservations=config.worker_slot_reservations,
+            consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
+            max_retries=config.worker_max_retries,
+            on_wall_timeout=memory.on_task_wall_timeout,
+        )
+
+        # Create the HTTP app for metrics/health
+        app = create_worker_app(poller, memory)
+
+        # Setup signal handlers for graceful shutdown using asyncio
+        shutdown_requested = asyncio.Event()
+        force_exit = False
+        async_handlers_installed = False
+
+        loop = asyncio.get_event_loop()
+
+        def signal_handler():
+            nonlocal force_exit
+            if shutdown_requested.is_set():
+                # Second signal = force exit
+                print("\nReceived second signal, forcing immediate exit...")
+                force_exit = True
+                # Restore default handler so third signal kills process
+                if async_handlers_installed:
+                    loop.remove_signal_handler(signal.SIGINT)
+                    loop.remove_signal_handler(signal.SIGTERM)
+                sys.exit(1)
+            else:
+                print("\nReceived shutdown signal, initiating graceful shutdown...")
+                print("(Press Ctrl+C again to force immediate exit)")
+                shutdown_requested.set()
+
+        async_handlers_installed = _install_shutdown_signal_handlers(loop, signal_handler)
+        if not async_handlers_installed:
+            # Windows ProactorEventLoop: asyncio.add_signal_handler is Unix-only
+            # and raises NotImplementedError. Default Python SIGINT handler still
+            # terminates the worker on Ctrl+C, just without the two-stage path.
+            print(
+                f"WARN: asyncio signal handlers unavailable on this platform "
+                f"({sys.platform}); graceful two-stage shutdown disabled, "
+                f"default Python SIGINT handler remains active.",
+                flush=True,
+            )
+
+        # Create uvicorn config and server
+        uvicorn_config = uvicorn.Config(
+            app,
+            host=args.http_host,
+            port=args.http_port,
+            log_level="info",  # Reduce uvicorn noise
+            access_log=False,
+        )
+        server = uvicorn.Server(uvicorn_config)
+
+        # Start the event-loop stall watchdog: if a task blocks the loop, this
+        # logs the culprit stack so a failing /health can be attributed to a
+        # blocked loop (vs DB-pool exhaustion, which the pool instrumentation logs).
+        from ..loop_watchdog import start_loop_watchdog
+
+        loop_watchdog = start_loop_watchdog(loop)
+
+        # Run the poller and HTTP server concurrently
+        poller_task = asyncio.create_task(poller.run())
+        http_task = asyncio.create_task(server.serve())
+
+        print(f"Worker started. Metrics available at http://{args.http_host}:{args.http_port}/metrics")
+
+        # Wait for shutdown signal
+        try:
+            await shutdown_requested.wait()
+        except KeyboardInterrupt:
+            print("\nReceived interrupt, initiating graceful shutdown...")
+
+        # Graceful shutdown
+        if loop_watchdog is not None:
+            loop_watchdog.stop()
+
+        print("Shutting down HTTP server...")
+        server.should_exit = True
+
+        print("Waiting for poller to finish...")
+        await poller.shutdown_graceful(timeout=30.0)
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
+
+        # Wait for HTTP server to finish
+        try:
+            await asyncio.wait_for(http_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            http_task.cancel()
+            try:
+                await http_task
+            except asyncio.CancelledError:
+                pass
+
+        # Close memory engine
+        await memory.close()
+
+        # Flush queued spans before exiting: a consolidation span can be minutes
+        # long, and everything still batched is lost if the process just exits.
+        from ..tracing import shutdown_tracing
+
+        shutdown_tracing()
+
+        print("Worker shutdown complete")
+
+    def cleanup():
+        """Synchronous cleanup for atexit."""
+        if memory is not None and memory._pg0 is not None:
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(memory._pg0.stop())
+                loop.close()
+                print("\npg0 stopped.")
+            except Exception as e:
+                print(f"\nError stopping pg0: {e}")
+
+    atexit.register(cleanup)
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\nWorker interrupted")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,76 @@
+{{- if .Values.tei.reranker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hindsight.fullname" . }}-tei-reranker
+  labels:
+    {{- include "hindsight.tei.reranker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.tei.reranker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hindsight.tei.reranker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hindsight.tei.reranker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "hindsight.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: tei-reranker
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ .Values.tei.reranker.image.repository }}:{{ .Values.tei.reranker.image.tag }}"
+        imagePullPolicy: {{ .Values.tei.reranker.image.pullPolicy }}
+        args:
+          - "--model-id"
+          - {{ .Values.tei.reranker.model | quote }}
+          - "--hostname"
+          - "0.0.0.0"
+          {{- range .Values.tei.reranker.args }}
+          - {{ . | quote }}
+          {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.tei.reranker.port }}
+          protocol: TCP
+        env:
+        - name: PORT
+          value: {{ .Values.tei.reranker.port | quote }}
+        {{- range $key, $value := .Values.tei.reranker.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.tei.reranker.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.tei.reranker.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.tei.reranker.resources | nindent 10 }}
+        volumeMounts:
+        - name: model-cache
+          mountPath: /data
+      volumes:
+      - name: model-cache
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

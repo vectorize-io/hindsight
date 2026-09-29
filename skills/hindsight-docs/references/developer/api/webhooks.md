@@ -1,0 +1,175 @@
+
+# Webhooks
+
+Hindsight can notify your application in real-time when memory events occur by sending HTTP POST requests to a URL you configure.
+
+## Delivery and Retries
+
+Webhooks are registered per memory bank and fire automatically when matching events occur. Each delivery attempt is tracked, and failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay after failure |
+|---------|---------------------|
+| 1 | 5 seconds |
+| 2 | 5 minutes |
+| 3 | 30 minutes |
+| 4 | 2 hours |
+| 5 | 5 hours |
+| 6 | Permanent failure |
+
+A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
+
+> **ℹ️ At-least-once delivery**
+>
+Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
+## Verifying Deliveries
+
+When a webhook is registered with a secret, every delivery carries an HMAC-SHA256 signature of the exact request body. Verify it before trusting a payload — the URL alone is not proof the request came from Hindsight.
+
+| Header | Value | Notes |
+|--------|-------|-------|
+| `X-Hindsight-Event` | The event type, e.g. `retain.completed` | Always sent |
+| `X-Hindsight-Signature` | `sha256=<hex>` over the raw body | Sent when a secret is configured |
+| `X-Hub-Signature-256` | Identical to `X-Hindsight-Signature` | The conventional name for this construction, so GitHub-style receivers verify out of the box |
+| `X-Hindsight-Signature-V2` | `t=<unix_seconds>,v1=<hex>` over `<t>.<raw body>` | Timestamped variant — use this if you want replay protection |
+
+`X-Hindsight-Signature` and `X-Hub-Signature-256` always carry the same value: same secret, same algorithm, same bytes. Verify whichever one your framework already understands; there is no reason to check both.
+
+> **⚠️ Prefer the timestamped signature**
+>
+`X-Hindsight-Signature` / `X-Hub-Signature-256` sign the body and nothing else, so they say *this payload came from Hindsight* but not *this payload is fresh*. A delivery captured off the wire stays verifiable forever. `X-Hindsight-Signature-V2` binds the payload to the time it was signed — check that `t` is within a tolerance you choose (five minutes is a common default) and reject anything older. The timestamp is inside the signed string, so it cannot be edited without breaking the MAC. It is re-signed on every retry attempt, so a delivery that is retried hours later still arrives with a fresh `t`.
+```python
+
+TOLERANCE_SECONDS = 300
+
+def verify(secret: str, body: bytes, header: str) -> bool:
+    """Verify an X-Hindsight-Signature-V2 header against the raw request body."""
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    timestamp, received = parts["t"], parts["v1"]
+
+    if abs(time.time() - int(timestamp)) > TOLERANCE_SECONDS:
+        return False  # too old (or too far in the future) — treat as a replay
+
+    expected = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, received)
+```
+
+Two things to get right in any language:
+
+- **Sign the raw bytes.** Re-serializing the parsed JSON changes whitespace and key order, and the signature will not match. Read the body before your framework decodes it.
+- **Compare in constant time** (`hmac.compare_digest`, `crypto.timingSafeEqual`, …), never with `==`.
+
+Custom headers set on a webhook's `http_config` cannot override `X-Hindsight-Event` or any signature header, so a receiver can trust those values whatever else is configured.
+
+## Event Types
+
+### `consolidation.completed`
+
+Fired after Hindsight finishes consolidating new memories into observations for a bank.
+
+**Payload:**
+
+```json
+{
+  "event": "consolidation.completed",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "completed",
+  "timestamp": "2026-03-04T12:00:00Z",
+  "data": {
+    "observations_created": 3,
+    "observations_updated": 1,
+    "observations_deleted": null,
+    "error_message": null
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `observations_created` | `integer \| null` | Number of new observations created |
+| `observations_updated` | `integer \| null` | Number of existing observations updated |
+| `observations_deleted` | `integer \| null` | Number of observations deleted |
+| `error_message` | `string \| null` | Set when `status` is `"failed"` |
+
+**`status` values:** `"completed"` or `"failed"`
+
+---
+
+### `retain.completed`
+
+Fired once per document after a retain operation completes (both synchronous and asynchronous). When retaining a batch of N documents, N separate events are fired.
+
+**Payload:**
+
+```json
+{
+  "event": "retain.completed",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "completed",
+  "timestamp": "2026-03-04T12:00:01Z",
+  "data": {
+    "document_id": "doc-abc123",
+    "tags": ["meeting", "q1-2026"],
+    "memory_unit_count": 12
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_id` | `string \| null` | The document ID if one was provided in the retain request |
+| `tags` | `string[] \| null` | Document-level tags applied during retain |
+| `memory_unit_count` | `number \| null` | Memory units the document owns after this retain. `null` when the request carried no `document_id`. |
+
+**Notes:**
+- For async retain (`async: true`), `operation_id` matches the `operation_id` returned by the retain API.
+- For sync retain, `operation_id` is a generated identifier for tracing purposes.
+- One event is fired per content item in the retain request.
+- `memory_unit_count: 0` means fact extraction returned nothing for the document. The retain still succeeded and the text is stored, but `recall` and `reflect` search memories — so the document is not retrievable until it is [reprocessed](../retain.md#when-a-mission-excludes-everything-in-a-document). Watch this field to catch a retain mission that excludes more than intended.
+
+---
+
+### `memory_defense.triggered`
+
+Fired when a bank's [Memory Defense](../memory-defense/index.md) policy acts on a retained item — once per item that is **redacted** or **blocked**. Items that pass cleanly do not fire an event. Requires a Memory Defense policy enabled on the bank and a webhook subscribed to this event type.
+
+**Payload:**
+
+```json
+{
+  "event": "memory_defense.triggered",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "redact",
+  "timestamp": "2026-03-04T12:00:02Z",
+  "data": {
+    "action": "redact",
+    "detector": "sensitive_data",
+    "document_id": "doc-abc123",
+    "matched_types": ["github_token", "aws_access_key"],
+    "message": "Sensitive data pattern matched: github_token, aws_access_key"
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | `string` | Action taken on the item: `"redact"` or `"block"` |
+| `detector` | `string \| null` | The detector that matched (`"sensitive_data"`) |
+| `document_id` | `string \| null` | The document ID if one was provided in the retain request |
+| `matched_types` | `string[] \| null` | Labels of the redaction patterns that fired (e.g. `github_token`, `ssn_us`) |
+| `message` | `string \| null` | Human-readable summary of what matched |
+
+**`status` values:** mirrors `data.action` — `"redact"` or `"block"`.
+
+**Notes:**
+- A `redact` event means the secret was scrubbed and the redacted memory was still stored. A `block` event means the item was dropped; if every item in the retain request is blocked, the retain call returns `422`.

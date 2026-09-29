@@ -1,0 +1,16 @@
+{
+  "name": "hindsight-memory",
+  "displayName": "Hindsight Memory",
+  "version": "0.2.0",
+  "description": "Automatic long-term memory for Cursor via Hindsight. Recalls relevant memories before each prompt and retains conversation transcripts after each response.",
+  "author": {"name": "Vectorize", "url": "https://vectorize.io/hindsight"},
+  "homepage": "https://vectorize.io/hindsight",
+  "repository": "https://github.com/vectorize-io/hindsight",
+  "license": "MIT",
+  "keywords": ["memory", "hindsight", "recall", "retain", "long-term-memory"],
+  "category": "developer-tools",
+  "tags": ["automation", "memory", "transcripts"],
+  "hooks": "./hooks/hooks.json",
+  "skills": "./skills/",
+  "rules": "./rules/"
+}

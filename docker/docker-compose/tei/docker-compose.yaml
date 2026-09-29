@@ -1,0 +1,113 @@
+name: hindsight-tei
+# Example: run Hindsight with embeddings and reranking served by two
+# HuggingFace Text Embeddings Inference (TEI) sidecars instead of the
+# in-process local models.
+#
+# Because embeddings and reranking are external, Hindsight itself needs no
+# baked-in models — this uses the **slim** image
+# (`ghcr.io/vectorize-io/hindsight:latest-slim`). Only the LLM (used for
+# retain/recall/reflect) still needs a provider + API key.
+#
+# The two TEI services here run a prod-like configuration:
+# `BAAI/bge-small-en-v1.5` embeddings (384-dim, Hindsight's default) and the
+# `BAAI/bge-reranker-base` cross-encoder, with the batching/concurrency flags
+# tuned for sustained multi-client load rather than TEI's bare defaults. Swap
+# the `--model-id` args to serve any TEI-supported model — the embedding
+# dimension is auto-detected from the server, and the pgvector schema is
+# adjusted to match on first boot.
+#
+# Quick start:
+#   export HINDSIGHT_API_LLM_API_KEY=sk-xxx
+#   docker compose -f docker/docker-compose/tei/docker-compose.yaml up
+#
+# First boot downloads the two models into the `tei_*_cache` volumes;
+# subsequent boots reuse them.
+
+services:
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3
+    container_name: hindsight-tei-embedding
+    # Prod-like tuning: high request concurrency with bounded batch sizes.
+    command:
+      [
+        "--model-id", "BAAI/bge-small-en-v1.5",
+        "--max-concurrent-requests", "512",
+        "--max-batch-tokens", "16384",
+        "--max-client-batch-size", "32",
+        "--auto-truncate",
+      ]
+    environment:
+      # TEI listens on port 80 inside the container by default.
+      PORT: "80"
+    ports:
+      # Exposed on the host so you can curl the server directly, e.g.
+      #   curl 127.0.0.1:8080/embed -H 'content-type: application/json' \
+      #        -d '{"inputs":"hello world"}'
+      - "8080:80"
+    volumes:
+      - tei_embedding_cache:/data
+    healthcheck:
+      # The TEI image ships curl; hit its /health endpoint so Hindsight only
+      # starts once the model is loaded and serving.
+      test: ["CMD", "curl", "-fsS", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  tei-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3
+    container_name: hindsight-tei-reranker
+    # Prod-like tuning: reranking batches are larger than embedding batches
+    # (rerank inputs are query+document pairs scored in bulk during recall).
+    command:
+      [
+        "--model-id", "BAAI/bge-reranker-base",
+        "--max-concurrent-requests", "512",
+        "--max-batch-tokens", "32768",
+        "--max-client-batch-size", "128",
+        "--auto-truncate",
+      ]
+    environment:
+      PORT: "80"
+    ports:
+      - "8081:80"
+    volumes:
+      - tei_reranker_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest-slim}
+    container_name: hindsight-tei
+    depends_on:
+      tei-embedding:
+        condition: service_healthy
+      tei-reranker:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      # LLM still runs through a provider — bring your own key. Pair with
+      # HINDSIGHT_API_LLM_PROVIDER to use a provider other than openai.
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_API_LLM_API_KEY:-}
+
+      # Embeddings + reranking served by the TEI sidecars above. Use the
+      # in-cluster service DNS names, not localhost.
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: tei
+      HINDSIGHT_API_EMBEDDINGS_TEI_URL: http://tei-embedding:80
+      HINDSIGHT_API_RERANKER_PROVIDER: tei
+      HINDSIGHT_API_RERANKER_TEI_URL: http://tei-reranker:80
+    volumes:
+      - pg_data:/home/hindsight/.pg0
+
+volumes:
+  pg_data:
+  tei_embedding_cache:
+  tei_reranker_cache:

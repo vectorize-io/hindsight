@@ -1,0 +1,46 @@
+.hero {
+  width: 100vw;
+  position: relative;
+  left: 50%;
+  margin-left: -50vw;
+  /* cancel Docusaurus's margin-vert--lg on the page <main> */
+  margin-top: -2rem;
+  padding: 4rem 1.5rem 3.5rem;
+  text-align: center;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 116, 217, 0.12) 0%, transparent 70%),
+              var(--ifm-background-color);
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  margin-bottom: 3rem;
+}
+
+[data-theme='dark'] .hero {
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 116, 217, 0.18) 0%, transparent 70%),
+              var(--ifm-background-color);
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #0074d9, #009296);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 0.75rem;
+}
+
+.subtitle {
+  font-size: 1.05rem;
+  color: var(--ifm-color-emphasis-600);
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .title {
+    font-size: 2.2rem;
+  }
+}

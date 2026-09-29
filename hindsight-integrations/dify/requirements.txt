@@ -1,0 +1,3 @@
+dify_plugin>=0.6.0
+hindsight-client>=0.4.0
+requests>=2.31.0

@@ -1,0 +1,36 @@
+apiVersion: 1
+
+providers:
+  # Default LGTM dashboards
+  - name: "RED Metrics (classic histogram)"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-red-metrics-classic.json
+      foldersFromFilesStructure: false
+  - name: "RED Metrics (exponential/native histogram)"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-red-metrics-native.json
+      foldersFromFilesStructure: false
+  - name: "JVM Metrics"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-jvm-metrics.json
+      foldersFromFilesStructure: false
+
+  # Hindsight dashboards
+  - name: "Hindsight Operations"
+    type: file
+    options:
+      path: /otel-lgtm/hindsight-operations.json
+      foldersFromFilesStructure: false
+  - name: "Hindsight LLM"
+    type: file
+    options:
+      path: /otel-lgtm/hindsight-llm.json
+      foldersFromFilesStructure: false
+  - name: "Hindsight API Service"
+    type: file
+    options:
+      path: /otel-lgtm/hindsight-api-service.json
+      foldersFromFilesStructure: false

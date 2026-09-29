@@ -1,0 +1,65 @@
+{
+  "name": "@vectorize-io/hindsight-chat",
+  "version": "0.4.20",
+  "description": "Hindsight memory integration for Vercel Chat SDK - Give your chat bots persistent, per-user memory",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "chat",
+    "chatbot",
+    "slack",
+    "discord",
+    "teams",
+    "memory",
+    "hindsight",
+    "agents",
+    "llm",
+    "long-term-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/chat"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "chat": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/ui": "^4.1.2",
+    "chat": "^4.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5",
+    "esbuild": "^0.28.1",
+    "postcss": ">=8.5.23 <9.0.0"
+  }
+}

@@ -1,0 +1,362 @@
+"""learnings_and_pinned_reflections
+
+Revision ID: n9i0j1k2l3m4
+Revises: m8h9i0j1k2l3
+Create Date: 2026-01-21 00:00:00.000000
+
+This migration:
+1. Creates the 'learnings' table for automatic bottom-up consolidation
+2. Creates the 'pinned_reflections' table for user-curated living documents
+3. Adds consolidation tracking columns to the 'banks' table
+"""
+
+import os
+from collections.abc import Sequence
+
+from alembic import context, op
+from sqlalchemy import text
+
+from hindsight_api._pg_extensions import create_extension
+from hindsight_api._pg_search import (
+    PG_SEARCH_TOKENIZER_ENV,
+    normalize_pg_search_tokenizer,
+    pg_search_bm25_columns,
+)
+from hindsight_api.alembic._dialect import run_for_dialect
+
+# revision identifiers, used by Alembic.
+revision: str = "n9i0j1k2l3m4"
+down_revision: str | Sequence[str] | None = "m8h9i0j1k2l3"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def _get_schema_prefix() -> str:
+    """Get schema prefix for table names (required for multi-tenant support)."""
+    schema = context.config.get_main_option("target_schema")
+    return f'"{schema}".' if schema else ""
+
+
+def _detect_vector_extension() -> str:
+    """Detect or validate vector extension for this immutable migration revision."""
+    conn = op.get_bind()
+    vector_extension = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
+
+    if vector_extension == "pgvectorscale":
+        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+        if not pgvector_check:
+            raise RuntimeError(
+                "DiskANN requires pgvector. Install with: CREATE EXTENSION vector; then vectorscale or pg_diskann CASCADE;"
+            )
+        vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
+        pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
+
+        if vectorscale_check:
+            return "pgvectorscale"
+        if pg_diskann_check:
+            return "pg_diskann"
+        raise RuntimeError(
+            "Configured vector extension 'pgvectorscale' not found. Install either:\n"
+            "  - pgvectorscale: CREATE EXTENSION vectorscale CASCADE;\n"
+            "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
+        )
+    if vector_extension == "vchord":
+        vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+        if not vchord_check:
+            raise RuntimeError(
+                "Configured vector extension 'vchord' not found. Install it with: CREATE EXTENSION vchord CASCADE;"
+            )
+        return "vchord"
+    if vector_extension == "scann":
+        scann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'alloydb_scann'")).scalar()
+        if not scann_check:
+            raise RuntimeError(
+                "Configured vector extension 'scann' not found. Install it with: CREATE EXTENSION alloydb_scann CASCADE;"
+            )
+        return "scann"
+    if vector_extension == "pgvector":
+        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+        if not pgvector_check:
+            raise RuntimeError(
+                "Configured vector extension 'pgvector' not found. Install it with: CREATE EXTENSION vector;"
+            )
+        return "pgvector"
+    raise ValueError(
+        "Invalid HINDSIGHT_API_VECTOR_EXTENSION: "
+        f"{vector_extension}. Must be 'pgvector', 'vchord', 'pgvectorscale', or 'scann'"
+    )
+
+
+def _vector_index_using_clause(ext: str) -> str:
+    if ext == "pgvectorscale":
+        return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
+    if ext == "pg_diskann":
+        return "USING diskann (embedding vector_cosine_ops) WITH (max_neighbors = 50)"
+    if ext == "vchord":
+        return "USING vchordrq (embedding vector_cosine_ops)"
+    if ext == "scann":
+        return "USING scann (embedding cosine) WITH (mode = 'AUTO')"
+    return "USING hnsw (embedding vector_cosine_ops)"
+
+
+def _detect_text_search_extension() -> str:
+    """
+    Detect or validate text search extension: 'native', 'vchord', 'pg_textsearch',
+    'pgroonga', or 'pg_search'. Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
+    Creates the extension if needed.
+
+    pgroonga is treated as native here so this migration still creates valid
+    tsvector columns; ensure_text_search_extension() at startup converts the
+    reflections table (renamed from pinned_reflections in p1k2l3m4n5o6) to
+    pgroonga structures. The learnings table is dropped in p1k2l3m4n5o6 so its
+    transient native-style column never reaches steady state.
+    """
+    text_search_extension = os.getenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION", "native").lower()
+
+    if text_search_extension == "vchord":
+        # Create vchord_bm25 extension if not exists
+        try:
+            create_extension(op.get_bind(), "vchord_bm25", cascade=True)
+        except Exception:
+            # Extension might already exist or user lacks permissions - verify it exists
+            conn = op.get_bind()
+            result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord_bm25'")).fetchone()
+            if not result:
+                # Extension truly doesn't exist - re-raise the error
+                raise
+        return "vchord"
+    elif text_search_extension == "pg_textsearch":
+        # Create pg_textsearch extension if not exists
+        try:
+            create_extension(op.get_bind(), "pg_textsearch", cascade=True)
+        except Exception:
+            # Extension might already exist or user lacks permissions - verify it exists
+            conn = op.get_bind()
+            result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_textsearch'")).fetchone()
+            if not result:
+                # Extension truly doesn't exist - re-raise the error
+                raise
+        return "pg_textsearch"
+    elif text_search_extension == "pg_search":
+        # ParadeDB pg_search — true BM25 over base columns, Citus-compatible.
+        try:
+            create_extension(op.get_bind(), "pg_search", cascade=True)
+        except Exception:
+            conn = op.get_bind()
+            result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'")).fetchone()
+            if not result:
+                raise
+        return "pg_search"
+    elif text_search_extension == "native":
+        return "native"
+    elif text_search_extension == "pgroonga":
+        # Treat as native here; ensure_text_search_extension() converts the
+        # reflections table to pgroonga structures at runtime.
+        return "native"
+    else:
+        raise ValueError(
+            f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
+            "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', or 'pg_search'"
+        )
+
+
+def _pg_search_tokenizer() -> str:
+    return normalize_pg_search_tokenizer(os.getenv(PG_SEARCH_TOKENIZER_ENV))
+
+
+def _pg_upgrade() -> None:
+    """Create learnings and pinned_reflections tables."""
+    schema = _get_schema_prefix()
+
+    # Detect which vector extension is available
+    vector_ext = _detect_vector_extension()
+
+    # Detect which text search extension to use
+    text_search_ext = _detect_text_search_extension()
+
+    # 1. Create learnings table
+    op.execute(f"""
+        CREATE TABLE {schema}learnings (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            bank_id VARCHAR(64) NOT NULL,
+            text TEXT NOT NULL,
+            proof_count INT NOT NULL DEFAULT 1,
+            history JSONB DEFAULT '[]'::jsonb,
+            mission_context VARCHAR(64),
+            pre_mission_change BOOLEAN DEFAULT FALSE,
+            embedding vector(384),
+            tags VARCHAR[] DEFAULT ARRAY[]::VARCHAR[],
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+        )
+    """)
+
+    # Add foreign key constraint
+    op.execute(f"""
+        ALTER TABLE {schema}learnings
+        ADD CONSTRAINT fk_learnings_bank_id
+        FOREIGN KEY (bank_id) REFERENCES {schema}banks(bank_id) ON DELETE CASCADE
+    """)
+
+    # Indexes for learnings
+    op.execute(f"CREATE INDEX idx_learnings_bank_id ON {schema}learnings(bank_id)")
+
+    # Create vector index based on detected extension. ScaNN is deferred because
+    # this table is empty during migration and AlloyDB rejects empty ScaNN builds.
+    if vector_ext != "scann":
+        op.execute(f"""
+            CREATE INDEX idx_learnings_embedding ON {schema}learnings
+            {_vector_index_using_clause(vector_ext)}
+        """)
+
+    op.execute(f"CREATE INDEX idx_learnings_tags ON {schema}learnings USING GIN(tags)")
+
+    # Full-text search for learnings
+    if text_search_ext == "vchord":
+        # VectorChord BM25: bm25vector type (no GENERATED - tokenization happens on INSERT)
+        # Note: vchord_bm25 extension creates types in bm25_catalog schema
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector bm25_catalog.bm25vector
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_learnings_text_search ON {schema}learnings
+            USING bm25 (search_vector bm25_catalog.bm25_ops)
+        """)
+    elif text_search_ext == "pg_textsearch":
+        # Timescale pg_textsearch: dummy TEXT column for consistency (indexes operate on base columns directly)
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_learnings_text_search ON {schema}learnings
+            USING bm25(text) WITH (text_config='english')
+        """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index is built directly over (id, text)
+        # with key_field='id' (matches the table's primary key).
+        bm25_cols = pg_search_bm25_columns("id", ("text",), _pg_search_tokenizer())
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_learnings_text_search ON {schema}learnings
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
+        """)
+    else:  # native
+        # Native PostgreSQL: tsvector with automatic generation
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector tsvector
+            GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
+        """)
+        op.execute(f"CREATE INDEX idx_learnings_text_search ON {schema}learnings USING gin(search_vector)")
+
+    # 2. Create pinned_reflections table
+    op.execute(f"""
+        CREATE TABLE {schema}pinned_reflections (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            bank_id VARCHAR(64) NOT NULL,
+            name VARCHAR(256) NOT NULL,
+            source_query TEXT NOT NULL,
+            content TEXT NOT NULL,
+            embedding vector(384),
+            tags VARCHAR[] DEFAULT ARRAY[]::VARCHAR[],
+            last_refreshed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+        )
+    """)
+
+    # Add foreign key constraint
+    op.execute(f"""
+        ALTER TABLE {schema}pinned_reflections
+        ADD CONSTRAINT fk_pinned_reflections_bank_id
+        FOREIGN KEY (bank_id) REFERENCES {schema}banks(bank_id) ON DELETE CASCADE
+    """)
+
+    # Indexes for pinned_reflections
+    op.execute(f"CREATE INDEX idx_pinned_reflections_bank_id ON {schema}pinned_reflections(bank_id)")
+
+    # Create vector index based on detected extension. ScaNN is deferred because
+    # this table is empty during migration and AlloyDB rejects empty ScaNN builds.
+    if vector_ext != "scann":
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
+            {_vector_index_using_clause(vector_ext)}
+        """)
+
+    op.execute(f"CREATE INDEX idx_pinned_reflections_tags ON {schema}pinned_reflections USING GIN(tags)")
+
+    # Full-text search for pinned_reflections
+    if text_search_ext == "vchord":
+        # VectorChord BM25: bm25vector type (no GENERATED - tokenization happens on INSERT/UPDATE)
+        # Note: vchord_bm25 extension creates types in bm25_catalog schema
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector bm25_catalog.bm25vector
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING bm25 (search_vector bm25_catalog.bm25_ops)
+        """)
+    elif text_search_ext == "pg_textsearch":
+        # Timescale pg_textsearch: dummy TEXT column for consistency (indexes operate on base columns directly)
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING bm25(content)
+            WITH (text_config='english')
+        """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index over (id, name, content)
+        # with key_field='id'.
+        bm25_cols = pg_search_bm25_columns("id", ("name", "content"), _pg_search_tokenizer())
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
+        """)
+    else:  # native
+        # Native PostgreSQL: tsvector with automatic generation
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector tsvector
+            GENERATED ALWAYS AS (to_tsvector('english', COALESCE(name, '') || ' ' || content)) STORED
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING gin(search_vector)
+        """)
+
+    # 3. Add consolidation tracking columns to banks table
+    op.execute(f"""
+        ALTER TABLE {schema}banks
+        ADD COLUMN IF NOT EXISTS last_consolidated_at TIMESTAMP WITH TIME ZONE
+    """)
+    op.execute(f"""
+        ALTER TABLE {schema}banks
+        ADD COLUMN IF NOT EXISTS mission_changed_at TIMESTAMP WITH TIME ZONE
+    """)
+
+
+def _pg_downgrade() -> None:
+    """Drop learnings and pinned_reflections tables."""
+    schema = _get_schema_prefix()
+
+    # Drop tables
+    op.execute(f"DROP TABLE IF EXISTS {schema}learnings CASCADE")
+    op.execute(f"DROP TABLE IF EXISTS {schema}pinned_reflections CASCADE")
+
+    # Remove columns from banks
+    op.execute(f"ALTER TABLE {schema}banks DROP COLUMN IF EXISTS last_consolidated_at")
+    op.execute(f"ALTER TABLE {schema}banks DROP COLUMN IF EXISTS mission_changed_at")
+
+
+def upgrade() -> None:
+    run_for_dialect(pg=_pg_upgrade)
+
+
+def downgrade() -> None:
+    run_for_dialect(pg=_pg_downgrade)

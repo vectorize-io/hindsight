@@ -1,0 +1,1705 @@
+"""
+Hindsight Embedded CLI.
+
+A wrapper CLI that manages a local daemon and forwards commands to hindsight-cli.
+No external server required - runs everything locally with automatic daemon management.
+
+Usage:
+    hindsight-embed configure              # Interactive setup
+    hindsight-embed retain "User prefers dark mode"
+    hindsight-embed recall "What are user preferences?"
+    hindsight-embed daemon status          # Check daemon status
+
+Environment variables:
+    HINDSIGHT_API_LLM_API_KEY: Required when the selected LLM provider uses an API key.
+    HINDSIGHT_API_LLM_PROVIDER: Optional. LLM provider (default: "openai").
+    HINDSIGHT_API_LLM_MODEL: Optional. LLM model (default: provider-specific, resolved by hindsight-api).
+    HINDSIGHT_EMBED_API_URL: Optional. Use external API server instead of starting local daemon.
+    HINDSIGHT_EMBED_API_TOKEN: Optional. Authentication token for external API (sent as Bearer token).
+    HINDSIGHT_EMBED_API_DATABASE_URL: Optional. Database URL for daemon (default: "pg0://hindsight-embed").
+    HINDSIGHT_EMBED_API_VERSION: Optional. hindsight-api version to use (default: matches embed version).
+                                 Note: Only applies when starting daemon. To change version, stop daemon first.
+    HINDSIGHT_EMBED_CLI_VERSION: Optional. hindsight CLI version to install (default: {embed_version}).
+    HINDSIGHT_EMBED_CONTROL_PORT: Optional. Port for the control center web app (default: 7878).
+"""
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+
+from . import get_embed_manager
+
+CONFIG_DIR = Path.home() / ".hindsight"
+CONFIG_FILE = CONFIG_DIR / "embed"
+CONFIG_FILE_ALT = CONFIG_DIR / "config.env"  # Alternative config file location
+
+# Module-level variable to store CLI profile override (set by argparse)
+_cli_profile_override: str | None = None
+
+
+def get_cli_profile_override() -> str | None:
+    """Get the profile override from CLI flag (--profile).
+
+    Returns:
+        Profile name if set via CLI flag, None otherwise.
+    """
+    return _cli_profile_override
+
+
+def set_cli_profile_override(profile: str | None) -> None:
+    """Set the profile override from CLI flag (--profile).
+
+    Args:
+        profile: Profile name to set, or None to clear.
+    """
+    global _cli_profile_override
+    _cli_profile_override = profile
+
+
+def setup_logging(verbose: bool = False):
+    """Configure logging."""
+    level_str = os.environ.get("HINDSIGHT_EMBED_LOG_LEVEL", "info").lower()
+    if verbose:
+        level_str = "debug"
+
+    level_map = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+    }
+    level = level_map.get(level_str, logging.INFO)
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        stream=sys.stderr,
+    )
+
+    return logging.getLogger(__name__)
+
+
+def load_config_file():
+    """Load configuration from the active profile's file if it exists.
+
+    IMPORTANT: Only loads from the active profile, never from default if a specific profile is set.
+    Uses dynamic path resolution to support testing with temporary HOME directories.
+    """
+    from .profile_manager import ProfileManager, resolve_active_profile
+
+    # Resolve which profile to use (respects --profile flag, env vars, active_profile file)
+    active_profile = resolve_active_profile()
+
+    # Get the config file path for this profile
+    # Use ProfileManager which resolves paths dynamically
+    pm = ProfileManager()
+    paths = pm.resolve_profile_paths(active_profile)
+    config_path = paths.config
+
+    # Load ONLY this profile's config, never fall back to default
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    # Handle 'export VAR=value' format
+                    if line.startswith("export "):
+                        line = line[7:]
+                    key, value = line.split("=", 1)
+                    if key not in os.environ:  # Don't override env vars
+                        os.environ[key] = value
+
+
+ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
+ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
+
+
+def get_config() -> dict[str, str]:
+    """This invocation's daemon overrides, as ``HINDSIGHT_*`` environment variables.
+
+    Every ``HINDSIGHT_*`` variable in the process environment is forwarded
+    verbatim; there is no whitelist of known settings. A whitelist is exactly
+    how ``HINDSIGHT_API_LLM_BASE_URL`` came to be dropped while KEY/MODEL
+    applied (issue #4094) — ``hindsight-api``, not this wrapper, owns the list
+    of settings that exist, and it grows every release.
+
+    No provider or model default is injected: ``hindsight-api`` resolves both
+    (its ``DEFAULT_LLM_PROVIDER`` is this same ``"openai"``, and
+    ``PROVIDER_DEFAULT_MODELS`` is provider-keyed). Duplicating those tables
+    here would silently desync — and importing them fails in standalone venvs
+    (``uvx hindsight-embed``) where ``hindsight-api`` isn't installed anyway.
+    """
+    load_config_file()
+    config = {key: value for key, value in os.environ.items() if key.startswith("HINDSIGHT_")}
+
+    # OPENAI_API_KEY is the one non-HINDSIGHT_ name honoured here, and only for
+    # providers that authenticate with an LLM API key at all.
+    provider = config.get(ENV_LLM_PROVIDER) or "openai"
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key and ENV_LLM_API_KEY not in config and provider not in NO_API_KEY_PROVIDERS:
+        config[ENV_LLM_API_KEY] = openai_key
+
+    return config
+
+
+# Provider -> API-key env var (None = no key needed)
+PROVIDER_API_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "ollama": None,
+    "vertexai": None,
+    "github-copilot": None,
+}
+NO_API_KEY_PROVIDERS = frozenset(provider for provider, key_env in PROVIDER_API_KEYS.items() if key_env is None)
+
+
+def do_configure(args):
+    """Configuration setup with optional profile and env vars support.
+
+    Args:
+        args: Parsed arguments with optional --profile, --port, and --env flags.
+    """
+    # Get profile, port, and env vars from args
+    profile = getattr(args, "profile", None)
+    port = getattr(args, "port", None)
+    env_vars = getattr(args, "env", None)
+
+    # Check if we're creating a named profile with --env flags
+    if profile and env_vars:
+        # Pass port (may be None for auto-allocation/reuse)
+        return _do_configure_profile_with_env(profile, port, env_vars)
+
+    # Check if we're creating a named profile interactively
+    if profile:
+        # Pass port (may be None for auto-allocation/reuse)
+        return _do_configure_profile_interactive(profile, port)
+
+    # Default behavior: interactive configuration for default profile.
+    # Prefer non-interactive mode when the CI/env-driven inputs are already
+    # set — otherwise Windows CI hits the interactive path (pwsh makes stdin
+    # look like a TTY) and blocks on EOF instead of using the env vars.
+    if _has_non_interactive_env():
+        return _do_configure_from_env()
+
+    # If stdin is not a terminal (e.g., running via curl | bash),
+    # redirect stdin from /dev/tty for interactive prompts
+    original_stdin = None
+    if not sys.stdin.isatty():
+        try:
+            original_stdin = sys.stdin
+            sys.stdin = open("/dev/tty", "r")
+        except OSError:
+            # No terminal available - try non-interactive mode with env vars
+            return _do_configure_from_env()
+
+    try:
+        return _do_configure_interactive()
+    finally:
+        if original_stdin is not None:
+            sys.stdin.close()
+            sys.stdin = original_stdin
+
+
+def _has_non_interactive_env() -> bool:
+    """Whether the env vars required by _do_configure_from_env are already set.
+
+    Returns True when an API key is present, OR when the provider is one that
+    doesn't need a key. Prevents the interactive prompt from kicking in when
+    the user clearly wants CI/scripted behavior.
+    """
+    if os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"):
+        return True
+    return os.environ.get("HINDSIGHT_API_LLM_PROVIDER") in NO_API_KEY_PROVIDERS
+
+
+def _do_configure_from_env():
+    """Non-interactive configuration from environment variables (for CI)."""
+    # Check for required environment variables
+    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    api_key = (
+        None
+        if provider in NO_API_KEY_PROVIDERS
+        else os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    )
+
+    # Don't gate on PROVIDER_API_KEYS — that's only the small interactive-menu
+    # set. hindsight-api's PROVIDER_DEFAULT_MODELS supports many more
+    # providers (anthropic, claude-code, bedrock, openrouter, ...). Let the
+    # daemon validate; rejecting here would block valid configurations.
+
+    # These providers authenticate locally rather than through an LLM API key.
+    if not api_key and provider not in NO_API_KEY_PROVIDERS:
+        print("Error: Cannot run interactive configuration without a terminal.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("For non-interactive (CI) mode, set environment variables:", file=sys.stderr)
+        print("  HINDSIGHT_API_LLM_API_KEY=<your-api-key>", file=sys.stderr)
+        print(f"  HINDSIGHT_API_LLM_PROVIDER={provider}  # optional, default: openai", file=sys.stderr)
+        print(
+            "  HINDSIGHT_API_LLM_MODEL=<model>  # optional, defaults to provider's recommended model", file=sys.stderr
+        )
+        return 1
+
+    model = os.environ.get("HINDSIGHT_API_LLM_MODEL")
+
+    print()
+    print("\033[1m\033[36m  Hindsight Embed - Non-interactive Configuration\033[0m")
+    print()
+    print(f"  \033[2mProvider:\033[0m {provider}")
+    print(f"  \033[2mModel:\033[0m {model or '(provider default)'}")
+
+    # Save configuration
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Persist every HINDSIGHT_API_* variable the caller set, not a hand-listed
+    # subset: the subset is why HINDSIGHT_API_LLM_BASE_URL never reached the
+    # written profile (issue #4094). HINDSIGHT_EMBED_* is deliberately excluded
+    # — those configure this wrapper for one invocation (API URL, component
+    # versions), and baking them into the profile is not what a user setting
+    # them for a single `configure` run asked for.
+    config_values = {key: value for key, value in os.environ.items() if key.startswith("HINDSIGHT_API_") and value}
+    config_values[ENV_LLM_PROVIDER] = provider
+    if api_key:
+        config_values[ENV_LLM_API_KEY] = api_key
+    else:
+        # Providers in NO_API_KEY_PROVIDERS authenticate locally; don't persist
+        # a stale key that the resolved provider will never use.
+        config_values.pop(ENV_LLM_API_KEY, None)
+
+    from .env_template import render_config
+
+    CONFIG_FILE.write_text(render_config(config_values), encoding="utf-8")
+    CONFIG_FILE.chmod(0o600)
+
+    print()
+    print("\033[32m  ✓ Configuration saved!\033[0m")
+    print()
+
+    return 0
+
+
+def _prompt_choice(prompt: str, choices: list[tuple[str, str]], default: int = 1) -> str | None:
+    """Simple choice prompt that works with /dev/tty."""
+    print(f"\033[1m{prompt}\033[0m")
+    print()
+    for i, (label, _) in enumerate(choices, 1):
+        print(f"  \033[36m{i})\033[0m {label}")
+    print()
+    try:
+        response = input(f"Enter choice [{default}]: ").strip()
+        if not response:
+            return choices[default - 1][1]
+        idx = int(response)
+        if 1 <= idx <= len(choices):
+            return choices[idx - 1][1]
+        return choices[default - 1][1]
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return None
+
+
+def _prompt_text(prompt: str, default: str = "") -> str | None:
+    """Simple text prompt."""
+    try:
+        suffix = f" [{default}]" if default else ""
+        response = input(f"\033[1m{prompt}\033[0m{suffix}: ").strip()
+        return response if response else default
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _prompt_password(prompt: str) -> str | None:
+    """Simple password prompt that works with /dev/tty."""
+    import termios
+    import tty
+
+    # Read password with echo disabled (works because sys.stdin is already /dev/tty)
+    fd = sys.stdin.fileno()
+    print(f"\033[1m{prompt}\033[0m: ", end="", flush=True)
+    try:
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd, termios.TCSADRAIN)
+            # Read character by character until newline
+            password = []
+            while True:
+                ch = sys.stdin.read(1)
+                if ch in ("\n", "\r"):
+                    break
+                elif ch == "\x7f":  # Backspace
+                    if password:
+                        password.pop()
+                        # Erase character on screen
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                elif ch == "\x03":  # Ctrl+C
+                    raise KeyboardInterrupt
+                elif ch >= " ":  # Printable character
+                    password.append(ch)
+            print()  # Newline after password
+            return "".join(password)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    except Exception:
+        # Fallback to simple input if termios fails
+        try:
+            return input("")
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+
+def _prompt_confirm(prompt: str, default: bool = True) -> bool | None:
+    """Simple yes/no prompt."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        response = input(f"\033[1m{prompt}\033[0m {suffix}: ").strip().lower()
+        if not response:
+            return default
+        return response in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _do_configure_interactive(profile_name: str | None = None, port: int | None = None):
+    """Internal interactive configuration.
+
+    Args:
+        profile_name: Optional profile name. If None, configures default profile.
+        port: Optional port for named profile. Required if profile_name is provided.
+
+    Returns:
+        Exit code (0 = success, 1 = error).
+    """
+    print()
+    if profile_name:
+        print(f"\033[1m\033[36m  Configuring profile '{profile_name}' (port {port})\033[0m")
+    else:
+        print("\033[1m\033[36m  ╭─────────────────────────────────────╮\033[0m")
+        print("\033[1m\033[36m  │   Hindsight Embed Configuration    │\033[0m")
+        print("\033[1m\033[36m  ╰─────────────────────────────────────╯\033[0m")
+    print()
+
+    # Check existing config
+    config_file = CONFIG_DIR / "profiles" / f"{profile_name}.env" if profile_name else CONFIG_FILE
+    if config_file.exists():
+        if not _prompt_confirm("Existing configuration found. Reconfigure?", default=False):
+            print("\n\033[32m✓\033[0m Keeping existing configuration.")
+            return 0
+        print()
+
+    # Provider selection
+    providers = [
+        ("OpenAI (recommended)", "openai"),
+        ("Groq (fast & free tier)", "groq"),
+        ("Google Gemini", "gemini"),
+        ("Ollama (local, no API key)", "ollama"),
+        ("GitHub Copilot (signed-in account, no LLM API key)", "github-copilot"),
+    ]
+
+    provider = _prompt_choice("Select your LLM provider:", providers, default=1)
+    if provider is None:
+        print("\n\033[33m⚠\033[0m Configuration cancelled.")
+        return 1
+
+    env_key = PROVIDER_API_KEYS[provider]
+    print()
+
+    # API key
+    api_key = ""
+    if env_key:
+        existing = os.environ.get(env_key, "")
+
+        if existing:
+            masked = existing[:8] + "..." + existing[-4:] if len(existing) > 12 else "***"
+            if _prompt_confirm(f"Found API key in ${env_key} ({masked}). Use it?", default=True):
+                api_key = existing
+            print()
+
+        if not api_key:
+            api_key = _prompt_password("Enter your API key")
+            if not api_key:
+                print("\n\033[31m✗\033[0m API key is required.", file=sys.stderr)
+                return 1
+            print()
+
+    # Empty = let the daemon pick the provider default (PROVIDER_DEFAULT_MODELS)
+    model = _prompt_text("Model name (leave empty for provider default)")
+    if model is None:
+        return 1
+    print()
+
+    # Save configuration
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    config_dict = {
+        "HINDSIGHT_API_LLM_PROVIDER": provider,
+    }
+    if model:
+        config_dict["HINDSIGHT_API_LLM_MODEL"] = model
+    if api_key:
+        config_dict["HINDSIGHT_API_LLM_API_KEY"] = api_key
+
+    if profile_name:
+        # Create named profile
+        from .profile_manager import ProfileManager
+
+        pm = ProfileManager()
+        try:
+            pm.create_profile(profile_name, port, config_dict)
+        except ValueError as e:
+            print(f"\n\033[31m✗\033[0m Error creating profile: {e}", file=sys.stderr)
+            return 1
+    else:
+        # Save to default profile
+        from .env_template import render_config
+
+        CONFIG_FILE.write_text(render_config(config_dict), encoding="utf-8")
+        CONFIG_FILE.chmod(0o600)
+
+    # Stop existing daemon if running (it needs to pick up new config)
+    from . import daemon_client
+
+    daemon_profile = profile_name if profile_name else None
+    if daemon_client.is_daemon_running(daemon_profile):
+        print("\n  \033[2mRestarting daemon with new configuration...\033[0m")
+        daemon_client.stop_daemon(daemon_profile)
+
+    # Start daemon with new config
+    if daemon_client.ensure_daemon_running(dict(config_dict), daemon_profile):
+        print("  \033[32m✓ Daemon started\033[0m")
+    else:
+        print("  \033[33m⚠ Failed to start daemon (will start on first command)\033[0m")
+
+    print()
+    print("\033[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m")
+    print("\033[32m  ✓ Configuration saved!\033[0m")
+    print("\033[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m")
+    print()
+    print(f"  \033[2mConfig:\033[0m {CONFIG_FILE}")
+    print()
+    print("  \033[2mTest with:\033[0m")
+    print('    \033[36mhindsight-embed retain "Alice works at Google as a software engineer"\033[0m')
+    print('    \033[36mhindsight-embed recall "Alice"\033[0m')
+    print()
+
+    return 0
+
+
+def do_daemon(args, config: dict, logger):
+    """Handle daemon subcommands."""
+    from pathlib import Path
+
+    from . import daemon_client
+    from .profile_manager import ProfileManager
+
+    # Get profile from args
+    profile = args.profile
+
+    # Get profile-specific paths
+    pm = ProfileManager()
+    paths = pm.resolve_profile_paths(profile or "")
+
+    daemon_log_path = paths.log
+    port = paths.port
+
+    if args.daemon_command == "start":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
+        if daemon_client.is_daemon_running(profile):
+            # Build title with profile and port
+            if profile:
+                already_running_title = (
+                    f"[bold yellow]Daemon Already Running[/bold yellow] [dim]({profile} @ :{port})[/dim]"
+                )
+            else:
+                already_running_title = f"[bold yellow]Daemon Already Running[/bold yellow] [dim](:{port})[/dim]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is already running", style="yellow"),
+                    title=already_running_title,
+                    border_style="yellow",
+                )
+            )
+            return 0
+
+        if daemon_client.ensure_daemon_running(config, profile):
+            # Start UI if --ui flag was passed
+            if getattr(args, "ui", False):
+                from .daemon_embed_manager import DaemonEmbedManager
+                from .profile_manager import resolve_active_profile
+
+                # Use the same profile resolution as the daemon
+                resolved_profile = profile if profile is not None else resolve_active_profile()
+                manager = DaemonEmbedManager()
+                ui_started = manager.start_ui(resolved_profile, None, "0.0.0.0")
+                if not ui_started:
+                    console.print(
+                        Panel(
+                            Text("Daemon is running but UI failed to start", style="yellow"),
+                            title="[bold yellow]UI Warning[/bold yellow]",
+                            border_style="yellow",
+                        )
+                    )
+            return 0
+        else:
+            console.print(
+                Panel(
+                    Text("Failed to start daemon", style="red"),
+                    title="[bold red]✗ Error[/bold red]",
+                    border_style="red",
+                )
+            )
+            return 1
+
+    elif args.daemon_command == "stop":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
+        if not daemon_client.is_daemon_running(profile):
+            # Build title for not running status
+            if profile:
+                not_running_title = f"[bold]Daemon Status[/bold] [dim]({profile})[/dim]"
+            else:
+                not_running_title = "[bold]Daemon Status[/bold]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is not running", style="dim"),
+                    title=not_running_title,
+                    border_style="dim",
+                )
+            )
+            return 0
+
+        if daemon_client.stop_daemon(profile):
+            # Build title with profile
+            if profile:
+                stopped_title = f"[bold green]✓ Daemon Stopped[/bold green] [dim]({profile})[/dim]"
+            else:
+                stopped_title = "[bold green]✓ Daemon Stopped[/bold green]"
+
+            console.print(
+                Panel(
+                    Text("Daemon stopped successfully", style="green"),
+                    title=stopped_title,
+                    border_style="green",
+                )
+            )
+            return 0
+        else:
+            console.print(
+                Panel(
+                    Text("Failed to stop daemon", style="red"),
+                    title="[bold red]✗ Error[/bold red]",
+                    border_style="red",
+                )
+            )
+            return 1
+
+    elif args.daemon_command == "status":
+        from pathlib import Path
+
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
+        if daemon_client.is_daemon_running(profile):
+            status_text = Text()
+            status_text.append("Daemon is running\n\n", style="green bold")
+            status_text.append("  URL: ", style="dim")
+            status_text.append(f"http://127.0.0.1:{port}\n", style="cyan")
+            status_text.append("  Logs: ", style="dim")
+            status_text.append(f"{daemon_log_path}\n", style="")
+
+            # Check if using pg0 and show database location
+            database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL")
+            if not database_url:
+                # Default: use profile-specific pg0 (shared utility ensures consistency)
+                database_url = get_embed_manager().get_database_url(profile)
+
+            if database_url.startswith("pg0://"):
+                pg0_name = database_url.replace("pg0://", "")
+                pg0_path = Path.home() / ".pg0" / "instances" / pg0_name
+                status_text.append("  Database: ", style="dim")
+                status_text.append(f"{pg0_path}", style="")
+
+            # Build title with profile and port
+            if profile:
+                status_title = f"[bold green]✓ Daemon Running[/bold green] [dim]({profile} @ :{port})[/dim]"
+            else:
+                status_title = f"[bold green]✓ Daemon Running[/bold green] [dim](:{port})[/dim]"
+
+            console.print(
+                Panel(
+                    status_text,
+                    title=status_title,
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
+            return 0
+        else:
+            # Build title for not running status
+            if profile:
+                not_running_title = f"[bold]Daemon Status[/bold] [dim]({profile})[/dim]"
+            else:
+                not_running_title = "[bold]Daemon Status[/bold]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is not running", style="dim"),
+                    title=not_running_title,
+                    border_style="dim",
+                )
+            )
+            return 1
+
+    elif args.daemon_command == "logs":
+        if not daemon_log_path.exists():
+            print("No daemon logs found", file=sys.stderr)
+            print(f"  Expected at: {daemon_log_path}")
+            return 1
+
+        if args.follow:
+            # Follow mode - like tail -f
+            import subprocess
+
+            try:
+                subprocess.run(["tail", "-f", str(daemon_log_path)])
+            except KeyboardInterrupt:
+                pass
+            return 0
+        else:
+            # Show last N lines
+            try:
+                with open(daemon_log_path, encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    for line in lines[-args.lines :]:
+                        print(line, end="")
+                return 0
+            except Exception as e:
+                print(f"Error reading logs: {e}", file=sys.stderr)
+                return 1
+
+    else:
+        print("Usage: hindsight-embed daemon {start|stop|status|logs}", file=sys.stderr)
+        return 1
+
+
+def do_ui(args, config: dict, logger):
+    """Handle UI subcommands."""
+    from . import daemon_client
+    from .profile_manager import ProfileManager
+
+    profile = args.profile
+    ui_port = getattr(args, "port", None)
+    hostname = getattr(args, "hostname", "0.0.0.0")
+
+    # Resolve default UI port (from the profile's .env, else API + offset)
+    pm = ProfileManager()
+    paths = pm.resolve_profile_paths(profile or "")
+    default_ui_port = paths.ui_port
+
+    if args.ui_command == "start":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
+        effective_port = ui_port or default_ui_port
+
+        if daemon_client.is_ui_running(profile, effective_port):
+            title = (
+                f"[bold yellow]UI Already Running[/bold yellow] [dim]({profile or 'default'} @ :{effective_port})[/dim]"
+            )
+            console.print(
+                Panel(
+                    Text("UI is already running", style="yellow"),
+                    title=title,
+                    border_style="yellow",
+                )
+            )
+            return 0
+
+        # Ensure daemon is running first
+        if not daemon_client.is_daemon_running(profile):
+            console.print("[dim]Daemon not running, starting it first...[/dim]")
+            if not daemon_client.ensure_daemon_running(config, profile):
+                console.print(
+                    Panel(
+                        Text("Failed to start daemon (required for UI)", style="red"),
+                        title="[bold red]✗ Error[/bold red]",
+                        border_style="red",
+                    )
+                )
+                return 1
+
+        if daemon_client.start_ui(profile, ui_port, hostname):
+            return 0
+        else:
+            return 1
+
+    elif args.ui_command == "stop":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+        effective_port = ui_port or default_ui_port
+
+        if not daemon_client.is_ui_running(profile, effective_port):
+            title = f"[bold]UI Status[/bold] [dim]({profile or 'default'})[/dim]"
+            console.print(
+                Panel(
+                    Text("UI is not running", style="dim"),
+                    title=title,
+                    border_style="dim",
+                )
+            )
+            return 0
+
+        if daemon_client.stop_ui(profile, ui_port):
+            title = f"[bold green]✓ UI Stopped[/bold green] [dim]({profile or 'default'})[/dim]"
+            console.print(
+                Panel(
+                    Text("UI stopped successfully", style="green"),
+                    title=title,
+                    border_style="green",
+                )
+            )
+            return 0
+        else:
+            console.print(
+                Panel(
+                    Text("Failed to stop UI", style="red"),
+                    title="[bold red]✗ Error[/bold red]",
+                    border_style="red",
+                )
+            )
+            return 1
+
+    elif args.ui_command == "status":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+        effective_port = ui_port or default_ui_port
+
+        if daemon_client.is_ui_running(profile, effective_port):
+            status_text = Text()
+            status_text.append("UI is running\n\n", style="green bold")
+            status_text.append("  URL: ", style="dim")
+            # localhost, not a loopback literal: the UI can be bound to ::1 only.
+            status_text.append(f"http://localhost:{effective_port}\n", style="cyan")
+            status_text.append("  Logs: ", style="dim")
+            status_text.append(f"{paths.ui_log}", style="")
+
+            title = f"[bold green]✓ UI Running[/bold green] [dim]({profile or 'default'} @ :{effective_port})[/dim]"
+            console.print(
+                Panel(
+                    status_text,
+                    title=title,
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
+            return 0
+        else:
+            title = f"[bold]UI Status[/bold] [dim]({profile or 'default'})[/dim]"
+            console.print(
+                Panel(
+                    Text("UI is not running", style="dim"),
+                    title=title,
+                    border_style="dim",
+                )
+            )
+            return 1
+
+    elif args.ui_command == "logs":
+        ui_log_path = paths.ui_log
+        if not ui_log_path.exists():
+            print("No UI logs found", file=sys.stderr)
+            print(f"  Expected at: {ui_log_path}")
+            return 1
+
+        if args.follow:
+            import subprocess
+
+            try:
+                subprocess.run(["tail", "-f", str(ui_log_path)])
+            except KeyboardInterrupt:
+                pass
+            return 0
+        else:
+            try:
+                with open(ui_log_path, encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    for line in lines[-args.lines :]:
+                        print(line, end="")
+                return 0
+            except Exception as e:
+                print(f"Error reading logs: {e}", file=sys.stderr)
+                return 1
+
+    else:
+        print("Usage: hindsight-embed ui {start|stop|status|logs}", file=sys.stderr)
+        return 1
+
+
+def _do_configure_profile_with_env(profile_name: str, port: int | None, env_vars: list[str]) -> int:
+    """Configure a named profile with environment variables (non-interactive).
+
+    Args:
+        profile_name: Name of the profile to create/update.
+        port: Port number for the daemon (None to auto-allocate/reuse existing).
+        env_vars: List of KEY=VALUE strings.
+
+    Returns:
+        Exit code (0 = success, 1 = error).
+    """
+    from .profile_manager import ProfileManager
+
+    # Parse env vars
+    config = {}
+    for env_str in env_vars:
+        if "=" not in env_str:
+            print(f"Error: Invalid --env format '{env_str}'. Expected KEY=VALUE", file=sys.stderr)
+            return 1
+
+        key, value = env_str.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        # Validate key format
+        if not key.startswith("HINDSIGHT_EMBED_") and not key.startswith("HINDSIGHT_API_"):
+            print(
+                f"Warning: Key '{key}' doesn't start with HINDSIGHT_EMBED_ or HINDSIGHT_API_",
+                file=sys.stderr,
+            )
+
+        config[key] = value
+
+    # Create profile
+    pm = ProfileManager()
+
+    # Determine port: use provided, reuse existing, or allocate new
+    if port is None:
+        # Check if profile exists and get its port
+        existing_profile = pm.get_profile(profile_name)
+        if existing_profile:
+            port = existing_profile.port
+        else:
+            port = pm._allocate_port(profile_name)
+
+    try:
+        pm.create_profile(profile_name, port, config)
+    except ValueError as e:
+        print(f"Error creating profile: {e}", file=sys.stderr)
+        return 1
+
+    print()
+    print(f"\033[32m✓ Profile '{profile_name}' configured successfully!\033[0m")
+    print()
+    profile_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+    print(f"  \033[2mConfig:\033[0m {profile_path}")
+    print(f"  \033[2mPort:\033[0m {port}")
+    print()
+    print("  \033[2mUse with:\033[0m")
+    print(f"    \033[36mhindsight-embed daemon start --profile {profile_name}\033[0m")
+    print(f'    \033[36mhindsight-embed --profile {profile_name} memory recall default "query"\033[0m')
+    print()
+
+    return 0
+
+
+def _do_configure_profile_interactive(profile_name: str, port: int | None) -> int:
+    """Configure a named profile interactively.
+
+    Args:
+        profile_name: Name of the profile to create/update.
+        port: Port number for the daemon (None to auto-allocate/reuse existing).
+
+    Returns:
+        Exit code (0 = success, 1 = error).
+    """
+    from .profile_manager import ProfileManager
+
+    # Determine port: use provided, reuse existing, or allocate new
+    if port is None:
+        pm = ProfileManager()
+        # Check if profile exists and get its port
+        existing_profile = pm.get_profile(profile_name)
+        if existing_profile:
+            port = existing_profile.port
+        else:
+            port = pm._allocate_port(profile_name)
+
+    print()
+    print(f"\033[1m\033[36m  Configuring profile '{profile_name}' (port {port})\033[0m")
+    print()
+
+    # Use the same interactive flow as default profile but save to named profile
+    return _do_configure_interactive(profile_name, port)
+
+
+def do_control(args) -> int:
+    """Handle control-center subcommands (start/stop/status/logs).
+
+    The control center is a persistent, localhost-only web app that writes
+    profile config (the LLM wizard) and supervises the daemon. It runs as its
+    own detached process, so it survives daemon restarts.
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from .control_center import (
+        control_status,
+        resolve_control_port,
+        start_control_center,
+        stop_control_center,
+    )
+    from .control_center.lifecycle import log_file
+
+    console = Console()
+    port = getattr(args, "port", None) or resolve_control_port()
+    command = args.control_command
+
+    if command == "start":
+        result = start_control_center(port, open_browser=not getattr(args, "no_open", False))
+        if not result.ok:
+            console.print(
+                Panel(
+                    Text(result.message, style="red"), title="[bold red]✗ Control Center[/bold red]", border_style="red"
+                )
+            )
+            return 1
+        body = Text()
+        body.append(
+            "Control center already running\n\n" if result.already_running else "Control center started\n\n",
+            style="green bold",
+        )
+        body.append("  Open: ", style="dim")
+        body.append(f"{result.url}\n", style="cyan")
+        body.append("  Logs: ", style="dim")
+        body.append(str(log_file()), style="")
+        console.print(
+            Panel(
+                body,
+                title=f"[bold green]✓ Control Center[/bold green] [dim](:{port})[/dim]",
+                border_style="green",
+                padding=(1, 2),
+            )
+        )
+        return 0
+
+    if command == "stop":
+        if stop_control_center(port):
+            console.print(
+                Panel(
+                    Text("Control center stopped", style="green"),
+                    title="[bold green]✓ Control Center[/bold green]",
+                    border_style="green",
+                )
+            )
+            return 0
+        console.print(
+            Panel(
+                Text("Failed to stop control center", style="red"),
+                title="[bold red]✗ Error[/bold red]",
+                border_style="red",
+            )
+        )
+        return 1
+
+    if command == "status":
+        status = control_status(port)
+        if status.running:
+            body = Text()
+            body.append("Control center is running\n\n", style="green bold")
+            body.append("  URL: ", style="dim")
+            body.append(f"http://localhost:{status.port}\n", style="cyan")
+            console.print(
+                Panel(
+                    body,
+                    title=f"[bold green]✓ Control Center[/bold green] [dim](:{status.port})[/dim]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
+            return 0
+        console.print(
+            Panel(
+                Text("Control center is not running", style="dim"),
+                title="[bold]Control Center[/bold]",
+                border_style="dim",
+            )
+        )
+        return 1
+
+    if command == "logs":
+        log_path = log_file()
+        if not log_path.exists():
+            print("No control center logs found", file=sys.stderr)
+            print(f"  Expected at: {log_path}")
+            return 1
+        if getattr(args, "follow", False):
+            import subprocess
+
+            try:
+                subprocess.run(["tail", "-f", str(log_path)])
+            except KeyboardInterrupt:
+                pass
+            return 0
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            for line in f.readlines()[-getattr(args, "lines", 50) :]:
+                print(line, end="")
+        return 0
+
+    print("Usage: hindsight-embed control {start|stop|status|logs}", file=sys.stderr)
+    return 1
+
+
+def do_profile_command(args: list[str]) -> int:
+    """Handle profile subcommands.
+
+    Args:
+        args: Command arguments (after 'profile').
+
+    Returns:
+        Exit code (0 = success, 1 = error).
+    """
+    from .profile_manager import ProfileManager, resolve_active_profile, validate_profile_exists
+
+    parser = argparse.ArgumentParser(prog="hindsight-embed profile")
+    subparsers = parser.add_subparsers(dest="profile_command", required=True)
+
+    # List command
+    list_parser = subparsers.add_parser("list", help="List all profiles")
+    list_parser.add_argument(
+        "-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)"
+    )
+
+    # Create command
+    create_parser = subparsers.add_parser("create", help="Create a new profile")
+    create_parser.add_argument("name", help="Profile name")
+    create_parser.add_argument("--port", type=int, required=True, help="Port for the daemon")
+    create_parser.add_argument("--env", action="append", help="Environment variable (KEY=VALUE, can be repeated)")
+    create_parser.add_argument("--merge", action="store_true", help="Merge with existing profile if it exists")
+
+    # Set-env command
+    set_env_parser = subparsers.add_parser("set-env", help="Set/update an environment variable in a profile")
+    set_env_parser.add_argument("name", help="Profile name")
+    set_env_parser.add_argument("key", help="Environment variable key")
+    set_env_parser.add_argument("value", help="Environment variable value")
+
+    # Remove-env command
+    remove_env_parser = subparsers.add_parser("remove-env", help="Remove an environment variable from a profile")
+    remove_env_parser.add_argument("name", help="Profile name")
+    remove_env_parser.add_argument("key", help="Environment variable key to remove")
+
+    # Delete command
+    delete_parser = subparsers.add_parser("delete", help="Delete a profile")
+    delete_parser.add_argument("name", help="Profile name to delete")
+
+    # Set-active command
+    set_active_parser = subparsers.add_parser("set-active", help="Set active profile")
+    set_active_parser.add_argument("name", nargs="?", help="Profile name (omit to clear)")
+    set_active_parser.add_argument("--none", action="store_true", help="Clear active profile")
+
+    # Show command
+    show_parser = subparsers.add_parser("show", help="Show current active profile")
+    show_parser.add_argument(
+        "-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)"
+    )
+
+    try:
+        parsed_args = parser.parse_args(args)
+    except SystemExit as e:
+        return e.code or 1
+
+    pm = ProfileManager()
+
+    if parsed_args.profile_command == "list":
+        # List all profiles
+        profiles = pm.list_profiles()
+
+        if parsed_args.output == "json":
+            # JSON output
+            import json
+
+            profiles_data = []
+            for profile in profiles:
+                config_path = str(CONFIG_DIR / "profiles" / f"{profile.name}.env") if profile.name else str(CONFIG_FILE)
+                profiles_data.append(
+                    {
+                        "name": profile.name or "default",
+                        "port": profile.port,
+                        "config": config_path,
+                        "created_at": profile.created_at,
+                        "last_used": profile.last_used,
+                        "is_active": profile.is_active,
+                        "daemon_running": profile.daemon_running,
+                    }
+                )
+            print(json.dumps(profiles_data, indent=2))
+            return 0
+
+        # Text output
+        if not profiles:
+            print("No profiles configured.")
+            print()
+            print("Create one with:")
+            print("  hindsight-embed configure --profile my-app --port 9100 --env HINDSIGHT_API_LLM_PROVIDER=...")
+            return 0
+
+        print()
+        print("\033[1mProfiles:\033[0m")
+        print()
+        for profile in profiles:
+            name = profile.name or "default"
+            active_marker = " \033[32m✓ active\033[0m" if profile.is_active else ""
+            daemon_marker = " \033[36m● running\033[0m" if profile.daemon_running else ""
+            print(f"  \033[1m{name}\033[0m{active_marker}{daemon_marker}")
+            print(f"    Port: {profile.port}")
+            if profile.name:  # Named profile
+                config_path = CONFIG_DIR / "profiles" / f"{profile.name}.env"
+                print(f"    Config: {config_path}")
+            else:  # Default profile
+                config_path = CONFIG_FILE
+                print(f"    Config: {config_path}")
+            print()
+
+        return 0
+
+    elif parsed_args.profile_command == "create":
+        # Create new profile
+        profile_name = parsed_args.name
+        port = parsed_args.port
+        env_vars = parsed_args.env or []
+        merge = parsed_args.merge
+
+        # Normalize "default" to empty string
+        if profile_name == "default":
+            profile_name = ""
+
+        # Check if profile exists
+        profile_exists = pm.profile_exists(profile_name)
+        if profile_exists and not merge:
+            display_name = profile_name or "default"
+            print(f"Error: Profile '{display_name}' already exists.", file=sys.stderr)
+            print("  Use --merge to update the profile, or delete it first with:", file=sys.stderr)
+            print(f"  hindsight-embed profile delete {display_name}", file=sys.stderr)
+            return 1
+
+        # Parse new env vars
+        new_config = {}
+        for env_str in env_vars:
+            if "=" not in env_str:
+                print(f"Error: Invalid --env format '{env_str}'. Expected KEY=VALUE", file=sys.stderr)
+                return 1
+            key, value = env_str.split("=", 1)
+            new_config[key.strip()] = value.strip()
+
+        # If merging, read existing config and merge
+        config = {}
+        if merge and profile_exists:
+            if profile_name:
+                config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+            else:
+                config_path = CONFIG_FILE
+
+            if config_path.exists():
+                for line in config_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        if k != "PORT":  # Don't copy PORT, we'll set it explicitly
+                            config[k] = v
+
+        # Merge new config into existing
+        config.update(new_config)
+
+        # Create/update profile
+        try:
+            pm.create_profile(profile_name, port, config)
+            display_name = profile_name or "default"
+            action = "updated" if (merge and profile_exists) else "created"
+            print(f"\033[32m✓\033[0m Profile '{display_name}' {action} successfully!")
+            print()
+            if profile_name:
+                config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+            else:
+                config_path = CONFIG_FILE
+            print(f"  \033[2mConfig:\033[0m {config_path}")
+            print(f"  \033[2mPort:\033[0m {port}")
+            return 0
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    elif parsed_args.profile_command == "set-env":
+        # Set/update env variable in profile
+        profile_name = parsed_args.name
+        key = parsed_args.key
+        value = parsed_args.value
+
+        # Normalize "default" to empty string
+        if profile_name == "default":
+            profile_name = ""
+
+        if not pm.profile_exists(profile_name):
+            display_name = profile_name or "default"
+            print(f"Error: Profile '{display_name}' does not exist.", file=sys.stderr)
+            return 1
+
+        # Read current config
+        if profile_name:
+            config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+        else:
+            config_path = CONFIG_FILE
+
+        # Parse existing config
+        config = {}
+        if config_path.exists():
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    config[k] = v
+
+        # Update the key
+        config[key] = value
+
+        # Get port from config or resolve from profile
+        port = int(config.get("PORT", pm.resolve_profile_paths(profile_name).port))
+
+        # Write back
+        try:
+            pm.create_profile(profile_name, port, {k: v for k, v in config.items() if k != "PORT"})
+            display_name = profile_name or "default"
+            print(f"\033[32m✓\033[0m Set {key}={value} in profile '{display_name}'")
+            return 0
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    elif parsed_args.profile_command == "remove-env":
+        # Remove env variable from profile
+        profile_name = parsed_args.name
+        key = parsed_args.key
+
+        # Normalize "default" to empty string
+        if profile_name == "default":
+            profile_name = ""
+
+        if not pm.profile_exists(profile_name):
+            display_name = profile_name or "default"
+            print(f"Error: Profile '{display_name}' does not exist.", file=sys.stderr)
+            return 1
+
+        # Read current config
+        if profile_name:
+            config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+        else:
+            config_path = CONFIG_FILE
+
+        # Parse existing config
+        config = {}
+        if config_path.exists():
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    config[k] = v
+
+        # Remove the key
+        if key not in config:
+            display_name = profile_name or "default"
+            print(f"Error: Key '{key}' not found in profile '{display_name}'", file=sys.stderr)
+            return 1
+
+        del config[key]
+
+        # Get port from config or resolve from profile
+        port = int(config.get("PORT", pm.resolve_profile_paths(profile_name).port))
+
+        # Write back
+        try:
+            pm.create_profile(profile_name, port, {k: v for k, v in config.items() if k != "PORT"})
+            display_name = profile_name or "default"
+            print(f"\033[32m✓\033[0m Removed {key} from profile '{display_name}'")
+            return 0
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    elif parsed_args.profile_command == "delete":
+        # Delete profile
+        profile_name = parsed_args.name
+        # Normalize "default" to empty string
+        if profile_name == "default":
+            profile_name = ""
+
+        if not pm.profile_exists(profile_name):
+            display_name = profile_name or "default"
+            print(f"Error: Profile '{display_name}' does not exist.", file=sys.stderr)
+            return 1
+
+        # Check if daemon is running
+        profile_info = pm.get_profile(profile_name)
+        if profile_info and profile_info.daemon_running:
+            display_name = profile_name or "default"
+            print(f"Warning: Daemon is running for profile '{display_name}'")
+            try:
+                confirm = input("Stop daemon and delete profile? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    print("Cancelled.")
+                    return 0
+            except (EOFError, KeyboardInterrupt):
+                print("\nCancelled.")
+                return 0
+
+            # Stop daemon
+            from . import daemon_client
+
+            daemon_client.stop_daemon(profile_name)
+
+        # Delete profile
+        try:
+            pm.delete_profile(profile_name)
+            display_name = profile_name or "default"
+            print(f"\033[32m✓\033[0m Profile '{display_name}' deleted.")
+            return 0
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    elif parsed_args.profile_command == "set-active":
+        # Set active profile
+        if parsed_args.none:
+            pm.set_active_profile(None)
+            print("\033[32m✓\033[0m Active profile cleared.")
+            return 0
+
+        if not parsed_args.name:
+            print("Error: Specify profile name or use --none to clear.", file=sys.stderr)
+            return 1
+
+        profile_name = parsed_args.name
+        try:
+            pm.set_active_profile(profile_name)
+            print(f"\033[32m✓\033[0m Active profile set to '{profile_name}'.")
+            return 0
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    elif parsed_args.profile_command == "show":
+        # Show current active profile
+        # Resolve using full priority chain
+        active_profile = resolve_active_profile()
+
+        # Validate profile exists
+        validate_profile_exists(active_profile)
+
+        display_name = active_profile if active_profile else "default"
+
+        # Determine source
+        source = "default"
+        if not active_profile:
+            source = "default"
+        elif os.getenv("HINDSIGHT_EMBED_PROFILE"):
+            source = "HINDSIGHT_EMBED_PROFILE"
+        elif get_cli_profile_override():
+            source = "cli_flag"
+        elif pm.get_active_profile():
+            source = "active_profile_file"
+
+        # Get config path
+        paths = pm.resolve_profile_paths(active_profile)
+
+        if parsed_args.output == "json":
+            # JSON output
+            import json
+
+            data = {
+                "name": display_name,
+                "source": source,
+                "config": str(paths.config),
+                "port": paths.port,
+            }
+            print(json.dumps(data, indent=2))
+            return 0
+
+        # Text output
+        print()
+        print(f"\033[1mActive profile:\033[0m {display_name}")
+        print()
+
+        if source == "default":
+            print("  \033[2mSource:\033[0m Default (no profile specified)")
+        elif source == "HINDSIGHT_EMBED_PROFILE":
+            print("  \033[2mSource:\033[0m HINDSIGHT_EMBED_PROFILE environment variable")
+        elif source == "cli_flag":
+            print("  \033[2mSource:\033[0m --profile flag")
+        elif source == "active_profile_file":
+            print("  \033[2mSource:\033[0m Active profile file")
+
+        print(f"  \033[2mConfig:\033[0m {paths.config}")
+        print(f"  \033[2mPort:\033[0m {paths.port}")
+        print()
+
+        return 0
+
+    return 1
+
+
+def main():
+    """Main entry point."""
+    # Windows defaults stdout/stderr to the legacy cp1252 codec, which crashes
+    # on the Unicode glyphs (✓, box-drawing, etc.) used throughout Rich-rendered
+    # output. Reconfigure to UTF-8 before the first print. `errors="replace"`
+    # keeps the CLI from dying on an unexpected character (e.g. a redirected
+    # pipe) — glyphs that can't be rendered become '?' rather than raising.
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8", errors="replace")
+
+    # Use argparse to properly parse global flags
+    # Create a parent parser for global --profile/-p flag
+    parent_parser = argparse.ArgumentParser(add_help=False)
+    parent_parser.add_argument("-p", "--profile", help="Profile name to use")
+
+    # Parse known args to extract --profile value
+    global_args, remaining_args = parent_parser.parse_known_args()
+    global_profile = global_args.profile
+    if global_profile == "default":
+        global_profile = None
+
+    # Set the CLI profile override so it's available to resolve_active_profile()
+    # This must happen BEFORE any config loading (load_config_file, get_config, etc.)
+    set_cli_profile_override(global_profile)
+
+    # Check for built-in commands first
+    # Find the first non-flag argument (the actual command)
+    command = None
+    if remaining_args:
+        command = remaining_args[0]
+
+        # Handle configure
+        if command == "configure":
+            # Parse configure arguments
+            parser = argparse.ArgumentParser(prog="hindsight-embed configure")
+            parser.add_argument("-p", "--profile", help="Profile name to create/update")
+            parser.add_argument(
+                "--port",
+                type=int,
+                help="Port for the daemon (required for named profiles, default profile uses 8888)",
+            )
+            parser.add_argument(
+                "--env",
+                action="append",
+                help="Environment variable (KEY=VALUE, can be repeated)",
+            )
+            parser.add_argument(
+                "--web",
+                action="store_true",
+                help="Launch the browser-based control center wizard instead of the terminal prompts",
+            )
+            args = parser.parse_args(remaining_args[1:])  # Skip 'configure' itself
+
+            # If --profile was consumed by parent_parser, use global_profile
+            if not args.profile and global_profile:
+                args.profile = global_profile
+
+            logger = setup_logging(False)
+            if getattr(args, "web", False):
+                # Delegate to the control center: a persistent local web UI
+                # that writes config and supervises the daemon.
+                control_args = argparse.Namespace(control_command="start", port=None, no_open=False)
+                sys.exit(do_control(control_args))
+            exit_code = do_configure(args)
+            sys.exit(exit_code)
+
+        # Handle profile subcommands
+        if command == "profile":
+            exit_code = do_profile_command(remaining_args[1:])  # Skip 'profile' itself
+            sys.exit(exit_code)
+
+        # Handle daemon subcommands
+        if command == "daemon":
+            # Parse daemon subcommand (profile already extracted globally)
+            parser = argparse.ArgumentParser(prog="hindsight-embed daemon")
+            subparsers = parser.add_subparsers(dest="daemon_command")
+            start_parser = subparsers.add_parser("start", help="Start the daemon")
+            start_parser.add_argument("--ui", action="store_true", help="Also start the web UI after daemon is ready")
+            subparsers.add_parser("stop", help="Stop the daemon")
+            subparsers.add_parser("status", help="Check daemon status")
+            logs_parser = subparsers.add_parser("logs", help="View daemon logs")
+            logs_parser.add_argument("--follow", "-f", action="store_true")
+            logs_parser.add_argument("--lines", "-n", type=int, default=50)
+
+            args = parser.parse_args(remaining_args[1:])  # Skip 'daemon' itself
+            # Use globally extracted profile
+            args.profile = global_profile
+            logger = setup_logging(False)
+            config = get_config()
+            exit_code = do_daemon(args, config, logger)
+            sys.exit(exit_code)
+
+        # Handle UI subcommands
+        if command == "ui":
+            parser = argparse.ArgumentParser(prog="hindsight-embed ui")
+            subparsers = parser.add_subparsers(dest="ui_command")
+            start_parser = subparsers.add_parser("start", help="Start the UI")
+            start_parser.add_argument("--port", type=int, help="Port for the UI (default: daemon_port + 10000)")
+            start_parser.add_argument(
+                "--hostname", "-H", default="0.0.0.0", help="Hostname to bind to (default: 0.0.0.0)"
+            )
+            stop_parser = subparsers.add_parser("stop", help="Stop the UI")
+            stop_parser.add_argument("--port", type=int, help="Port the UI is running on")
+            status_parser = subparsers.add_parser("status", help="Check UI status")
+            status_parser.add_argument("--port", type=int, help="Port to check")
+            logs_parser = subparsers.add_parser("logs", help="View UI logs")
+            logs_parser.add_argument("--follow", "-f", action="store_true")
+            logs_parser.add_argument("--lines", "-n", type=int, default=50)
+
+            args = parser.parse_args(remaining_args[1:])
+            args.profile = global_profile
+            logger = setup_logging(False)
+            config = get_config()
+            exit_code = do_ui(args, config, logger)
+            sys.exit(exit_code)
+
+        # Handle control-center subcommands
+        if command == "control":
+            parser = argparse.ArgumentParser(prog="hindsight-embed control")
+            subparsers = parser.add_subparsers(dest="control_command")
+            start_parser = subparsers.add_parser("start", help="Start the control center web app")
+            start_parser.add_argument("--port", type=int, help="Port for the control center (default: 7878)")
+            start_parser.add_argument("--no-open", action="store_true", help="Don't open the browser automatically")
+            stop_parser = subparsers.add_parser("stop", help="Stop the control center")
+            stop_parser.add_argument("--port", type=int, help="Port the control center is running on")
+            status_parser = subparsers.add_parser("status", help="Check control center status")
+            status_parser.add_argument("--port", type=int, help="Port to check")
+            logs_parser = subparsers.add_parser("logs", help="View control center logs")
+            logs_parser.add_argument("--follow", "-f", action="store_true")
+            logs_parser.add_argument("--lines", "-n", type=int, default=50)
+
+            args = parser.parse_args(remaining_args[1:])
+            if not args.control_command:
+                parser.print_help()
+                sys.exit(1)
+            setup_logging(False)
+            sys.exit(do_control(args))
+
+        # Handle --help / -h
+        if command in ("--help", "-h"):
+            print_help()
+            sys.exit(0)
+
+        # Check for common mistakes - these are daemon subcommands, not top-level commands
+        if command in ("start", "stop", "status", "logs"):
+            print(f"error: '{command}' is not a direct command", file=sys.stderr)
+            print(f"\nDid you mean: hindsight-embed daemon {command}", file=sys.stderr)
+            if global_profile:
+                print(f"              (with --profile {global_profile})", file=sys.stderr)
+            sys.exit(1)
+
+        # Forward all other commands to hindsight-cli
+        config = get_config()
+
+        from . import daemon_client
+
+        # Forward to hindsight-cli (handles daemon startup and CLI installation)
+        # Pass the globally extracted profile
+        # remaining_args already has --profile/-p filtered out
+        exit_code = daemon_client.run_cli(remaining_args, config, global_profile)
+        sys.exit(exit_code)
+
+    # No command - show help
+    print_help()
+    sys.exit(1)
+
+
+def print_help():
+    """Print help message."""
+    print("""Hindsight Embedded CLI - local memory operations with automatic daemon management.
+
+Usage: hindsight-embed [-p PROFILE] <command> [options]
+
+Profile management:
+    profile create NAME --port PORT [--env KEY=VALUE ...]   Create a new profile
+    profile set-env NAME KEY VALUE                          Set/update environment variable
+    profile remove-env NAME KEY                             Remove environment variable
+    profile list [-o json]                                  List all profiles
+    profile show [-o json]                                  Show current active profile
+    profile set-active NAME                                 Set active profile
+    profile delete NAME                                     Delete a profile
+
+Daemon management:
+    daemon start           Start the background daemon
+    daemon stop            Stop the daemon
+    daemon status          Check daemon status
+    daemon logs [-f] [-n]  View daemon logs
+
+UI (control plane):
+    ui start [--port PORT] [--hostname HOST]  Start the web UI (default port: daemon_port + 10000)
+    ui stop [--port PORT]                     Stop the web UI
+    ui status [--port PORT]                   Check UI status
+    ui logs [-f] [-n]                         View UI logs
+
+Control center (config wizard + daemon supervisor):
+    control start [--port PORT] [--no-open]   Start the local control center (default port: 7878)
+    control stop [--port PORT]                Stop the control center
+    control status [--port PORT]              Check control center status
+    control logs [-f] [-n]                    View control center logs
+
+CLI commands (forwarded to hindsight-cli):
+    memory retain <bank> <content>   Store a memory
+    memory recall <bank> <query>     Search memories
+    memory reflect <bank> <query>    Generate contextual answer
+    bank list                        List memory banks
+    ...                              Run 'hindsight --help' for all commands
+
+Global options:
+    -p, --profile PROFILE  Profile to use for commands
+
+Examples:
+    # Create a profile
+    hindsight-embed profile create my-app --port 9100 --env HINDSIGHT_API_LLM_PROVIDER=openai
+
+    # Manage environment variables
+    hindsight-embed profile set-env my-app HINDSIGHT_API_LLM_MODEL gpt-4
+    hindsight-embed profile remove-env my-app HINDSIGHT_API_LLM_MODEL
+
+    # Use profile with commands
+    hindsight-embed -p my-app daemon start
+    hindsight-embed -p my-app memory retain default "User prefers dark mode"
+    hindsight-embed --profile my-app bank list
+
+Note: 'configure' command is deprecated, use 'profile create' instead.
+""")
+
+
+if __name__ == "__main__":
+    main()

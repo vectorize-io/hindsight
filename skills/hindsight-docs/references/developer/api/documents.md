@@ -1,0 +1,539 @@
+
+# Documents
+
+Track and manage document sources in your memory bank. Documents provide traceability — knowing where memories came from.
+
+{/* Import raw source files */}
+
+> **💡 Prerequisites**
+>
+Make sure you've completed the [Quick Start](./quickstart.md) and understand [how retain works](./retain.md).
+## What Are Documents?
+
+Documents are containers for retained content. They help you:
+
+- **Track sources** — Know which PDF, conversation, or file a memory came from
+- **Update content** — Re-retain a document to update its facts
+- **Delete in bulk** — Remove all memories from a document at once
+- **Organize memories** — Group related facts by source
+
+## Chunks
+
+When you retain content, Hindsight splits it into chunks before extracting facts. These chunks are stored alongside the extracted memories, preserving the original text segments.
+
+**Why chunks matter:**
+- **Context preservation** — Chunks contain the raw text that generated facts, useful when you need the exact wording
+- **Richer recall** — Including chunks in recall provides surrounding context for matched facts
+
+> **💡 Include Chunks in Recall**
+>
+Use `include_chunks=True` in your recall calls to get the original text chunks alongside fact results. See [Recall](./recall.md) for details.
+## Retain with Document ID
+
+Associate retained content with a document:
+
+### Python
+
+```python
+# Retain with document ID
+client.retain(
+    bank_id="my-bank",
+    content="Alice presented the Q4 roadmap...",
+    document_id="meeting-2024-03-15"
+)
+
+# Batch retain for a document with different sections
+client.retain_batch(
+    bank_id="my-bank",
+    items=[
+        {"content": "Item 1: Product launch delayed to Q2", "document_id": "meeting-2024-03-15-section-1"},
+        {"content": "Item 2: New hiring targets announced", "document_id": "meeting-2024-03-15-section-2"},
+        {"content": "Item 3: Budget approved for ML team", "document_id": "meeting-2024-03-15-section-3"}
+    ]
+)
+```
+
+### Node.js
+
+```javascript
+// Retain with document ID
+await client.retain('my-bank', 'Alice presented the Q4 roadmap...', {
+    document_id: 'meeting-2024-03-15'
+});
+
+// Batch retain for a document with different sections
+await client.retainBatch('my-bank', [
+    { content: 'Item 1: Product launch delayed to Q2', document_id: 'meeting-2024-03-15-section-1' },
+    { content: 'Item 2: New hiring targets announced', document_id: 'meeting-2024-03-15-section-2' },
+    { content: 'Item 3: Budget approved for ML team', document_id: 'meeting-2024-03-15-section-3' }
+]);
+```
+
+### CLI
+
+```bash
+# Retain content with document ID
+hindsight memory retain "$BANK_ID" "Meeting notes content..." --doc-id notes-2024-03-15
+
+# Batch retain from files
+hindsight memory retain-files "$BANK_ID" docs/
+```
+
+### Go
+
+```go
+// Retain with document ID
+docID := "meeting-2024-03-15"
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{
+				Content:    hindsight.TextContent("Alice presented the Q4 roadmap..."),
+				DocumentId: *hindsight.NewNullableString(&docID),
+			},
+		},
+	}).Execute()
+```
+
+## Update Documents
+
+Re-retaining with the same document_id **replaces** the old content:
+
+### Python
+
+```python
+# Original
+client.retain(
+    bank_id="my-bank",
+    content="Project deadline: March 31",
+    document_id="project-plan"
+)
+
+# Update (deletes old facts, creates new ones)
+client.retain(
+    bank_id="my-bank",
+    content="Project deadline: April 15 (extended)",
+    document_id="project-plan"
+)
+```
+
+### Node.js
+
+```javascript
+// Original
+await client.retain('my-bank', 'Project deadline: March 31', {
+    document_id: 'project-plan'
+});
+
+// Update
+await client.retain('my-bank', 'Project deadline: April 15 (extended)', {
+    document_id: 'project-plan'
+});
+```
+
+### CLI
+
+```bash
+# Original
+hindsight memory retain "$BANK_ID" "Project deadline: March 31" --doc-id project-plan
+
+# Update
+hindsight memory retain "$BANK_ID" "Project deadline: April 15 (extended)" --doc-id project-plan
+```
+
+### Go
+
+```go
+// Original
+planDoc := "project-plan"
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{
+				Content:    hindsight.TextContent("Project deadline: March 31"),
+				DocumentId: *hindsight.NewNullableString(&planDoc),
+			},
+		},
+	}).Execute()
+
+// Update (deletes old facts, creates new ones)
+client.MemoryAPI.RetainMemories(ctx, "my-bank").
+	RetainRequest(hindsight.RetainRequest{
+		Items: []hindsight.MemoryItem{
+			{
+				Content:    hindsight.TextContent("Project deadline: April 15 (extended)"),
+				DocumentId: *hindsight.NewNullableString(&planDoc),
+			},
+		},
+	}).Execute()
+```
+
+## Get Document
+
+Retrieve a document's original text and metadata. This is useful for expanding document context after a recall operation returns memories with document references.
+
+### Python
+
+```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+
+async def get_document_example():
+    config = Configuration(host="http://localhost:8888")
+    api_client = ApiClient(config)
+    api = DocumentsApi(api_client)
+
+    # Get document to expand context from recall results
+    doc = await api.get_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15"
+    )
+
+    print(f"Document: {doc.id}")
+    print(f"Original text: {doc.original_text}")
+    print(f"Memory count: {doc.memory_unit_count}")
+    print(f"Created: {doc.created_at}")
+
+asyncio.run(get_document_example())
+```
+
+### Node.js
+
+```javascript
+// Get document to expand context from recall results
+const { data: doc, error } = await sdk.getDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' }
+});
+
+if (error) {
+    throw new Error(`Failed to get document: ${JSON.stringify(error)}`);
+}
+
+console.log(`Document: ${doc.id}`);
+console.log(`Original text: ${doc.original_text}`);
+console.log(`Memory count: ${doc.memory_unit_count}`);
+console.log(`Created: ${doc.created_at}`);
+```
+
+### CLI
+
+```bash
+hindsight document get "$BANK_ID" notes-2024-03-15
+```
+
+### Go
+
+```go
+doc, _, err := client.DocumentsAPI.GetDocument(ctx, "my-bank", "meeting-2024-03-15").Execute()
+if err != nil {
+	log.Fatalf("Failed to get document: %v", err)
+}
+fmt.Printf("Document ID: %s\n", doc.GetId())
+fmt.Printf("Memory units: %d\n", doc.GetMemoryUnitCount())
+```
+
+## Update Document
+
+Update mutable fields on an existing document without re-processing the content. Currently supports updating `tags`.
+
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To remove a single tag, read the document's current tags, drop the one you want gone, and send the rest. Omitting the field entirely is not an update at all and is rejected with a `422`.
+
+### Python
+
+```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+from hindsight_client_api.models import UpdateDocumentRequest
+
+async def update_document_example():
+    config = Configuration(host="http://localhost:8888")
+    api_client = ApiClient(config)
+    api = DocumentsApi(api_client)
+
+    # Fix tags on a document retained with the wrong scope
+    result = await api.update_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15",
+        update_document_request=UpdateDocumentRequest(tags=["team-a", "team-b"]),
+    )
+    print(f"Updated: {result.success}")
+
+    # Remove all tags (make document visible everywhere)
+    await api.update_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15",
+        update_document_request=UpdateDocumentRequest(tags=[]),
+    )
+
+asyncio.run(update_document_example())
+```
+
+### Node.js
+
+```javascript
+// Fix tags on a document retained with the wrong scope
+const { data: updateResult, error: updateError } = await sdk.updateDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    body: { tags: ['team-a', 'team-b'] }
+});
+
+if (updateError) {
+    throw new Error(`Failed to update tags: ${JSON.stringify(updateError)}`);
+}
+
+console.log(`Updated: ${updateResult.success}`);
+
+// Remove all tags (make document visible everywhere)
+await sdk.updateDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    body: { tags: [] }
+});
+```
+
+### CLI
+
+```bash
+# Replace tags with new values (comma-separated)
+hindsight document update "$BANK_ID" notes-2024-03-15 --tags team-a,team-b
+
+# Remove all tags (make document visible everywhere)
+hindsight document update "$BANK_ID" notes-2024-03-15 --tags ""
+```
+
+### Go
+
+```go
+// Replace the document's tags (the full set it should end up with)
+updateResult, _, err := client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{Tags: []string{"team-a", "team-b"}}).
+	Execute()
+if err != nil {
+	log.Fatalf("Failed to update document: %v", err)
+}
+fmt.Printf("Updated: %v\n", updateResult.GetSuccess())
+
+// Remove all tags (make document visible everywhere). Pass an empty slice, not nil:
+// a nil slice is left out of the request, and the server rejects an update with no tags.
+client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{Tags: []string{}}).
+	Execute()
+```
+
+> **ℹ️ Observations are re-consolidated**
+>
+When tags change, any consolidated observations derived from the document's memories are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset.
+
+This is required for correctness rather than incidental: consolidation scopes a memory by its tag set, so an observation built under the old tags is no longer valid, and deleting it would strand every other memory that observation was consolidated from unless those are requeued too. The size of that requeue is the number of memories co-sourced with this document's — on a densely co-sourced bank it can be many times the document's own memory count.
+
+Tags are compared as a **set** against the document's current tags, and an update that leaves the set unchanged — including one that only reorders the array — performs no retag and queues no re-consolidation. A repeatable tag-normalisation sweep therefore only pays the re-consolidation cost on the run that actually changes something.
+## Delete Document
+
+Remove a document and all its associated memories:
+
+### Python
+
+```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+
+async def delete_document_example():
+    config = Configuration(host="http://localhost:8888")
+    api_client = ApiClient(config)
+    api = DocumentsApi(api_client)
+
+    # Delete document and all its memories
+    result = await api.delete_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15"
+    )
+
+    print(f"Deleted {result.memory_units_deleted} memories")
+
+asyncio.run(delete_document_example())
+```
+
+### Node.js
+
+```javascript
+// Delete document and all its memories
+const { data: deleteResult } = await sdk.deleteDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' }
+});
+
+console.log(`Deleted ${deleteResult.memory_units_deleted} memories`);
+```
+
+### CLI
+
+```bash
+hindsight document delete "$BANK_ID" notes-2024-03-15
+```
+
+### Go
+
+```go
+client.DocumentsAPI.DeleteDocument(ctx, "my-bank", "meeting-2024-03-15").Execute()
+```
+
+> **⚠️ Warning**
+>
+Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
+## List Documents
+
+List documents in a bank with optional filtering by ID, tags, and time.
+
+`start_date=` and `end_date=` restrict the results to a half-open range `[start, end)` on the timestamp named by `time_field=` — either `created_at` (when the document first arrived) or `updated_at` (its last write, and the default ordering). `time_field` also becomes the sort order, newest first.
+
+Because filtering and ordering follow the same column, `total` counts only the documents inside the window rather than the whole bank. Omit all three parameters to keep the default listing.
+
+### Python
+
+```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+
+async def list_documents_example():
+    config = Configuration(host="http://localhost:8888")
+    api_client = ApiClient(config)
+    api = DocumentsApi(api_client)
+
+    # List all documents
+    result = await api.list_documents(bank_id="my-bank")
+    print(f"Total documents: {result.total}")
+
+    # Filter by document ID substring
+    result = await api.list_documents(bank_id="my-bank", q="report")
+
+    # Filter by tags — only docs tagged with "team-a" (untagged excluded)
+    result = await api.list_documents(
+        bank_id="my-bank",
+        tags=["team-a"],
+        tags_match="any_strict",
+    )
+
+    # Combine ID search and tags
+    result = await api.list_documents(
+        bank_id="my-bank",
+        q="meeting",
+        tags=["team-a", "team-b"],
+        tags_match="all_strict",  # must have both tags
+    )
+
+    # Paginate
+    result = await api.list_documents(bank_id="my-bank", limit=20, offset=40)
+    print(f"Page items: {len(result.items)}")
+
+import asyncio
+asyncio.run(list_documents_example())
+```
+
+### Node.js
+
+```javascript
+const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
+
+// List all documents
+const { data: allDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' }
+});
+console.log(`Total documents: ${allDocs.total}`);
+
+// Filter by document ID substring
+const { data: reportDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { q: 'report' }
+});
+
+// Filter by tags — only docs tagged with "team-a" (untagged excluded)
+const { data: taggedDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { tags: ['team-a'], tags_match: 'any_strict' }
+});
+
+// Combine ID search and tags
+const { data: filtered } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { q: 'meeting', tags: ['team-a', 'team-b'], tags_match: 'all_strict' }
+});
+
+// Paginate
+const { data: page } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { limit: 20, offset: 40 }
+});
+console.log(`Page items: ${page.items.length}`);
+```
+
+### CLI
+
+```bash
+# List all documents
+hindsight document list "$BANK_ID"
+
+# Filter by ID substring
+hindsight document list "$BANK_ID" --query notes
+```
+
+### Go
+
+```go
+// List all documents
+docs, _, err := client.DocumentsAPI.ListDocuments(ctx, "my-bank").Execute()
+if err != nil {
+	log.Fatalf("Failed to list documents: %v", err)
+}
+for _, d := range docs.Items {
+	fmt.Printf("%s: %d memories\n", d.Id, d.GetMemoryUnitCount())
+}
+```
+
+### Filtering Options
+
+| Parameter | Description |
+|---|---|
+| `q` | Case-insensitive substring match on document ID. `report` matches `report-2024`, `annual-report`, etc. |
+| `tags` | Filter by document tags. Accepts multiple values. |
+| `tags_match` | How to match tags (default: `any_strict`). See below. |
+| `limit` / `offset` | Pagination. Default limit is 100. |
+
+**`tags_match` modes:**
+
+| Mode | Behaviour |
+|---|---|
+| `any_strict` *(default)* | Document must have **at least one** of the specified tags. Untagged docs excluded. |
+| `any` | Same as `any_strict` but also includes untagged documents. |
+| `all_strict` | Document must have **all** specified tags. Untagged docs excluded. |
+| `all` | Same as `all_strict` but also includes untagged documents. |
+
+## Document Response Format
+
+```json
+{
+  "id": "meeting-2024-03-15",
+  "bank_id": "my-bank",
+  "original_text": "Alice presented the Q4 roadmap...",
+  "content_hash": "abc123def456",
+  "memory_unit_count": 12,
+  "nodes_by_fact_type": {
+    "world": 5,
+    "experience": 4,
+    "observation": 3
+  },
+  "created_at": "2024-03-15T14:00:00Z",
+  "updated_at": "2024-03-15T14:00:00Z"
+}
+```
+
+## Next Steps
+
+- [**Operations**](./operations.md) — Monitor background tasks
+- [**Memory Banks**](./memory-banks.md) — Configure bank settings

@@ -1,0 +1,5 @@
+FROM hindsight-coding-agents-e2e-base
+ARG VERSION=latest
+# Stable v2 moved to its own package (`@opencode/cli`, whose `latest` is 2.x). It publishes both
+# `opencode` and `opencode2`; use the latter so this image drives the v2 harness explicitly.
+RUN npm install --global "@opencode/cli@${VERSION}"

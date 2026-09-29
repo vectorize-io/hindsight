@@ -1,0 +1,335 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { ControlPlaneClient } from "@/lib/api";
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    warning: vi.fn(),
+  },
+}));
+
+describe("ControlPlaneClient error handling", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "",
+          pathname: "/en/dashboard",
+          search: "",
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    vi.mocked(toast.error).mockReset();
+    vi.mocked(toast.warning).mockReset();
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it("shows client-error details for 4xx validation failures", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: "Failed to update bank config",
+          details: "retain_structured_chunk_size must be a positive integer",
+        }),
+        { status: 400 }
+      )
+    );
+
+    await expect(client.getBankConfig("bank-a")).rejects.toMatchObject({
+      message: "retain_structured_chunk_size must be a positive integer",
+      status: 400,
+      details: "retain_structured_chunk_size must be a positive integer",
+    });
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Client Error",
+      expect.objectContaining({
+        description: "retain_structured_chunk_size must be a positive integer",
+      })
+    );
+  });
+
+  it("does not show upstream response details for 5xx failures", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: "DiskFullError on shared memory",
+          details: "internal stack trace",
+        }),
+        { status: 500 }
+      )
+    );
+
+    await expect(client.getBankConfig("bank-a")).rejects.toMatchObject({
+      message: "HTTP 500",
+      status: 500,
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "Server Error",
+      expect.objectContaining({
+        description: "HTTP 500",
+      })
+    );
+  });
+});
+
+describe("ControlPlaneClient.cloneBank", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ operation_id: "op-1", status: "pending" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("posts the target bank id to the clone route", async () => {
+    const result = await client.cloneBank("source-bank", "source-bank-copy");
+
+    expect(result.operation_id).toBe("op-1");
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/banks/source-bank/clone");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ target_bank_id: "source-bank-copy" });
+  });
+
+  it("forwards all three scope flags, matching the endpoint's own three", async () => {
+    await client.cloneBank("source-bank", "copy", {
+      includeData: true,
+      includeBankConfig: false,
+      includeHistory: true,
+    });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      target_bank_id: "copy",
+      include_data: true,
+      include_bank_config: false,
+      include_history: true,
+    });
+  });
+
+  it("omits scope flags that were not set, so the server's defaults decide", async () => {
+    await client.cloneBank("source-bank", "copy", { includeBankConfig: false });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.include_bank_config).toBe(false);
+    expect(body).not.toHaveProperty("include_data");
+    expect(body).not.toHaveProperty("include_history");
+  });
+});
+
+describe("ControlPlaneClient.deleteOperation", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "",
+          pathname: "/en/dashboard",
+          search: "",
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    vi.mocked(toast.error).mockReset();
+    vi.mocked(toast.warning).mockReset();
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it("issues DELETE to /api/banks/{bankId}/operations/{opId}", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: true,
+          message: "Operation deleted",
+          operation_id: "op-1",
+        }),
+        { status: 200 }
+      )
+    );
+
+    await client.deleteOperation("bank-a", "op-1");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/banks\/bank-a\/operations\/op-1$/),
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+});
+
+describe("ControlPlaneClient direct fetch error formatting", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("preserves the transfer API's validation detail for the import view", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "Invalid transfer archive: manifest.json is missing" }), {
+        status: 400,
+      })
+    );
+
+    const file = new File(["not a transfer archive"], "documents.zip", { type: "application/zip" });
+
+    await expect(client.importDocuments("bank-a", file)).rejects.toMatchObject({
+      message: "Invalid transfer archive: manifest.json is missing",
+      status: 400,
+    });
+  });
+
+  it("prefers an error message over a transfer API detail", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Transfer imports are disabled", detail: "Ignored detail" }), {
+        status: 404,
+      })
+    );
+
+    const file = new File(["transfer archive"], "documents.zip", { type: "application/zip" });
+
+    await expect(client.importDocuments("bank-a", file)).rejects.toMatchObject({
+      message: "Transfer imports are disabled",
+      status: 404,
+    });
+  });
+
+  it("formats structured validation details from direct upload requests", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: { violations: [{ message: "File type is not supported" }] } }), {
+        status: 422,
+      })
+    );
+
+    const file = new File(["unsupported"], "document.zip", { type: "application/zip" });
+
+    await expect(
+      client.uploadFiles({
+        bank_id: "bank-a",
+        files: [file],
+      })
+    ).rejects.toMatchObject({
+      message: "File type is not supported",
+      status: 422,
+    });
+  });
+
+  it("formats structured validation details from binary download requests", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: { violations: [{ message: "Export is disabled" }] } }), {
+        status: 404,
+      })
+    );
+
+    await expect(client.exportDocuments("bank-a")).rejects.toMatchObject({
+      message: "Export is disabled",
+      status: 404,
+    });
+  });
+
+  it("passes the knowledge-base export flag to the transfer route", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(new Blob(["zip"]), { status: 200 }));
+
+    await client.exportDocuments("bank-a", undefined, false, true);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/documents/transfer?bank_id=bank-a&include_knowledge_base=true")
+    );
+  });
+
+  // The bank profile endpoint was retired server-side; getBankProfile now composes
+  // the bank config (traits + mission) with the filtered bank list (display name).
+  it("composes a bank profile from the config and the bank list", async () => {
+    fetchSpy.mockImplementation(((url: string) =>
+      Promise.resolve(
+        url.includes("/config")
+          ? new Response(
+              JSON.stringify({
+                bank_id: "bank-a",
+                config: {
+                  disposition_skepticism: 5,
+                  disposition_literalism: 2,
+                  disposition_empathy: 4,
+                  reflect_mission: "Be useful",
+                },
+                overrides: {},
+              }),
+              { status: 200 }
+            )
+          : new Response(
+              JSON.stringify({
+                banks: [
+                  { bank_id: "bank-a-other", name: "Wrong bank" },
+                  { bank_id: "bank-a", name: "Bank A" },
+                ],
+                total: 2,
+                limit: 100,
+                offset: 0,
+              }),
+              { status: 200 }
+            )
+      )) as unknown as typeof fetch);
+
+    await expect(client.getBankProfile("bank-a")).resolves.toEqual({
+      bank_id: "bank-a",
+      name: "Bank A",
+      disposition: { skepticism: 5, literalism: 2, empathy: 4 },
+      mission: "Be useful",
+    });
+  });
+
+  it("falls back to the bank id when the listing cannot supply a name", async () => {
+    fetchSpy.mockImplementation(((url: string) =>
+      url.includes("/config")
+        ? Promise.resolve(
+            new Response(JSON.stringify({ bank_id: "bank-a", config: {}, overrides: {} }), {
+              status: 200,
+            })
+          )
+        : Promise.reject(new Error("list unavailable"))) as unknown as typeof fetch);
+
+    await expect(client.getBankProfile("bank-a")).resolves.toEqual({
+      bank_id: "bank-a",
+      name: "bank-a",
+      disposition: { skepticism: 3, literalism: 3, empathy: 3 },
+      mission: "",
+    });
+  });
+});

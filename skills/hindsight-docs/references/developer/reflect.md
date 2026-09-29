@@ -1,0 +1,317 @@
+
+
+# Reflect: Agentic Reasoning with Disposition
+
+When you call `reflect()`, Hindsight runs an **agentic loop** that autonomously gathers evidence and reasons through the lens of the bank's disposition to generate contextual responses.
+
+**Figure: Reflect Agent Loop.** An animated diagram on the docs site; its narration, step by step:
+
+- **reflect()**
+  1. reflect() gets a question that needs reasoning, not just lookup.
+  2. The bank’s mission, disposition and directives go into the agent’s instructions before it looks anything up.
+  3. Each turn is one tool call. Retrieval starts at the top, with mental models: curated summaries kept up to date.
+  4. A fresh mental model can be enough to answer. This one covers the team, not the ML project, so the agent keeps looking.
+  5. Then observations: beliefs consolidated from many facts.
+  6. The result is flagged stale: the bank has facts not yet consolidated into observations. So the agent must check the raw facts.
+  7. recall() runs the full four-way search over raw facts: the ground truth.
+  8. The newer fact is what the stale observation was missing: Alice asked to move to ML herself.
+  9. recall already returns the chunk each fact came from. expand goes further: the whole source document, for the full context.
+  10. The agent calls done. Every cited ID is checked against what it actually retrieved; anything else is dropped. It must gather evidence first, and stops after 10 iterations at most.
+  11. The answer follows the directives and the bank’s disposition, and comes back with the memories it is based on.
+
+---
+
+## How It Works
+
+Unlike simple retrieval, reflect is an **agentic system** that:
+
+1. **Autonomously gathers evidence** — The agent decides what information it needs and calls appropriate tools
+2. **Uses hierarchical retrieval** — Checks mental models first, then observations, then raw facts
+3. **Applies disposition** — Shapes reasoning based on the bank's personality traits
+4. **Enforces applicable directives** — Global rules and rules matching the reflect tag scope
+5. **Cites sources** — Returns which memories and observations were used
+
+### The Agentic Loop
+
+The reflect agent runs in a loop with access to these tools:
+
+| Tool | Purpose | Priority |
+|------|---------|----------|
+| `search_mental_models` | User-curated summaries — best match in full, a snippet of the others | Highest (check first) |
+| `read_mental_models` | Full text of the pages returned as snippets | When a snippet looks relevant |
+| `search_observations` | Consolidated knowledge | High |
+| `recall` | Raw facts (ground truth) | Fallback |
+| `expand` | Get more context for a memory | As needed |
+| `done` | Complete with final answer | When ready |
+
+The agent:
+- **Must gather evidence** before answering (guardrail prevents empty responses)
+- **Runs up to 10 iterations** to find relevant information
+- **Validates citations** — only IDs that were actually retrieved can be cited
+
+### Hierarchical Retrieval Strategy
+
+The agent uses a smart retrieval hierarchy:
+
+1. **[Mental Models](api/mental-models.md)** — User-curated summaries you've pre-computed for common queries
+2. **[Observations](observations.md)** — Consolidated knowledge with freshness awareness
+3. **Raw Facts** — Ground truth for verification when observations are stale
+
+**Mental models** are saved reflect responses that you create for frequently asked questions. They're checked first because they represent explicitly curated knowledge. See the [Mental Models API](api/mental-models.md) for how to create and manage them.
+
+If an observation is marked as **stale**, the agent automatically verifies it against current facts.
+
+---
+
+## Why Reflect?
+
+Most AI systems can retrieve facts, but they can't **reason** about them in a consistent way.
+
+### The Problem
+
+Without reflect:
+- **No consistent character**: Same question gets different answers each time
+- **No knowledge synthesis**: System never connects related facts
+- **No reasoning context**: Responses don't reflect accumulated knowledge
+- **Generic responses**: Every AI sounds the same
+
+### The Value
+
+With reflect:
+- **Consistent character**: A "detail-oriented, cautious" bank emphasizes risks and thorough planning
+- **Evolving knowledge**: Observations strengthen and adapt as evidence accumulates
+- **Contextual reasoning**: "Based on what I know about your team's remote work success..."
+- **Differentiated behavior**: Support bots sound diplomatic, code reviewers sound direct
+
+### When to Use Reflect
+
+| Use `recall()` when... | Use `reflect()` when... |
+|------------------------|-------------------------|
+| You need raw facts | You need reasoned interpretation |
+| You're building your own reasoning | You want disposition-consistent responses |
+| You need maximum control | You want the bank to "think" for itself |
+| Simple fact lookup | Forming recommendations |
+
+**Example:**
+- `recall("Alice")` → Returns all Alice facts and relevant mental models
+- `reflect("Should we hire Alice?")` → Agent gathers evidence about Alice, reasons about fit, returns answer with citations
+
+---
+
+## Disposition Traits
+
+When you create a memory bank, you can configure its disposition using three traits. These traits influence how the bank interprets information and reasons during `reflect()`:
+
+| Trait | Scale | Low (1) | High (5) |
+|-------|-------|---------|----------|
+| **Skepticism** | 1-5 | Trusting, accepts information at face value | Skeptical, questions and doubts claims |
+| **Literalism** | 1-5 | Flexible interpretation, reads between the lines | Literal interpretation, takes things at face value |
+| **Empathy** | 1-5 | Detached, focuses on facts | Empathetic, considers emotional context |
+
+### Mission: Natural Language Identity
+
+Beyond numeric traits, you can provide a natural language **mission** that describes the bank's identity and reasoning context:
+
+```python
+client.create_bank(bank_id="architect-bank")
+client.update_bank_config(
+    "architect-bank",
+    reflect_mission="You're a senior software architect - keep track of system designs, "
+            "technology decisions, and architectural patterns. Prefer simplicity over cutting-edge.",
+    disposition_skepticism=4,   # Questions new technologies
+    disposition_literalism=4,   # Focuses on concrete specs
+    disposition_empathy=2,      # Prioritizes technical facts
+)
+```
+
+The reflect mission frames how the agent reasons and responds:
+- Provides identity context: who the agent is and what it cares about
+- Shapes how disposition traits are applied in practice
+- Keeps reasoning consistent across conversations
+
+> **ℹ️ Per-operation missions**
+>
+The reflect mission only affects `reflect()`. To steer what gets extracted during `retain()`, use [`retain_mission`](api/memory-banks.md#retain-configuration). To control what gets synthesised into observations, use [`observations_mission`](api/memory-banks.md#observations-configuration).
+---
+
+## Disposition Shapes Reasoning
+
+Two banks with different dispositions, given identical facts about remote work:
+
+**Bank A** (low skepticism, high empathy):
+> "Remote work enables flexibility and work-life balance. The team seems happier and more productive when they can choose their environment."
+
+**Bank B** (high skepticism, low empathy):
+> "Remote work claims need verification. What are the actual productivity metrics? The anecdotal benefits may not translate to measurable outcomes."
+
+**Same facts → Different conclusions** because disposition shapes interpretation.
+
+---
+
+## Disposition Presets by Use Case
+
+Different use cases benefit from different disposition configurations:
+
+| Use Case | Recommended Traits | Why |
+|----------|-------------------|-----|
+| **Customer Support** | skepticism: 2, literalism: 2, empathy: 5 | Trusting, flexible, understanding |
+| **Code Review** | skepticism: 4, literalism: 5, empathy: 2 | Questions assumptions, precise, direct |
+| **Legal Analysis** | skepticism: 5, literalism: 5, empathy: 2 | Highly skeptical, exact interpretation |
+| **Therapist/Coach** | skepticism: 2, literalism: 2, empathy: 5 | Supportive, reads between lines |
+| **Research Assistant** | skepticism: 4, literalism: 3, empathy: 3 | Questions claims, balanced interpretation |
+
+---
+
+## Directives: Hard Rules
+
+While disposition traits *influence* reasoning style, **directives** are hard
+rules that the agent *must* follow when they apply to the current reflect scope.
+Untagged directives are global; tagged directives require matching reflect
+tags. See [Memory Banks: Directives](api/memory-banks.md#directives) for
+the full matching and default-behavior tables.
+
+### When to Use Directives
+
+Use directives for constraints that must never be violated:
+
+- **Compliance rules**: "Never recommend specific stocks or financial products"
+- **Privacy constraints**: "Never share personal data with third parties"
+- **Style requirements**: "Always respond in formal English"
+- **Domain guardrails**: "Always cite sources when making factual claims"
+
+### Directive Scope and Tags
+
+Directive `tags` scope when a directive applies, just like they scope memories. Untagged directives always apply; tagged directives apply only when the `reflect` request carries matching tags. A `reflect` with no tags therefore applies only the untagged directives. Set `apply_all_directives: true` on the request to enforce **every** active directive regardless of tags. See [Memory Banks: Directive Scope and Tags](api/memory-banks.md#directive-scope-and-tags).
+
+### Directives vs Disposition
+
+| Aspect | Disposition | Directives |
+|--------|-------------|------------|
+| **Nature** | Soft influence | Hard rules |
+| **Effect** | Shapes interpretation and tone | Must be followed exactly |
+| **Violation** | Acceptable (it's a tendency) | Not acceptable |
+| **Example** | High skepticism → questions claims | "Never make medical diagnoses" |
+
+> **💡 Tip**
+>
+Use disposition for personality and character. Use directives for compliance and guardrails.
+See [Memory Banks: Directives](api/memory-banks.md#directives) for how to create and manage directives.
+
+---
+
+## What You Get from Reflect
+
+When you call `reflect()`:
+
+**Returns:**
+- **Response text** — Disposition-influenced answer from the agent
+- **based_on** — Evidence used: memories, mental models, and directives that grounded the response
+- **trace** — Tool calls, LLM calls, and observations accessed (when `include.tool_calls=True`)
+- **structured_output** — Parsed response if `response_schema` was provided
+- **usage** — Token usage metrics
+
+**Example:**
+```json
+{
+  "text": "Based on Alice's ML expertise and her work at Google, she'd be an excellent fit for the research team lead position...",
+  "based_on": {
+    "memories": [
+      {"id": "mem-123", "text": "Alice has 5 years of ML experience", "type": "world"},
+      {"id": "mem-456", "text": "Alice worked at Google on search ranking", "type": "experience"}
+    ],
+    "mental_models": [],
+    "directives": [
+      {"id": "dir-001", "name": "Formal Language", "rules": ["Always respond in formal English"]}
+    ]
+  },
+  "usage": {"input_tokens": 1500, "output_tokens": 500, "total_tokens": 2000}
+}
+```
+
+The agent automatically gathers evidence, validates citations, and generates a grounded response.
+
+---
+
+## Structured Output
+
+Reflect returns prose by default. Pass a `response_schema` (a JSON Schema **object** with a
+`properties` map) to *also* get a machine-readable version of the same answer:
+
+```json
+{
+  "query": "How does Alice fit the research lead role?",
+  "response_schema": {
+    "type": "object",
+    "properties": {
+      "recommendation": { "type": "string" },
+      "strengths": { "type": "array", "items": { "type": "string" } },
+      "confidence": { "type": "number" }
+    },
+    "required": ["recommendation"]
+  }
+}
+```
+
+The response then carries **both** the prose and the structured view:
+
+```json
+{
+  "text": "Based on Alice's ML expertise and her work at Google, she'd be an excellent fit...",
+  "structured_output": {
+    "recommendation": "Strong fit for research lead",
+    "strengths": ["5 years of ML experience", "Search ranking at Google"],
+    "confidence": 0.9
+  }
+}
+```
+
+**How it works.** The agent first reasons to a natural-language answer, then a second pass
+extracts that answer into JSON matching your schema. `structured_output` is therefore always a
+faithful projection of `text` — you get the readable answer **and** a typed object to program
+against, never one instead of the other.
+
+**When extraction fails.** The reflect still returns `200` with the prose answer, no
+`structured_output`, and a `structured_output_error` field saying why (a provider error, a timeout,
+unparseable output). A missing `structured_output` *without* that field means the answer simply held
+nothing matching your schema — so you can retry the broken case without retrying the ordinary one.
+
+**Schema rules.** The schema must be an object with at least one property. Each property's `type`
+is one of `string`, `number`, `integer`, `boolean`, `array`, or `object`, and `required` lists
+property names. Invalid schemas are rejected before the call runs, so a malformed schema fails
+fast instead of silently returning nothing.
+
+### Structured output for mental models
+
+A pinned mental model can carry its own `response_schema` in its trigger config. Every refresh
+then stores a `structured_output` next to the markdown content — extracted from the **final
+stored document**. This matters for delta-mode (surgical) refreshes: the structured view reflects
+the whole merged document, not just the facts that changed in that refresh.
+
+### Building a schema (no code)
+
+In the control plane, the reflect view and the mental-model dialogs include a **Build schema**
+editor with a **Visual** mode (add fields — name, type, required, description) and a **Code** mode
+(raw JSON). The page itself shows only whether a schema is set; all editing happens in the
+builder, so you never hand-write JSON unless you want to.
+
+---
+
+## Why Disposition Matters
+
+Without disposition, all AI assistants sound the same. With disposition:
+
+- **Customer support bots** can be diplomatic and empathetic
+- **Code review assistants** can be direct and thorough
+- **Creative assistants** can be open to unconventional ideas
+- **Risk analysts** can be appropriately cautious
+
+Disposition creates **consistent character** across conversations while observations **evolve with evidence**.
+
+---
+
+## Next Steps
+
+- [**Observations**](./observations.md) — How knowledge is consolidated
+- [**Retain**](./retain.md) — How rich facts are stored
+- [**Recall**](./retrieval.md) — How multi-strategy search works
+- [**Reflect API**](./api/reflect.md) — Code examples and parameters

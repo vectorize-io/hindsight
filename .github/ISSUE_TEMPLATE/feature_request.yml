@@ -1,0 +1,82 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe what you'd like to see added.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe your specific use case. What are you building? What's your goal?
+      placeholder: |
+        I'm building an AI agent that needs to...
+        My application handles...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem are you facing? What's missing or difficult today?
+      placeholder: Currently I have to... which causes...
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefit
+    attributes:
+      label: How This Feature Would Help
+      description: Explain how this feature would improve your workflow or solve your problem
+      placeholder: With this feature, I would be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your ideal solution (optional - we may have ideas too!)
+      placeholder: It would be great if Hindsight could...
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or workarounds?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Nice to have
+        - Important - affects my workflow
+        - Critical - blocking my use case
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or examples?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I would be willing to contribute this feature
+          required: false

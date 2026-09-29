@@ -1,0 +1,71 @@
+name: Sign published images
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to sign (without leading v, e.g. 0.6.0)'
+        required: true
+        type: string
+        default: '0.6.0'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  sign:
+    name: Sign ${{ matrix.image }}:${{ inputs.version }}${{ matrix.suffix }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: hindsight-api, suffix: '' }
+          - { image: hindsight-api, suffix: '-slim' }
+          - { image: hindsight-control-plane, suffix: '' }
+          - { image: hindsight, suffix: '' }
+          - { image: hindsight, suffix: '-slim' }
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Resolve image digest
+        id: resolve
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          TAG: ${{ inputs.version }}${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          if [[ -z "${DIGEST}" || "${DIGEST}" != sha256:* ]]; then
+            echo "Failed to resolve digest for ${IMAGE}:${TAG} (got: ${DIGEST})" >&2
+            exit 1
+          fi
+          echo "Resolved ${IMAGE}:${TAG} -> ${DIGEST}"
+          echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign image
+        env:
+          REF: ${{ steps.resolve.outputs.ref }}
+        run: cosign sign --yes "${REF}"
+
+      - name: Verify signature
+        env:
+          REF: ${{ steps.resolve.outputs.ref }}
+        run: |
+          cosign verify "${REF}" \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/sign-images\.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com

@@ -1,0 +1,26 @@
+# Source files (we ship dist/)
+src/
+tsconfig.json
+
+# Development
+node_modules/
+*.test.ts
+*.spec.ts
+coverage/
+.nyc_output
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Documentation source
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+*.tsbuildinfo

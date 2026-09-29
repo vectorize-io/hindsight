@@ -1,0 +1,1118 @@
+---
+sidebar_position: 6
+title: "Coding Agents"
+description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
+---
+
+{/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
+    node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
+
+import {Flow} from '@vectorize-io/interfig';
+import codingAgents from '@vectorize-io/interfig/figures/coding-agents';
+
+Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
+One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Kimi Code**, **Factory Droid**, **ZCode**, **TraeCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+automatic — there is no setup command: a repo's git history and conversations flow into its memory
+bank in the background as you work.
+
+The premise: most of a real fix is derivable from the code, but the _last mile_ often hinges on a
+project-specific decision that isn't in the code at all — a rounding rule, a retry allowlist, a
+tie-break policy. Those decisions live in git history and past conversations. This package puts them
+in front of the agent at the moment it starts working, and keeps a curated set of **knowledge pages**
+(architecture, conventions, in-flight initiatives) that future sessions start from.
+
+<Flow {...codingAgents.props} />
+
+[View Changelog →](/changelog/integrations/coding-agents)
+
+## Install
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
+npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
+npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly what install added
+npx @vectorize-io/hindsight-coding-agents update               # refresh the runtime only, no rewiring
+npx @vectorize-io/hindsight-coding-agents stats                # how often each agent uses Hindsight
+```
+
+`install` takes an explicit target — `all`, or one or more harness names. A bare
+`npx @vectorize-io/hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
+the machine is never something that happens by accident. **Updating is the same `install`
+command again** — it re-copies the runtime in place.
+
+Day to day you should not have to: once a day, a session start checks npm and re-stages a newer
+runtime in the background (`autoUpdate`, on by default — set it to `false` to pin the version you
+have). That is the `update` command above, which refreshes the copy every wired agent already
+points at and deliberately touches no host config; re-run `install` yourself after a release that
+adds a new hook, or to wire another agent.
+
+On a terminal it also asks **where memory should live** — Hindsight Cloud, a server you run, or a
+local daemon on this machine (see Where memory lives). Scripted installs pass
+`--server cloud|self-hosted|daemon` instead; it is asked only once, and never again on re-install.
+
+### Per agent
+
+Same command, only the harness name changes. Run after installing the package globally.
+
+#### <img src="/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install claude-code
+```
+
+3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
+
+#### <img src="/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install codex
+```
+
+3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
+
+#### <img src="/img/harness/dcode.svg" alt="" width="20" height="20" /> DeepAgents Dcode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install dcode
+```
+
+The installer registers this package as a local marketplace with Dcode, then invokes Dcode's own
+`plugin install` command. The package is a native Agent Plugin: its root `plugin.json` contributes the shared skill, the
+Hooks V2 `SessionStart`, `UserPromptSubmit`, and `Stop` lifecycle, and the namespaced
+`hindsight_*` MCP server. Enable the plugin through Dcode's normal plugin manager; no Dcode config
+patcher or compatibility bridge is required.
+
+Dcode namespaces a plugin's MCP tools, so they appear as
+`plugin__hindsight-coding-…__hindsight_…` rather than under their bare names — the agent resolves
+them from the tool guide either way. In headless runs (`dcode -n`) Dcode allows the read-only
+Hindsight tools and gates the two that write (`hindsight_ingest_document`,
+`hindsight_capture_initiative`) behind an approval it has no UI for; use the interactive TUI to
+capture an initiative or ingest a document. For the same reason the one-time codebase survey runs
+under another installed agent's CLI when there is one, exactly as it does for Cursor, Copilot,
+Devin, Grok Build, Cline, Kilo and Prime Agent.
+
+#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install opencode
+```
+
+A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
+
+#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode 2
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install opencode2
+```
+
+opencode v2 (`npm @opencode/cli`) exposes an `opencode2` binary alias **alongside** `opencode` and
+rewrote the plugin API, so it is a harness of its own. It writes the same plugin entry to the same
+`~/.config/opencode/opencode.json` — the two CLIs share that file, and v1 rejects the whole config
+if it sees v2's `plugins` key — and each CLI then loads its own entry point from the one registered
+path. So installing either harness wires both, and uninstalling either removes the shared entry.
+
+Two differences from v1, both because of the host: the one-time codebase survey runs under another
+installed agent's CLI (v2 plugins cannot define the read-only agent the survey needs), and the seed
+banner is written to the plugin log instead of a TUI toast (v2 plugins cannot raise one). Recall,
+injection, the native `hindsight_*` tools and session write-back are identical. The companion skill
+is identical too, but it is registered in memory through v2's skill API rather than copied into a
+skills directory — opencode2 has none of its own, and the two it reads belong to other agents.
+
+#### <img src="/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install kilo
+```
+
+A plugin entry in `~/.config/kilo/kilo.json[c]`.
+
+#### <img src="/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install cursor-cli
+```
+
+Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
+
+#### <img src="/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install copilot-cli
+```
+
+`~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
+
+#### <img src="/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install grok-build
+```
+
+Native hooks in `~/.grok/hooks/hindsight.json`, MCP in `~/.grok/config.toml`, plus the companion
+skill. Grok also runs Claude Code's hooks from `~/.claude/settings.json`; those stay silent inside
+Grok, so a machine wired for both hosts records each Grok session once.
+
+#### <img src="/img/harness/qwen-code.svg" alt="" width="20" height="20" /> Qwen Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install qwen-code
+```
+
+Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
+
+> Qwen's hook `timeout` is in **milliseconds** (its own docs: "Timeout in milliseconds, default
+> 60000"), unlike every other supported agent, so the installed values are `30000/30000/60000`.
+> Recall fires on genuine submissions only — `UserPromptSubmit` also fires on tool-result
+> continuations, so interactive sessions recall once per prompt while headless (`qwen -p`),
+> `serve`, SDK and ACP sessions seed and retain but do not recall.
+
+#### <img src="/img/harness/kimi-code.svg" alt="" width="20" height="20" /> Kimi Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install kimi-code
+```
+
+Native hooks in `~/.kimi-code/config.toml`, plus MCP in `~/.kimi-code/mcp.json` and the companion skill.
+(Hooks and MCP go under `$KIMI_CODE_HOME` instead when it is set.)
+
+> Kimi's SessionStart hook cannot reach the model, so the session briefing is silent there;
+> recalled memory arrives on the first prompt instead, as a `<hook_result>` block. Sessions are
+> retained from every agent's `wire.jsonl` under the session directory, subagents included.
+
+#### <img src="/img/harness/factory-droid.svg" alt="" width="20" height="20" /> Factory Droid
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install factory-droid
+```
+
+4 hook registrations in `~/.factory/hooks.json` (user scope), including a cancellation-safe
+`Notification` write-back, plus a stdio MCP registration under
+`mcpServers.hindsight` in `~/.factory/mcp.json`, and the companion skill in `~/.factory/skills`.
+The installer touches only JSON files - no Droid CLI round-trip - and refuses to overwrite a
+user-managed MCP server already named `hindsight`. Droid's hook protocol matches Claude Code's
+(`session_id`/`transcript_path`/`cwd` in, `hookSpecificOutput.additionalContext` out). Recall and
+injection use the same protocol; write-back also handles Droid's cancellation notification because
+Droid does not emit `Stop` after a cancelled turn.
+
+#### <img src="/img/harness/zcode.svg" alt="" width="20" height="20" /> ZCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install zcode
+```
+
+Three hook registrations plus a stdio MCP server under `mcp.servers.hindsight`, both in ZCode's own
+CLI config `~/.zcode/cli/config.json` - never your real Claude Code settings, even though ZCode
+embeds the Claude Code agent runtime and speaks its hook protocol. The companion skill goes to
+`~/.zcode/skills`. Config hooks ship **disabled**, so the installer also sets `hooks.enabled` to
+`true`; `uninstall` removes the whole block again when nothing else is registered there, and
+refuses to touch an MCP server named `hindsight` that it did not write.
+
+> ZCode's hook `timeoutMs` is in **milliseconds** (installed values `30000/30000/60000`), and
+> `hooks.maxOutputBytes` caps what a hook may print - anything larger is dropped, injection and
+> all. The installer seeds it at `32768` only when your config does not already set one.
+>
+> ZCode keeps no durable session transcript: `Stop` carries the reply plus a temp, assistant-only
+> file it deletes as soon as the hook returns, and no user prompt at all. So this is the one agent
+> whose conversation the plugin journals itself - the prompt hook records what you asked, the
+> `Stop` hook records the reply - and the write-back then behaves like every other agent's,
+> appending each new turn to the same session document. `--import-conversations` is therefore not
+> available for ZCode: there is no past history on disk to backfill from.
+
+#### <img src="/img/harness/traecode.png" alt="" width="20" height="20" /> TraeCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install traecode
+```
+
+Three hook registrations in TraeCode's user-level `hooks.json`, the companion skill under the
+same dot-dir's `skills/`, and two `filesystem.readWrite` rules in `sandbox.json` — one for
+`~/.hindsight`, without which the hooks fail silently (exit 0, no effect) because the sandbox
+blocks those writes, and one for Trae's per-window storage DBs
+(`<userData>/User/workspaceStorage`), which the SessionStart hook seeds with the workspace's
+MCP enable switch. Network is allowed by default. TRAE ships two editions with different brand
+roots — the CN build uses `~/.trae-cn` and "Trae CN", the international build `~/.trae` and
+"Trae" — so every path resolves by probing for the edition dir that exists and defaulting to the
+CN names. Plain JSON files, no CLI round-trip. TraeCode speaks Claude Code's hook protocol, so
+recall and injection work exactly as they do there; the event map lives under the top-level
+`hooks` key and the `version` field the host writes is preserved.
+
+MCP is registered per repo, never at the user level: Trae launches user-level servers with the
+Electron process's cwd (your home directory), where a hindsight entry either self-disables under
+`optInOnly` (zero tools) or resolves the home bank instead of the repo's. So the installer
+pre-seeds the per-repo registration for every repo opted in via `mapPathToBank` — a
+`mcpServers.hindsight` stdio server in `<repo>/.trae/mcp.json`, pinned to that repo via
+`HINDSIGHT_MCP_PROJECT_CWD` — migrates any stale user-level entry back out of
+`<userData>/User/mcp.json`, and seeds the per-workspace enable switch directly. The SessionStart
+hook re-checks both on every session and writes them only when missing or stale (idempotent
+fallback) — Trae's hook sandbox cannot be relied on to perform those writes itself. The per-repo
+file is merged not clobbered, and gitignored when the repo has a `.gitignore` (the path is
+machine-specific). A foreign `hindsight` entry — in either file — is the user's own server and
+is never touched.
+
+Trae only reads that per-repo file once the global `trae.mcp.enableWorkspaceMcp` setting is on
+(default off), so the installer handles the gate: an interactive run asks, a non-interactive run
+takes `--enable-workspace-mcp`, and either way the setting is written and Trae windows must be
+restarted to pick it up (declining, or a settings file with comments, prints the manual step).
+Registrations and enable switches take effect on the NEXT window, so the MCP tools appear when
+you reload after the first session; repos opted into `mapPathToBank` after install need one more
+`install traecode` run, and if a repo's server still shows disabled in the MCP panel, flip it on
+once there.
+
+> One manual step remains after install (UI state the installer cannot write): enable the hooks
+> under TraeCode Settings > Hooks. If you declined the workspace-MCP prompt, enable it later in
+> Trae settings (search "enableWorkspaceMcp").
+
+> TraeCode keeps no readable session transcript - sessions live in an encrypted local DB or the
+> cloud. Like ZCode, its conversation is journaled by the plugin itself: the prompt hook records
+> what you asked, and the `Stop` hook closes the turn with the reply it carries in
+> `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
+> there is no past history on disk to backfill from.
+
+#### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install agy
+```
+
+Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
+
+#### <img src="/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install devin-cli
+```
+
+Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
+
+#### <img src="/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install cline-cli
+```
+
+A native plugin via `cline plugin install`, plus MCP and the companion skill.
+
+#### <img src="/img/harness/pi.svg" alt="" width="20" height="20" /> pi
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install pi
+```
+
+An extension entry in `~/.pi/agent/settings.json`, plus the companion skill in
+`~/.pi/agent/skills` — native tools, no MCP needed.
+
+This command is the only supported route, for pi and for Prime Agent below. Installing us as a pi
+package (`pi install npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: both
+hosts read the same `pi` key of a package's `package.json`, and that key can only name one entry —
+whichever host it did not name would load the other's bundle and report itself as the wrong agent,
+taking that harness's config section and stamping every document it retains with it. So the package
+carries no `pi` key at all, and each host is pointed at its own bundle by the install command above.
+
+#### <img src="/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install prime-agent
+```
+
+Prime Agent is a fork of pi, so it is wired the same way: an extension entry, here in
+`~/.prime/agent/settings.json`, plus the companion skill in `~/.prime/agent/skills` — native tools,
+no MCP needed. Installing both is fine and expected:
+each host loads its own entry from its own settings file, and like every other pair of agents they
+**share one bank per repo** (the default `coding-agent::{gitProject}`), so what you tell pi is there
+when you open Prime Agent. Separate entries are what keeps each side attributable — its own
+`harnesses.<name>` config section, and its own agent stamped on every document it retains.
+
+#### <img src="/img/harness/dsh.svg" alt="" width="20" height="20" /> DeepSeek Harness
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install dsh
+```
+
+A Cordis plugin row in `$DSH_HOME/cordis.patch.yml` (`~/.dsh` by default), which every dsh profile
+composes — native tools, no MCP needed. Two dsh-specific notes: one dsh process serves **several
+repositories** (its Web UI opens each session in whatever directory you pick), so the bank is
+resolved per session workspace rather than once per process; and dsh has no plugin-facing notice
+channel, so the seed line goes to the plugin log rather than the UI. Everything model-facing —
+recalled memory, the knowledge preamble, the `hindsight_*` tools — is unaffected. If you prefer the
+published-package route, `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` works
+too: the package ships the profile patch layer, so nothing else needs editing. Either route gets the
+companion skill — a plugin wired by the host's own plugin manager installs it itself on the first
+session, since that route never runs our installer.
+
+Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
+
+**Devin CLI needs Node 22.5 or newer.** Its hooks pass only a session id — the conversation itself
+lives in `~/.local/share/devin/cli/sessions.db` — so reading it depends on Node's built-in
+`node:sqlite`. Installing `devin-cli` checks for this first and refuses (with the reason) rather
+than wiring hooks that could never retain anything. Every other agent works on any supported Node.
+
+`install` copies what it needs into `~/.hindsight/coding-agents` and points each agent's wiring
+there, so nothing depends on where you ran it from. **Updating** is the same command again — it
+re-copies the runtime in place, leaving the wiring valid and every new session on the new version.
+
+`install` merges the native wiring (hooks + MCP registration where the host wants them) into each
+agent's own config, preserving everything already there; it is idempotent (re-run after moving the
+package) and backs up any pre-existing file it touches as `<file>.hindsight-backup`. `uninstall`
+removes only our entries. On Claude Code the install also ships a **companion skill**
+(`~/.claude/skills/hindsight-coding-agent`) that teaches the agent how this memory works — what
+"store this in hindsight" should do, the tool surface, per-repo configuration, debugging — so users
+can ask the agent itself. Manual wiring per harness, if you prefer:
+
+**opencode** and **opencode 2** install directly — point `opencode.json` at the package dir:
+
+```json
+{ "plugin": ["/path/to/hindsight-coding-agents"] }
+```
+
+One entry, both CLIs: v1 resolves that directory through `package.json` `main`, v2 through its
+`index.js`, so each loads its own plugin.
+
+**Claude Code** and **Codex** get their full three-hook + MCP wiring from this package's own
+installer — `npx @vectorize-io/hindsight-coding-agents install claude-code` / `install codex`. This package's `bin`
+entries (`hindsight-claude-hook`, `hindsight-codex-hook`,
+`hindsight-cursor-hook`) are the individual injection-only `UserPromptSubmit` entrypoints for a
+minimal, hand-wired setup.
+
+Adding an agent: hook-based → write a `HookSpec` entry point (see `src/cursor-hook.ts`) and register
+a `hookAdapter` in `src/harness/registry.ts`; persistent-plugin → implement `HarnessAdapter`
+(`src/core/types.ts`) fully (see `src/harness/opencode.ts`), or bind the host's own plugin API to
+`RuntimeCore` directly when it is not an opencode fork (see `src/cline.ts`, `src/dsh.ts`).
+
+## Migrating from the per-agent plugins
+
+The older per-agent integrations (`hindsight-claude-code`, `hindsight-cursor-cli`, `hindsight-codex`, …) are superseded by this package. Two things move; nothing else does.
+
+**Your server moves automatically.** If `~/.hindsight/claude-code.json` or `~/.hindsight/codex.json`
+exists, `install` adopts its endpoint — `hindsightApiUrl` → `apiUrl`, `hindsightApiToken` →
+`apiToken`, and an empty URL means the local daemon, as it did there. The agent you are installing
+is checked first, so wiring Codex takes Codex's server even if an old `claude-code.json` is still
+lying around. You already chose where your memory lives; defaulting to Cloud instead would quietly
+send your prompts somewhere else. Pass `--server` to override. (Those two are the only old plugins
+that shipped a user config — Cursor CLI, Copilot CLI, opencode and Cline have no endpoint to carry.)
+
+**Your conversations are re-imported from local disk**, as new documents:
+
+```bash
+cd /path/to/your/repo
+npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations   # or: install codex --import-conversations
+```
+
+This re-extracts the transcripts the agent already wrote, so it costs tokens roughly in proportion
+to the history imported, and it is safe to re-run (ingestion dedups by document id).
+
+Local transcripts are the source rather than the old bank, because the old bank cannot be split by
+repo. Its default was a **single static bank** — `dynamicBankId` defaults to false, so everything
+landed in one bank named `claude_code` — and its documents record only `retained_at`,
+`message_count` and `session_id`, nothing identifying the project. Working out which documents
+belong to which repo means joining `session_id` back to the `cwd` in the local transcript, so the
+transcripts are needed either way; going through them directly is simply the shorter path.
+
+**How sessions are matched.** A conversation is imported only when the session itself records the
+directory it ran in — never inferred from a file or folder name. Claude Code writes that directory
+on its entries, Codex in its `session_meta` header and DeepSeek Harness in its session-log header,
+and pi and Prime Agent in their session header, so all five can be attributed exactly, including
+sessions started in a subdirectory of the repo. Guessing was tempting (Claude names its history
+folders after the project path) but unsafe: `/` and `.` both encode to `-`, so `repo-sub` is either
+the subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone else's
+conversation into your bank. Sessions that record nothing are skipped and the count is reported.
+DeepSeek Harness logs are Zstandard-framed JSONL under `$DSH_HOME/sessions`, which needs Node 22.15+
+to read; an older Node skips the import with that reason rather than silently importing nothing.
+Dcode's transcripts record no directory at all — the working directory lives only in its LangGraph
+checkpoint database — so the repo comes from `dcode threads list --json`, a declared, versioned
+command contract rather than that internal schema; with the `dcode` CLI unavailable the import is
+skipped with that reason. The other harnesses (opencode, opencode 2, Kilo, Cursor, Cline, Copilot, Devin) keep
+history in internal SQLite databases with unversioned schemas and are skipped with a reason.
+
+**Nothing else is translated.** The old plugin's behavioural settings — 12 `recall*`, 7 `retain*`,
+`bankMission`/`retainMission`, `dynamicBankGranularity` — describe a pipeline this package replaced,
+and reinterpreting them would be guesswork. Bank naming changes too: this package uses one bank per
+**repo** (`coding-agent::{gitProject}`) shared by every agent. To keep the old naming instead:
+
+```jsonc
+{ "bankIdTemplate": "{harness}::{gitProject}" } // reproduces the old per-agent naming
+```
+
+## Where memory lives
+
+Three modes, chosen once when you install (`install` asks on a terminal; pass `--server` to script it):
+
+| mode          | what runs                                 | needs                                    |
+| ------------- | ----------------------------------------- | ---------------------------------------- |
+| `cloud`       | Hindsight Cloud (default)                 | an API token                             |
+| `self-hosted` | a Hindsight server you already run        | its URL                                  |
+| `daemon`      | a local `hindsight-embed` on this machine | `uv` on PATH + an LLM key for extraction |
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install claude-code --server daemon
+npx @vectorize-io/hindsight-coding-agents install claude-code --server self-hosted --api-url http://localhost:8888
+npx @vectorize-io/hindsight-coding-agents install claude-code --server cloud --api-token <token>
+```
+
+Re-running `install` never re-asks: a config that already names a server is left alone.
+
+### Local daemon mode
+
+Nothing to sign up for and nothing to host — memory runs on your machine. The plugin starts
+`hindsight-embed` on demand at `127.0.0.1:9077` and points every agent at it.
+
+- **A server already on the port is adopted, never restarted** — so one daemon serves every agent
+  and every repo, and your own `hindsight-embed` is reused if you already run one.
+- **Cold starts happen in the background.** The first start downloads the daemon and loads models,
+  which takes longer than any hook is allowed to run, so it is launched detached at session start.
+  A session that begins before it is ready simply has no memory for a turn or two — a daemon that
+  isn't up is treated as an unreachable server, exactly like a Cloud or self-hosted outage, with the
+  same error handling and the same diagnostics. Nothing downstream of the URL knows which mode it is.
+- **It keeps running** until you stop it. There is deliberately no stop-on-exit: one daemon is
+  shared, so ending one session must not cut memory out from under another agent still working.
+- **macOS additionally needs a current Rust toolchain.** `litellm` (a transitive dependency of the
+  API) publishes wheels only for Linux and Windows, so a Mac compiles it from source through
+  maturin and its crates pin a recent `rustc`. Install from [rustup.rs](https://rustup.rs) and keep
+  it updated — an out-of-date toolchain fails as surely as a missing one. Linux and Windows install
+  from wheels and need none of this.
+- **Fact extraction runs locally**, so it needs an LLM. `HINDSIGHT_API_LLM_PROVIDER` wins if set;
+  otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
+  otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
+
+Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
+environment carries over unchanged:
+
+| field               | env                             | default        | meaning                                                    |
+| ------------------- | ------------------------------- | -------------- | ---------------------------------------------------------- |
+| `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`                       |
+| `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on                           |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | —              | deprecated, ignored: the daemon no longer exits on its own |
+| `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses                               |
+| `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run                     |
+| `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development)                 |
+
+Any `HINDSIGHT_API_*` variable you export is forwarded to the daemon, so server-side settings need
+no equivalent here.
+
+## Configuration
+
+Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. Layering, later wins per field:
+
+1. built-in defaults
+2. environment variables — `HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN`, and one per scalar setting
+   (`HINDSIGHT_<FIELD_IN_CAPS>`), for containers and CI that inject config rather than write a file
+3. the file's top level
+4. its `harnesses.<name>` section — per-agent override
+5. its `paths.<prefix>` section — per-directory override, applied after the bank is resolved
+   (see Per-directory overrides)
+6. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
+   (see Per-repo opt-in/out)
+
+Environment variables are a **fallback**: the file wins wherever it sets a value, so adding env to
+an existing setup changes nothing. The two list-valued settings, `retainTags` and `optInPaths`, take
+a comma-separated value (`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are
+trimmed and blanks dropped.
+The map-valued settings (`mapPathToBank`, `harnesses`, `paths`, `banks`, `retainMetadata`) are file-only —
+per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
+as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
+
+`HINDSIGHT_CONFIG` moves the file itself — point it at another path for a container or a test
+harness where `$HOME` is not the right anchor. It is still exactly one file; only its location
+changes. (The other variables that are not settings are `HINDSIGHT_LOG_FILE`, `HINDSIGHT_DIAG_FILE`,
+`HINDSIGHT_USAGE_FILE` and `HINDSIGHT_LOG_LEVEL` — see Diagnostics & logging.)
+
+### When a change takes effect
+
+Config is read when a process starts — the file is not watched — so when an edit applies depends on
+what reads it:
+
+| host                                                                                                        | reads the file                                                      | an edit applies            |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
+| hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
+| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)           | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
+
+`apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling
+authentication or rotating the key is picked up on the next call with nothing to restart —
+otherwise a rotation would leave a long-running agent failing every memory call until it was
+restarted. Everything else follows the table: `apiUrl`, `disabled`, bank routing, `gitIngest`, and
+the survey and knowledge-page settings.
+
+`hindsight_diagnose` reports both sides of that gap — what the file says now, and what the running
+client is actually using.
+
+### Opt-in only
+
+By default every project gets memory — that is what makes the plugin zero-setup. If you would
+rather nothing be remembered until you say so, turn memory off everywhere and name the projects
+that may use it:
+
+```jsonc
+{
+  "optInOnly": true,
+  "optInPaths": ["~/work/client-x", "~/oss"],
+}
+```
+
+Anything outside those paths is **inert**: no bank is created, nothing is retained, no seed runs,
+and the agent behaves exactly as it would without the plugin. Approving costs nothing else —
+`optInPaths` says _which projects_, not _which bank_, so an approved repo keeps its usual
+`coding-agent::{gitProject}` name. Paths are prefixes, so approving `~/work` approves every repo
+under it while each still gets its own bank.
+
+A `mapPathToBank` entry counts as opted in too, since routing a path to a named bank already
+declares that project. A bare `bankId` does not: it names a bank rather than a project, so it
+cannot say which work may be remembered, and a privacy switch has to fail closed.
+
+There is no per-repo opt-in file, for the same reason there is no repo-carried config at all: a
+cloned repository must not be able to turn memory on.
+
+There is deliberately no repo-carried config file — per-repo bank routing is `mapPathToBank`,
+per-agent differences are `harnesses.<name>`.
+
+Each entry point knows which harness it _is_ (the opencode plugin is loaded by opencode, the codex
+hook by Codex...), so one shared config serves several agents side by side:
+
+```jsonc
+{
+  "apiUrl": "https://api.hindsight.vectorize.io",
+  "harnesses": {
+    "opencode": { "reflectTimeoutMs": 60000 },
+    "claude-code": { "disabled": true }, // e.g. memory off for Claude only
+  },
+}
+```
+
+### Reference
+
+| field                   | default                              | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiUrl`                | `https://api.hindsight.vectorize.io` | Hindsight API base URL (set to `http://localhost:8888` for a local server)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `apiToken`              | —                                    | bearer token (Hindsight Cloud). Picked up without restarting the agent: a long-lived host re-reads it after a rejected request, so enabling auth or rotating the key mid-session recovers on the next call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `bankId`                | —                                    | **explicit static bank**; unset ⇒ per-repo dynamic resolution (below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `dynamicBankId`         | dynamic iff no `bankId`              | force dynamic (`true`) or static (`false`) resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `bankIdTemplate`        | `"coding-agent::{gitProject}"`       | dynamic bank id format; the default makes every agent share one bank per repo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `mapPathToBank`         | —                                    | absolute path → bank; **longest prefix wins**; linked worktrees inherit their main checkout's mapping; overrides everything                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `optInOnly`             | `false`                              | run memory ONLY in opted-in projects — everything else is inert, with no bank created; see Opt-in only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `optInPaths`            | —                                    | directories opted in, matched as prefixes with `~` expanded; each repo beneath and its linked worktrees are approved while keeping their own dynamic bank                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `resolveWorktrees`      | `true`                               | linked worktrees inherit the main checkout's bank identity, path approval, and mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `retainContext`         | see description                      | the `context` sent with every session write-back. Extraction reads it to decide whose claim a sentence is, so the default names both speakers, and asks for an agent's own "fixed" or "passes" to be stored as its claim rather than as fact. Accepts the same `{placeholder}` templates as `retainTags`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive — the one exception is the extraction mode of its own strategies, which follows `retainExtractionMode`. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                                                                                                                                      |
+| `retainExtractionMode`  | `"concise"`                          | how the server extracts memories from sessions, commits and documents: `"concise"`, `"verbose"`, `"verbatim"` or `"chunks"` (store the text, no extraction). Every Stop writes the session back, so this is what each turn costs — `"verbose"` pulls more detail for several times the tokens. Kept in sync on the plugin's own retain strategies every session, so a change reaches existing banks too (not with `manageBankConfig: false`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `defaultBankConfig`     | —                                    | bank-config fields of your own for the banks the plugin shapes, e.g. `{"enable_observations": false, "enable_auto_consolidation": false, "mental_model_min_refresh_interval_seconds": 21600}`. Keys are the bank-config API's own field names. Written under the same additive rule as the rest: only where the bank does not define the field, so a bank the plugin creates is born with these instead of the server's defaults and a value you set in the control plane is never overwritten. Wins over the template on a key both name (`enable_observations`); `retain_strategies`, `entity_labels` and `retain_extraction_mode` are refused, since the plugin governs them itself. Ignored with `manageBankConfig: false` — see **A bank you shape yourself** below. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                     |
+| `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`; `"per_source"` adds a scope per `source:` kind alongside the global one, so commit knowledge and conversation knowledge consolidate apart                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `reflectTimeoutMs`      | `20000`                              | **automatic** session-reflect timeout; on hook harnesses the installer registers a 30s prompt-hook timeout, so going above ~20s also means raising that hook's `timeout` in the host's config, or the host kills the hook mid-reflect; on timeout or a 5xx the hook falls back to knowledge-page search, then to a raw recall of observations (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `injectTimeoutMs`       | `7000`                               | retrieval timeout in milliseconds for `autoInject: "pages"` and `autoInject: "recall"`; also the **shared** budget for page search then recall after a reflect timeout/5xx (recall gets only the time left after page search). Set e.g. `2000` to limit turn latency or `15000` for a slower self-hosted bank. Environment fallback: `HINDSIGHT_INJECT_TIMEOUT_MS`. On hook harnesses, injection must fit the host's prompt-hook timeout (30s by default); for reflect with fallback, allow for **`reflectTimeoutMs` + `injectTimeoutMs`**, and raise the host hook's `timeout` when needed                                                                                                                                                                                                                                                                                                                     |
+| `reflectBudget`         | `"high"`                             | reflect budget for the `hindsight_reflect` tool: `"low"`, `"mid"` or `"high"`. Drop it on a large bank where high-budget synthesis exceeds the server's wall timeout. The automatic session-start reflect always uses `"low"` to fit its hook window and is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `autoInject`            | `"reflect"`                          | what to inject once, on the session's **first prompt**: `"reflect"` = a low-budget reflect synthesis (on timeout/5xx it falls back to page search, then recall); `"pages"` = the knowledge pages matching the prompt by search; `"recall"` = the bank's memories recalled for the prompt (what it asks for is `recallOptions`, observations by default); `"none"` = nothing — the agent searches knowledge pages first and reflects only when they are too shallow. `"pages"` and `"recall"` are retrieval only (no LLM), their time budget is `injectTimeoutMs`                                                                                                                                                                                                                                                                                                                                                |
+| `autoReflect`           | `true`                               | **deprecated** — use `autoInject`. Still honoured (`false` = `autoInject: "none"`), ignored when `autoInject` is set, and logs a deprecation warning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `pageSearchLimit`       | `3`                                  | knowledge pages ONE search returns. Applies to every search of the bank — the `autoInject: "pages"` injection, the reflect fallback, and the agent's own `hindsight_search_knowledge_pages` tool — because the limit lives on the client they all share                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `recallOptions`         | see description                      | overrides merged key-by-key into the body of every recall — the `autoInject: "recall"` source and the reflect fallback. Keys are the API's own recall parameters, passed straight through, so anything recall accepts is settable without a new option here; `query` is the one field it cannot replace. The default body is `{"types": ["observation"], "budget": "low", "max_tokens": 2000, "include": {"entities": null}}`, and what you set is merged over it one key at a time — `{"max_tokens": 4000}` changes the budget and leaves the rest alone. Observations are the consolidated layer, so they answer best per token, but a bank with **consolidation disabled never grows any** and the default recall comes back empty on it: set `{"types": ["world", "experience"]}` there, or `{"types": null}` for every type. File-only, like `retainMetadata` — an object does not flatten into an env var |
+| `toolGuideExtra`        | —                                    | your own guidance on how the agent should treat memory, added **after** the built-in tool guide (at session start and on every refresh) and after the crediting note returned with `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it. Set it per harness or per bank like any other key, e.g. `"Memory is a past record, not current state: verify any claim against the code before acting on it."`                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `pageRefreshEveryTurns` | `10`                                 | refetch the knowledge pages and re-inject the page roster + tool guide every N user turns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `pageTriggerType`       | `"cron"`                             | when NEW knowledge pages refresh, i.e. what keeping them current costs — `"cron"` (default) on `pageTriggerCron` only and only when actually stale, `"auto-refresh"` after every consolidation that produced new material, `"manual"` never on their own. Auto-refresh is the most current and by far the most expensive: one synthesis per page per consolidation. Maps to the page's `trigger.refresh_cron`, or `trigger.refresh_after_consolidation` in the Hindsight API (`true` for auto-refresh, `false` for manual)                                                                                                                                                                                                                                                                                                                                                                                      |
+| `pageTriggerCron`       | `"H * * * *"`                        | schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. `"0 3 * * *"`. The default is hourly, each page on its own hashed minute. Sets the page's `trigger.refresh_cron`, which the API treats as mutually exclusive with `refresh_after_consolidation`; a scheduled refresh is skipped when nothing changed. Write a field as `H` to give each page its own value there — see **Spreading refreshes with `H`** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `pages`                 | every page                           | per-page configuration for the seeded knowledge pages, keyed by page name (case-insensitive): `false` skips a page entirely, `{"source_query": "..."}` seeds it with your question instead of the built-in one. Omitted, all five pages are seeded with their built-in queries. This is the supported way to own a page's wording — the plugin re-syncs a page whose live query differs from the one it is configured to have, so a query edited through the API or the control plane is replaced on the next session. A skipped page is **not deleted**: one already seeded keeps its content and stops being re-synced. The scoping clause is appended to your query too, so a reworded page cannot start reporting a dependency's decisions as this project's. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                             |
+| `customPages`           | —                                    | knowledge pages of your own, seeded alongside the five above and keyed by the name they get: `{"Security posture": {"source_query": "...", "tags": ["knowledge:decision"]}}`. `source_query` is required; `tags` picks which facts feed the page and is optional — omitted, the page draws on everything the bank holds. A separate setting from `pages` on purpose, so that an unknown name there stays a typo warning rather than quietly creating a page. File-only, and replaced (not merged) by a `banks.<id>` section                                                                                                                                                                                                                                                                                                                                                                                     |
+| `autoSeed`              | `true`                               | SessionStart: auto-seed a cold repo's bank from git history                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `seedLimit`             | `300`                                | auto-seed: most-recent-N-commits cap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `codebaseSurvey`        | `true`                               | SessionStart: headless survey of a cold repo's structure, run under the current harness's own CLI (claude/codex/antigravity/opencode), falling back to any available agent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `surveyModel`           | `haiku`                              | model for the survey — Claude recipe only (`claude -p --model`); other agents use their configured default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `surveyRefreshCommits`  | `20`                                 | re-run the survey at SessionStart once this many commits have accrued since the last one, so the structural pages track an architecture that keeps moving (`0` = survey a cold repo only, never again)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `retainSessions`        | `true`                               | session write-back, honored by every harness: hook harnesses write the transcript on Stop, Factory Droid also writes on its cancellation notification, and plugin harnesses (opencode, opencode 2, Kilo) upsert it every turn plus an idle flush that captures the reply the per-turn pass can't see. Set `false` - globally, per harness, or per bank - to stop writing transcripts (the background history import stops with it) while recall, git ingest and the memory tools keep working                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `autoUpdate`            | `true`                               | keep the installed runtime current by itself: once a day a session start asks npm for the published version and, when it is newer, re-stages `~/.hindsight/coding-agents` in the background. It rewires no host config, so a release adding a **new** hook entry point still needs a manual `install`. Set `false` to pin the installed version; `disabled` stops it too, since an inert plugin should stay inert. Only ever replaces a runtime installed the documented way, via `npx` — a copy installed with `npm i -g`, vendored as a project dependency, or built from a checkout is left to whoever manages it (update those the way you installed them), and it needs `npx` and `npm` on `PATH`                                                                                                                                                                                                          |
+| `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD has a commit it lacks); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `harness`               | `opencode`                           | **deepen engine only**: which session format `--conversations` is read as                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+By default a page refreshes **hourly, staggered**: `pageTriggerCron` is `"H * * * *"`, so every
+page gets its own minute of the hour (see below) and a tick with nothing new to fold in is skipped
+server-side. That keeps pages within an hour of the repo without paying auto-refresh's price — one
+LLM synthesis per page per consolidation, on a repo that consolidates all day. Set
+`pageTriggerType: "auto-refresh"` to go back to refreshing on every consolidation.
+
+`pageTriggerType`/`pageTriggerCron` decide only **when** a page refreshes. **How** it refreshes
+belongs to the server: Hindsight creates a knowledge page with a delta refresh (each pass edits the
+page instead of rebuilding it) that doesn't reflect over sibling pages, and these settings merge
+over those defaults rather than replacing them.
+
+### Spreading refreshes with `H`
+
+One `pageTriggerCron` is shared by every page in every repo you point this plugin at. So a literal
+`"0 3 * * *"` does not schedule _a_ refresh at 03:00 — it schedules **all** of them at 03:00, five
+pages per bank, on the same worker pool that serves retain. A session ingesting at 03:0x queues
+behind the pile, and moving the hour just moves the pile.
+
+Write a field as `H` and it is replaced, per page, by a value hashed from the bank id and the page
+name. Each page gets its own slot, the same slot on every run:
+
+| `pageTriggerCron`  | what each page gets                                    |
+| ------------------ | ------------------------------------------------------ |
+| `"H H * * *"`      | once a day, at its own minute and hour                 |
+| `"H * * * *"`      | once an hour, at its own minute                        |
+| `"H 3 * * *"`      | daily at 03:MM — spread inside the hour you chose      |
+| `"H H(0-5) * * *"` | daily, spread across 00:00–05:59 only                  |
+| `"0 3 * * *"`      | no `H`, no hashing — exactly what it says, all at once |
+
+`H` is [Jenkins' syntax](https://www.jenkins.io/doc/book/pipeline/syntax/#cron-syntax) for the same
+problem. It never reaches the API: the plugin resolves it to an ordinary cron expression
+(`"41 17 * * *"`) when it creates the page, so the schedule you see in the control plane is a plain
+one you can edit. Hashing spreads pages out, it does not partition them — two pages can still land
+on the same minute, just not all of them.
+
+**These settings apply to the pages a repo already has, too.** Every session compares each page
+this plugin created — the seeded taxonomy and every captured initiative — against the config and
+re-syncs the ones that differ, so a bank seeded before this default changed moves onto the hourly
+schedule by itself, and a page you retriggered by hand in the control plane is put back on the
+configured policy the next time an agent runs. The config
+file is the source of truth for these pages: to give one a different schedule, change
+`pageTriggerType`/`pageTriggerCron` (per bank, if it is only that repo) rather than editing the
+page. Only the fields this plugin states are touched — a page's `mode`, its excluded siblings and
+its minimum refresh interval are left exactly as they are.
+
+### Customize Knowledge Pages — `pages`
+
+Every repo gets the same five pages. They are a **taxonomy**, not a summary of your source: each one
+is synthesized from what the bank ingested — commit history and past conversations — and each is
+pinned to one knowledge tier, so a page draws only on the facts the extractor routed to it.
+
+| Page                           | What it answers                                                                                         | Tier tag                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `Component map`                | the main components/modules/subsystems, what each is responsible for, and how they depend on each other | `knowledge:component`    |
+| `Core concepts`                | the domain abstractions and key entities — the vocabulary a developer has to know                       | `knowledge:concept`      |
+| `Conventions and patterns`     | how THIS project does things: testing, error handling, naming, structure, how changes are made          | `knowledge:convention`   |
+| `Key decisions and rationale`  | the significant technical decisions and the durable "why we do it this way" behind them                 | `knowledge:decision`     |
+| `Initiatives and enhancements` | the major initiatives and features over time, linking out to each captured initiative's own page        | `knowledge:feature-work` |
+
+`pages` says which of them to seed and what each one asks. Keys are the page names above, matched
+ignoring case and surrounding spaces:
+
+```jsonc
+{
+  "pages": {
+    // don't seed this page at all
+    "Component map": false,
+    // seed it, but ask your question instead of the built-in one
+    "Key decisions and rationale": {
+      "source_query": "What did we decide about data retention, encryption and PII handling, and why? Prefer decisions that constrain what new code may do.",
+    },
+  },
+}
+```
+
+Omit `pages` entirely — the default — and all five are seeded with their built-in queries.
+
+**Fewer pages.** Each page costs one LLM synthesis per refresh, so a repo that only wants the
+architecture ones turns the rest off:
+
+```jsonc
+{
+  "pages": {
+    "Initiatives and enhancements": false,
+    "Conventions and patterns": false,
+    "Key decisions and rationale": false,
+  },
+}
+```
+
+**Per repo**, like every other field — usually where this belongs, since what a page should ask is a
+property of the project, not of your machine:
+
+```jsonc
+{
+  "banks": {
+    "coding-agent::payments-api": {
+      "pages": {
+        "Core concepts": {
+          "source_query": "What are the payment domain's entities — orders, ledgers, settlement states — and what does each mean in OUR model?",
+        },
+      },
+    },
+  },
+}
+```
+
+Four things worth knowing before you reach for it:
+
+- **This is the only durable way to reword a page.** Every session compares each seeded page against
+  the query it is configured to have and re-syncs the ones that differ, so a `source_query` edited
+  through the API or the control plane is replaced the next time an agent runs. Setting it here makes
+  your wording the configured one. When a re-sync does replace a query, the plugin now says which
+  page in the plugin log rather than doing it silently.
+- **Your query still gets the scoping clause.** The sentence that keeps a dependency's decisions off
+  your project's page is appended to a custom query too — a bank holds facts about the libraries and
+  services a repo merely uses, and without that clause a page will present them as yours.
+- **The tier tag stays the taxonomy's.** It selects which facts the synthesis reads; rewording the
+  question changes what is asked of those facts, not which ones are in scope.
+- **`false` does not delete anything.** A page already seeded keeps its content and simply stops
+  being re-synced — remove it in the control plane if you want it gone.
+
+A name that matches no page above is ignored with a warning in the plugin log, so a typo fails
+loudly instead of looking like it disabled something. Adding pages of your own is not what this
+setting is for: the agent's `hindsight_capture_initiative` tool already creates pages, one per
+initiative, each with its own query.
+
+#### Pages of your own — `customPages`
+
+`pages` only reworks the five above. To add a page, name it under `customPages`:
+
+```jsonc
+{
+  "customPages": {
+    "Security posture": {
+      "source_query": "What are this project's security decisions — authn, secrets handling, PII, dependency policy — and what do they constrain in new code?",
+      "tags": ["knowledge:decision"],
+    },
+    "Operational runbook": {
+      "source_query": "How does this project get deployed, monitored and rolled back? What has broken in production, and what fixed it?",
+    },
+  },
+}
+```
+
+`source_query` is required. `tags` is optional and picks which facts feed the page — one of the tier
+tags above, or any tag you stamp on your own writes with `retainTags`. Omit it and the page draws on
+everything the bank holds: a refresh matches tags with `all`, so no tags means no tag constraint,
+**not** an empty page.
+
+Your pages are seeded at the same root as the taxonomy, on the same refresh schedule, and re-synced
+from the config the same way — reword one here and the live page follows on the next session. They
+compose with `pages`, so trading two built-ins for one of your own is just both settings at once.
+
+**Why it is a separate setting.** `pages` refuses a name that matches no seeded page, and that is
+what makes a typo loud: if an unknown key there meant "create this page", `"Componnet map"` would
+quietly create an empty second page instead of rewording the one you meant. For the same reason,
+naming a seeded page under `customPages` is refused — reword it under `pages`.
+
+A page you create yourself in the control plane is a third thing again, and the plugin never touches
+it: the seed pass only visits the pages it is configured to own.
+
+### A bank you shape yourself — `manageBankConfig`
+
+Pointed at a bank, this plugin gives it the shape its ingestion needs: retain strategies for the
+kinds of document it writes (`git`, `gitlog`, `conversation`, `document`, `survey`), a `knowledge`
+entity-label group that routes facts to the knowledge pages, and — on a bank that has no missions of
+its own — the coding missions.
+
+**It only ever adds what is missing.** A strategy you defined, an edit you made to one of the
+plugin's, a reworded label group, a mission you rewrote in the control plane: each is left exactly
+as it is, on every session, forever. What the bank already says wins. The cost of that promise is
+that a plugin release which _rewords_ an existing strategy or label does not reach a bank that
+already has it. To take the current default back, clear that override on the bank (delete the
+strategy, or the whole `retain_strategies` entry, in the control plane): the next session finds the
+bank silent there and seeds it again.
+
+One field is the exception: the extraction mode of the plugin's own four strategies (`git`,
+`gitlog`, `conversation`, `document`) follows `retainExtractionMode` and is put back on every session
+if it drifts — the same way a seeded page's query is. Change it in `coding-agent.json`, not in the
+control plane. The strategies' other fields, and your own strategies, are still left alone.
+
+**Your own defaults for new banks — `defaultBankConfig`.** Everything the template does not name, a
+bank the plugin creates gets from the server: auto-consolidation on, observations on, a 60s floor
+between mental-model refreshes. With one bank per repo those are the settings that cost money, and
+a new repo an agent touches spawns a new bank with all of them switched on — while every bank you had
+hand-tuned in the control plane sits at a cheaper baseline. `defaultBankConfig` names the baseline
+once, in the plugin's config, and it travels in the same import that creates the bank:
+
+```json
+{
+  "defaultBankConfig": {
+    "enable_observations": false,
+    "enable_auto_consolidation": false,
+    "mental_model_min_refresh_interval_seconds": 21600
+  }
+}
+```
+
+The keys are the bank-config API's own field names, passed straight through, so anything the
+bank-config accepts can go here. They follow the same additive rule as the template: written only
+where the bank is silent, so an existing bank picks them up on its next session **except** for the
+fields it already sets — a value you chose in the control plane stays, even one equal to the server
+default, and so does a value an earlier plugin release seeded (the template writes
+`enable_observations: true` alongside the missions; clear that override on the bank to let your
+default in). On a key the template also names, your default wins. The three fields the plugin
+governs itself — `retain_strategies`, `entity_labels` and `retain_extraction_mode` — are refused
+with a warning: the first two are merged entry by entry, the last is `retainExtractionMode`'s.
+
+Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether,
+`defaultBankConfig` included — the right setting for a bank you share with non-coding work, or one
+you configure yourself. That bank should then define the five strategies above itself. Note that the
+miss is **silent**: the server does not reject a retain naming a strategy the bank lacks, it logs a
+warning and extracts with the bank's own configuration — so a commit diff, a session transcript and
+a survey marker would all get the same generic treatment instead of the extraction each needs.
+Knowledge pages are seeded either way; `pageTriggerType` governs what they cost.
+
+Like every field here it can be set per bank, which is usually where it belongs:
+
+```json
+{
+  "bankId": "my-global-bank",
+  "banks": { "my-global-bank": { "manageBankConfig": false } }
+}
+```
+
+### Per-repo opt-in/out — `banks.<bankId>`
+
+Per-repo control lives in the SAME file, keyed by the **resolved bank id** (shown in the session
+banner) and applied AFTER bank resolution — so it works regardless of where the repo lives, and
+survives directory moves:
+
+```jsonc
+{
+  "banks": {
+    "coding-agent::secret-client": { "disabled": true }, // blacklist: no memory at all
+    "coding-agent::old-name": { "bank": "team::shared" }, // rename / converge banks
+    "coding-agent::big-mono": { "gitIngest": "full", "retainSessions": false },
+  },
+}
+```
+
+Any behavioral field can be overridden per bank, and `bank` **renames the destination** (single
+hop: the section is selected by the resolved id, the target is literal — several ids may converge
+on one shared bank, and the target's own section is not consulted). Other bank-resolution fields
+are ignored inside a bank section.
+
+#### Recipe: two repos, one shared bank
+
+Two ways, by what the natural key is:
+
+**By resolved id** — you know the repo names; works wherever the repos live (and keeps working if
+they move). Both ids converge on one literal target:
+
+```jsonc
+{
+  "banks": {
+    "coding-agent::backend": { "bank": "team::product" },
+    "coding-agent::frontend": { "bank": "team::product" },
+  },
+}
+```
+
+**By path prefix** — the repos live under one directory; a single `mapPathToBank` entry covers
+every repo (present and future) beneath it:
+
+```jsonc
+{
+  "mapPathToBank": { "/Users/me/work/client-x": "client-x-memory" },
+}
+```
+
+Rule of thumb: converge by **id** for a hand-picked set of repos; map by **path** when a folder is
+the boundary ("everything I clone under `work/client-x` shares memory").
+
+### Per-directory overrides — `paths.<prefix>`
+
+When a folder is the boundary for something other than the bank — typically a different server
+or tenant for client work — key the override by directory instead of by bank id:
+
+```jsonc
+{
+  "apiToken": "personal-key",
+  "paths": {
+    "~/work/client-x": { "apiToken": "client-x-key" },
+    "~/work/acme": { "apiUrl": "https://hindsight.acme.internal", "apiToken": "acme-key" },
+    "~/oss": { "serverMode": "daemon" },
+  },
+}
+```
+
+Every repo under the prefix, present and future, keeps its own bank but uses the entry's
+settings. The longest matching prefix wins, and a linked worktree outside the tree uses its main
+checkout's entry, as with `mapPathToBank`. The section applies after bank resolution and before
+`banks.<bankId>`, so a bank section still wins for its one repo. Bank-resolution and approval
+fields (`bankId`, `mapPathToBank`, `bank`, `optInOnly`, `optInPaths`, ...) are ignored inside a
+path section. Any connection setting can be overridden — `serverMode`, `apiUrl`, `apiPort`,
+`apiToken` — so one directory can use a local daemon while another uses Cloud or a self-hosted
+server. The token is re-read on a rejected request, like the top-level `apiToken`, but only while
+the directory still points at the same server.
+
+### Bank resolution
+
+Coding memory is **per repository**. Resolution order for the working directory:
+
+1. `mapPathToBank` — longest matching absolute-path prefix (mapping a repo root covers every
+   subdirectory; deeper mappings win; overrides even an explicit `bankId`).
+2. Static — `bankId` set (or `dynamicBankId: false`).
+3. Dynamic — `bankIdTemplate` with placeholders:
+   - `{gitProject}` — worktree-aware repo name: `git rev-parse --git-common-dir` resolves every
+     linked worktree to the **main** worktree's basename, so all worktrees of a repo share one bank
+     (bare repos use the bare dir name). **Outside a repo** there is nothing for git to resolve, so
+     it falls back to the basename of the directory the **session started in** — an agent that
+     `cd`s into a subdirectory keeps writing to one bank, and a subdirectory gets its own bank only
+     when you deliberately start a session there
+   - `{project}` — plain working-directory basename
+   - `{harness}` — the entry point asking (`opencode`, `claude-code`, `codex`, `antigravity-cli`, `cursor-cli`, `copilot-cli`)
+   - `{channel}` / `{user}` — `$HINDSIGHT_CHANNEL_ID` / `$HINDSIGHT_USER_ID`
+
+The default `"coding-agent::{gitProject}"` is **harness-neutral**, so opencode, Claude Code, and Codex
+all share one memory per repo — use `"{harness}-{gitProject}"` to split per agent instead.
+
+### Recording where a memory came from
+
+With a bank per repo, the bank _is_ the answer to "where did this come from". On a deliberately
+**shared** bank — one bank holding cross-project knowledge so facts recall everywhere — it isn't:
+every memory looks alike. `retainTags` and `retainMetadata` stamp that provenance onto conversations,
+git history and diffs, survey lifecycle documents, initiative markers, and documents saved through
+`hindsight_ingest_document`:
+
+```jsonc
+{
+  "bankId": "shared", // one bank for everything
+  "retainTags": ["project:{gitProject}", "env:work"],
+  "retainMetadata": { "repo": "{gitProject}" },
+}
+```
+
+Recalls can then filter by `project:<repo>`, and every document shows which repository it came out
+of. Both accept the same placeholders as `bankIdTemplate` — `{gitProject}`, `{project}`,
+`{harness}`, `{channel}`, `{user}` — plus `{bankId}`, `{sessionId}` and `{timestamp}`.
+`{gitProject}` is worktree-aware here too, so every linked worktree of a repo stamps one name.
+`{sessionId}` resolves to `unknown` for documents that do not originate from an agent session.
+
+The plugin's own `source:` and `harness:` tags are reserved: entries in those namespaces are ignored
+with a warning, so a document's agent attribution always reflects the agent that actually wrote it.
+
+### One set of beliefs per repo
+
+Every document this integration writes carries provenance tags — `source:chat`, `harness:<id>`,
+`knowledge:<kind>`, plus anything from `retainTags`. Those tags say **who wrote** a memory; they are
+what filters recall and draws each document's agent logo, and they stay on the facts.
+
+They are not, however, a good boundary for
+[observations](/developer/observations). Consolidation's own
+default (`combined`) builds one observation set per distinct tag set, so the same repository
+worked on by two agents would grow two parallel sets of beliefs — one per harness — that never
+merge, each blind to the other, at double the consolidation cost. Which agent happened to be typing
+does not change whether a convention or a decision is true.
+
+So the integration retains with `observationScopes: "shared"`: one global, untagged observation
+scope per bank, which is what a bank already is — one project's memory. Set the field to change it:
+
+```jsonc
+{
+  "observationScopes": "combined", // one observation set per distinct tag set (server default)
+  "banks": {
+    "coding-agent::mono": { "observationScopes": "per_tag" }, // per-repo, like any behavioral field
+  },
+}
+```
+
+### Splitting code from conversation — `per_source`
+
+`shared` puts every document a repo produces into one belief set. `"per_source"` keeps that set and
+adds one per origin, so "what the commits say" and "what was decided in conversation" can be asked
+apart:
+
+```jsonc
+{ "observationScopes": "per_source" }
+```
+
+Each document consolidates into the global scope **plus** one named for each `source:` tag it
+carries — `[[], ["source:chat"]]` for a session transcript, `[[], ["source:git"]]` for a commit
+diff. Read an axis back with `tags: ["source:git"], tags_match: "exact"`, and the merged view with
+`tags: [], tags_match: "exact"`.
+
+A document carrying two `source:` tags gets a scope for each, and that is deliberate rather than
+duplication. The commit-message seed is tagged `source:git` and `source:git-log`, so
+`source:git-log` is fed only by the seed — what the commit _messages_ say — while `source:git` also
+collects every per-commit diff under `gitIngest: "full"`. Two questions, two answers, each
+deduplicated within itself by consolidation. A fact belonging to more than one axis is the point.
+
+This cannot be expressed as a scope list. The server treats an explicit `list[list[str]]` as
+unconditional — it is not filtered against the memory's own tags — so a configured
+`[[], ["source:git"], ["source:chat"]]` writes every document into all three, and the `source:git`
+scope fills with beliefs built from chat transcripts. Only a per-document decision separates them.
+
+It costs one extra consolidation pass per document, and it reads only `source:`, so a volatile
+provenance tag never becomes a scope. The global scope is still written first and unchanged, so the
+untagged observations knowledge pages read are unaffected.
+
+`"per_tag"` and `"all_combinations"` split further still, and an explicit `[["project:demo"], …]`
+declares the scopes literally. `HINDSIGHT_OBSERVATION_SCOPES` sets the scalar modes; a scope list is
+file-only. Changing this does not rewrite observations already consolidated under the old scoping —
+they stay where they were built, and new work accrues under the new setting.
+
+## Diagnostics & logging
+
+All logs live in `~/.hindsight/coding-agents-logs/` (owner-only). Each file rotates to `<file>.1`
+at 10 MB.
+
+**Leveled plugin log** (humans debugging): `~/.hindsight/coding-agents-logs/plugin.log` (override
+`HINDSIGHT_LOG_FILE`) — timestamped `LEVEL [scope] message` lines from every component, including
+the ingestion engine. Level defaults to `info`; set `"logLevel": "debug"` in config or
+`HINDSIGHT_LOG_LEVEL=debug` for ad-hoc debugging (at `debug`, every diag event below is mirrored
+here too, so one file tells the whole story).
+
+**Structured diag events** (machines/harnesses): every reflect and page-fetch outcome is appended
+as a JSON line to `~/.hindsight/coding-agents-logs/diag.jsonl` (override with
+`HINDSIGHT_DIAG_FILE`):
+
+```json
+{
+  "ts": "2026-07-27T07:05:52Z",
+  "harness": "claude-code",
+  "event": "reflect_ok",
+  "ms": 14210,
+  "chars": 792,
+  "query": "..."
+}
+```
+
+`reflect_failed` / `pages_failed` record the error; if you're comparing memory-on vs memory-off,
+check this file — a run whose reflects failed is a no-memory run. When the failure was a timeout or
+a 5xx, the hook falls back to knowledge-page search and, if no page matches, to a raw recall of the
+bank's memories: `reflect_fallback_pages` / `reflect_fallback_observations` record what each
+step returned (`*_failed` when it errored). Seed starts are logged as
+`seed_started`.
+
+When `autoInject` names a retrieval source instead of reflect, that source records its own
+outcome with the number of items it returned: `inject_pages` for `"pages"`, `inject_recall` for
+`"recall"` (`inject_pages_failed` / `inject_recall_failed` when the call errored). No reflect
+event is written on those turns — nothing reflected.
+
+**Tool usage** (is the agent using Hindsight?): one JSON line per finished user turn in
+`~/.hindsight/coding-agents-logs/usage.jsonl` (override `HINDSIGHT_USAGE_FILE`) — the `hindsight_*`
+tools the agent called during that turn, and whether its reply credited Hindsight memory ("From
+Hindsight memory"). The credit rate counts only turns that called a retrieval tool (search, list,
+read, reflect); saving a document is not expected to be credited. Recorded when the session is written back, so a scope with
+`retainSessions: false` records none. It never leaves your machine. Summarize it per agent with:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents stats
+```
+
+### Is the memory ready yet?
+
+`hindsight_sync_status` — the agent-facing tool, `dist/status.js` for scripts — answers exactly
+that: `"synced": true` means the seeded memory is queryable. It also reports gitlog freshness, how
+far per-commit deepening has got, the codebase survey's state (`surveyBaseline` is the HEAD the last
+survey started from, `surveyDocs` counts the findings documents that have landed, 0–4 — a baseline
+with no findings retries automatically), and the extraction operations still in flight.
+
+### Resetting a repo's memory
+
+Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
+session in that repo is a true first open — seed and survey run again from scratch. There are no
+client-side files to clean up.
+
+### Marker documents you may notice
+
+Two document ids exist for the machinery's own bookkeeping. Both are safe to ignore and safe to
+delete:
+
+- `survey-baseline:<sha>` — reads "🛰️ researching…" while a codebase survey runs and flips to
+  "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
+  rule extracts **nothing** from a status marker, and it drives the re-survey cadence
+  (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
+- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
+  when the seed runs again.
+
+### When memory seems to be missing
+
+Failures never break the agent: a reflect, page fetch or retain that fails degrades to an ordinary
+memoryless turn and is recorded in the logs. "No memory" is therefore a log question — check the
+diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
+was already running when the plugin was installed has no SessionStart behind it; its first prompt
+after the install self-heals.

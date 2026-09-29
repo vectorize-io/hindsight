@@ -1,0 +1,12 @@
+{
+  "version": "1",
+  "bank": {
+    "retain_extraction_mode": "chunks",
+    "enable_observations": false,
+    "enable_temporal_retrieval": false,
+    "enable_graph_retrieval": false,
+    "enable_reranking": false
+  },
+  "mental_models": [],
+  "directives": []
+}

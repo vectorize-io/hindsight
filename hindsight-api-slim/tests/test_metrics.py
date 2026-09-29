@@ -1,0 +1,603 @@
+"""Tests for metrics instrumentation."""
+
+import pytest
+from unittest.mock import MagicMock, patch
+
+from hindsight_api.metrics import (
+    MetricsCollector,
+    MetricsCollectorBase,
+    NoOpMetricsCollector,
+    get_metrics_collector,
+    get_token_bucket,
+    create_metrics_collector,
+    initialize_metrics,
+    normalize_http_endpoint,
+)
+
+
+class TestNoOpMetricsCollector:
+    """Tests for the no-op metrics collector."""
+
+    def test_record_operation_is_noop(self):
+        """Test that record_operation does nothing."""
+        collector = NoOpMetricsCollector()
+
+        # Should not raise any exception
+        with collector.record_operation("recall", bank_id="test_bank", source="api"):
+            pass
+
+    def test_nested_contexts_work(self):
+        """Test that nested context managers work correctly."""
+        collector = NoOpMetricsCollector()
+
+        # Nested contexts should work without issues
+        with collector.record_operation("reflect", bank_id="test_bank", source="api"):
+            with collector.record_operation("recall", bank_id="test_bank", source="reflect"):
+                pass
+
+    def test_exception_propagates(self):
+        """Test that exceptions inside context are propagated."""
+        collector = NoOpMetricsCollector()
+
+        with pytest.raises(ValueError, match="test error"):
+            with collector.record_operation("recall", bank_id="test_bank"):
+                raise ValueError("test error")
+
+    def test_record_llm_call_is_noop(self):
+        """Test that record_llm_call does nothing."""
+        collector = NoOpMetricsCollector()
+
+        # Should not raise any exception
+        collector.record_llm_call(
+            provider="openai",
+            model="gpt-4",
+            scope="memory",
+            duration=1.5,
+            input_tokens=100,
+            output_tokens=50,
+            success=True,
+        )
+
+
+class TestMetricsCollector:
+    """Tests for the real metrics collector."""
+
+    @pytest.fixture
+    def mock_meter(self):
+        """Create a mock meter for testing."""
+        meter = MagicMock()
+        # Return a fresh mock per instrument, regardless of how many the collector
+        # creates — so adding a histogram/counter to MetricsCollector never requires
+        # bumping a hard-coded count here.
+        meter.create_histogram.side_effect = lambda *a, **k: MagicMock()
+        meter.create_counter.side_effect = lambda *a, **k: MagicMock()
+        return meter
+
+    @pytest.fixture
+    def collector(self, mock_meter):
+        """Create a MetricsCollector with a mock meter."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=mock_meter),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            return MetricsCollector()
+
+    def test_record_operation_records_duration(self, collector):
+        """Test that record_operation records duration."""
+        with collector.record_operation("recall", bank_id="test_bank", source="api"):
+            pass
+
+        # Histogram should have been called
+        collector.operation_duration.record.assert_called_once()
+        call_args = collector.operation_duration.record.call_args
+
+        # First arg is duration (should be > 0)
+        duration = call_args[0][0]
+        assert duration >= 0
+
+        # Second arg is attributes dict
+        attributes = call_args[0][1]
+        assert attributes["operation"] == "recall"
+        assert "bank_id" not in attributes  # excluded by default to avoid high-cardinality OTel growth
+        assert attributes["source"] == "api"
+        assert attributes["success"] == "true"
+
+    def test_record_operation_records_failure_on_exception(self, collector):
+        """Test that record_operation records failure when exception occurs."""
+        with pytest.raises(RuntimeError):
+            with collector.record_operation("retain", bank_id="test_bank", source="api"):
+                raise RuntimeError("Test error")
+
+        # Should have recorded with success=false
+        call_args = collector.operation_duration.record.call_args
+        attributes = call_args[0][1]
+        assert attributes["success"] == "false"
+
+    def test_record_operation_cancellation_excluded_from_metric(self, collector):
+        """A client-disconnect cancellation is neither a success nor a failure.
+
+        Recall/reflect run the engine call inside record_operation; when the
+        client disconnects the engine raises OperationCancelledError (issue
+        #2122). That abandoned request must not be recorded on
+        hindsight.operation.total at all -- inflating neither the failure nor
+        the success rate -- even though the exception still propagates.
+        """
+        from hindsight_api.cancellation import OperationCancelledError
+
+        with pytest.raises(OperationCancelledError):
+            with collector.record_operation("recall", bank_id="test_bank", source="api"):
+                raise OperationCancelledError("client disconnected")
+
+        collector.operation_total.add.assert_not_called()
+        collector.operation_duration.record.assert_not_called()
+
+    def test_record_operation_http_499_from_cancellation_excluded(self, collector):
+        """run_cancellable_on_disconnect re-raises the cancellation as
+        ``HTTPException(499) from exc``; the cause chain marks it as a
+        cancellation, so it is excluded from the metric too."""
+        from fastapi import HTTPException
+
+        from hindsight_api.cancellation import OperationCancelledError
+
+        with pytest.raises(HTTPException):
+            with collector.record_operation("reflect", bank_id="test_bank", source="api"):
+                try:
+                    raise OperationCancelledError("client disconnected")
+                except OperationCancelledError as cancel:
+                    raise HTTPException(status_code=499, detail="client disconnected") from cancel
+
+        collector.operation_total.add.assert_not_called()
+        collector.operation_duration.record.assert_not_called()
+
+    def test_record_operation_unrelated_499_still_recorded_as_failure(self, collector):
+        """A 499 that is NOT caused by a cancellation (no OperationCancelledError
+        in the cause chain) is a real failure and must still be recorded."""
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException):
+            with collector.record_operation("recall", bank_id="test_bank", source="api"):
+                raise HTTPException(status_code=499, detail="unrelated downstream error")
+
+        attributes = collector.operation_duration.record.call_args[0][1]
+        assert attributes["success"] == "false"
+
+    def test_record_operation_with_budget(self, collector):
+        """Test that budget is included in attributes when provided."""
+        with collector.record_operation("recall", bank_id="test_bank", source="api", budget="mid"):
+            pass
+
+        call_args = collector.operation_duration.record.call_args
+        attributes = call_args[0][1]
+        assert attributes["budget"] == "mid"
+
+    def test_record_operation_with_max_tokens(self, collector):
+        """Test that max_tokens is included in attributes when provided."""
+        with collector.record_operation("recall", bank_id="test_bank", source="api", max_tokens=4096):
+            pass
+
+        call_args = collector.operation_duration.record.call_args
+        attributes = call_args[0][1]
+        assert attributes["max_tokens"] == "4096"
+
+    def test_record_operation_source_values(self, collector):
+        """Test different source values: api, reflect, internal."""
+        sources = ["api", "reflect", "internal"]
+
+        for source in sources:
+            collector.operation_duration.record.reset_mock()
+
+            with collector.record_operation("recall", bank_id="test_bank", source=source):
+                pass
+
+            call_args = collector.operation_duration.record.call_args
+            attributes = call_args[0][1]
+            assert attributes["source"] == source
+
+    def test_nested_contexts_track_separately(self, collector):
+        """Test that nested operations are tracked separately with different sources."""
+        # Simulate reflect (api) calling recall (reflect)
+        with collector.record_operation("reflect", bank_id="test_bank", source="api"):
+            with collector.record_operation("recall", bank_id="test_bank", source="reflect"):
+                pass
+
+        # Should have 2 calls to record
+        assert collector.operation_duration.record.call_count == 2
+        assert collector.operation_total.add.call_count == 2
+
+        # Check the calls
+        calls = collector.operation_duration.record.call_args_list
+
+        # First call should be recall (inner context exits first)
+        recall_attrs = calls[0][0][1]
+        assert recall_attrs["operation"] == "recall"
+        assert recall_attrs["source"] == "reflect"
+
+        # Second call should be reflect (outer context exits last)
+        reflect_attrs = calls[1][0][1]
+        assert reflect_attrs["operation"] == "reflect"
+        assert reflect_attrs["source"] == "api"
+
+    def test_record_operation_result_records_with_explicit_success(self, collector):
+        """Direct recording path used by the worker (source=worker, explicit success)."""
+        collector.record_operation_result("retain", bank_id="test_bank", success=False, duration=1.5, source="worker")
+
+        duration, attributes = collector.operation_duration.record.call_args[0]
+        assert duration == 1.5
+        assert attributes["operation"] == "retain"
+        assert attributes["source"] == "worker"
+        assert attributes["success"] == "false"
+        collector.operation_total.add.assert_called_once_with(1, attributes)
+
+    def test_record_retain_document_labels_facts_outcome(self, collector):
+        """A document left with memory units is labelled outcome=facts."""
+        collector.record_retain_document(bank_id="test_bank", memory_unit_count=3)
+
+        count, attributes = collector.retain_documents_total.add.call_args[0]
+        assert count == 1
+        assert attributes["outcome"] == "facts"
+        assert "bank_id" not in attributes  # excluded by default, like every other metric
+
+    def test_record_retain_document_labels_no_facts_outcome(self, collector):
+        """A document left with zero memory units is the alertable case (#3040)."""
+        collector.record_retain_document(bank_id="test_bank", memory_unit_count=0)
+
+        count, attributes = collector.retain_documents_total.add.call_args[0]
+        assert count == 1
+        assert attributes["outcome"] == "no_facts"
+
+    def test_record_operation_includes_bank_id_when_enabled(self):
+        """Test that bank_id is included in attributes when metrics_include_bank_id is enabled."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = True
+        with (
+            patch("hindsight_api.metrics.get_meter") as mock_get_meter,
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            mock_get_meter.return_value = MagicMock()
+            collector = MetricsCollector()
+
+        with collector.record_operation("recall", bank_id="test_bank", source="api"):
+            pass
+
+        attributes = collector.operation_duration.record.call_args[0][1]
+        assert attributes["bank_id"] == "test_bank"
+
+    def test_tenant_label_excluded_by_default(self):
+        """The per-tenant (schema) label is high-cardinality and off by default.
+
+        metrics_include_tenant=False must strip ``tenant`` from every always-on instrument.
+        Regression for OTel metric blow-up on deployments with many tenant schemas: one series
+        set per tenant, multiplied through every histogram bucket.
+        """
+        from hindsight_api.config import DEFAULT_METRICS_INCLUDE_TENANT
+
+        assert DEFAULT_METRICS_INCLUDE_TENANT is False
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.metrics_include_tenant = False
+        mock_config.recall_diagnostic_phases = True
+        mock_config.recall_phase_sample_every = 1
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+            patch("hindsight_api.metrics._get_tenant", return_value="tenant_abc"),
+        ):
+            collector = MetricsCollector()
+
+        collector.record_operation_result("recall", "test_bank", success=True, duration=0.1)
+        collector.record_recall_phase("engine_auth", 0.01)
+        collector.record_retain_phase("write", 0.01)
+
+        op_attrs = collector.operation_duration.record.call_args[0][1]
+        recall_attrs = collector.recall_phase_duration.record.call_args[0][1]
+        retain_attrs = collector.retain_phase_duration.record.call_args[0][1]
+        assert "tenant" not in op_attrs
+        assert "tenant" not in recall_attrs
+        assert "tenant" not in retain_attrs
+
+    def test_tenant_label_included_when_enabled(self):
+        """metrics_include_tenant=True restores the ``tenant`` label for small deployments."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.metrics_include_tenant = True
+        mock_config.recall_diagnostic_phases = True
+        mock_config.recall_phase_sample_every = 1
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+            patch("hindsight_api.metrics._get_tenant", return_value="tenant_abc"),
+        ):
+            collector = MetricsCollector()
+            # _get_tenant is read at record time, so the phase must be recorded inside the patch.
+            collector.record_recall_phase("engine_auth", 0.01)
+
+        recall_attrs = collector.recall_phase_duration.record.call_args[0][1]
+        assert recall_attrs["tenant"] == "tenant_abc"
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_recall_diagnostic_phases_follow_config(self, enabled):
+        """Diagnostic phases are dropped when disabled; ordinary phases are always recorded, once."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.recall_diagnostic_phases = enabled
+        mock_config.recall_phase_sample_every = 1
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            collector = MetricsCollector()
+
+        collector.record_recall_phase("engine_call", 0.01, diagnostic=True)
+        collector.record_recall_phase("engine_auth", 0.01)
+
+        phases = [c.args[1]["phase"] for c in collector.recall_phase_duration.record.call_args_list]
+        assert phases == (["engine_call", "engine_auth"] if enabled else ["engine_auth"])
+
+    def test_recall_phase_sampling_records_one_in_n(self):
+        """With a sample rate of N, a phase is recorded only when the draw lands in the 1/N slice."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.recall_diagnostic_phases = True
+        mock_config.recall_phase_sample_every = 10
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=MagicMock()),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            collector = MetricsCollector()
+
+        # random() * 10 < 1 keeps the observation: 0.05 and 0.099 are kept, 0.1 and 0.9 are dropped.
+        with patch("hindsight_api.metrics.random.random", side_effect=[0.05, 0.1, 0.9, 0.099]):
+            for phase in ("a", "b", "c", "d"):
+                collector.record_recall_phase(phase, 0.01)
+
+        phases = [c.args[1]["phase"] for c in collector.recall_phase_duration.record.call_args_list]
+        assert phases == ["a", "d"]
+
+
+class TestGetMetricsCollector:
+    """Tests for the get_metrics_collector function."""
+
+    def test_returns_noop_by_default(self):
+        """Test that get_metrics_collector returns NoOpMetricsCollector by default."""
+        # Reset global state
+        import hindsight_api.metrics as metrics_module
+
+        original_collector = metrics_module._metrics_collector
+
+        try:
+            metrics_module._metrics_collector = NoOpMetricsCollector()
+            collector = get_metrics_collector()
+            assert isinstance(collector, NoOpMetricsCollector)
+        finally:
+            metrics_module._metrics_collector = original_collector
+
+
+class TestMetricsCollectorBase:
+    """Tests for the MetricsCollectorBase abstract class."""
+
+    def test_is_abstract(self):
+        """Test that MetricsCollectorBase methods are abstract."""
+
+        # Create a class that inherits but doesn't implement
+        class IncompleteCollector(MetricsCollectorBase):
+            pass
+
+        collector = IncompleteCollector()
+
+        # Abstract methods should raise NotImplementedError
+        with pytest.raises(NotImplementedError):
+            with collector.record_operation("test", "test"):
+                pass
+
+        with pytest.raises(NotImplementedError):
+            collector.record_llm_call("test", "test", "test", 1.0)
+
+
+class TestGetTokenBucket:
+    """Tests for the get_token_bucket function."""
+
+    def test_bucket_0_100(self):
+        """Test tokens < 100 return '0-100' bucket."""
+        assert get_token_bucket(0) == "0-100"
+        assert get_token_bucket(50) == "0-100"
+        assert get_token_bucket(99) == "0-100"
+
+    def test_bucket_100_500(self):
+        """Test tokens 100-499 return '100-500' bucket."""
+        assert get_token_bucket(100) == "100-500"
+        assert get_token_bucket(250) == "100-500"
+        assert get_token_bucket(499) == "100-500"
+
+    def test_bucket_500_1k(self):
+        """Test tokens 500-999 return '500-1k' bucket."""
+        assert get_token_bucket(500) == "500-1k"
+        assert get_token_bucket(750) == "500-1k"
+        assert get_token_bucket(999) == "500-1k"
+
+    def test_bucket_1k_5k(self):
+        """Test tokens 1000-4999 return '1k-5k' bucket."""
+        assert get_token_bucket(1000) == "1k-5k"
+        assert get_token_bucket(2500) == "1k-5k"
+        assert get_token_bucket(4999) == "1k-5k"
+
+    def test_bucket_5k_10k(self):
+        """Test tokens 5000-9999 return '5k-10k' bucket."""
+        assert get_token_bucket(5000) == "5k-10k"
+        assert get_token_bucket(7500) == "5k-10k"
+        assert get_token_bucket(9999) == "5k-10k"
+
+    def test_bucket_10k_50k(self):
+        """Test tokens 10000-49999 return '10k-50k' bucket."""
+        assert get_token_bucket(10000) == "10k-50k"
+        assert get_token_bucket(25000) == "10k-50k"
+        assert get_token_bucket(49999) == "10k-50k"
+
+    def test_bucket_50k_plus(self):
+        """Test tokens >= 50000 return '50k+' bucket."""
+        assert get_token_bucket(50000) == "50k+"
+        assert get_token_bucket(100000) == "50k+"
+        assert get_token_bucket(1000000) == "50k+"
+
+
+class TestNormalizeHttpEndpoint:
+    """Tests for normalize_http_endpoint (low-cardinality HTTP metric labels)."""
+
+    def test_templates_high_cardinality_segments(self):
+        """Bank ids (incl. non-numeric), UUIDs, and numeric ids collapse to placeholders."""
+        cases = [
+            ("/v1/default/banks/user-1680/memories/recall", "/v1/default/banks/{bank_id}/memories/recall"),
+            ("/v1/default/banks/tenant-acme/memories", "/v1/default/banks/{bank_id}/memories"),
+            ("/v1/default/banks/user-1680", "/v1/default/banks/{bank_id}"),
+            ("/v1/default/banks/3f8c1e2a-1111-2222-3333-444455556666/config", "/v1/default/banks/{bank_id}/config"),
+            ("/v1/default/banks/42/config", "/v1/default/banks/{bank_id}/config"),
+            ("/v1/default/banks", "/v1/default/banks"),
+            ("/health", "/health"),
+        ]
+        for raw, expected in cases:
+            assert normalize_http_endpoint(raw) == expected, raw
+
+
+class TestLLMMetrics:
+    """Tests for LLM-specific metrics recording."""
+
+    @pytest.fixture
+    def mock_meter(self):
+        """Create a mock meter for testing."""
+        meter = MagicMock()
+        # Return a fresh mock per instrument, regardless of how many the collector
+        # creates — so adding a histogram/counter to MetricsCollector never requires
+        # bumping a hard-coded count here.
+        meter.create_histogram.side_effect = lambda *a, **k: MagicMock()
+        meter.create_counter.side_effect = lambda *a, **k: MagicMock()
+        return meter
+
+    @pytest.fixture
+    def collector(self, mock_meter):
+        """Create a MetricsCollector with a mock meter."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=mock_meter),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            return MetricsCollector()
+
+    def test_record_llm_call_records_duration(self, collector):
+        """Test that record_llm_call records duration."""
+        collector.record_llm_call(
+            provider="openai",
+            model="gpt-4",
+            scope="memory",
+            duration=1.5,
+            input_tokens=100,
+            output_tokens=50,
+            success=True,
+        )
+
+        # LLM duration histogram should be called
+        collector.llm_duration.record.assert_called_once()
+        call_args = collector.llm_duration.record.call_args
+
+        # First arg is duration
+        assert call_args[0][0] == 1.5
+
+        # Second arg is attributes dict
+        attributes = call_args[0][1]
+        assert attributes["provider"] == "openai"
+        assert attributes["model"] == "gpt-4"
+        assert attributes["scope"] == "memory"
+        assert attributes["success"] == "true"
+
+    def test_record_llm_call_records_failure(self, collector):
+        """Test that record_llm_call records failure status."""
+        collector.record_llm_call(
+            provider="anthropic",
+            model="claude-3",
+            scope="reflect",
+            duration=0.5,
+            success=False,
+        )
+
+        # Check success is false
+        call_args = collector.llm_duration.record.call_args
+        attributes = call_args[0][1]
+        assert attributes["success"] == "false"
+
+    def test_record_llm_call_records_tokens_with_buckets(self, collector):
+        """Test that record_llm_call records tokens with bucket labels."""
+        collector.record_llm_call(
+            provider="openai",
+            model="gpt-4",
+            scope="memory",
+            duration=1.0,
+            input_tokens=2500,  # Should be "1k-5k" bucket
+            output_tokens=150,  # Should be "100-500" bucket
+            success=True,
+        )
+
+        # Input tokens should be recorded with bucket
+        collector.llm_tokens_input.add.assert_called_once()
+        input_call = collector.llm_tokens_input.add.call_args
+        assert input_call[0][0] == 2500
+        assert input_call[0][1]["token_bucket"] == "1k-5k"
+
+        # Output tokens should be recorded with bucket
+        collector.llm_tokens_output.add.assert_called_once()
+        output_call = collector.llm_tokens_output.add.call_args
+        assert output_call[0][0] == 150
+        assert output_call[0][1]["token_bucket"] == "100-500"
+
+    def test_record_llm_call_skips_zero_tokens(self, collector):
+        """Test that zero token values don't record."""
+        collector.record_llm_call(
+            provider="openai",
+            model="gpt-4",
+            scope="memory",
+            duration=1.0,
+            input_tokens=0,
+            output_tokens=0,
+            success=True,
+        )
+
+        # Token counters should not be called
+        collector.llm_tokens_input.add.assert_not_called()
+        collector.llm_tokens_output.add.assert_not_called()
+
+    def test_record_llm_call_increments_call_counter(self, collector):
+        """Test that record_llm_call increments the call counter."""
+        collector.record_llm_call(
+            provider="gemini",
+            model="gemini-pro",
+            scope="memory",
+            duration=2.0,
+            success=True,
+        )
+
+        # Call counter should be incremented
+        collector.llm_calls_total.add.assert_called_once()
+        call_args = collector.llm_calls_total.add.call_args
+        assert call_args[0][0] == 1
+        assert call_args[0][1]["provider"] == "gemini"
+        assert call_args[0][1]["model"] == "gemini-pro"
+        assert call_args[0][1]["scope"] == "memory"
+
+    def test_record_llm_call_different_scopes(self, collector):
+        """Test recording LLM calls with different scopes."""
+        scopes = ["memory", "reflect", "consolidation", "answer"]
+
+        for scope in scopes:
+            collector.llm_duration.record.reset_mock()
+
+            collector.record_llm_call(
+                provider="openai",
+                model="gpt-4",
+                scope=scope,
+                duration=1.0,
+                success=True,
+            )
+
+            call_args = collector.llm_duration.record.call_args
+            attributes = call_args[0][1]
+            assert attributes["scope"] == scope

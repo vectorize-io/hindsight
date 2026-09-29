@@ -1,0 +1,27 @@
+#!/bin/bash
+# Pre-commit hook - runs all scripts in scripts/hooks/
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+HOOKS_DIR="$REPO_ROOT/scripts/hooks"
+
+if [ ! -d "$HOOKS_DIR" ]; then
+    exit 0
+fi
+
+echo ""
+echo "=== Running pre-commit hooks ==="
+echo ""
+
+# Run all executable scripts in hooks directory
+for hook in "$HOOKS_DIR"/*.sh; do
+    if [ -x "$hook" ]; then
+        echo "[hook] $(basename "$hook")"
+        (cd "$REPO_ROOT" && "$hook")
+    fi
+done
+
+echo ""
+echo "=== Pre-commit hooks completed ==="
+echo ""

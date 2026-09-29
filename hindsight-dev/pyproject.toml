@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hindsight-dev"
+version = "0.10.2"
+description = "Development utilities for Hindsight"
+requires-python = ">=3.11"
+dependencies = [
+    "hindsight-api==0.10.2",
+    "openai>=1.0.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.27.0",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_dev", "benchmarks", "upgrade_tests"]
+
+[tool.uv.sources]
+hindsight-api = { workspace = true }
+
+[project.scripts]
+generate-openapi = "hindsight_dev.generate_openapi:generate_openapi_spec"
+generate-bank-template-schema = "hindsight_dev.generate_bank_template_schema:main"
+generate-changelog = "hindsight_dev.generate_changelog:main"
+sync-cookbook = "hindsight_dev.sync_cookbook:main"
+generate-llms-full = "hindsight_dev.generate_llms_full:main"
+check-openapi-compatibility = "hindsight_dev.check_openapi_compatibility:main"
+cli-coverage-check = "hindsight_dev.cli_coverage_check:main"
+client-coverage-check = "hindsight_dev.client_coverage_check:main"
+perf-test = "benchmarks.perf.system_perf:main"
+token-count-bench = "benchmarks.micro.token_counting:main"
+vector-serialization-bench = "benchmarks.micro.vector_serialization:main"
+semantic-within-batch-bench = "benchmarks.micro.semantic_within_batch:main"
+entity-resolver-bench = "benchmarks.micro.entity_resolver_bench:main"
+transfer-streaming-bench = "benchmarks.micro.transfer_streaming_bench:main"
+find-duplicate-observations = "hindsight_dev.obs_dedup.cli:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "ty>=0.0.1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module import not at top of file
+    "E712",   # avoid equality comparisons to False (intentional for optional bools)
+    "F811",   # redefined while unused
+    "F821",   # undefined name (forward references in type hints)
+    "W291",   # trailing whitespace (in multiline strings)
+    "W293",   # blank line contains whitespace (in multiline strings)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty]
+# Type checking configuration
+# ty is an extremely fast Python type checker from Astral (same team as ruff/uv)
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+# Disable noisy rules
+invalid-argument-type = "ignore"    # Too many false positives
+invalid-return-type = "ignore"      # Often intentional
+# missing-argument and unknown-argument are enabled (default)
+invalid-parameter-default = "ignore" # Optional params with None default
+possibly-missing-attribute = "ignore" # Common with Optional types
+unsupported-operator = "ignore"     # Pandas DataFrame operations
+unresolved-reference = "ignore"     # Forward references
+unresolved-import = "ignore"        # Dynamic imports
+invalid-assignment = "ignore"       # Intentional monkey-patching
+no-matching-overload = "ignore"     # Complex generic issues

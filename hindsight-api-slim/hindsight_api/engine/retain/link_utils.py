@@ -1,0 +1,1179 @@
+"""
+Link creation utilities for temporal, semantic, and entity links.
+"""
+
+import logging
+import re
+import time
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+import numpy as np
+
+from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..causal_links import (
+    CANONICAL_CAUSAL_LINK_TYPES,
+    CAUSAL_LINK_TYPES,
+    DEFAULT_CAUSAL_LINK_WEIGHT,
+    LEGACY_CAUSAL_LINK_TYPES,
+    CausalLinkDescriptor,
+)
+from ..db.base import DatabaseConnection
+from ..db.ops import DataAccessOps
+from ..db.postgresql import setting_rejected_by_server
+from ..memory_engine import fq_table
+from .types import CausalRelation, EmbeddingLike, EntityResolutionResult, embedding_to_pgvector
+
+logger = logging.getLogger(__name__)
+
+# Sentinel UUID used in the unique index to represent NULL entity_id
+_NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
+
+# Any run of whitespace, including the \n / \r / \t that extraction sometimes
+# leaves inside a candidate entity name.
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+# Longest candidate entity name intake will accept. `entities.canonical_name` is
+# unbounded TEXT, but `idx_entities_bank_name` is a btree on (bank_id,
+# canonical_name) and a btree tuple cannot exceed ~2704 bytes, so a longer name
+# fails the INSERT with ProgramLimitExceededError — and takes the whole retain
+# with it, not just the one entity. 512 characters stays under that limit even at
+# 4 bytes per character plus a long bank_id. Real names never get close: on a
+# production bank set of ~11M entities the median was 13 characters and p99.9 was
+# 96; everything past a few hundred was an extraction artifact — SVG path data,
+# base64, a fragment of serialized JSON.
+# This cap counts characters, which is what the PostgreSQL btree needs. Oracle
+# declares canonical_name as VARCHAR2(512) — byte-counted — so a multibyte name
+# under this cap can still be rejected there; that is a narrower, pre-existing
+# limit of the Oracle schema, not something this cap is sized for.
+_MAX_ENTITY_NAME_CHARS = 512
+
+
+def _normalize_entity_name(name: str) -> str:
+    """Collapse internal whitespace runs to a single space and strip the ends.
+
+    Extraction can hand back names carrying embedded newlines/tabs, which then
+    become ``entities.canonical_name`` values that shear every line-oriented
+    consumer (``psql -A`` output, log lines, exports) — issue #3275. Case is
+    deliberately untouched: the entity registry already matches on
+    ``LOWER(canonical_name)``, so lowercasing here would only lose the display
+    form.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name).strip()
+
+
+def _entity_resolve_flag(ent) -> bool:
+    """Whether this candidate name should be resolved against existing entities.
+
+    Defaults to True (extraction's behaviour). Only dict candidates can opt out, which is how
+    retain marks the entities its *caller* supplied: those are authoritative names, not guesses
+    at which entity is meant (#3479).
+    """
+    return bool(ent.get("resolve", True)) if isinstance(ent, dict) else True
+
+
+# Maximum number of temporal links to keep per unit (from_unit_id).
+# Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
+# more is wasted storage and write amplification.
+MAX_TEMPORAL_LINKS_PER_UNIT = 20
+
+# Rows of the within-batch similarity matrix computed per BLAS call. The transient
+# is (block_rows x n) floats, so this trades peak bytes against call overhead —
+# 256 rows is ~74 MB at the 36K facts a delta retain can hand over in one batch.
+_SEMANTIC_WITHIN_BATCH_BLOCK_ROWS = 256
+
+
+def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LINKS_PER_UNIT) -> list[tuple]:
+    """Keep only the top-N links per from_unit_id, ranked by weight descending.
+
+    Args:
+        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
+        max_per_unit: Maximum number of links to retain per from_unit_id.
+
+    Returns:
+        Filtered list of link tuples.
+    """
+    if not links:
+        return links
+
+    # Group by from_unit_id (index 0)
+    groups: dict[str, list[tuple]] = {}
+    for link in links:
+        key = str(link[0])
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(link)
+
+    # For each group, sort by weight (index 3) descending and keep top N
+    result: list[tuple] = []
+    for group_links in groups.values():
+        group_links.sort(key=lambda lnk: lnk[3], reverse=True)
+        result.extend(group_links[:max_per_unit])
+
+    return result
+
+
+def _within_batch_temporal_links(
+    new_units: dict[str, tuple[datetime | None, str]],
+    time_window_hours: int,
+    max_per_unit: int = MAX_TEMPORAL_LINKS_PER_UNIT,
+) -> list[tuple]:
+    """Temporal links among the units of one batch, bounded to ``2 * max_per_unit`` each.
+
+    These are the pairs ``_cap_links_per_unit`` would have kept from an all-pairs
+    sweep, without materialising the pairs it would have thrown away.
+
+    Every same-``fact_type`` pair inside the window used to be appended before the
+    cap ran, so a batch carrying n same-day facts of one type built n*(n-1) tuples
+    in order to keep 20 per unit. That is merely wasteful at the ~1.7K facts a
+    streaming sub-batch holds (~600 MB, against a 128 MB budget) and fatal on a
+    delta, which hands over a whole document's changed chunks at once: 36K facts is
+    1.3 billion tuples, and the worker is OOM-killed inside the loop (#3848).
+
+    The cap is recoverable from a bounded candidate set because ``weight`` is a
+    non-increasing function of the gap: the top ``max_per_unit`` by weight ARE the
+    ``max_per_unit`` nearest in time. Sorting each fact_type group by event_date and
+    walking only the next ``max_per_unit`` entries therefore hands every unit its
+    nearest successors directly, and its nearest predecessors through the reverse
+    link each earlier unit writes — the ``2 * max_per_unit`` nearest overall, which
+    contains the ``max_per_unit`` the cap is about to choose.
+
+    Two consequences worth stating rather than discovering:
+
+    - The per-unit budget is spent on candidates, not enforced during generation.
+      Counting a unit's links as they are appended looks like a tighter bound and
+      is a worse one: the reverse links land first, so a unit hits the cap before
+      its own turn comes and keeps only predecessors — a graph biased to point
+      backwards, where the cap picks the nearest in both directions.
+    - Weight ties resolve differently than they did. Any gap past ~16.8h clamps to
+      0.3, so a unit with more than ``max_per_unit`` distant neighbours has more
+      tied candidates than places; which ones survived was already decided by dict
+      order, and is now decided by proximity.
+
+    The break is safe for the same reason the window is: the group is sorted, so
+    once a successor falls outside the window every later one does too.
+    """
+    by_fact_type: dict[str, list[tuple[str, datetime]]] = {}
+    for unit_id, (event_date, fact_type) in new_units.items():
+        if event_date is None:
+            continue  # Skip units without event_date for temporal linking
+        by_fact_type.setdefault(fact_type, []).append((unit_id, _normalize_datetime(event_date)))
+
+    links: list[tuple] = []
+    for group in by_fact_type.values():
+        if len(group) < 2:
+            continue
+        # Stable, so units sharing an event_date keep the order they were inserted in.
+        group.sort(key=lambda entry: entry[1])
+        for i, (unit_id, event_date_norm) in enumerate(group):
+            for other_id, other_event_date_norm in group[i + 1 : i + 1 + max_per_unit]:
+                time_diff_hours = (other_event_date_norm - event_date_norm).total_seconds() / 3600
+                if time_diff_hours > time_window_hours:
+                    break
+                weight = max(0.3, 1.0 - (time_diff_hours / time_window_hours))
+                # Create bidirectional links
+                links.append((unit_id, other_id, "temporal", weight, None))
+                links.append((other_id, unit_id, "temporal", weight, None))
+    return links
+
+
+def _lock_order_key(lnk: tuple) -> tuple[str, str, str, str]:
+    """Canonical lock-order key for a link row, shared by every writer.
+
+    Mirrors the total order that ``chunk_storage.delete_chunks_by_ids`` uses when
+    it locks ``memory_links`` before a cascade delete:
+
+        (LEAST(from, to), GREATEST(from, to), link_type, COALESCE(entity_id, nil))
+
+    Direction is normalised so ``(A, B)`` and ``(B, A)`` sort adjacent, and the
+    key covers the full unique index — including ``link_type`` and ``entity_id``
+    — so two edges sharing a ``(from, to)`` pair can't be locked in opposite
+    orders by concurrent inserts. UUID string ordering matches the DB's ``uuid``
+    ordering because the ids are canonical lowercase-hex form.
+    """
+    a, b = str(lnk[0]), str(lnk[1])
+    low, high = (a, b) if a <= b else (b, a)
+    entity = str(lnk[4]) if lnk[4] is not None else _NIL_ENTITY_UUID
+    return (low, high, str(lnk[2]), entity)
+
+
+async def _bulk_insert_links(
+    conn,
+    links: list[tuple],
+    bank_id: str = "",
+    chunk_size: int = 5000,
+    skip_exists_check: bool = False,
+    ops=None,
+) -> None:
+    """Bulk-insert links using sorted INSERT FROM unnest().
+
+    Sorting on the full, direction-normalised unique key ensures all concurrent
+    writers — inserts and deletes alike — acquire index locks in the same order,
+    eliminating circular-wait deadlocks. See :func:`_lock_order_key`.
+
+    Args:
+        conn: Database connection (must be inside a transaction).
+        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
+        bank_id: Bank identifier stored on memory_links for fast filtering.
+        chunk_size: Max rows per INSERT statement to avoid query timeouts on
+                    very large tables (100M+ rows).
+        skip_exists_check: Skip WHERE EXISTS checks on memory_units. Use when
+                    all referenced unit IDs are guaranteed to exist (e.g., within
+                    the same transaction that inserted them).
+        ops: DataAccessOps instance for backend-specific bulk operations.
+    """
+    if not links:
+        return
+
+    # Sort on the canonical lock-order key so every concurrent writer takes the
+    # index locks in the same order — prevents circular-wait deadlocks.
+    sorted_links = sorted(links, key=_lock_order_key)
+
+    exists_clause = ""
+    if not skip_exists_check:
+        exists_clause = (
+            f"WHERE EXISTS (SELECT 1 FROM {fq_table('memory_units')} mu WHERE mu.id = f)"
+            f"  AND EXISTS (SELECT 1 FROM {fq_table('memory_units')} mu WHERE mu.id = t)"
+        )
+
+    await ops.bulk_insert_links(
+        conn,
+        fq_table("memory_links"),
+        sorted_links,
+        bank_id,
+        _NIL_ENTITY_UUID,
+        exists_clause,
+        chunk_size,
+    )
+
+
+def _normalize_datetime(dt):
+    """Normalize datetime to be timezone-aware (UTC) for consistent comparison."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # Naive datetime - assume UTC
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+def _log(log_buffer, message, level="info"):
+    """Helper to log to buffer if available, otherwise use logger.
+
+    Args:
+        log_buffer: Buffer to append messages to (for main output)
+        message: The log message
+        level: 'info', 'debug', 'warning', or 'error'. Debug messages are not added to buffer.
+    """
+    if level == "debug":
+        # Debug messages only go to logger, not to buffer
+        logger.debug(message)
+        return
+
+    if log_buffer is not None:
+        log_buffer.append(message)
+    else:
+        if level == "info":
+            logger.info(message)
+        else:
+            logger.log(logging.WARNING if level == "warning" else logging.ERROR, message)
+
+
+def _prepare_entities_for_resolution(
+    unit_ids: list[str],
+    sentences: list[str],
+    fact_dates: list,
+    llm_entities: list[list[dict]],
+    log_buffer: list[str] = None,
+) -> tuple[list[dict], list[list[dict]], list[tuple]]:
+    """
+    Convert LLM entities into the flat format expected by entity resolver.
+
+    Candidate names are whitespace-normalized here (see ``_normalize_entity_name``)
+    and names that are empty afterwards are dropped, so no downstream stage has to
+    cope with an entity whose canonical name is blank or spans several lines.
+    Names longer than ``_MAX_ENTITY_NAME_CHARS`` are dropped too: they are always
+    extraction artifacts, and storing one fails the retain on the btree index.
+    Both happen before the flat list and ``entity_to_unit`` are derived, keeping
+    the resolver's positional invariant (output index-aligned with input) intact.
+
+    Returns:
+        Tuple of (all_entities_flat, all_entities, entity_to_unit) where:
+        - all_entities_flat: flat list of entity dicts ready for resolve_entities_batch
+        - all_entities: per-unit formatted entity lists
+        - entity_to_unit: maps flat index to (unit_id, local_index, fact_date)
+    """
+    substep_start = time.time()
+    all_entities = []
+    dropped_empty = 0
+    dropped_oversized = 0
+    for entity_list in llm_entities:
+        formatted_entities = []
+        # Normalization can make two candidates that reached here as distinct
+        # strings ("Acme\nCorp" from extraction, "Acme Corp" from the caller's
+        # own entity list) identical, and the upstream dedup in
+        # entity_processing runs on the raw text. Without this, the same entity
+        # would be resolved twice for one fact and its mention_count bumped twice.
+        seen_in_fact: dict[str, dict] = {}
+        for ent in entity_list:
+            if hasattr(ent, "text"):
+                raw_text, entity_type = ent.text, "CONCEPT"
+            elif isinstance(ent, dict):
+                raw_text, entity_type = ent.get("text", ""), ent.get("type", "CONCEPT")
+            else:
+                continue
+
+            normalized_text = _normalize_entity_name(raw_text)
+            if not normalized_text:
+                # A blank or whitespace-only candidate would otherwise be created
+                # as an entity with an empty canonical_name — the resolver has no
+                # guard of its own.
+                dropped_empty += 1
+                continue
+            if len(normalized_text) > _MAX_ENTITY_NAME_CHARS:
+                # Dropped rather than truncated: a truncated SVG path or base64 run
+                # would become a real registry entity that is trigram-indexed and can
+                # fuzzy-merge with other truncated junk. The fact itself still retains.
+                dropped_oversized += 1
+                continue
+
+            resolve = _entity_resolve_flag(ent)
+            kept = seen_in_fact.get(normalized_text.lower())
+            if kept is not None:
+                # Same name after normalization. Keep the first spelling but carry the stricter
+                # flag: entity_processing dedups on the RAW text, so a caller's literal
+                # "Acme Corp" and the extractor's "Acme\nCorp" both reach here, and dropping the
+                # caller's outright would let the name be resolved away after all (#3479).
+                kept["resolve"] = kept["resolve"] and resolve
+                continue
+
+            entity = {"text": normalized_text, "type": entity_type, "resolve": resolve}
+            seen_in_fact[normalized_text.lower()] = entity
+            formatted_entities.append(entity)
+        all_entities.append(formatted_entities)
+
+    if dropped_empty:
+        _log(
+            log_buffer,
+            f"  [6.1] Dropped {dropped_empty} empty candidate entity name(s)",
+            level="debug",
+        )
+    if dropped_oversized:
+        _log(
+            log_buffer,
+            f"  [6.1] Dropped {dropped_oversized} candidate entity name(s) longer than "
+            f"{_MAX_ENTITY_NAME_CHARS} characters",
+            level="warning",
+        )
+
+    total_entities = sum(len(ents) for ents in all_entities)
+    _log(
+        log_buffer,
+        f"  [6.1] Process LLM entities: {total_entities} entities from {len(sentences)} facts in {time.time() - substep_start:.3f}s",
+        level="debug",
+    )
+
+    substep_start = time.time()
+    all_entities_flat = []
+    entity_to_unit: list[tuple] = []
+
+    for unit_id, entities, fact_date in zip(unit_ids, all_entities, fact_dates):
+        if not entities:
+            continue
+        for local_idx, entity in enumerate(entities):
+            all_entities_flat.append(
+                {
+                    "text": entity["text"],
+                    "type": entity["type"],
+                    "resolve": entity["resolve"],
+                    "nearby_entities": entities,
+                }
+            )
+            entity_to_unit.append((unit_id, local_idx, fact_date))
+    _log(
+        log_buffer,
+        f"    [6.2.1] Prepare entities: {len(all_entities_flat)} entities in {time.time() - substep_start:.3f}s",
+        level="debug",
+    )
+
+    # Attach per-entity dates
+    for idx, (_unit_id, _local_idx, fact_date) in enumerate(entity_to_unit):
+        all_entities_flat[idx]["event_date"] = fact_date
+
+    return all_entities_flat, all_entities, entity_to_unit
+
+
+async def resolve_entities_only(
+    entity_resolver,
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    sentences: list[str],
+    context: str,
+    fact_dates: list,
+    llm_entities: list[list[dict]],
+    log_buffer: list[str] = None,
+    entity_labels: list | None = None,
+) -> EntityResolutionResult:
+    """
+    Phase 1 of entity processing: resolve entity names to canonical IDs.
+
+    Runs the expensive read-heavy trigram search, co-occurrence fetch, and scoring
+    OUTSIDE the main write transaction.  Also INSERTs new entities (idempotent
+    DO NOTHING) so that IDs are available for the subsequent write phase.
+
+    Args:
+        entity_resolver: EntityResolver instance
+        conn: Database connection (separate from the main write transaction)
+        bank_id: Bank identifier
+        unit_ids: Placeholder unit IDs (used only for grouping, not yet inserted)
+        sentences: Fact texts
+        context: Context string
+        fact_dates: Per-fact dates
+        llm_entities: Per-fact entity lists from LLM extraction
+        log_buffer: Optional logging buffer
+        entity_labels: Optional entity label taxonomy
+
+    Returns:
+        EntityResolutionResult carrying the resolved entity identities (id +
+        stored canonical name, in flattened order), the flat-index → unit map,
+        and the unit → entity-id map used to remap placeholder unit IDs in
+        Phase 2.
+    """
+    all_entities_flat, _all_entities, entity_to_unit = _prepare_entities_for_resolution(
+        unit_ids, sentences, fact_dates, llm_entities, log_buffer
+    )
+
+    if not all_entities_flat:
+        _log(log_buffer, "  [6.2] Entity resolution (batched): 0 entities", level="debug")
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
+
+    step_start = time.time()
+    resolved_entities = await entity_resolver.resolve_entities_batch(
+        bank_id=bank_id,
+        entities_data=all_entities_flat,
+        context=context,
+        unit_event_date=None,
+        conn=conn,
+        entity_labels=entity_labels,
+    )
+    _log(
+        log_buffer,
+        f"    [6.2.2] Resolve entities: {len(all_entities_flat)} entities in single batch in {time.time() - step_start:.3f}s",
+        level="debug",
+    )
+
+    # Build unit_to_entity_ids mapping
+    unit_to_entity_ids: dict[str, list[str]] = {}
+    for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
+        if unit_id not in unit_to_entity_ids:
+            unit_to_entity_ids[unit_id] = []
+        unit_to_entity_ids[unit_id].append(resolved_entities[idx].entity_id)
+
+    _log(
+        log_buffer,
+        f"  [6.2] Entity resolution (batched): {len(all_entities_flat)} entities resolved in {time.time() - step_start:.3f}s",
+        level="debug",
+    )
+
+    return EntityResolutionResult(
+        resolved_entities=resolved_entities,
+        entity_to_unit=entity_to_unit,
+        unit_to_entity_ids=unit_to_entity_ids,
+    )
+
+
+async def create_temporal_links_batch_per_fact(
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    time_window_hours: int = 24,
+    log_buffer: list[str] = None,
+    ops=None,
+) -> int:
+    """
+    Create temporal links for multiple units, each with their own event_date.
+
+    Queries the event_date for each unit from the database and creates temporal
+    links based on individual dates (supports per-fact dating).
+
+    Args:
+        conn: Database connection
+        bank_id: Bank identifier
+        unit_ids: List of unit IDs
+        time_window_hours: Time window in hours for temporal links
+        log_buffer: Optional buffer for logging
+
+    Returns:
+        Number of temporal links created
+    """
+    if not unit_ids:
+        return 0
+
+    try:
+        import time as time_mod
+
+        # Get the event_date for each new unit
+        fetch_dates_start = time_mod.time()
+        rows = await ops.fetch_unit_dates(conn, fq_table("memory_units"), unit_ids)
+        new_units = {str(row["id"]): (row["event_date"], row["fact_type"]) for row in rows}
+        _log(
+            log_buffer,
+            f"      [7.1] Fetch event_dates for {len(unit_ids)} units: {time_mod.time() - fetch_dates_start:.3f}s",
+        )
+
+        # Use LATERAL push-down to fetch only top-N temporal neighbors per new unit,
+        # avoiding transfer of the entire time-window result set (could be 50k+ rows).
+        fetch_neighbors_start = time_mod.time()
+
+        # Build arrays of new unit IDs, event dates, and fact types for the LATERAL query
+        new_unit_entries = [(uid, edate, ftype) for uid, (edate, ftype) in new_units.items() if edate is not None]
+        if new_unit_entries:
+            import uuid as uuid_mod
+
+            lateral_unit_ids = [
+                uuid_mod.UUID(uid) if isinstance(uid, str) else uid for uid in [e[0] for e in new_unit_entries]
+            ]
+            lateral_event_dates = [_normalize_datetime(e[1]) for e in new_unit_entries]
+            lateral_fact_types = [e[2] for e in new_unit_entries]
+            # Bidirectional index scan: instead of scanning all units in the 24h
+            # window (O(N) — 164k rows at scale) and sorting by proximity, we scan
+            # the nearest K units in each direction using the B-tree index on
+            # (bank_id, fact_type, event_date). This reads only 2×K rows per probe
+            # regardless of bank size — 120x faster at 164k units (0.6ms vs 74ms).
+            TEMPORAL_LATERAL_BATCH = 500
+            half_limit = MAX_TEMPORAL_LINKS_PER_UNIT  # fetch K in each direction, take top K combined
+            mu = fq_table("memory_units")
+
+            # Bidirectional index scan: instead of scanning all units in the 24h
+            # window (O(N) — 164k rows at scale) and sorting by proximity, we scan
+            # the nearest K units in each direction using the B-tree index on
+            # (bank_id, fact_type, event_date). This reads only 2×K rows per probe
+            # regardless of bank size — 120x faster at 164k units (0.6ms vs 74ms).
+            rows = await ops.fetch_temporal_neighbors(
+                conn,
+                mu,
+                bank_id,
+                lateral_unit_ids,
+                lateral_event_dates,
+                lateral_fact_types,
+                half_limit,
+                batch_size=TEMPORAL_LATERAL_BATCH,
+            )
+        else:
+            rows = []
+
+        _log(
+            log_buffer,
+            f"      [7.2] Fetch {len(rows)} candidate neighbors (LATERAL): {time_mod.time() - fetch_neighbors_start:.3f}s",
+        )
+
+        # Build links directly from the LATERAL results (already per-unit limited)
+        link_gen_start = time_mod.time()
+        links = []
+        for row in rows:
+            time_diff_h = float(row["time_diff_hours"])
+            weight = max(0.3, 1.0 - (time_diff_h / time_window_hours))
+            links.append((row["from_id"], str(row["id"]), "temporal", weight, None))
+
+        # Also compute temporal links WITHIN the new batch (new units to each other)
+        if len(new_units) > 1:
+            links.extend(_within_batch_temporal_links(new_units, time_window_hours))
+
+        # Cap temporal links per unit to avoid write amplification;
+        # retrieval only reads top 10-20 per unit anyway.
+        links = _cap_links_per_unit(links)
+
+        _log(log_buffer, f"      [7.3] Generate {len(links)} temporal links: {time_mod.time() - link_gen_start:.3f}s")
+
+        if links:
+            insert_start = time_mod.time()
+            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
+            _log(log_buffer, f"      [7.4] Insert {len(links)} temporal links: {time_mod.time() - insert_start:.3f}s")
+
+        return len(links)
+
+    except Exception as e:
+        logger.error(f"Failed to create temporal links: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        raise
+
+
+async def compute_semantic_links_ann(
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    embeddings: Sequence[EmbeddingLike],
+    fact_types: list[str] | None = None,
+    top_k: int = 50,
+    *,
+    threshold: float,
+    log_buffer: list[str] = None,
+) -> list[tuple]:
+    """
+    Phase 1: ANN search for semantic neighbors among existing units.
+
+    Runs on a separate connection OUTSIDE the write transaction to avoid
+    holding locks during expensive HNSW index probes. Uses a temp table +
+    LATERAL join to batch all probes in a single query.
+
+    Queries are split by fact_type so PostgreSQL uses the per-bank partial
+    HNSW indexes (idx_mu_emb_worl_*, idx_mu_emb_expr_*). Without the
+    fact_type filter, the planner falls back to sequential scan (~50x slower).
+
+    Args:
+        conn: Database connection (separate from write transaction, autocommit)
+        bank_id: Bank identifier
+        unit_ids: Placeholder unit IDs (real IDs not yet created)
+        embeddings: Embedding vectors for each unit
+        fact_types: Per-unit fact types (same length as unit_ids). Used to
+            query only the matching HNSW index per seed.
+        top_k: Max neighbors per unit
+        threshold: Minimum cosine similarity
+        log_buffer: Optional logging buffer
+
+    Returns:
+        List of (from_id, to_id, "semantic", similarity, None) tuples
+        where from_id uses placeholder IDs.
+    """
+    if not unit_ids or not embeddings:
+        return []
+
+    import time as time_mod
+
+    ann_start = time_mod.time()
+    links = []
+
+    logger.debug(f"[ANN] Starting: {len(unit_ids)} seeds, top_k={top_k}")
+
+    # Build per-unit fact_types (default to 'world' if not provided)
+    if fact_types is None:
+        fact_types = ["world"] * len(unit_ids)
+
+    # No exclude_uuids — large exclusion lists (8k+ UUIDs) force PostgreSQL to
+    # sequential-scan every HNSW probe result against the array, destroying
+    # performance (67s for 8k seeds). Self-links are harmless (ON CONFLICT DO
+    # NOTHING handles duplicates in memory_links).
+
+    candidates: list[tuple[str, str, float]] = []  # (from_id, to_id, similarity)
+    if getattr(conn, "backend_type", None) == "oracle":
+        # No temp tables, COPY or LATERAL-with-GUC tuning here: probe the vector
+        # index once per seed with an approximate top-k.
+        # ponytail: one round trip per seed; batch seeds through JSON_TABLE if retain batches get large.
+        for uid, emb, ft in zip(unit_ids, embeddings, fact_types):
+            ft_rows = await conn.fetch(
+                f"""
+                SELECT id, 1 - VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE) AS similarity
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1 AND fact_type = $2 AND embedding IS NOT NULL
+                ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE)
+                FETCH APPROX FIRST {int(top_k)} ROWS ONLY
+                """,
+                bank_id,
+                ft,
+                embedding_to_pgvector(emb),
+            )
+            candidates.extend((uid, str(r["id"]), r["similarity"]) for r in ft_rows)
+    else:
+        rows = await _ann_rows_pg(conn, bank_id, unit_ids, embeddings, fact_types, top_k)
+        candidates = [(r["from_id"], r["to_id"], r["similarity"]) for r in rows]
+
+    for from_id, to_id, similarity in candidates:
+        sim = float(min(1.0, max(0.0, similarity)))
+        if sim >= threshold:
+            links.append((from_id, to_id, "semantic", sim, None))
+
+    _log(
+        log_buffer,
+        f"      [8.1] ANN search (Phase 1): {len(unit_ids)} units → {len(links)} links in {time_mod.time() - ann_start:.3f}s",
+    )
+
+    return links
+
+
+async def _ann_rows_pg(
+    conn, bank_id: str, unit_ids: list[str], embeddings: Sequence[EmbeddingLike], fact_types: list[str], top_k: int
+) -> list:
+    """PostgreSQL ANN probe: one LATERAL HNSW query per fact_type over a temp seed table."""
+    import time as time_mod
+
+    # The entire CREATE TEMP TABLE → COPY → SELECT sequence MUST run inside a
+    # single transaction. Callers may connect through pgBouncer in `transaction`
+    # pool mode, in which case the backend is only pinned to the client for the
+    # duration of a transaction. Outside a transaction, pgBouncer can rebind
+    # the client to a different backend between statements, and the temp table
+    # (which is session-scoped to its creating backend) becomes invisible.
+    # The observed failure mode was an intermittent
+    # `relation "_ann_seeds" does not exist` on the second statement.
+    #
+    # Using ON COMMIT DROP + SET LOCAL also means we don't have to remember to
+    # manually drop the temp table or reset the per-backend ANN tuning GUC —
+    # the transaction end handles both.
+    rows: list = []
+    async with conn.transaction():
+        # Transaction-local ANN tuning. The dispatcher only returns GUCs that
+        # are safe to apply at session/transaction scope for the configured
+        # backend. VectorChord probe values are index-shaped, so vchordrq uses
+        # index storage fallback parameters instead of a blanket SET LOCAL.
+        #
+        # A GUC the server has already rejected is skipped rather than attempted:
+        # hnsw.iterative_scan needs pgvector 0.8+, and pgvector reserves the "hnsw."
+        # prefix, so an older server errors on it — which inside this transaction would
+        # abort the whole link computation rather than merely fail to apply.
+        for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="low_latency"):
+            if setting_rejected_by_server(guc):
+                continue
+            await conn.execute(f"SET LOCAL {guc} = {value}")
+
+        t_setup = time_mod.time()
+        await conn.execute("CREATE TEMP TABLE _ann_seeds (unit_id text, emb_text text, fact_type text) ON COMMIT DROP")
+
+        records = [(uid, embedding_to_pgvector(emb), ft) for uid, emb, ft in zip(unit_ids, embeddings, fact_types)]
+        await conn.copy_records_to_table("_ann_seeds", records=records, columns=["unit_id", "emb_text", "fact_type"])
+        logger.debug(f"[ANN] Temp table setup: {time_mod.time() - t_setup:.3f}s ({len(records)} seeds)")
+
+        # Run one ANN query per fact_type so each uses the right HNSW index.
+        active_types = set(fact_types)
+        for fact_type in active_types:
+            t_query = time_mod.time()
+            seed_count = sum(1 for ft in fact_types if ft == fact_type)
+            logger.debug(f"[ANN] Querying fact_type={fact_type}: {seed_count} seeds")
+            # Cast each seed's text embedding to `vector` exactly once in a
+            # MATERIALIZED CTE. Casting inside the LATERAL (s.emb_text::vector)
+            # re-parses the ~5KB embedding string for every candidate row the
+            # probe touches — seeds × bank_units text-parses per batch, which
+            # dominated the whole job on small banks (see #1919: ~50 seeds over
+            # ~1k units took 1.5-3.7s, ~25-48x slower than casting once). The
+            # stable `vector` column also lets the planner consider an HNSW
+            # index scan, which a cast expression inhibits.
+            ft_rows = await conn.fetch(
+                f"""
+                WITH seeds AS MATERIALIZED (
+                    SELECT unit_id, emb_text::vector AS emb
+                    FROM _ann_seeds
+                    WHERE fact_type = $2
+                )
+                SELECT s.unit_id       AS from_id,
+                       n.id::text      AS to_id,
+                       n.similarity
+                FROM seeds s
+                CROSS JOIN LATERAL (
+                    SELECT mu.id,
+                           1 - (mu.embedding <=> s.emb) AS similarity
+                    FROM {fq_table("memory_units")} mu
+                    WHERE mu.bank_id = $1
+                      AND mu.fact_type = $2
+                      AND mu.embedding IS NOT NULL
+                    ORDER BY mu.embedding <=> s.emb
+                    LIMIT $3
+                ) n
+                """,
+                bank_id,
+                fact_type,
+                top_k,
+            )
+            logger.debug(f"[ANN] fact_type={fact_type}: {len(ft_rows)} rows in {time_mod.time() - t_query:.3f}s")
+            rows.extend(ft_rows)
+    # Transaction commits here. _ann_seeds is dropped (ON COMMIT DROP).
+    # Transaction-local ANN tuning reverts (SET LOCAL).
+    return rows
+
+
+def compute_semantic_links_within_batch(
+    unit_ids: list[str],
+    embeddings: Sequence[EmbeddingLike],
+    top_k: int = 50,
+    *,
+    threshold: float,
+) -> list[tuple]:
+    """
+    Compute semantic links between units within the same batch (no DB needed).
+
+    Uses cosine similarity on embeddings already in memory — instant.
+
+    Args:
+        unit_ids: Unit IDs (real IDs from insert_facts_batch)
+        embeddings: Embedding vectors
+        top_k: Max neighbors per unit
+        threshold: Minimum cosine similarity
+
+    Returns:
+        List of (from_id, to_id, "semantic", similarity, None) tuples
+    """
+    if len(unit_ids) < 2:
+        return []
+
+    n_units = len(unit_ids)
+    links = []
+    # float32, not float64: `PackedEmbedding` is already `array("f")` and pgvector's `vector`
+    # column stores float32, so the doubles the old `dtype=float` produced were padding that
+    # nothing downstream could use -- they only doubled the working set and pushed BLAS off
+    # SGEMM onto DGEMM. `np.array` (not `asarray`) because this buffer is normalised in place
+    # below and must not alias an ndarray the caller still owns.
+    normalized_embeddings = np.array(embeddings, dtype=np.float32)
+    # Accumulate the norms in float64. The vectors are float32, but summing 1536 squares in
+    # float32 overflows to inf above ~1e19 and flushes to zero below ~1e-22, which would drop
+    # those rows as "invalid" when float64 handled them fine. `einsum` keeps the wide
+    # accumulator without materialising an (n, dim) float64 copy of the batch.
+    norms = np.sqrt(np.einsum("ij,ij->i", normalized_embeddings, normalized_embeddings, dtype=np.float64))
+    # A non-finite component poisons its own row norm, so the norm check alone catches NaN and
+    # inf rows -- no need for an (n, dim) `isfinite` mask over the whole batch.
+    valid_embeddings = np.isfinite(norms) & (norms > 0)
+    np.divide(
+        normalized_embeddings,
+        norms[:, np.newaxis].astype(np.float32),
+        out=normalized_embeddings,
+        where=valid_embeddings[:, np.newaxis],
+    )
+    normalized_embeddings[~valid_embeddings] = 0.0
+
+    # One matrix product per block of rows, rather than one per unit against a
+    # freshly gathered copy of every other unit. `normalized[others]` is advanced
+    # indexing, so each of the n iterations it used to run allocated and filled an
+    # (n-1, dim) array: at the 36K facts a delta retain can hand over in one batch
+    # that is a 110 MB memcpy done 36,000 times, several minutes of a synchronous
+    # call with the event loop blocked behind it (#3848). The work is the same
+    # O(n^2 * dim) dot products either way; this hands them to BLAS in one call and
+    # keeps the transient at one block of similarity rows.
+    block_rows = _SEMANTIC_WITHIN_BATCH_BLOCK_ROWS
+    # One (block_rows, n) buffer for the whole sweep. At 36K facts each block of
+    # similarities is 37 MB, and allocating and freeing that once per block is churn
+    # the allocator does not need to see.
+    similarity_buffer = np.empty((min(block_rows, n_units), n_units), dtype=np.float32)
+    invalid_columns = np.flatnonzero(~valid_embeddings)
+    for start in range(0, n_units, block_rows):
+        stop = min(start + block_rows, n_units)
+        block_similarities = similarity_buffer[: stop - start]
+        np.matmul(normalized_embeddings[start:stop], normalized_embeddings.T, out=block_similarities)
+        # A unit with an unusable embedding is neither a source nor a target.
+        if invalid_columns.size:
+            block_similarities[:, invalid_columns] = -np.inf
+        # Never link a unit to itself: row `i` of the block is unit `start + i`.
+        diagonal = np.arange(stop - start)
+        block_similarities[diagonal, start + diagonal] = -np.inf
+
+        for local_index, unit_index in enumerate(range(start, stop)):
+            if not valid_embeddings[unit_index]:
+                continue
+
+            similarities = block_similarities[local_index]
+            above_threshold = np.where(similarities >= threshold)[0]
+            candidate_count = len(above_threshold)
+            if candidate_count == 0:
+                continue
+
+            if candidate_count > top_k:
+                # Introselect the top k in O(candidates), then sort only those k, rather
+                # than sorting every candidate to throw all but k of them away.
+                candidate_scores = -similarities[above_threshold]
+                top_partition = np.argpartition(candidate_scores, top_k)[:top_k]
+                neighbours = above_threshold[top_partition[np.argsort(candidate_scores[top_partition])]]
+            elif candidate_count > 1:
+                neighbours = above_threshold[np.argsort(-similarities[above_threshold])]
+            else:
+                neighbours = above_threshold
+
+            from_id = unit_ids[unit_index]
+            # One C-level pass to clamp and unbox, instead of boxing each score on its own.
+            scores = np.clip(similarities[neighbours], 0.0, 1.0).tolist()
+            for other_index, similarity in zip(neighbours, scores):
+                links.append((from_id, unit_ids[other_index], "semantic", similarity, None))
+
+    return links
+
+
+async def create_semantic_links_batch(
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    embeddings: Sequence[EmbeddingLike],
+    top_k: int = 50,
+    *,
+    threshold: float,
+    log_buffer: list[str] = None,
+    pre_computed_ann_links: list[tuple] | None = None,
+    ops=None,
+) -> int:
+    """
+    Phase 2: Create semantic links (within-batch + pre-computed ANN results).
+
+    Within-batch similarities are computed in Python (numpy, instant).
+    ANN results from Phase 1 are passed in via pre_computed_ann_links and
+    inserted alongside the within-batch links.
+
+    Args:
+        conn: Database connection (inside write transaction)
+        bank_id: Bank identifier
+        unit_ids: Real unit IDs (from insert_facts_batch)
+        embeddings: Embedding vectors
+        top_k: Max neighbors per unit
+        threshold: Minimum cosine similarity
+        log_buffer: Optional logging buffer
+        pre_computed_ann_links: ANN results from Phase 1 (already remapped to real IDs)
+
+    Returns:
+        Number of semantic links created
+    """
+    if not unit_ids or not embeddings:
+        return 0
+
+    try:
+        import time as time_mod
+
+        all_links = []
+
+        # Within-batch similarities (numpy, no DB)
+        batch_start = time_mod.time()
+        within_batch_links = compute_semantic_links_within_batch(
+            unit_ids,
+            embeddings,
+            top_k,
+            threshold=threshold,
+        )
+        all_links.extend(within_batch_links)
+        _log(
+            log_buffer,
+            f"      [8.1] Within-batch semantic: {len(within_batch_links)} links in {time_mod.time() - batch_start:.3f}s",
+        )
+
+        # Add pre-computed ANN links from Phase 1
+        if pre_computed_ann_links:
+            all_links.extend(pre_computed_ann_links)
+            _log(
+                log_buffer,
+                f"      [8.2] Pre-computed ANN: {len(pre_computed_ann_links)} links",
+            )
+
+        if all_links:
+            insert_start = time_mod.time()
+            await _bulk_insert_links(conn, all_links, bank_id=bank_id, ops=ops)
+            _log(
+                log_buffer, f"      [8.3] Insert {len(all_links)} semantic links: {time_mod.time() - insert_start:.3f}s"
+            )
+
+        return len(all_links)
+
+    except Exception as e:
+        logger.error(f"Failed to create semantic links: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        raise
+
+
+async def create_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Create canonical causal links for the retain pipeline.
+
+    Retain must only create the backward-looking ``caused_by`` form. Historical
+    types are restored exclusively through ``restore_legacy_causal_links_batch``.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        CANONICAL_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def restore_legacy_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Restore historical causal links while importing a transfer archive.
+
+    This is deliberately separate from the retain writer: retrieval continues
+    reading historical types, but only transfer import may create them.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        LEGACY_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def _write_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    allowed_relation_types: frozenset[str],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Write causal links after the caller has selected its allowed taxonomy.
+
+    Returns:
+        Number of causal links created
+    """
+    if not unit_ids or not causal_relations_per_fact:
+        return 0
+
+    try:
+        import time as time_mod
+
+        # Build links list
+        links = []
+        for fact_idx, causal_relations in enumerate(causal_relations_per_fact):
+            if not causal_relations:
+                continue
+
+            from_unit_id = unit_ids[fact_idx]
+
+            for relation in causal_relations:
+                target_idx = relation.target_fact_index
+                relation_type = relation.relation_type
+
+                if relation_type not in allowed_relation_types:
+                    logger.error(
+                        f"Invalid relation_type '{relation_type}' (type: {type(relation_type).__name__}) "
+                        f"from fact {fact_idx}. Must be one of: {allowed_relation_types}. "
+                        f"Relation data: {relation}"
+                    )
+                    continue
+
+                # Validate target index
+                if target_idx < 0 or target_idx >= len(unit_ids):
+                    logger.warning(f"Invalid target_fact_index {target_idx} in causal relation from fact {fact_idx}")
+                    continue
+
+                to_unit_id = unit_ids[target_idx]
+
+                # Don't create self-links
+                if from_unit_id == to_unit_id:
+                    continue
+
+                links.append((from_unit_id, to_unit_id, relation_type, 1.0, None))
+
+        if links:
+            insert_start = time_mod.time()
+            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
+            logger.debug(f"      [10.1] Insert {len(links)} causal links: {time_mod.time() - insert_start:.3f}s")
+
+        return len(links)
+
+    except Exception as e:
+        logger.error(f"Failed to create causal links: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        raise
+
+
+async def snapshot_causal_links(conn: DatabaseConnection, bank_id: str, unit_id: str) -> list[CausalLinkDescriptor]:
+    """Collect the causal edges that must survive a unit's move to the archive.
+
+    Causal edges are retain-time extraction output: unlike temporal/semantic
+    links they can't be recomputed from dates or embeddings, and nothing
+    rebuilds them (graph maintenance only relinks temporal/semantic, and
+    consolidation regenerates observations, not raw-fact edges). Invalidation
+    removes the live row, so the FK cascade takes every incident edge with it —
+    hence this snapshot, parked on the archive row (#2864).
+
+    The snapshot merges two sources:
+
+    * the unit's currently materialized causal edges, and
+    * descriptors already parked on *archived* peers that name this unit — an
+      edge whose other endpoint was invalidated first is no longer in
+      ``memory_links``, so the peer's snapshot is the only copy left.
+
+    Keeping a copy on every archived endpoint makes revert order irrelevant:
+    whichever endpoint comes back last sees both sides live and rematerializes.
+
+    Returns:
+        The descriptors to store on the archive row (deduplicated across both
+        sources by the UNION).
+    """
+    rows = await conn.fetch(
+        f"""
+        SELECT from_unit_id, to_unit_id, link_type, weight
+        FROM {fq_table("memory_links")}
+        WHERE (from_unit_id = $1 OR to_unit_id = $1)
+          AND bank_id = $2
+          AND link_type = ANY($3::text[])
+        UNION
+        SELECT d.from_unit_id, d.to_unit_id, d.link_type, d.weight
+        FROM {fq_table("invalidated_memory_units")} a
+        CROSS JOIN LATERAL jsonb_to_recordset(a.causal_links)
+            AS d(from_unit_id uuid, to_unit_id uuid, link_type text, weight float8)
+        WHERE a.bank_id = $2
+          AND a.causal_links <> '[]'::jsonb
+          AND (d.from_unit_id = $1 OR d.to_unit_id = $1)
+          -- Same guard as CausalLinkDescriptor.from_json_dict: the column is
+          -- schemaless JSON, and a malformed entry would otherwise be copied
+          -- forward as a NULL-endpoint descriptor.
+          AND d.from_unit_id IS NOT NULL
+          AND d.to_unit_id IS NOT NULL
+          AND d.link_type = ANY($3::text[])
+        """,
+        unit_id,
+        bank_id,
+        list(CAUSAL_LINK_TYPES),
+    )
+    return [
+        CausalLinkDescriptor(
+            from_unit_id=str(row["from_unit_id"]),
+            to_unit_id=str(row["to_unit_id"]),
+            link_type=row["link_type"],
+            weight=float(row["weight"]) if row["weight"] is not None else DEFAULT_CAUSAL_LINK_WEIGHT,
+        )
+        for row in rows
+    ]
+
+
+async def rematerialize_causal_links(
+    conn: DatabaseConnection,
+    bank_id: str,
+    stored_descriptors: list,
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Recreate archived causal edges whose endpoints are both live again.
+
+    Counterpart of :func:`snapshot_causal_links`, called when a fact reverts to
+    ``valid``. Descriptors whose peer is still archived (or was permanently
+    deleted) are silently dropped from this insert: the bulk writer only takes
+    links whose endpoints exist in ``memory_units``. That is the point — a
+    still-archived peer keeps its own copy of the descriptor and materializes
+    the edge when *it* reverts.
+
+    Insertion is ``ON CONFLICT DO NOTHING``, so repeated invalidate/revert
+    cycles never duplicate an edge.
+
+    Args:
+        stored_descriptors: The archive row's ``causal_links`` payload, already
+            decoded from JSON. Entries that don't parse as a causal edge are
+            skipped (see :meth:`CausalLinkDescriptor.from_json_dict`).
+
+    Returns:
+        Number of descriptors submitted (not all of which may materialize).
+    """
+    parsed = [CausalLinkDescriptor.from_json_dict(raw) for raw in stored_descriptors]
+    links = [
+        (
+            descriptor.from_unit_id,
+            descriptor.to_unit_id,
+            descriptor.link_type,
+            descriptor.weight,
+            None,
+        )
+        for descriptor in parsed
+        if descriptor is not None
+    ]
+    if not links:
+        return 0
+    await _bulk_insert_links(conn, links, bank_id=bank_id, ops=ops)
+    return len(links)

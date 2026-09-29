@@ -1,0 +1,40 @@
+identity:
+  name: retain
+  author: vectorize
+  label:
+    en_US: Retain
+description:
+  human:
+    en_US: Store content in a Hindsight memory bank. Facts are extracted asynchronously after the call returns.
+  llm: Use this tool to store information in Hindsight long-term memory. Pass the content to remember and the bank ID. Hindsight extracts facts in the background.
+parameters:
+  - name: bank_id
+    type: string
+    required: true
+    label:
+      en_US: Bank ID
+    human_description:
+      en_US: Memory bank to store in. Banks are auto-created on first use.
+    llm_description: Memory bank identifier. Banks are auto-created on first use.
+    form: llm
+  - name: content
+    type: string
+    required: true
+    label:
+      en_US: Content
+    human_description:
+      en_US: Free-text content to retain.
+    llm_description: The text content to store as a memory.
+    form: llm
+  - name: tags
+    type: string
+    required: false
+    label:
+      en_US: Tags
+    human_description:
+      en_US: Optional comma-separated tags (e.g. "support,vip").
+    llm_description: Optional comma-separated tags for filtering memories during recall.
+    form: llm
+extra:
+  python:
+    source: tools/retain.py

@@ -1,0 +1,646 @@
+/* Inter and JetBrains Mono are loaded via next/font/google in
+   src/app/[locale]/layout.tsx. The CSS variables --font-sans and
+   --font-mono are set on <html> and consumed below in :root. */
+@import "tailwindcss";
+
+/* Bind the `dark:` variant to the `.dark` class this app actually toggles.
+ *
+ * Tailwind v4 changed the default: `dark:` now compiles to
+ * `@media (prefers-color-scheme: dark)`. Themes here are switched by toggling
+ * a `.dark` class on <html> (lib/theme-context.tsx), so without this every
+ * `dark:` utility in the codebase was keyed to the OS setting instead of the
+ * in-app toggle — it fired only when the two happened to agree, and never at
+ * all for a user on a light OS.
+ *
+ * The CSS-variable half of theming always worked (the `.dark` block below
+ * overrides the tokens), which is why this was easy to miss: backgrounds and
+ * foregrounds flipped correctly while the ~145 literal `dark:` utilities —
+ * mostly `dark:text-*-400` lightened text, plus `dark:prose-invert` for
+ * rendered markdown — silently did nothing.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Hindsight design system palette — light mode. Replaces the shadcn oklch
+     defaults so every bg-card / text-foreground / border-border utility across
+     the whole site picks up the design system without per-component edits. */
+  --background: #F3F5F9;
+  --foreground: #0D1117;
+  --card: #FFFFFF;
+  --card-foreground: #0D1117;
+  --popover: #FFFFFF;
+  --popover-foreground: #0D1117;
+  --primary: #0074D9;
+  --primary-foreground: #FFFFFF;
+  --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  --secondary: #EDF0F6;
+  --secondary-foreground: #0D1117;
+  --muted: #EDF0F6;
+  /* #525866 is 5.3:1 against the page bg and 7.1:1 against card white, which
+     hits WCAG AA for body text at every size we use. The lighter #6C7586 used
+     elsewhere in the palette is only 4.4:1 against the page and fails AA, so
+     light mode keeps this darker value for body copy. */
+  --muted-foreground: #525866;
+  --accent: #EDF0F6;
+  --accent-foreground: #0D1117;
+  --destructive: #D4183D;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.08);
+  --ring: #0074D9;
+  --chart-1: #2C82F5;
+  --chart-2: #10B981;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EC4899;
+
+  /* Chip treatment — used by components/ui/facet-chip.tsx, the only place tags,
+     entities and metadata are rendered.
+
+     There are two treatments, not one per kind. Earlier revisions gave each
+     kind its own saturated fill; at chip size, three filled colours per row is
+     what made the tables look busy, and the colour was doing work that the `#`
+     / `key=` prefixes and the header legend already do. So: everything is the
+     quiet neutral chip, and the accent is spent only on the rare thing worth
+     calling out — a tag that is actively filtering the list.
+
+     The three chips are tonal variants of one another, not different colours:
+     same family, separated by lightness (and a slight hue shift for entity).
+     Each carries its own border, because on a chip this small the border is
+     as much of the perceived tone as the fill — varying only the fill was
+     measurably invisible (ΔE < 2). These are tuned to ΔE 3.4-13 between any
+     two, i.e. above the just-noticeable threshold but well short of the
+     saturated fills that made the tables noisy. Foreground and accent are
+     shared across all three.
+
+     Defined as theme variables rather than Tailwind `dark:` utilities so
+     light/dark resolve through the .dark block below, which is the mechanism
+     that works here: `dark:` compiles to a prefers-color-scheme media query in
+     Tailwind v4, while the app switches themes with a .dark class. */
+  --chip-tag: #e7edf5; /* slate */
+  --chip-tag-border: #d3dfec;
+  --chip-entity: #eaeaf7; /* indigo-ward */
+  --chip-entity-border: #dcdcf1;
+  --chip-meta: #f4f6f8; /* lighter — metadata recedes toward the page */
+  --chip-meta-border: #e7ebef;
+  --chip-fg: #55677d;
+  --chip-accent: #0e7f8c; /* brand cyan, darkened for the light surface */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #6C7586;
+  --sidebar-primary: #0074D9;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EDF0F6;
+  --sidebar-accent-foreground: #0D1117;
+  --sidebar-border: rgba(0, 0, 0, 0.05);
+  --sidebar-ring: #0074D9;
+  /* --font-sans and --font-mono are set on <html> by next/font/google in
+     [locale]/layout.tsx. :root inherits them; we intentionally do NOT
+     redeclare them here so the next/font value is what utilities resolve to.
+     A separate --font-fallback chain is provided for any future use. */
+  --font-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --radius: 0.5rem;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.17;
+  --shadow-color: #000000;
+  --shadow-2xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.09);
+  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.09);
+  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 1px 2px -1px hsl(0 0% 0% / 0.17);
+  --shadow: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 1px 2px -1px hsl(0 0% 0% / 0.17);
+  --shadow-md: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 2px 4px -1px hsl(0 0% 0% / 0.17);
+  --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 4px 6px -1px hsl(0 0% 0% / 0.17);
+  --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.17), 0px 8px 10px -1px hsl(0 0% 0% / 0.17);
+  --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.43);
+  /* Inter renders best at 0 tracking for body text, negative at heading sizes.
+     Was 0.025em (positive), which made all body/label text feel spaced-out and
+     wrong at the sizes the design system actually uses. */
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* Hindsight design tokens (light) — semantic surface/text/border/status/chart
+     palette. The brand gradient stays as the pre-existing --primary-gradient
+     above. These are namespaced with --hs- to avoid colliding with the shadcn
+     token set. */
+  --hs-surface-page: #F3F5F9;
+  --hs-surface-card: #FFFFFF;
+  --hs-surface-sidebar: #FFFFFF;
+  --hs-surface-hover: #EDF0F6;
+  --hs-surface-muted: #EDF0F6;
+
+  --hs-fg-primary: #0D1117;
+  --hs-fg-muted: #6C7586;
+  --hs-fg-on-accent: #FFFFFF;
+
+  --hs-border-default: rgba(0, 0, 0, 0.08);
+  --hs-border-subtle: rgba(0, 0, 0, 0.05);
+
+  /* #00BC7D is the success accent across light mode (progress %, "done"
+     values, operation dots). Distinct from #10B981, which is the Experience
+     chart series — different token, don't conflate them. */
+  --hs-success: #00BC7D;
+  --hs-warning: #F59E0B;
+  --hs-danger: #D4183D;
+  --hs-info: #0074D9;
+  --hs-neutral: #6C7586;
+
+  --hs-brand-blue: #0074D9;
+  --hs-brand-teal: #009296;
+
+  --hs-chart-world: #2C82F5;
+  --hs-chart-experience: #10B981;
+  --hs-chart-observations: #8B5CF6;
+  --hs-chart-temporal: #F59E0B;
+  --hs-chart-semantic: #009296;
+  --hs-chart-entity: #EC4899;
+}
+
+.dark {
+  /* Hindsight design system palette — dark mode. */
+  --background: #080C17;
+  --foreground: #DCE8FF;
+  --card: #0F1724;
+  --card-foreground: #DCE8FF;
+  --popover: #0F1724;
+  --popover-foreground: #DCE8FF;
+  --primary: #5BB0FF;
+  --primary-foreground: #080C17;
+  --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  --secondary: #172036;
+  --secondary-foreground: #DCE8FF;
+  --muted: #172036;
+  --muted-foreground: #94A8C9;
+  --accent: #172036;
+  --accent-foreground: #DCE8FF;
+  --destructive: #C0183A;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(100, 160, 255, 0.10);
+  --input: rgba(100, 160, 255, 0.10);
+  --ring: #5BB0FF;
+  --chart-1: #2C82F5;
+  --chart-2: #10B981;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EC4899;
+
+  /* Chip treatment on the dark surface (see :root for rationale). */
+  --chip-tag: #1c2836; /* slate */
+  --chip-tag-border: #2e4056;
+  --chip-entity: #272f45; /* indigo-ward */
+  --chip-entity-border: #3b4463;
+  --chip-meta: #141b24; /* darker — metadata recedes toward the page */
+  --chip-meta-border: #232d3a;
+  --chip-fg: #94a8bc;
+  --chip-accent: #4dd8e6; /* logo cyan */
+  --sidebar: #0A1020;
+  --sidebar-foreground: #6E8AAF;
+  --sidebar-primary: #5BB0FF;
+  --sidebar-primary-foreground: #080C17;
+  --sidebar-accent: #172036;
+  --sidebar-accent-foreground: #DCE8FF;
+  --sidebar-border: rgba(100, 160, 255, 0.07);
+  --sidebar-ring: #5BB0FF;
+
+  /* Hindsight design tokens (dark) — see the :root block above for rationale. */
+  --hs-surface-page: #080C17;
+  --hs-surface-card: #0F1724;
+  --hs-surface-sidebar: #0A1020;
+  --hs-surface-hover: #172036;
+  --hs-surface-muted: #172036;
+
+  --hs-fg-primary: #DCE8FF;
+  --hs-fg-muted: #94A8C9;
+  --hs-fg-on-accent: #FFFFFF;
+
+  --hs-border-default: rgba(100, 160, 255, 0.10);
+  --hs-border-subtle: rgba(100, 160, 255, 0.07);
+
+  /* Dark mode uses the more vivid #00D492 as the primary success — it reads
+     better against the deep navy page than the light-mode #00BC7D. */
+  --hs-success: #00D492;
+  --hs-warning: #FBB040;
+  --hs-danger: #C0183A;
+  --hs-info: #5BB0FF;
+  --hs-neutral: #6E8AAF;
+
+  /* Brand stops are mode-invariant; the gradient stays as --primary-gradient. */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chip-tag: var(--chip-tag);
+  --color-chip-tag-border: var(--chip-tag-border);
+  --color-chip-entity: var(--chip-entity);
+  --color-chip-entity-border: var(--chip-entity-border);
+  --color-chip-meta: var(--chip-meta);
+  --color-chip-meta-border: var(--chip-meta-border);
+  --color-chip-fg: var(--chip-fg);
+  --color-chip-accent: var(--chip-accent);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  /* Headings use Inter like the rest of the UI — alias --font-heading to
+     --font-sans so any legacy `font-heading` utility falls through to Inter. */
+  --font-heading: var(--font-sans);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+
+  --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+  --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+  --tracking-normal: var(--tracking-normal);
+  --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+  --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+  --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+
+  /* Hindsight semantic utilities — generate bg-surface-*, text-fg-*, bg-success,
+     border-border-*, text-chart-* etc. from the --hs-* tokens above. */
+  --color-surface-page: var(--hs-surface-page);
+  --color-surface-card: var(--hs-surface-card);
+  --color-surface-sidebar: var(--hs-surface-sidebar);
+  --color-surface-hover: var(--hs-surface-hover);
+  --color-surface-muted: var(--hs-surface-muted);
+
+  --color-fg-primary: var(--hs-fg-primary);
+  --color-fg-muted: var(--hs-fg-muted);
+  --color-fg-on-accent: var(--hs-fg-on-accent);
+
+  --color-border-default: var(--hs-border-default);
+  --color-border-subtle: var(--hs-border-subtle);
+
+  --color-success: var(--hs-success);
+  --color-warning: var(--hs-warning);
+  --color-danger: var(--hs-danger);
+  --color-info: var(--hs-info);
+  --color-neutral: var(--hs-neutral);
+
+  --color-brand-blue: var(--hs-brand-blue);
+  --color-brand-teal: var(--hs-brand-teal);
+
+  --color-chart-world: var(--hs-chart-world);
+  --color-chart-experience: var(--hs-chart-experience);
+  --color-chart-observations: var(--hs-chart-observations);
+  --color-chart-temporal: var(--hs-chart-temporal);
+  --color-chart-semantic: var(--hs-chart-semantic);
+  --color-chart-entity: var(--hs-chart-entity);
+}
+
+/* Force the Inter chain on the document AND on form elements, which don't
+   inherit font-family from body. Without this they fall back to the browser
+   default and render visibly off against the rest of the page. */
+html, body, button, input, select, textarea, optgroup {
+  font-family: var(--font-sans), 'Inter', -apple-system, BlinkMacSystemFont,
+    system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tailwind preflight resets headings to `font-weight: inherit`, and unlike the
+   every heading in this app carries an explicit weight utility yet. Keep the
+   600 default so those headings stay headings; the font-family override is
+   gone because everything is Inter now. 600 is the ceiling for UI text. */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+}
+
+code, pre {
+  font-family: var(--font-mono);
+}
+
+/* Gradient utilities */
+.bg-primary-gradient {
+  background: var(--primary-gradient);
+}
+
+/* Switch primitive states. Tailwind `data-[state=...]` variants don't reach
+   the custom `.bg-primary-gradient` class (it's not a generated utility), so
+   we wire the visible track colors here. Targets Radix's `data-state` on
+   the Switch root rendered by `src/components/ui/switch.tsx`. */
+[data-slot="hs-switch"][data-state="checked"] {
+  background: var(--primary-gradient) !important;
+}
+[data-slot="hs-switch"][data-state="unchecked"] {
+  background-color: #c3cad6; /* between slate-300 and slate-400 — visible on white without feeling heavy */
+}
+.dark [data-slot="hs-switch"][data-state="unchecked"] {
+  background-color: #475569; /* slate-600 — visible on navy card without being loud */
+}
+
+.border-primary-gradient {
+  border-image: var(--primary-gradient) 1;
+}
+
+.text-primary-gradient {
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Fix datetime-local calendar icon visibility in both light and dark modes */
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.5);
+}
+
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+/* Markdown table styles - explicitly override Tailwind reset */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-size: 0.875em;
+  line-height: 1.5;
+  border: 2px solid rgba(0, 0, 0, 0.2) !important;
+}
+
+.prose thead {
+  border-bottom: 3px solid rgba(0, 0, 0, 0.3) !important;
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.prose thead th {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  vertical-align: bottom;
+  border: 1px solid rgba(0, 0, 0, 0.2) !important;
+  border-bottom-width: 3px !important;
+}
+
+.prose tbody tr {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
+}
+
+.prose tbody tr:last-child {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
+}
+
+.prose tbody td {
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  border: 1px solid rgba(0, 0, 0, 0.15) !important;
+}
+
+.prose tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* Dark mode table styles - use white borders with transparency */
+.dark .prose table {
+  color: hsl(var(--foreground));
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.dark .prose thead {
+  border-bottom: 3px solid rgba(255, 255, 255, 0.3) !important;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dark .prose thead th {
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-bottom-width: 3px !important;
+}
+
+.dark .prose tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.dark .prose tbody td {
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.dark .prose tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Branded loading spinner — the Hindsight mark doing a looping "tumble": a
+   crouch, a hop with an in-plane 360° flip, then a squash on landing. It's pure
+   2D squash-and-stretch (scale x/y + in-plane rotate, no 3D transforms) so the
+   flat logo reads as a bouncy little character. The hop distance is a % of the
+   element's own height, so one keyframe scales across every LogoSpinner size.
+   Ported from the "full tumble" motion-lab experiment. */
+@keyframes logo-tumble {
+  0% {
+    transform: translateY(0) rotate(0deg) scale(1, 1);
+  }
+  10% {
+    transform: translateY(6%) scale(1.1, 0.84); /* crouch / anticipation */
+  }
+  34% {
+    transform: translateY(-72%) rotate(200deg) scale(0.92, 1.08); /* rise + flip, stretched */
+  }
+  60% {
+    transform: translateY(-46%) rotate(360deg) scale(1, 1); /* flip done, falling */
+  }
+  80% {
+    transform: translateY(0) rotate(360deg) scale(1.14, 0.82); /* land squash */
+  }
+  90%,
+  100% {
+    transform: translateY(0) rotate(360deg) scale(1, 1); /* settle + brief rest */
+  }
+}
+
+.animate-logo-tumble {
+  /* Overshoot easing (negative/over-1 control points) gives the hop its spring. */
+  animation: logo-tumble 1400ms cubic-bezier(0.4, -0.15, 0.3, 1.3) infinite;
+  transform-origin: 50% 54%;
+  will-change: transform;
+}
+
+/* One-shot logo wiggle — subtle nav feedback fired on sidebar navigation.
+   Applied to the mark ALONE (the header logo is split into an animatable mark +
+   a static wordmark). A small tilt that springs back — far less impactful than a
+   full spin, but still a bit of life. */
+@keyframes logo-wiggle {
+  0% {
+    transform: rotate(0deg);
+  }
+  35% {
+    transform: rotate(-9deg);
+  }
+  65% {
+    transform: rotate(5deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.animate-logo-wiggle {
+  animation: logo-wiggle 450ms ease-in-out;
+  transform-origin: 50% 54%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-logo-wiggle {
+    animation: none;
+  }
+}
+
+/* In-place flip variant: same 360° tumble + squash, but only a tiny vertical
+   bob (±8%) so it stays on the text baseline inside buttons and inline labels.
+   This is the default spinner motion; the big hop above is reserved for roomy
+   centered loaders. */
+@keyframes logo-flip {
+  0% {
+    transform: translateY(0) rotate(0deg) scale(1, 1);
+  }
+  15% {
+    transform: translateY(4%) scale(1.08, 0.9); /* squash */
+  }
+  50% {
+    transform: translateY(-8%) rotate(200deg) scale(0.94, 1.06); /* flip, slight lift + stretch */
+  }
+  85% {
+    transform: translateY(0) rotate(360deg) scale(1.08, 0.9); /* land squash */
+  }
+  100% {
+    transform: translateY(0) rotate(360deg) scale(1, 1);
+  }
+}
+
+.animate-logo-flip {
+  animation: logo-flip 1200ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  transform-origin: 50% 54%;
+  will-change: transform;
+}
+
+/* Respect reduced-motion: drop the bounce for a calm opacity pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-logo-tumble,
+  .animate-logo-flip {
+    animation: logo-tumble-pulse 1200ms ease-in-out infinite;
+  }
+}
+@keyframes logo-tumble-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* List rows that stream in a page at a time (the bank selector pages as it is
+   scrolled). Defined here rather than reached for from tailwindcss-animate:
+   this app is on Tailwind v4 with the CSS-first config, so the v3 plugin in
+   tailwind.config.ts is never loaded and its `animate-in` / `fade-in-0`
+   utilities emit nothing. Callers stagger rows with an inline animation-delay,
+   so `both` matters — without it a delayed row would sit fully drawn until its
+   turn came, which is the pop the stagger exists to avoid. */
+@keyframes list-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-list-row-enter {
+  animation: list-row-enter 200ms ease-out both;
+}
+
+@keyframes soft-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-soft-fade-in {
+  animation: soft-fade-in 200ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-list-row-enter,
+  .animate-soft-fade-in {
+    animation: none;
+  }
+}
+
+/* Themed scrollbars — match the app surface instead of the default white track.
+   color-mix is what applies the opacity to the theme token. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

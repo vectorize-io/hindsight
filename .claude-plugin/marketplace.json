@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hindsight",
+  "version": "0.7.5",
+  "description": "Official Hindsight integrations for Claude Code",
+  "owner": {
+    "name": "vectorize-io"
+  },
+  "plugins": [
+    {
+      "name": "hindsight-memory",
+      "description": "Automatic long-term memory for Claude Code via Hindsight",
+      "source": "./hindsight-integrations/claude-code"
+    },
+    {
+      "name": "hindsight-zcode",
+      "description": "No-MCP long-term memory for ZCode via Hindsight hooks",
+      "source": "./hindsight-integrations/zcode"
+    }
+  ]
+}

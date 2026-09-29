@@ -1,0 +1,700 @@
+/**
+ * The single lifecycle contract for every hook-based harness. Entry-point binaries, installer
+ * wiring, payload parsing, host response encoding, and transcript readers all resolve through
+ * this registry. Adding a harness means adding one complete declaration here; its lifecycle
+ * cannot silently drift between the runtime and installer.
+ */
+import { runHook, type HookSpec } from "../core/hook";
+import { runRetainHook, type RetainHookSpec } from "../core/retain-hook";
+import { runSessionStartHook, type SessionStartHookSpec } from "../core/session-start";
+import { ensureTraecodeWorkspaceMcp } from "../core/traecode-mcp";
+import { readCodexTranscript } from "../core/transcript-codex";
+import { readCursorTranscript } from "../core/transcript-cursor";
+import { readAntigravityTranscript } from "../core/transcript-antigravity";
+import { readCopilotTranscript } from "../core/transcript-copilot";
+import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok";
+import { readDevinTranscript } from "../core/transcript-devin";
+import { dcodeAssistantText, readDcodeTranscript } from "../core/transcript-dcode";
+import { readQwenTranscript } from "../core/transcript-qwen";
+import { readDroidTranscript } from "../core/transcript-droid";
+import { zcodeAssistantText } from "../core/transcript-zcode";
+import { kimiPromptText, kimiSessionDir, readKimiTranscript } from "../core/transcript-kimi";
+
+export type HookHarnessName =
+  | "claude-code"
+  | "codex"
+  | "antigravity-cli"
+  | "cursor-cli"
+  | "copilot-cli"
+  | "devin-cli"
+  | "grok-build"
+  | "dcode"
+  | "qwen-code"
+  | "factory-droid"
+  | "zcode"
+  | "traecode"
+  | "kimi-code";
+export type HookLifecycle = "sessionStart" | "prompt" | "stop";
+/**
+ * How the HOST spells one hook registration.
+ *   nested  — Claude Code's matcher group: `[{hooks:[{type:"command", command, timeout}]}]`.
+ *   flat    — one `{command, timeout}` object per entry (Cursor, Copilot, Antigravity).
+ *   process — ZCode's: a matcher group like `nested`, but the command is SPLIT into an argv
+ *             (`type:"process"`, `command:"node"`, `args:[...]`) and the budget is `timeoutMs`.
+ *             The split matters: ZCode spawns without a shell, so a quoted command string is
+ *             looked up verbatim as an executable name and never runs.
+ *   toml-array — Kimi Code's flat `[[hooks]]` array of tables, whose entry schema is strict
+ *             (event/matcher/command/timeout); a fifth key drops EVERY hook in the file, so
+ *             its installer writes the block itself. See the installer's kimi adapter.
+ */
+export type HookConfigStyle = "nested" | "flat" | "process" | "toml-array";
+
+export interface HookInstallSpec {
+  event: string;
+  entry: string;
+  /** In `HookHarnessSpec.timeoutUnit` — NOT always seconds. See that field. */
+  timeout?: number;
+}
+
+/**
+ * The unit the HOST reads `HookInstallSpec.timeout` in. Every host but Qwen Code uses seconds;
+ * Qwen passes the value straight to setTimeout, so 30 there means 30ms and the hook is dead before
+ * a Node process starts. Declaring the unit makes that difference checkable instead of a comment:
+ * the lifecycle test normalises through it, so changing Qwen's 30_000 to 30 without also changing
+ * this field now fails a test rather than silently shipping dead hooks.
+ */
+export type HookTimeoutUnit = "seconds" | "milliseconds";
+
+export interface HookHarnessSpec {
+  configStyle: HookConfigStyle;
+  /** Defaults to "seconds" when absent — the unit every host but qwen-code uses. */
+  timeoutUnit?: HookTimeoutUnit;
+  install: Record<HookLifecycle, HookInstallSpec>;
+  /** Native host events beyond the shared three-stage lifecycle. */
+  additionalHooks?: HookInstallSpec[];
+  sessionStart: SessionStartHookSpec;
+  prompt: HookSpec;
+  retain: RetainHookSpec;
+}
+
+const cursorCwd = (ev: Record<string, unknown>): string | undefined =>
+  (ev.cwd as string | undefined) ??
+  (ev.workspace_root as string | undefined) ??
+  (Array.isArray(ev.workspace_roots) ? (ev.workspace_roots[0] as string | undefined) : undefined);
+
+const claudePrompt: HookSpec = {
+  harness: "claude-code",
+  parse: (ev) => ({
+    prompt: ev.prompt as string | undefined,
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.session_id as string | undefined,
+  }),
+  emit: (context, notice) => ({
+    ...(notice ? { systemMessage: notice } : {}),
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
+  }),
+};
+
+const codexPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "codex",
+  parse: (ev) => ({
+    prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.session_id as string | undefined,
+  }),
+};
+
+const dcodePrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "dcode",
+};
+
+/**
+ * Factory Droid speaks Claude Code's hook protocol field for field: `session_id`, `transcript_path`
+ * and `cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out. Its user-level hook
+ * config (`~/.factory/hooks.json`) also uses Claude's matcher-group shape, so the only real
+ * difference from `claude-code` is where the installer writes the registration and which transcript
+ * reader parses the file.
+ */
+const droidPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "factory-droid",
+};
+
+/**
+ * Qwen Code speaks Claude Code's hook protocol field for field (session_id / transcript_path / cwd
+ * in, hookSpecificOutput.additionalContext + systemMessage out), so only `parse` differs — and it
+ * reads `submitted_prompt`, NOT `prompt`.
+ *
+ * `UserPromptSubmit` fires on tool-result continuations too, not just on submissions: Qwen's send
+ * loop labels the first turn `userQuery` and every continuation `toolResult`, and the hook's fire
+ * guard excludes only retry/steer/cron/notification/teammate/goal. On a continuation `prompt` holds
+ * whatever text is currently model-bound (a tool result), so keying on it would recall ~20 times per
+ * user turn against tool output. `submitted_prompt` is attached only when the turn is BOTH the first
+ * one and a real `userQuery`, which makes it the exact genuine-submission marker — and runHook's
+ * `if (!prompt) return` then suppresses every continuation with no core change.
+ *
+ * Cost, deliberately accepted: `submitted_prompt` is the interactive TUI's text projection, so
+ * headless (`qwen -p`), serve/SDK and ACP sessions carry none and never recall. They still get the
+ * SessionStart seed and the Stop write-back.
+ */
+const qwenPrompt: HookSpec = {
+  ...claudePrompt,
+  harness: "qwen-code",
+  parse: (ev) => ({
+    prompt: ev.submitted_prompt as string | undefined,
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.session_id as string | undefined,
+  }),
+};
+
+/** ZCode sends `session_id` on UserPromptSubmit and BOTH spellings on Stop; accept either. */
+const zcodeSessionId = (ev: Record<string, unknown>): string | undefined =>
+  (ev.session_id as string | undefined) ?? (ev.sessionId as string | undefined);
+
+const antigravityCwd = (ev: Record<string, unknown>): string | undefined =>
+  Array.isArray(ev.workspacePaths) ? (ev.workspacePaths[0] as string | undefined) : undefined;
+
+const antigravityPrompt: HookSpec = {
+  harness: "antigravity-cli",
+  requireCwd: true,
+  parse: (ev) => ({
+    // Antigravity's PreInvocation payload deliberately omits the prompt. Its transcript is already
+    // persisted at that point, so recover the latest real user turn from the supplied JSONL path.
+    prompt: readAntigravityTranscript(ev.transcriptPath as string | undefined)
+      .filter((turn) => turn.role === "user")
+      .at(-1)?.content,
+    cwd: antigravityCwd(ev),
+    sessionId: ev.conversationId as string | undefined,
+  }),
+  emit: (context) => ({ injectSteps: context ? [{ ephemeralMessage: context }] : [] }),
+};
+
+const cursorPrompt: HookSpec = {
+  harness: "cursor-cli",
+  parse: (ev) => ({
+    prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+    cwd: cursorCwd(ev),
+    sessionId: (ev.conversation_id as string | undefined) ?? (ev.session_id as string | undefined),
+  }),
+  emit: (context) => ({ continue: true, additional_context: context }),
+};
+
+const copilotPrompt: HookSpec = {
+  harness: "copilot-cli",
+  parse: (ev) => ({
+    prompt: ev.prompt as string | undefined,
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.sessionId as string | undefined,
+  }),
+  emit: (context, _notice, ev) => ({
+    // Copilot's userPromptTransformed hook replaces model-facing content rather than appending
+    // hook context. Preserve its transformed prompt and add the shared Hindsight injection.
+    modifiedTransformedPrompt:
+      `${(ev?.transformedPrompt as string | undefined) ?? ""}\n\n${context}`.trim(),
+  }),
+};
+
+// Devin does not set DEVIN_PROJECT_DIR in every spawn context. It still launches hooks from the
+// project dir, so fall back to the process cwd; env-only resolution tagged those sessions
+// `project:unknown` (#4756).
+const devinCwd = (): string => process.env.DEVIN_PROJECT_DIR || process.cwd();
+const devinPrompt: HookSpec = {
+  harness: "devin-cli",
+  requireCwd: true,
+  parse: (ev) => ({
+    prompt: ev.prompt as string | undefined,
+    cwd: devinCwd(),
+    sessionId: ev.session_id as string | undefined,
+  }),
+  emit: (context) => ({
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
+  }),
+};
+
+const standardSessionStart = (harness: string): SessionStartHookSpec => ({
+  harness,
+  parse: (ev) => ({
+    cwd: ev.cwd as string | undefined,
+    sessionId: ev.session_id as string | undefined,
+  }),
+  emit: (out) => ({
+    ...(out.systemMessage ? { systemMessage: out.systemMessage } : {}),
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
+    },
+  }),
+});
+
+/**
+ * Grok Build also runs the hooks in ~/.claude/settings.json (its Claude compatibility layer), so
+ * without this gate every Grok session would run Claude Code's hooks next to Grok's own: a second
+ * SessionStart injection, a second recall per prompt, and a retain tagged claude-code. Grok's hook
+ * runner sets the reserved GROK_HOOK_EVENT on every hook process; Claude Code never does.
+ */
+const notGrokHosted = (): boolean => !process.env.GROK_HOOK_EVENT;
+
+export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
+  "claude-code": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "claude-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "claude-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "claude-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: { ...standardSessionStart("claude-code"), accept: notGrokHosted },
+    prompt: { ...claudePrompt, accept: notGrokHosted },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "claude-code",
+      accept: notGrokHosted,
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+    },
+  },
+  codex: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "codex-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "codex-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "codex-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("codex"),
+    prompt: codexPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "codex",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readCodexTranscript,
+    },
+  },
+  dcode: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "dcode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "dcode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "dcode-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: standardSessionStart("dcode"),
+    prompt: dcodePrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "dcode",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
+      }),
+      readTranscript: readDcodeTranscript,
+      readLastMessage: dcodeAssistantText,
+    },
+  },
+  "antigravity-cli": {
+    configStyle: "flat",
+    install: {
+      // PreInvocation is Antigravity's only lifecycle point that can inject context. Its first
+      // invocation also performs the SessionStart responsibilities through runHook's seed guard.
+      sessionStart: { event: "PreInvocation", entry: "antigravity-hook.js", timeout: 30 },
+      prompt: { event: "PreInvocation", entry: "antigravity-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "antigravity-stop-hook.js", timeout: 30 },
+    },
+    sessionStart: {
+      harness: "antigravity-cli",
+      parse: (ev) => ({
+        cwd: antigravityCwd(ev),
+        sessionId: ev.conversationId as string | undefined,
+      }),
+      emit: () => ({}),
+    },
+    prompt: antigravityPrompt,
+    retain: {
+      hostTimeoutSec: 30,
+      harness: "antigravity-cli",
+      parse: (ev) => ({
+        sessionId: ev.conversationId as string | undefined,
+        transcriptPath: ev.transcriptPath as string | undefined,
+        cwd: antigravityCwd(ev),
+      }),
+      readTranscript: readAntigravityTranscript,
+    },
+  },
+  "cursor-cli": {
+    configStyle: "flat",
+    install: {
+      sessionStart: { event: "sessionStart", entry: "cursor-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "beforeSubmitPrompt", entry: "cursor-hook.js" },
+      stop: { event: "stop", entry: "cursor-stop-hook.js", timeout: 30 },
+    },
+    sessionStart: {
+      harness: "cursor-cli",
+      parse: (ev) => ({
+        cwd: cursorCwd(ev),
+        sessionId:
+          (ev.conversation_id as string | undefined) ?? (ev.session_id as string | undefined),
+      }),
+      emit: (out) => ({
+        ...(out.additionalContext ? { additional_context: out.additionalContext } : {}),
+      }),
+    },
+    prompt: cursorPrompt,
+    retain: {
+      hostTimeoutSec: 30,
+      harness: "cursor-cli",
+      parse: (ev) => ({
+        sessionId:
+          (ev.conversation_id as string | undefined) ?? (ev.session_id as string | undefined),
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: cursorCwd(ev),
+      }),
+      readTranscript: readCursorTranscript,
+    },
+  },
+  "copilot-cli": {
+    configStyle: "flat",
+    install: {
+      sessionStart: { event: "sessionStart", entry: "copilot-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "userPromptTransformed", entry: "copilot-hook.js", timeout: 30 },
+      stop: { event: "agentStop", entry: "copilot-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: {
+      harness: "copilot-cli",
+      parse: (ev) => ({
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.sessionId as string | undefined,
+      }),
+      // Copilot CLI's SessionStart response only has model-facing `additionalContext`; unlike
+      // Claude/Cursor it has no supported in-TUI system-message/banner channel. Keep memory
+      // quiet rather than auto-submitting a synthetic prompt or showing an OS notification. When
+      // Copilot exposes a real TUI extension point, add the banner there without changing this
+      // shared lifecycle output.
+      emit: (out) => ({
+        ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
+      }),
+    },
+    prompt: copilotPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "copilot-cli",
+      parse: (ev) => ({
+        sessionId: ev.sessionId as string | undefined,
+        transcriptPath: ev.transcriptPath as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readCopilotTranscript,
+    },
+  },
+  "devin-cli": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "devin-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "devin-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "devin-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: {
+      harness: "devin-cli",
+      parse: (ev) => ({ cwd: devinCwd(), sessionId: ev.session_id as string | undefined }),
+      emit: (out) => ({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
+        },
+      }),
+    },
+    prompt: devinPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "devin-cli",
+      parse: (ev) => {
+        const sessionId = ev.session_id as string | undefined;
+        return {
+          sessionId,
+          // RetainHook calls the supplied reader with transcriptPath; Devin's reader uses its
+          // session id because the CLI persists conversations in sessions.db rather than a file.
+          transcriptPath: sessionId,
+          cwd: devinCwd(),
+        };
+      },
+      readTranscript: readDevinTranscript,
+    },
+  },
+  "grok-build": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "grok-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "grok-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "grok-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: {
+      ...standardSessionStart("grok-build"),
+      // Grok's wire envelope is camelCase, unlike Claude's similarly named hook events.
+      parse: (ev) => ({
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.sessionId as string | undefined,
+      }),
+    },
+    prompt: {
+      ...claudePrompt,
+      harness: "grok-build",
+      parse: (ev) => ({
+        prompt: ev.prompt as string | undefined,
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.sessionId as string | undefined,
+      }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "grok-build",
+      parse: (ev) => ({
+        sessionId: ev.sessionId as string | undefined,
+        transcriptPath:
+          typeof ev.cwd === "string" && typeof ev.sessionId === "string"
+            ? grokTranscriptPath(ev.cwd, ev.sessionId)
+            : undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readGrokTranscript,
+    },
+  },
+  "qwen-code": {
+    configStyle: "nested",
+    timeoutUnit: "milliseconds",
+    // TIMEOUTS ARE MILLISECONDS HERE, not seconds like every other harness in this table: Qwen's
+    // hookRunner does `setTimeout(..., hookConfig.timeout ?? DEFAULT_HOOK_TIMEOUT)` with
+    // DEFAULT_HOOK_TIMEOUT = 60_000 ("Timeout in milliseconds, default 60000"). Writing 30/60
+    // registers 30ms/60ms hooks, which die before a Node process starts — and Qwen spawns hooks
+    // `detached` and terminates the whole process TREE on timeout, so the retain is genuinely lost
+    // rather than merely orphaned. `retain.hostTimeoutSec` below stays SECONDS, as its name says;
+    // these two numbers are the same budget in different units for this harness alone.
+    // The prompt timeout must also stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
+    install: {
+      sessionStart: { event: "SessionStart", entry: "qwen-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "qwen-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "qwen-stop-hook.js", timeout: 60_000 },
+    },
+    sessionStart: standardSessionStart("qwen-code"),
+    prompt: qwenPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "qwen-code",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        // Qwen supplies the path, but as the EMPTY STRING (not null, not absent) when chat
+        // recording is off — runRetainHook's `if (!transcriptPath) return` already covers that.
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readQwenTranscript,
+    },
+  },
+  "factory-droid": {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "droid-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "droid-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "droid-stop-hook.js", timeout: 60 },
+    },
+    // Droid emits Notification(idle_prompt), not Stop, after user cancellation. Reusing the
+    // idempotent retain entry point captures that final partial turn; its event gate ignores every
+    // other notification type before config or daemon work begins.
+    additionalHooks: [{ event: "Notification", entry: "droid-stop-hook.js", timeout: 60 }],
+    sessionStart: standardSessionStart("factory-droid"),
+    prompt: droidPrompt,
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "factory-droid",
+      accept: (ev) =>
+        ev.hook_event_name === "Stop" ||
+        (ev.hook_event_name === "Notification" && ev.notification_type === "idle_prompt"),
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readDroidTranscript,
+    },
+  },
+  /**
+   * ZCode (Z.ai's GLM coding agent) embeds the Claude Code agent runtime, so its hook PROTOCOL is
+   * Claude's — `prompt`/`cwd` in, `hookSpecificOutput.additionalContext` + `systemMessage` out —
+   * with `sessionId` accepted alongside `session_id`, which its Stop payload sends instead.
+   *
+   * What is not Claude's is the TRANSCRIPT, and that is the whole of the difference here. ZCode
+   * keeps no durable session file: `Stop` carries the reply in `responseText` plus a temp,
+   * assistant-only transcript it deletes as soon as the hook returns, and no user prompt at all.
+   * So this is the one harness that retains from the plugin's own journal (core/turn-journal.ts) —
+   * the prompt hook appends the user turn, `journal.assistantText` closes it with the reply — and
+   * everything downstream (cursor, append, stamping) sees the same full conversation as any host
+   * transcript.
+   */
+  zcode: {
+    configStyle: "process",
+    // ZCode's `timeoutMs`, so MILLISECONDS — see the qwen-code note above for the same trap. The
+    // prompt budget must stay above core/config.ts's DEFAULT_REFLECT_TIMEOUT_MS.
+    timeoutUnit: "milliseconds",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "zcode-sessionstart-hook.js", timeout: 30_000 },
+      prompt: { event: "UserPromptSubmit", entry: "zcode-hook.js", timeout: 30_000 },
+      stop: { event: "Stop", entry: "zcode-stop-hook.js", timeout: 60_000 },
+    },
+    sessionStart: {
+      ...standardSessionStart("zcode"),
+      parse: (ev) => ({ cwd: ev.cwd as string | undefined, sessionId: zcodeSessionId(ev) }),
+    },
+    prompt: {
+      ...claudePrompt,
+      harness: "zcode",
+      journalPrompt: true,
+      parse: (ev) => ({
+        prompt: (ev.prompt as string | undefined) ?? (ev.user_prompt as string | undefined),
+        cwd: ev.cwd as string | undefined,
+        sessionId: zcodeSessionId(ev),
+      }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "zcode",
+      // No transcriptPath: the journal supplies it (see `journal` below).
+      parse: (ev) => ({ sessionId: zcodeSessionId(ev), cwd: ev.cwd as string | undefined }),
+      journal: {
+        // `responseText` is the full reply and is what ZCode sends in practice. The ephemeral
+        // transcript is the fallback when it is absent, and `responsePreview` — which is
+        // TRUNCATED — is the last resort, preferred only over losing the turn entirely.
+        assistantText: (ev) =>
+          (
+            (ev.responseText as string | undefined) ||
+            zcodeAssistantText(ev.transcript_path as string | undefined) ||
+            (ev.responsePreview as string | undefined) ||
+            ""
+          ).trim(),
+      },
+    },
+  },
+  /**
+   * TraeCode (TRAE CN's agent) also speaks Claude Code's hook protocol — `prompt`/`cwd`/`session_id`
+   * in, `hookSpecificOutput.additionalContext` + `systemMessage` out — with registrations nested
+   * under the top-level `hooks` key of `~/.trae-cn/hooks.json` (unlike Factory Droid, whose event
+   * map IS the file) and a `version` field the host writes and expects.
+   *
+   * Like ZCode, what it does not have is a TRANSCRIPT: sessions live in an encrypted local DB or
+   * the cloud and no `transcript_path` is ever supplied, so this is the second harness that retains
+   * from the plugin's own journal (core/turn-journal.ts) — the prompt hook appends the user turn,
+   * and Stop's `last_assistant_message` (the full reply) plays the role ZCode's `responseText`
+   * plays: `journal.assistantText` closes the turn with it.
+   */
+  traecode: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "traecode-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "traecode-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "traecode-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: {
+      ...standardSessionStart("traecode"),
+      // Trae launches USER-level MCP servers from the Electron process's cwd (home), where an
+      // optInOnly config self-disables and the tools vanish. Each repo's own workspace file fixes
+      // it — kept current here, once memory is confirmed live for the repo, along with the
+      // workspace's per-server enable switch (seeded into Trae's storage DB,
+      // core/traecode-mcp.ts). The returned hint (global gate off, or an unseedable switch)
+      // rides the session banner.
+      ensureMcpRegistration: (cwd) => ensureTraecodeWorkspaceMcp(cwd),
+    },
+    prompt: {
+      ...claudePrompt,
+      harness: "traecode",
+      journalPrompt: true,
+      // TraeCode's UserPromptSubmit payload carries `prompt` exactly like Claude Code's.
+      parse: (ev) => ({
+        prompt: ev.prompt as string | undefined,
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.session_id as string | undefined,
+      }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "traecode",
+      // No transcriptPath: the journal supplies it (see `journal` below).
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      journal: {
+        // `last_assistant_message` is the full reply — TraeCode's `responseText`.
+        assistantText: (ev) => ((ev.last_assistant_message as string | undefined) ?? "").trim(),
+      },
+    },
+  },
+  "kimi-code": {
+    // Kimi's ~/.kimi-code/config.toml takes a FLAT [[hooks]] array whose entries are validated by a
+    // strict 4-key schema (event/matcher/command/timeout). Neither JSON style can express it, and a
+    // fifth key drops EVERY hook in the file at warning severity, so its installer writes the block
+    // itself (the grok-build pattern) rather than going through mergeHarnessHooks.
+    configStyle: "toml-array",
+    install: {
+      // Timeouts are SECONDS here (integer 1-600, default 30) — the same unit as every other
+      // supported host, and the opposite of qwen-code's identically named field.
+      sessionStart: { event: "SessionStart", entry: "kimi-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "kimi-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "kimi-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: {
+      harness: "kimi-code",
+      parse: (ev) => ({
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.session_id as string | undefined,
+      }),
+      // Kimi runs SessionStart hooks for their side effects only: it awaits the trigger and drops
+      // the result, so nothing emitted here can reach the model or the terminal. Installed for the
+      // seed/daemon/session-root work runSessionStartHook does, and silent like antigravity-cli's.
+      emit: () => ({}),
+    },
+    prompt: {
+      harness: "kimi-code",
+      parse: (ev) => ({
+        // A block array, not a string — the same shape as the wire log's `turn.prompt.input`.
+        prompt: kimiPromptText(ev.prompt),
+        cwd: ev.cwd as string | undefined,
+        sessionId: ev.session_id as string | undefined,
+      }),
+      // Kimi has no additionalContext: a top-level `message` is the injection channel, which the
+      // CLI wraps as <hook_result hook_event="UserPromptSubmit"> and appends to the conversation.
+      // `notice` has no banner channel to reach (the copilot-cli precedent), but it cannot simply
+      // be dropped: when a hook's stdout parses to JSON carrying no message, Kimi falls back to
+      // injecting the RAW STDOUT, so an empty `{}` would put a literal "{}" in front of the model.
+      // Emitting the notice on the notice-only turn is what keeps that from ever happening.
+      emit: (context, notice) => ({ message: context || notice }),
+    },
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "kimi-code",
+      parse: (ev) => {
+        const sessionId = ev.session_id as string | undefined;
+        return {
+          sessionId,
+          // Kimi's Stop payload carries no transcript path — its hook feature has no such field at
+          // all — so resolve the session's own directory from the id, as grok-build does. The
+          // reader takes that DIRECTORY and reads every agent's wire.jsonl beneath it.
+          transcriptPath: sessionId ? kimiSessionDir(sessionId) : undefined,
+          cwd: ev.cwd as string | undefined,
+        };
+      },
+      readTranscript: readKimiTranscript,
+    },
+  },
+};
+
+export const runHarnessSessionStart = (harness: HookHarnessName): Promise<void> =>
+  runSessionStartHook(HOOK_HARNESSES[harness].sessionStart);
+export const runHarnessPrompt = (harness: HookHarnessName): Promise<void> =>
+  runHook(HOOK_HARNESSES[harness].prompt);
+export const runHarnessRetain = (harness: HookHarnessName): Promise<void> =>
+  runRetainHook(HOOK_HARNESSES[harness].retain);

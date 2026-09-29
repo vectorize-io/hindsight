@@ -1,0 +1,65 @@
+name: Release Tool
+
+on:
+  push:
+    tags:
+      - 'tools/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Extract tool info
+      id: info
+      run: |
+        # refs/tags/tools/self-driving-agents/v0.0.1 → tool=self-driving-agents, version=0.0.1
+        TAG="${GITHUB_REF#refs/tags/}"
+        TOOL=$(echo "$TAG" | cut -d'/' -f2)
+        VERSION=$(echo "$TAG" | cut -d'/' -f3 | sed 's/^v//')
+        echo "tool=$TOOL" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "Tool: $TOOL, Version: $VERSION"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    # Tools live under hindsight-tools/ and may depend on workspace packages
+    # (e.g. @vectorize-io/hindsight-client). Install from root so npm resolves
+    # workspace deps, then build any required workspace packages first.
+    - name: Install root workspace dependencies
+      run: npm ci
+
+    - name: Build hindsight-client (workspace dep)
+      run: npm run build --workspace=hindsight-clients/typescript
+
+    - name: Build hindsight-agent-sdk (workspace dep)
+      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
+
+    - name: Build tool
+      run: npm run build --workspace=hindsight-tools/${{ steps.info.outputs.tool }}
+
+    - name: Publish to npm
+      working-directory: ./hindsight-tools/${{ steps.info.outputs.tool }}
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,70 @@
+{
+  "name": "@vectorize-io/hindsight-openclaw",
+  "version": "0.13.0",
+  "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "hindsight-openclaw-backfill": "dist/backfill.js",
+    "hindsight-openclaw-setup": "dist/setup.js"
+  },
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "keywords": [
+    "openclaw",
+    "memory",
+    "ai",
+    "agent",
+    "hindsight",
+    "long-term-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/openclaw"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepack": "node scripts/pack-manifest.mjs strip",
+    "postpack": "node scripts/pack-manifest.mjs restore",
+    "backfill:help": "node dist/backfill.js --help",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "@vectorize-io/hindsight-agent-sdk": "^0.1.0",
+    "@vectorize-io/hindsight-all": "^0.6.2",
+    "@vectorize-io/hindsight-client": "^0.8.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/ui": "^4.1.11",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "rollup": "^4.59.0",
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5",
+    "postcss": ">=8.5.23 <9.0.0"
+  }
+}

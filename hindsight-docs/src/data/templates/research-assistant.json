@@ -1,0 +1,53 @@
+{
+  "version": "1",
+  "bank": {
+    "reflect_mission": "You are the long-term memory for a research and knowledge-work agent — one that monitors sources, writes briefings and digests, and maintains a second brain. Help it compound knowledge over time by recalling what the user cares about, what they've already learned, which sources they trust, and — importantly — what they choose to ignore.",
+    "retain_mission": "Extract the user's interests and focus areas, findings and syntheses worth keeping, sources and how reliable they proved, and signals about what the user dismisses or skips. Prefer durable knowledge over transient news. Ignore boilerplate and content the user has explicitly deprioritized.",
+    "enable_observations": true,
+    "observations_mission": "Track the user's evolving interests and focus, the sources they trust vs. the noise they filter out, and the growing body of what they've learned.",
+    "disposition_skepticism": 4,
+    "disposition_literalism": 3,
+    "disposition_empathy": 2
+  },
+  "mental_models": [
+    {
+      "id": "interests-and-focus",
+      "name": "Interests & Focus",
+      "source_query": "What topics, questions, and areas does the user care about right now? What do they want monitored, and what have they signalled they don't care about?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "knowledge-base",
+      "name": "Knowledge Base",
+      "source_query": "What has the user already learned or concluded on their topics of interest? What are the durable findings and open questions in their second brain?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "sources-and-reliability",
+      "name": "Sources & Reliability",
+      "source_query": "Which sources does the user rely on, and how reliable or useful has each proven over time? What should be trusted, cross-checked, or ignored?",
+      "max_tokens": 1024,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ],
+  "directives": [
+    {
+      "name": "Learn from what's ignored",
+      "content": "When the user skips, dismisses, or deprioritizes something, remember it. Use that signal to filter future curation so briefings and digests get more relevant over time, not noisier.",
+      "priority": 10
+    },
+    {
+      "name": "Attach provenance to findings",
+      "content": "When recalling a finding or claim, keep its source with it so the user can judge reliability and follow up. Compounding knowledge is only useful if it stays traceable.",
+      "priority": 8
+    }
+  ]
+}

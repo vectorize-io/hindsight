@@ -1,0 +1,50 @@
+[project]
+name = "hindsight-client"
+version = "0.10.2"
+description = "Python client for Hindsight - Semantic memory system with personality-driven thinking"
+license = "MIT"
+authors = [
+    {name = "Hindsight Team"}
+]
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+  "urllib3 (>=2.1.0,<3.0.0)",
+  "python-dateutil (>=2.8.2)",
+  "aiohttp (>=3.8.4)",
+  "aiohttp-retry (>=2.8.3)",
+  "pydantic (>=2)",
+  "typing-extensions (>=4.7.1)",
+  "yarl (>=1.9,<2.0)",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "requests>=2.33.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_client", "hindsight_client_api"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "I", "UP"]
+
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+addopts = "--timeout 120 -n auto --durations=10 -v"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+log_auto_indent = true

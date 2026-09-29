@@ -1,0 +1,241 @@
+---
+sidebar_position: 4
+---
+
+# CLI Reference
+
+import CodeSnippet from '@site/src/components/CodeSnippet';
+import cliSh from '!!raw-loader!@site/examples/api/cli-reference.sh';
+
+The Hindsight CLI provides command-line access to memory operations and bank management. All commands follow the [OpenAPI specification](/api-reference), so you can use `--help` on any command to see all available options.
+
+## Installation
+
+```bash
+curl -fsSL https://hindsight.vectorize.io/get-cli | bash
+```
+
+## Configuration
+
+Configure the API URL:
+
+<CodeSnippet code={cliSh} section="cli-configure" language="bash" />
+
+You can also run `hindsight configure` with no flags to be prompted interactively, or use environment variables (highest priority):
+
+```bash
+export HINDSIGHT_API_URL=http://localhost:8888
+export HINDSIGHT_API_KEY=your-api-key
+```
+
+### Named Profiles
+
+When you need to switch between multiple Hindsight deployments (e.g. local,
+staging, production) without constantly rewriting `~/.hindsight/config`, use
+named profiles. Each profile is a TOML file at
+`~/.hindsight/cli-profiles/<name>.toml` and is selected per-invocation with
+`-p/--profile` (or by setting `$HINDSIGHT_PROFILE`).
+
+<CodeSnippet code={cliSh} section="cli-profiles" language="bash" />
+
+Profile files are written with `0600` permissions on Unix so the API key is
+only readable by the owner.
+
+**Configuration precedence** (highest first):
+
+1. Environment variables (`HINDSIGHT_API_URL`, `HINDSIGHT_API_KEY`)
+2. Named profile — explicit `-p <name>`, otherwise `$HINDSIGHT_PROFILE`
+3. Shared config file (`~/.hindsight/config`, written by `hindsight configure`)
+4. Default (`http://localhost:8888`)
+
+`HINDSIGHT_API_URL` / `HINDSIGHT_API_KEY` always override profile values, which
+makes it safe to use `-p` in scripts while letting CI inject credentials via
+environment.
+
+## Core Commands
+
+### Retain (Store Memory)
+
+Store a single memory:
+
+<CodeSnippet code={cliSh} section="cli-retain" language="bash" />
+
+### Retain Files
+
+Bulk import from files:
+
+<CodeSnippet code={cliSh} section="cli-retain-files" language="bash" />
+
+### Recall (Search)
+
+Search memories using semantic similarity:
+
+<CodeSnippet code={cliSh} section="cli-recall" language="bash" />
+
+### Reflect (Generate Response)
+
+Generate a response using memories and bank disposition:
+
+<CodeSnippet code={cliSh} section="cli-reflect" language="bash" />
+
+### Memory History
+
+View the observation history for a specific memory unit:
+
+<CodeSnippet code={cliSh} section="cli-memory-history" language="bash" />
+
+### Clear Observations
+
+Remove all observations for a memory unit, keeping the core fact:
+
+<CodeSnippet code={cliSh} section="cli-memory-clear-observations" language="bash" />
+
+## Bank Management
+
+### List Banks
+
+<CodeSnippet code={cliSh} section="cli-bank-list" language="bash" />
+
+### View Disposition
+
+<CodeSnippet code={cliSh} section="cli-bank-disposition" language="bash" />
+
+### Set Disposition
+
+<CodeSnippet code={cliSh} section="cli-bank-set-disposition" language="bash" />
+
+### View Statistics
+
+<CodeSnippet code={cliSh} section="cli-bank-stats" language="bash" />
+
+### Set Bank Name
+
+<CodeSnippet code={cliSh} section="cli-bank-name" language="bash" />
+
+### Set Mission
+
+<CodeSnippet code={cliSh} section="cli-bank-mission" language="bash" />
+
+### Clear Observations (Bank-wide)
+
+Remove all observations across the entire bank:
+
+<CodeSnippet code={cliSh} section="cli-bank-clear-observations" language="bash" />
+
+### Recover Consolidation
+
+Recover from a failed or stuck consolidation:
+
+<CodeSnippet code={cliSh} section="cli-bank-consolidation-recover" language="bash" />
+
+## Document Management
+
+<CodeSnippet code={cliSh} section="cli-documents" language="bash" />
+
+## Entity Management
+
+<CodeSnippet code={cliSh} section="cli-entities" language="bash" />
+
+## Operation Management
+
+Track and manage async operations (retain-files, consolidation, etc.):
+
+<CodeSnippet code={cliSh} section="cli-operations" language="bash" />
+
+## Webhook Management
+
+Configure event delivery hooks for bank activity:
+
+<CodeSnippet code={cliSh} section="cli-webhooks" language="bash" />
+
+## Knowledge Base
+
+Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages) for what they are and how they refresh.
+
+<CodeSnippet code={cliSh} section="cli-kb-tree" language="bash" />
+
+<CodeSnippet code={cliSh} section="cli-kb-create-folder" language="bash" />
+
+<CodeSnippet code={cliSh} section="cli-kb-create-subfolder" language="bash" />
+
+<CodeSnippet code={cliSh} section="cli-kb-create-page" language="bash" />
+
+<CodeSnippet code={cliSh} section="cli-kb-manage" language="bash" />
+
+:::tip
+`hindsight fs mount --bank <bank_id>` mirrors the same knowledge base onto disk as
+real markdown files, kept current by a background refresh loop — handy when you'd
+rather use `grep`, `rg`, or your editor than the commands above.
+:::
+
+## Audit Logs
+
+Inspect the audit trail for a bank:
+
+<CodeSnippet code={cliSh} section="cli-audit" language="bash" />
+
+## Output Formats
+
+<CodeSnippet code={cliSh} section="cli-output" language="bash" />
+
+## Global Options
+
+| Flag | Description |
+|------|-------------|
+| `-v, --verbose` | Show detailed output including request/response |
+| `-o, --output <format>` | Output format: pretty, json, yaml |
+| `-p, --profile <name>` | Use a named profile (see [Named Profiles](#named-profiles)) |
+| `--help` | Show help |
+| `--version` | Show version |
+
+## Control Plane UI
+
+Launch the web-based Control Plane UI directly from the CLI:
+
+```bash
+hindsight ui
+```
+
+This runs the Control Plane locally on port 9999 using the API URL from your configuration. The UI provides:
+
+- **Memory bank management** — Browse and manage all your banks
+- **Entity explorer** — Visualize the knowledge graph
+- **Query testing** — Interactive recall and reflect testing
+- **Operation history** — View ingestion and processing logs
+
+:::tip
+The UI command requires Node.js to be installed. It automatically downloads and runs the `@vectorize-io/hindsight-control-plane` package via npx.
+:::
+
+## Interactive Explorer
+
+Launch the TUI explorer for visual navigation of your memory banks:
+
+```bash
+hindsight explore
+```
+
+The explorer provides an interactive terminal interface to:
+
+- **Browse memory banks** — View all banks and their statistics
+- **Search memories** — Run recall queries with real-time results
+- **Inspect memory details** — Open a memory to view its text, metadata, entities, and full JSON fields
+- **Inspect entities** — Explore the knowledge graph and entity relationships
+- **View facts** — Browse world facts, experiences, and observations
+- **Navigate documents** — See source documents and their extracted memories
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `↑/↓` | Navigate items |
+| `Enter` | Select item / view details |
+| `Tab` | Switch panels |
+| `/` | Search |
+| `q` | Quit |
+
+{/* Screenshot placeholder: explore command TUI */}
+
+## Example Workflow
+
+<CodeSnippet code={cliSh} section="cli-workflow" language="bash" />

@@ -1,0 +1,181 @@
+#!/usr/bin/env node
+/**
+ * Recall API examples for Hindsight (Node.js)
+ * Run: node examples/api/recall.mjs
+ */
+import { HindsightClient } from '@vectorize-io/hindsight-client';
+
+const HINDSIGHT_URL = process.env.HINDSIGHT_API_URL || 'http://localhost:8888';
+
+// =============================================================================
+// Setup (not shown in docs)
+// =============================================================================
+const client = new HindsightClient({ baseUrl: HINDSIGHT_URL });
+
+// Seed some data for recall examples
+await client.retain('my-bank', 'Alice works at Google as a software engineer');
+await client.retain('my-bank', 'Alice loves hiking on weekends');
+await client.retain('my-bank', 'Bob is a data scientist who works with Alice');
+
+// =============================================================================
+// Doc Examples
+// =============================================================================
+
+// [docs:recall-basic]
+const response = await client.recall('my-bank', 'What does Alice do?');
+
+// response.results is an array of result objects, each with:
+// - id:            fact ID
+// - text:          the extracted fact
+// - type:          "world", "experience", or "observation"
+// - context:       context label set during retain
+// - metadata:      Record<string, string> set during retain
+// - tags:          string[] of tags
+// - entities:      string[] of entity names linked to this fact
+// - occurredStart: ISO datetime of when the event started
+// - occurredEnd:   ISO datetime of when the event ended
+// - mentionedAt:   ISO datetime of when the fact was retained
+// - documentId:    document this fact belongs to
+// - chunkId:       chunk this fact was extracted from
+
+// Example response.results:
+// [
+//   { id: "a1b2...", text: "Alice works at Google as a software engineer", type: "world", context: "career", ... },
+//   { id: "c3d4...", text: "Alice got promoted to senior engineer", type: "experience", occurredStart: "2024-03-15T00:00:00Z", ... },
+// ]
+// [/docs:recall-basic]
+
+
+// [docs:recall-with-options]
+const detailedResponse = await client.recall('my-bank', 'What does Alice do?', {
+    types: ['world', 'experience'],
+    budget: 'high',
+    maxTokens: 8000,
+    trace: true
+});
+
+// Access results
+for (const r of detailedResponse.results) {
+    console.log(`${r.text} (score: ${r.weight})`);
+}
+// [/docs:recall-with-options]
+
+
+// [docs:recall-world-only]
+await client.recall('my-bank', 'query', { types: ['world'] });
+// [/docs:recall-world-only]
+
+
+// [docs:recall-experience-only]
+await client.recall('my-bank', 'query', { types: ['experience'] });
+// [/docs:recall-experience-only]
+
+
+// [docs:recall-observations-only]
+await client.recall('my-bank', 'query', { types: ['observation'] });
+// [/docs:recall-observations-only]
+
+
+// [docs:recall-token-budget]
+// Fill up to 4K tokens of context with relevant memories
+await client.recall('my-bank', 'What do I know about Alice?', { maxTokens: 4096 });
+
+// Smaller budget for quick lookups
+await client.recall('my-bank', "Alice's email", { maxTokens: 500 });
+// [/docs:recall-token-budget]
+
+
+// [docs:recall-with-tags]
+// Filter recall to only memories tagged for a specific user
+await client.recall('my-bank', 'What feedback did the user give?', {
+    tags: ['user:alice']
+});
+// [/docs:recall-with-tags]
+
+
+// [docs:recall-tags-strict]
+// Strict: only memories that have matching tags (excludes untagged)
+await client.recall('my-bank', 'What did the user say?', {
+    tags: ['user:alice'],
+    tagsMatch: 'any_strict'
+});
+// [/docs:recall-tags-strict]
+
+
+// [docs:recall-tags-all]
+// AND matching: require ALL specified tags to be present
+await client.recall('my-bank', 'What bugs were reported?', {
+    tags: ['user:alice', 'bug-report'],
+    tagsMatch: 'all_strict'
+});
+// [/docs:recall-tags-all]
+
+
+// [docs:recall-tags-any]
+await client.recall('my-bank', 'communication preferences', {
+    tags: ['user:alice'],
+    tagsMatch: 'any'
+});
+// [/docs:recall-tags-any]
+
+
+// [docs:recall-tags-any-strict]
+await client.recall('my-bank', 'communication preferences', {
+    tags: ['user:alice'],
+    tagsMatch: 'any_strict'
+});
+// [/docs:recall-tags-any-strict]
+
+
+// [docs:recall-tags-all-mode]
+await client.recall('my-bank', 'communication tools', {
+    tags: ['user:alice', 'team'],
+    tagsMatch: 'all'
+});
+// [/docs:recall-tags-all-mode]
+
+
+// [docs:recall-tags-all-strict]
+await client.recall('my-bank', 'communication tools', {
+    tags: ['user:alice', 'team'],
+    tagsMatch: 'all_strict'
+});
+// [/docs:recall-tags-all-strict]
+
+
+// [docs:recall-source-facts]
+// Recall observations and include their source facts
+const obsResponse = await client.recall('my-bank', 'What patterns have I learned about Alice?', {
+    types: ['observation'],
+    includeSourceFacts: true,
+    maxSourceFactsTokens: 4096,
+});
+
+for (const obs of obsResponse.results) {
+    console.log(`Observation: ${obs.text}`);
+    if (obs.source_fact_ids && obsResponse.source_facts) {
+        console.log('  Derived from:');
+        for (const factId of obs.source_fact_ids) {
+            const fact = obsResponse.source_facts[factId];
+            if (fact) console.log(`    - [${fact.type}] ${fact.text}`);
+        }
+    }
+}
+// [/docs:recall-source-facts]
+
+
+// [docs:recall-budget-levels]
+// Quick lookup
+const quickResults = await client.recall('my-bank', "Alice's email", { budget: 'low' });
+
+// Deep exploration
+const deepResults = await client.recall('my-bank', 'How are Alice and Bob connected?', { budget: 'high' });
+// [/docs:recall-budget-levels]
+
+
+// =============================================================================
+// Cleanup (not shown in docs)
+// =============================================================================
+await fetch(`${HINDSIGHT_URL}/v1/default/banks/my-bank`, { method: 'DELETE' });
+
+console.log('recall.mjs: All examples passed');

@@ -1,0 +1,546 @@
+"""
+Tests for document tracking and upsert functionality.
+"""
+
+import logging
+from datetime import datetime, timezone
+from unittest.mock import patch
+
+import pytest
+
+from hindsight_api import RequestContext
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
+
+
+@pytest.mark.asyncio
+async def test_document_creation_and_retrieval(memory, request_context):
+    """Test that documents are created and can be retrieved."""
+    bank_id = f"test_doc_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "meeting-001"
+
+        # Store memory with document tracking
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google. Bob works at Microsoft.",
+            context="Team meeting",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Retrieve document
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+
+        assert doc is not None
+        assert doc["id"] == document_id
+        assert doc["bank_id"] == bank_id
+        assert "Alice works at Google" in doc["original_text"]
+        assert doc["memory_unit_count"] > 0
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_upsert(memory, request_context):
+    """Test that providing the same document_id automatically upserts (deletes old units and creates new ones)."""
+    bank_id = f"test_upsert_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "meeting-002"
+
+        # First version
+        units_v1 = await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="Initial",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Get document stats
+        doc_v1 = await memory.get_document(document_id, bank_id, request_context=request_context)
+        count_v1 = doc_v1["memory_unit_count"]
+
+        # Update with different content (automatic upsert when same document_id is provided)
+        units_v2 = await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Microsoft. Bob works at Apple.",
+            context="Updated",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Get updated document stats
+        doc_v2 = await memory.get_document(document_id, bank_id, request_context=request_context)
+        count_v2 = doc_v2["memory_unit_count"]
+
+        # Verify old units were replaced
+        assert "Microsoft" in doc_v2["original_text"]
+        assert doc_v2["updated_at"] > doc_v1["created_at"]
+
+        # Different unit IDs (old ones deleted, new ones created)
+        assert set(units_v1).isdisjoint(set(units_v2))
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_deletion(memory, request_context):
+    """Test that deleting a document cascades to memory units."""
+    bank_id = f"test_delete_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "meeting-003"
+
+        # Create document
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="Test",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Verify it exists
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["memory_unit_count"] > 0
+
+        # Delete document
+        result = await memory.delete_document(document_id, bank_id, request_context=request_context)
+        assert result["document_deleted"] == 1
+        assert result["memory_units_deleted"] > 0
+
+        # Verify it's gone
+        doc_after = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc_after is None
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def _retain_shared_document(memory, request_context, banks, document_id):
+    """Give each bank its own copy of the same document_id — legal, `documents` is keyed on (id, bank_id)."""
+    for bank_id in banks:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="Test",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+
+async def _units(memory, request_context, bank_id, document_id):
+    page = await memory.list_memory_units(bank_id=bank_id, document_id=document_id, request_context=request_context)
+    return page["items"]
+
+
+@pytest.mark.asyncio
+async def test_document_deletion_counts_only_its_own_bank_units(memory, request_context):
+    """`memory_units_deleted` must report the caller's units, not those of every bank sharing the document_id."""
+    stamp = datetime.now(timezone.utc).timestamp()
+    bank_a, bank_b = f"test_del_scope_a_{stamp}", f"test_del_scope_b_{stamp}"
+    document_id = f"shared-document-id-{stamp}"
+
+    try:
+        await _retain_shared_document(memory, request_context, (bank_a, bank_b), document_id)
+        a_count = len(await _units(memory, request_context, bank_a, document_id))
+        assert a_count > 0
+
+        result = await memory.delete_document(document_id, bank_a, request_context=request_context)
+
+        assert result["memory_units_deleted"] == a_count
+        assert len(await _units(memory, request_context, bank_b, document_id)) == a_count
+
+    finally:
+        for bank_id in (bank_a, bank_b):
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_tag_update_is_scoped_to_its_bank(memory, request_context):
+    """Re-tagging a document must not re-tag the memory units of another bank sharing the document_id."""
+    stamp = datetime.now(timezone.utc).timestamp()
+    bank_a, bank_b = f"test_tag_scope_a_{stamp}", f"test_tag_scope_b_{stamp}"
+    document_id = f"shared-document-id-{stamp}"
+
+    try:
+        await _retain_shared_document(memory, request_context, (bank_a, bank_b), document_id)
+
+        await memory.update_document(document_id, bank_a, tags=["rewritten"], request_context=request_context)
+
+        for unit in await _units(memory, request_context, bank_a, document_id):
+            assert unit["tags"] == ["rewritten"]
+        for unit in await _units(memory, request_context, bank_b, document_id):
+            assert "rewritten" not in (unit["tags"] or [])
+
+    finally:
+        for bank_id in (bank_a, bank_b):
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_memory_without_document(memory, request_context):
+    """Test that memories can still be created without document tracking."""
+    bank_id = f"test_no_doc_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Create memory without document_id (backward compatibility)
+        units = await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google.",
+            context="Test",
+            request_context=request_context,
+        )
+
+        assert len(units) > 0
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_metadata_from_retain_params(memory, request_context):
+    """Test that document_metadata is returned from retain_params.metadata in both get and list."""
+    bank_id = f"test_doc_meta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-with-metadata"
+        metadata = {"source": "slack", "channel": "#general"}
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Alice works at Google.", "context": "Team meeting", "metadata": metadata}],
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # get_document should include document_metadata
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] == metadata
+        assert doc["retain_params"] is not None
+        assert doc["retain_params"]["metadata"] == metadata
+
+        # list_documents should also include document_metadata
+        docs_list = await memory.list_documents(
+            bank_id=bank_id, search_query=None, limit=100, offset=0, request_context=request_context
+        )
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == document_id)
+        assert listed_doc["document_metadata"] == metadata
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_without_metadata(memory, request_context):
+    """Test that document_metadata is None when no metadata was provided during retain."""
+    bank_id = f"test_doc_no_meta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-no-metadata"
+
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob works at Microsoft.",
+            context="Meeting",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] is None
+
+        docs_list = await memory.list_documents(
+            bank_id=bank_id, search_query=None, limit=100, offset=0, request_context=request_context
+        )
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == document_id)
+        assert listed_doc["document_metadata"] is None
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_observation_scopes_from_retain_params(memory, request_context):
+    """observation_scopes passed at retain time is captured into retain_params and surfaced by get_document."""
+    bank_id = f"test_doc_obs_scopes_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-with-scopes"
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Alice and Bob are friends.",
+                    "tags": ["alice", "bob"],
+                    "observation_scopes": "all_combinations",
+                }
+            ],
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        # Surfaced as a top-level field and persisted in retain_params.
+        assert doc["observation_scopes"] == "all_combinations"
+        assert doc["retain_params"]["observation_scopes"] == "all_combinations"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_observation_scopes_none_when_unset(memory, request_context):
+    """get_document returns observation_scopes None when none was configured at retain time."""
+    bank_id = f"test_doc_no_scopes_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-no-scopes"
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob works at Microsoft.",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["observation_scopes"] is None
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts(memory_real_llm, request_context):
+    """
+    Test that documents are persisted even when zero facts are extracted.
+
+    This is a regression test for issue #324 where documents with no extractable
+    facts were reported as disappearing from the system.
+    """
+    memory = memory_real_llm
+    bank_id = f"test_zero_facts_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-zero-facts"
+
+        # Retain content that produces zero facts (gibberish/random characters)
+        units = await memory.retain_async(
+            bank_id=bank_id,
+            content="xyzabc123 !!!### @@@ $$$",  # Random characters unlikely to produce facts
+            context="Test zero facts",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # Should return empty unit list (no facts extracted)
+        assert len(units) == 0, "Should extract zero facts from gibberish content"
+
+        # But document should still be persisted and retrievable
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None, "Document should be persisted even with zero facts"
+        assert doc["id"] == document_id
+        assert doc["bank_id"] == bank_id
+        assert doc["memory_unit_count"] == 0, "Should have zero memory units"
+        assert len(doc["original_text"]) > 0, "Should have non-zero text length"
+        assert "xyzabc123" in doc["original_text"], "Should contain original content"
+
+        # Document should also appear in list
+        docs_list = await memory.list_documents(
+            bank_id=bank_id,
+            search_query=None,
+            limit=100,
+            offset=0,
+            request_context=request_context,
+        )
+        assert docs_list["total"] == 1, "Document should appear in list"
+        assert any(d["id"] == document_id for d in docs_list["items"]), "Document should be in items"
+
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == document_id)
+        assert listed_doc["memory_unit_count"] == 0, "Listed document should show zero memory units"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts_batch(memory_real_llm, request_context):
+    """
+    Test that documents are persisted with zero facts in batch retain operations.
+
+    This tests the async batch code path to ensure it also handles zero facts correctly.
+    """
+    memory = memory_real_llm
+    bank_id = f"test_zero_facts_batch_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Mix of content: some produces facts, some produces zero facts
+        contents = [
+            {
+                "content": "Alice works at Google",
+                "document_id": "doc-with-facts",
+            },
+            {
+                "content": "!@# $$$ %%% ^^^ &&& ***",  # Gibberish - zero facts expected
+                "document_id": "doc-zero-facts",
+            },
+        ]
+
+        unit_ids = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+        # First content should produce facts, second should not
+        assert len(unit_ids[0]) > 0, "First content should produce facts"
+        assert len(unit_ids[1]) == 0, "Second content should produce zero facts"
+
+        # Both documents should be persisted
+        doc_with_facts = await memory.get_document("doc-with-facts", bank_id, request_context=request_context)
+        assert doc_with_facts is not None
+        assert doc_with_facts["memory_unit_count"] > 0
+
+        doc_zero_facts = await memory.get_document("doc-zero-facts", bank_id, request_context=request_context)
+        assert doc_zero_facts is not None, "Document with zero facts should be persisted"
+        assert doc_zero_facts["memory_unit_count"] == 0, "Should have zero memory units"
+        assert "!@#" in doc_zero_facts["original_text"]
+
+        # Both should appear in list
+        docs_list = await memory.list_documents(
+            bank_id=bank_id,
+            search_query=None,
+            limit=100,
+            offset=0,
+            request_context=request_context,
+        )
+        assert docs_list["total"] == 2, "Both documents should appear in list"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts_async_submit(memory_real_llm, request_context):
+    """
+    Test that documents are persisted with zero facts in fire-and-forget async retain.
+
+    This tests the submit_async_retain (background task) code path to ensure it also
+    handles zero facts correctly.
+    """
+    memory = memory_real_llm
+    import asyncio
+
+    bank_id = f"test_zero_facts_async_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Submit async retain with gibberish content
+        result = await memory.submit_async_retain(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "!@# $$$ %%% ^^^ &&& ***",  # Gibberish - zero facts expected
+                    "document_id": "doc-async-zero-facts",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        operation_id = result["operation_id"]
+        assert operation_id is not None, "Should return operation_id"
+
+        # Wait for background task to complete
+        max_wait = 60  # 60 seconds max
+        wait_interval = 0.5
+        elapsed = 0
+
+        while elapsed < max_wait:
+            await asyncio.sleep(wait_interval)
+            elapsed += wait_interval
+
+            # Check if document exists
+            doc = await memory.get_document("doc-async-zero-facts", bank_id, request_context=request_context)
+            if doc is not None:
+                break
+
+        # Document should be persisted even with zero facts
+        assert doc is not None, "Document should be persisted after async task completes"
+        assert doc["id"] == "doc-async-zero-facts"
+        assert doc["memory_unit_count"] == 0, "Should have zero memory units"
+        assert "!@#" in doc["original_text"]
+
+        # Document should appear in list
+        docs_list = await memory.list_documents(
+            bank_id=bank_id,
+            search_query=None,
+            limit=100,
+            offset=0,
+            request_context=request_context,
+        )
+        assert docs_list["total"] == 1, "Document should appear in list"
+        assert any(d["id"] == "doc-async-zero-facts" for d in docs_list["items"])
+
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == "doc-async-zero-facts")
+        assert listed_doc["memory_unit_count"] == 0, "Listed document should show zero memory units"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_stored_without_chunks_when_zero_facts(memory_no_llm_verify, request_context):
+    """
+    Regression test: when 0 facts are extracted from chunked content, the document row
+    must be stored but no chunk rows should be written.
+    """
+    bank_id = f"test_zero_facts_no_chunks_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-zero-facts-chunked"
+
+    # Content large enough to exceed default retain_chunk_size (3000 chars) so chunking is triggered
+    content = "Alice works at Google. " * 200  # ~4600 chars
+
+    async def mock_llm_zero_facts(*args, **kwargs):
+        response = {"facts": []}
+        return LLMCallResult(content=response, usage=TokenUsage(input_tokens=10, output_tokens=2))
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_zero_facts):
+            units = await memory_no_llm_verify.retain_async(
+                bank_id=bank_id,
+                content=content,
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        assert units == [], "Should return no memory units when LLM extracts zero facts"
+
+        # Document row must exist
+        doc = await memory_no_llm_verify.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None, "Document row must be stored even when zero facts are extracted"
+        assert doc["id"] == document_id
+        assert doc["memory_unit_count"] == 0
+
+        # No chunk rows should be stored
+        pool = await memory_no_llm_verify._get_pool()
+        async with pool.acquire() as conn:
+            chunk_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM chunks WHERE document_id = $1 AND bank_id = $2",
+                document_id,
+                bank_id,
+            )
+        assert chunk_count == 0, "No chunk rows should be stored when zero facts are extracted"
+
+    finally:
+        await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)

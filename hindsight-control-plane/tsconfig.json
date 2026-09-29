@@ -1,0 +1,88 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "target": "ES2017"
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "types/**/*.d.ts",
+    ".next-*/types/**/*.ts",
+    ".next-*/dev/types/**/*.ts",
+    ".next-49944/types/**/*.ts",
+    ".next-49944/dev/types/**/*.ts",
+    ".next-50612/types/**/*.ts",
+    ".next-50612/dev/types/**/*.ts",
+    ".next-54508/types/**/*.ts",
+    ".next-54508/dev/types/**/*.ts",
+    ".next-55630/types/**/*.ts",
+    ".next-55630/dev/types/**/*.ts",
+    ".next-58976/types/**/*.ts",
+    ".next-58976/dev/types/**/*.ts",
+    ".next-64080/types/**/*.ts",
+    ".next-64080/dev/types/**/*.ts",
+    ".next-50432/types/**/*.ts",
+    ".next-50432/dev/types/**/*.ts",
+    ".next-54840/types/**/*.ts",
+    ".next-54840/dev/types/**/*.ts",
+    ".next-64856/types/**/*.ts",
+    ".next-64856/dev/types/**/*.ts",
+    ".next-61030/types/**/*.ts",
+    ".next-61030/dev/types/**/*.ts",
+    ".next-52443/types/**/*.ts",
+    ".next-52443/dev/types/**/*.ts",
+    ".next-52431/types/**/*.ts",
+    ".next-52431/dev/types/**/*.ts",
+    ".next-63494/types/**/*.ts",
+    ".next-63494/dev/types/**/*.ts",
+    ".next-59810/types/**/*.ts",
+    ".next-59810/dev/types/**/*.ts",
+    ".next-55993/types/**/*.ts",
+    ".next-55993/dev/types/**/*.ts",
+    ".next-9998/types/**/*.ts",
+    ".next-9998/dev/types/**/*.ts",
+    ".next-9971/types/**/*.ts",
+    ".next-9971/dev/types/**/*.ts",
+    ".next-51161/types/**/*.ts",
+    ".next-51161/dev/types/**/*.ts",
+    ".next-63772/types/**/*.ts",
+    ".next-63772/dev/types/**/*.ts",
+    ".next-3117/types/**/*.ts",
+    ".next-3117/dev/types/**/*.ts",
+    ".next-32852/types/**/*.ts",
+    ".next-32852/dev/types/**/*.ts",
+    ".next-59588/types/**/*.ts",
+    ".next-59588/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

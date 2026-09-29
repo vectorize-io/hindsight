@@ -1,0 +1,2 @@
+FROM hindsight-coding-agents-e2e-base
+RUN curl -fsS https://cursor.com/install | bash && command -v cursor-agent

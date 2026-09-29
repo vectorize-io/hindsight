@@ -1,0 +1,129 @@
+{
+  "version": "1",
+  "bank": {
+    "reflect_mission": "You are the memory of a busy executive. Recall the current state of clients, sales opportunities, project delivery, and product development — the decisions made, commitments outstanding, risks emerging, and who is responsible for what — so the executive walks into any meeting already caught up.",
+    "retain_mission": "Extract decisions and who made them, action items with their owners and due dates, commitments and promises, changes in a deal or opportunity's stage or value, project delivery status and blockers, product development progress and feedback, financial figures and targets, and the people and organizations involved. Prioritize concrete outcomes, status changes, and next steps over discussion and small talk.",
+    "enable_observations": true,
+    "observations_mission": "Synthesize the durable state of the business: each client or account and the relationship, each open opportunity with its stage and risks, each project's delivery status and blockers, product direction and the decisions behind it, and the commitments outstanding across all of them.",
+    "disposition_literalism": 5,
+    "disposition_skepticism": 3,
+    "disposition_empathy": 3,
+    "entities_allow_free_form": true,
+    "entity_labels": [
+      {
+        "key": "area",
+        "description": "The business area a memory is about. Classify by the dominant topic of the content.",
+        "type": "value",
+        "optional": true,
+        "tag": true,
+        "values": [
+          {"value": "sales", "description": "Clients, prospects, opportunities, pipeline, revenue"},
+          {"value": "delivery", "description": "Project and client delivery, implementation, milestones"},
+          {"value": "product", "description": "Product development, roadmap, features, user feedback"},
+          {"value": "operations", "description": "Internal operations, process, tooling, vendors"},
+          {"value": "people", "description": "Hiring, team, org, performance, relationships"},
+          {"value": "finance", "description": "Budgets, forecasts, targets, spend, financial results"},
+          {"value": "strategy", "description": "Company direction, priorities, positioning, partnerships"}
+        ]
+      },
+      {
+        "key": "deal_stage",
+        "description": "For sales conversations, the stage of the opportunity being discussed.",
+        "type": "value",
+        "optional": true,
+        "tag": true,
+        "values": [
+          {"value": "lead", "description": "Unqualified interest"},
+          {"value": "qualification", "description": "Assessing fit, budget, and authority"},
+          {"value": "proposal", "description": "Proposal or quote presented"},
+          {"value": "negotiation", "description": "Terms, pricing, or contract under negotiation"},
+          {"value": "closed_won", "description": "Deal signed"},
+          {"value": "closed_lost", "description": "Deal lost or abandoned"}
+        ]
+      },
+      {
+        "key": "status_signal",
+        "description": "Health signal for a project, deliverable, or initiative mentioned in the content.",
+        "type": "value",
+        "optional": true,
+        "tag": false,
+        "values": [
+          {"value": "on_track", "description": "Progressing as planned"},
+          {"value": "at_risk", "description": "In danger of slipping"},
+          {"value": "blocked", "description": "Cannot proceed without a resolution"},
+          {"value": "delayed", "description": "Behind schedule"},
+          {"value": "completed", "description": "Finished or delivered"}
+        ]
+      }
+    ]
+  },
+  "mental_models": [
+    {
+      "id": "sales-pipeline",
+      "name": "Sales Pipeline",
+      "source_query": "What open opportunities exist? For each, what is the client, the stage, the value, the key risks, and the next step? Which deals moved stage recently and why?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "project-delivery",
+      "name": "Project Delivery Status",
+      "source_query": "What projects and client deliveries are in flight? For each, what is the status, the upcoming milestones, the blockers, and who owns it?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "product-development",
+      "name": "Product Development",
+      "source_query": "What is happening in product development? What has shipped or is planned, what decisions were made, and what recurring feedback or requests are shaping the roadmap?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "decisions-and-commitments",
+      "name": "Decisions & Commitments",
+      "source_query": "What decisions have been made, and what commitments, action items, or promises are outstanding? For each, who owns it and by when?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "key-relationships",
+      "name": "Key People & Relationships",
+      "source_query": "Who are the important clients, stakeholders, and team members? For each, what is their role, what do they care about, and what is the state of the relationship?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ],
+  "directives": [
+    {
+      "name": "Lead with decisions, owners, and deadlines",
+      "content": "When recalling context, surface decisions made, commitments outstanding, and who owns what by when before background discussion. The executive needs to know what was decided and what is expected of whom.",
+      "priority": 10
+    },
+    {
+      "name": "Track status changes over time",
+      "content": "Note when a deal's stage, a project's status, or a product milestone changes, and what drove the change. The trajectory matters as much as the current state.",
+      "priority": 8
+    },
+    {
+      "name": "Flag risks and blockers",
+      "content": "Proactively surface risks, blockers, and at-risk items. If a commitment is slipping or a deal is stalling, say so rather than waiting to be asked.",
+      "priority": 7
+    },
+    {
+      "name": "Preserve attribution",
+      "content": "Keep who said, decided, or committed to what. Attribute statements to the person and the meeting or context they came from so accountability stays clear.",
+      "priority": 6
+    }
+  ]
+}

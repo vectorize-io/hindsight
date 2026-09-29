@@ -1,0 +1,392 @@
+"""Shared PostgreSQL vector-extension dispatch helpers."""
+
+from __future__ import annotations
+
+import logging
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
+from ._pg_extensions import create_extension
+
+logger = logging.getLogger(__name__)
+
+# Extensions a user can set via HINDSIGHT_API_VECTOR_EXTENSION.
+CONFIGURABLE_EXTENSIONS = ("pgvector", "pgvectorscale", "vchord", "scann")
+
+# Extensions detect_vector_extension() can return. pg_diskann is a runtime-only
+# resolution from a configured "pgvectorscale" backend on Azure (uses a different
+# WITH clause), never a value the user sets directly.
+RESOLVED_EXTENSIONS = (*CONFIGURABLE_EXTENSIONS, "pg_diskann")
+
+# Backwards-compatible alias for older imports.
+VALID_EXTENSIONS = CONFIGURABLE_EXTENSIONS
+
+SCANN_MIN_ROWS_FOR_AUTO_INDEX = 10_000
+
+
+_EXTENSION_NAMES = {
+    "pgvector": "vector",
+    "pgvectorscale": "vectorscale",
+    "vchord": "vchord",
+    "scann": "alloydb_scann",
+}
+
+_INDEX_USING_CLAUSES = {
+    "pgvector": "USING hnsw (embedding vector_cosine_ops)",
+    "pgvectorscale": "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)",
+    "pg_diskann": "USING diskann (embedding vector_cosine_ops) WITH (max_neighbors = 50)",
+    "vchord": "USING vchordrq (embedding vector_cosine_ops)",
+    "scann": "USING scann (embedding cosine) WITH (mode = 'AUTO')",
+}
+
+_INDEX_TYPE_KEYWORDS = {
+    "pgvector": "hnsw",
+    "pgvectorscale": "diskann",
+    "pg_diskann": "diskann",
+    "vchord": "vchordrq",
+    "scann": "scann",
+}
+
+# Ceiling on how many tuples one resumed ANN scan may visit (hnsw.max_scan_tuples).
+# Only iterative scans consult it, and it is approximate — the initial round is not
+# counted. pgvector defaults to 20000; this is deliberately lower.
+#
+# The filters that thin a semantic arm (the similarity floor, tags, date ranges) are
+# applied *after* the index scan, so a selective query resumes repeatedly to fill its
+# LIMIT. Unbounded, that turns the cheapest queries today into the most expensive:
+# ~20x the standing batch is enough to fill even a large recall budget on an
+# unfiltered query, and caps the pathological filtered case at a scan that returns
+# short — which is exactly what those queries did before iterative scans were on.
+# The GUCs that make a scan resumable — dropped wholesale when the operator turns the
+# behaviour off, so a connection is left exactly as it was before it existed (and a
+# pgvector too old to define them is never sent them either).
+_ITERATIVE_SCAN_GUCS = frozenset({"hnsw.iterative_scan", "hnsw.max_scan_tuples"})
+
+
+def iterative_scan_enabled() -> bool:
+    """Whether ANN scans may resume to satisfy a query's LIMIT.
+
+    Turning it off restores the previous depth exactly: a scan stops when its first
+    candidate list drains, so no recall retrieves more rows than that list holds,
+    whatever its budget.
+
+    Resolved through the config object rather than read from the environment, so a
+    value set any other way — a CLI override applied with dataclasses.replace, a
+    programmatically built config — is honoured, and the parsing and validation live
+    in one place. Imported inside the function because config imports this module.
+    """
+    from .config import get_config
+
+    return get_config().ann_iterative_scan
+
+
+def ann_max_scan_tuples() -> int:
+    """Ceiling on tuples one resumed scan may visit (hnsw.max_scan_tuples).
+
+    This is the knob that governs the cost of the behaviour. It bounds the CPU a
+    selective query can spend resuming, and with it the scan's memory — pgvector
+    otherwise caps that at ``work_mem * hnsw.scan_mem_multiplier``, but at this
+    default the memory ceiling is never approached: squeezing work_mem to 256kB
+    changes neither the rows returned nor the latency.
+
+    Approximate, and the initial scan is not counted, so even 1 leaves intact the
+    depth a query had before scans could resume.
+    """
+    from .config import get_config
+
+    return get_config().ann_max_scan_tuples
+
+
+# Per-backend ANN search-time tuning GUCs. Each entry is a tuple of
+# (guc_name, value) pairs the caller can apply with SET or SET LOCAL.
+#
+# - pgvector exposes hnsw.ef_search. The 60 / 200 pair is unchanged from the
+#   pre-dispatcher code (internal benchmarks tuned around our embedding count
+#   and recall floor; see the link_utils / pool init call sites for the
+#   latency-vs-recall framing). With iterative scans on (below) the ef value is a
+#   batch size rather than a ceiling, so a query's own LIMIT decides its depth.
+# - vchord exposes vchordrq.probes, but its shape must match the index's
+#   build.internal.lists hierarchy. VectorChord 1.1 added per-index fallback
+#   parameters for this reason: a session GUC overrides every vchordrq index,
+#   and a single value can be invalid for listless or mixed-layout indexes.
+#   Hindsight's built-in vchord clause does not set lists, so the safe default
+#   is no session-level probe override; deployments that partition vchordrq
+#   indexes should attach probes to the index storage parameters instead.
+# - pgvectorscale / pg_diskann / scann do not expose an equivalent per-statement
+#   knob in the engine today, so the dispatcher returns no statements for them.
+#
+# hnsw.iterative_scan is what makes ef_search a *batch* size rather than a ceiling.
+# With it off (pgvector's default, and what Hindsight ran until now) the ground-layer
+# search runs once and the scan ends when its list drains, so a query could never get
+# more rows than ef_search however large its LIMIT — the recall budget moved the SQL
+# and nothing else. With it on, the scan resumes in ef_search-sized rounds until the
+# LIMIT is met, so each query gets the depth it asks for with no per-query setting.
+# strict_order, not relaxed_order: the arms are trimmed in Python on the assumption
+# that rows arrive ordered by distance.
+#
+# Retain-side link probing wants the opposite — it is tuned for latency, not depth,
+# and resuming past its small candidate list would defeat that — so the low-latency
+# profile pins it off. Both profiles set it explicitly rather than relying on the
+# server default, so neither depends on what the other last left on the connection.
+_ANN_TUNING_LOW_LATENCY: dict[str, tuple[tuple[str, str], ...]] = {
+    "pgvector": (("hnsw.ef_search", "60"), ("hnsw.iterative_scan", "off")),
+}
+_ANN_TUNING_HIGH_RECALL: dict[str, tuple[tuple[str, str], ...]] = {
+    "pgvector": (
+        ("hnsw.ef_search", "200"),
+        ("hnsw.iterative_scan", "strict_order"),
+        # Value filled in per call by ann_search_tuning_settings().
+        ("hnsw.max_scan_tuples", ""),
+    ),
+}
+
+# (extension name, needs CASCADE) per configured backend, in install order.
+# Creation goes through _pg_extensions.create_extension so every extension lands
+# in ``public`` even when migrations run with a tenant schema on the search_path.
+_EXTENSION_INSTALL_PLAN: dict[str, tuple[tuple[str, bool], ...]] = {
+    "pgvector": (("vector", False),),
+    "pgvectorscale": (("vector", False), ("vectorscale", True)),
+    "vchord": (("vchord", True),),
+    "scann": (("vector", False), ("alloydb_scann", True)),
+}
+
+_INSTALL_HINTS = {
+    "pgvector": "CREATE EXTENSION vector;",
+    "pgvectorscale": "CREATE EXTENSION vector; then CREATE EXTENSION vectorscale CASCADE; (or pg_diskann on Azure)",
+    "vchord": "CREATE EXTENSION vchord CASCADE;",
+    "scann": "CREATE EXTENSION vector; then CREATE EXTENSION alloydb_scann CASCADE;",
+}
+
+
+def configured_vector_extension() -> str:
+    """Return the user-configured vector backend extension.
+
+    Reads ``vector_extension`` off the resolved config, which is where
+    ``HINDSIGHT_API_VECTOR_EXTENSION`` and its default are parsed. This is the single
+    source of truth for runtime code that needs to dispatch behaviour by vector
+    backend; callers should prefer this over reading the env var directly.
+
+    The config import is deferred because ``config.py`` imports this module for
+    :func:`validate_extension` — at module scope the two would form a cycle.
+    """
+    from .config import get_config
+
+    return validate_extension(get_config().vector_extension)
+
+
+def validate_extension(name: str) -> str:
+    """Return a normalized configurable vector extension name or raise.
+
+    Used at the user-facing config boundary; pg_diskann is rejected here because
+    it is a detection-time alias, never a value the user sets directly.
+    """
+    ext = name.lower()
+    if ext not in CONFIGURABLE_EXTENSIONS:
+        valid = ", ".join(CONFIGURABLE_EXTENSIONS)
+        raise ValueError(f"Invalid vector_extension: {name}. Must be one of: {valid}")
+    return ext
+
+
+def _normalize_resolved(name: str) -> str:
+    """Normalize either a user-configurable or detect-time extension name."""
+    ext = name.lower()
+    if ext not in RESOLVED_EXTENSIONS:
+        valid = ", ".join(RESOLVED_EXTENSIONS)
+        raise ValueError(f"Unknown vector extension: {name}. Must be one of: {valid}")
+    return ext
+
+
+def pg_extension_name(ext: str) -> str:
+    """Return the PostgreSQL extension name for a configured vector backend."""
+    return _EXTENSION_NAMES[validate_extension(ext)]
+
+
+def index_using_clause(ext: str) -> str:
+    """Return the CREATE INDEX USING clause for the vector backend."""
+    return _INDEX_USING_CLAUSES[_normalize_resolved(ext)]
+
+
+def index_type_keyword(ext: str) -> str:
+    """Return the keyword that identifies this index type in pg_indexes.indexdef."""
+    return _INDEX_TYPE_KEYWORDS[_normalize_resolved(ext)]
+
+
+def minimum_rows_for_index(ext: str) -> int:
+    """Return the minimum populated embedding rows before creating this index type."""
+    return SCANN_MIN_ROWS_FOR_AUTO_INDEX if _normalize_resolved(ext) == "scann" else 0
+
+
+def should_defer_index_creation(ext: str, row_count: int) -> bool:
+    """Return True when index creation should wait for more embeddings."""
+    minimum_rows = minimum_rows_for_index(ext)
+    return minimum_rows > 0 and row_count < minimum_rows
+
+
+def ann_search_tuning_settings(ext: str, *, kind: str) -> tuple[tuple[str, str], ...]:
+    """Return per-backend (guc_name, value) pairs for ANN search-time tuning.
+
+    ``kind`` is ``"low_latency"`` for retain-side link probing (smaller probe
+    count, lower recall, lower latency) and ``"high_recall"`` for connection
+    init in the pool (larger probe count, higher recall). Callers wrap each
+    pair with ``SET LOCAL`` or ``SET`` themselves so the same dispatcher works
+    for both transaction-scoped and session-scoped use. Returns an empty tuple
+    for backends without an equivalent knob.
+    """
+    if kind == "low_latency":
+        table = _ANN_TUNING_LOW_LATENCY
+    elif kind == "high_recall":
+        table = _ANN_TUNING_HIGH_RECALL
+    else:
+        raise ValueError(f"Unknown ANN tuning kind: {kind!r}")
+    settings = table.get(_normalize_resolved(ext), ())
+    if not iterative_scan_enabled():
+        return tuple(pair for pair in settings if pair[0] not in _ITERATIVE_SCAN_GUCS)
+    return tuple(
+        (name, str(ann_max_scan_tuples()) if name == "hnsw.max_scan_tuples" else value) for name, value in settings
+    )
+
+
+def uses_per_bank_vector_indexes(ext: str) -> bool:
+    """Return whether the backend should create per-bank partial vector indexes."""
+    return _normalize_resolved(ext) != "scann"
+
+
+def per_bank_index_min_rows() -> int:
+    """Rows a (bank, fact_type) needs before it earns its own partial vector index.
+
+    ``0`` — the default — means the threshold is off entirely: indexes are
+    created up front at bank creation, exactly as they were before the threshold
+    existed, and no maintenance operation ever runs. Everything below applies
+    only when an operator sets a positive value.
+
+    Distinct from :func:`minimum_rows_for_index`, which is ScaNN's *build*
+    requirement for its single global index (AlloyDB cannot construct one below
+    a floor). This is a cost policy for the per-bank backends: the indexes sit on
+    the shared ``memory_units`` table, so each one is enumerated and locked at
+    plan time by queries belonging to every *other* bank, and opened by every DML
+    statement against the table. A small bank's index cannot repay that — the
+    ``(bank_id, fact_type)`` B-tree plus a top-N sort answers the same query
+    exactly and faster. See issue #3485.
+
+    Read from config rather than passed in because the write path's pre-check,
+    the maintenance operation and the admin command must all apply the same
+    number; a threshold that differed between the one deciding to queue work and
+    the one deciding what to do would either oscillate or never converge.
+    """
+    from .config import get_config
+
+    return get_config().vector_index_min_rows
+
+
+def per_bank_indexes_are_eager() -> bool:
+    """Whether indexes are created up front at bank creation rather than earned.
+
+    True at the default threshold of ``0``, where this reverts to the behaviour
+    that predates the threshold: the bank-create transaction builds all three
+    partial indexes (instant — the bank is empty), bank deletion drops them, and
+    nothing in between inspects row counts. No ``vector_index_maintenance``
+    operation is submitted, and no write pays a coverage pre-check.
+
+    Making ``0`` mean *eager* rather than *lazy with no minimum* is what keeps
+    the default deployment on exactly its pre-#3561 behaviour. Lazily building
+    the same indexes on first write produced identical coverage, but reached it
+    through a visible async operation per (bank, fact_type) and charged every
+    subsequent write a row count to rediscover there was nothing to do.
+    """
+    return per_bank_index_min_rows() == 0
+
+
+def per_bank_index_build_bound() -> int:
+    """Rows at which a partition earns an index. Only meaningful when not eager.
+
+    Returned as a bound to *test membership against* rather than a count to
+    compare with, because nothing needs the exact size of a partition — only
+    whether it reaches this many rows. That distinction is what lets the planner
+    answer with an index-only probe bounded by the threshold instead of counting
+    every row the bank owns (issue #3485 made those counts run on every write).
+    """
+    return max(per_bank_index_min_rows(), 1)
+
+
+def per_bank_index_keep_bound() -> int:
+    """Rows below which an existing index is dropped. Only meaningful when not eager.
+
+    Deliberately lower than :func:`per_bank_index_build_bound` — keeping starts
+    below building — so a partition hovering at the threshold does not rebuild
+    and drop the same ANN index on alternating writes.
+
+    Never below 1: an emptied partition loses its index at every threshold,
+    whatever the ratio works out to. Without that floor a bank written to once
+    and then cleared would hold three indexes over nothing, which is the
+    accumulation the threshold exists to prevent.
+    """
+    from .config import VECTOR_INDEX_DROP_RATIO
+
+    return max(int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO), 1)
+
+
+def per_bank_index_min_submit_interval_seconds() -> int:
+    """Shortest gap between two maintenance operations for one bank.
+
+    Lives here with the rest of the policy rather than being read from config at
+    the call site so tests can shift it the same way they shift the bounds, and
+    so every reader of the policy is in one file.
+    """
+    from .config import get_config
+
+    return get_config().vector_index_maintenance_min_interval_seconds
+
+
+def bootstrap_extension(conn: Connection, ext: str) -> None:
+    """Install the configured vector extension and any prerequisites if possible.
+
+    ``create_extension`` skips anything already installed, so this issues no
+    DDL on a database that is already set up.
+    """
+    normalized = validate_extension(ext)
+    for name, cascade in _EXTENSION_INSTALL_PLAN[normalized]:
+        create_extension(conn, name, cascade=cascade)
+
+
+def detect_vector_extension(conn: Connection, vector_extension: str = "pgvector") -> str:
+    """Validate the configured vector extension exists and return the index backend."""
+    configured_ext = validate_extension(vector_extension)
+
+    if configured_ext == "pgvectorscale":
+        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+        if not pgvector_check:
+            raise RuntimeError(
+                "DiskANN (pgvectorscale/pg_diskann) requires pgvector to be installed. "
+                f"Install it with: {_INSTALL_HINTS['pgvectorscale']}"
+            )
+
+        vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
+        pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
+
+        if vectorscale_check:
+            logger.debug("Using vector extension: pgvectorscale (DiskANN)")
+            return "pgvectorscale"
+        if pg_diskann_check:
+            logger.debug("Using vector extension: pg_diskann (Azure DiskANN)")
+            return "pg_diskann"
+
+        raise RuntimeError(
+            "Configured vector extension 'pgvectorscale' not found. Install either:\n"
+            "  - pgvectorscale (open source): CREATE EXTENSION vectorscale CASCADE;\n"
+            "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
+        )
+
+    extension_name = pg_extension_name(configured_ext)
+    extension_check = conn.execute(
+        text("SELECT 1 FROM pg_extension WHERE extname = :extension_name"),
+        {"extension_name": extension_name},
+    ).scalar()
+    if not extension_check:
+        raise RuntimeError(
+            f"Configured vector extension '{configured_ext}' not found. "
+            f"Install it with: {_INSTALL_HINTS[configured_ext]}"
+        )
+
+    logger.debug("Using configured vector extension: %s", configured_ext)
+    return configured_ext

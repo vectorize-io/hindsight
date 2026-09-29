@@ -1,0 +1,138 @@
+---
+title: "Agent Memory Benchmark: A Manifesto"
+authors: [nicoloboschi]
+date: 2026-03-23T12:00
+tags: [benchmark, memory, agents, evaluation, longmemeval, locomo, open-source, deep-dive]
+image: /img/blog/amb/explorer-0.png
+hide_table_of_contents: true
+---
+
+![Agent Memory Benchmark: A Manifesto](/img/blog/amb/explorer-0.png)
+
+import ImageCarousel from '@site/src/components/ImageCarousel';
+
+We're building Hindsight to be the best AI memory system in the world. "Best" doesn't mean winning every benchmark. It means building something that genuinely works — and being honest about where it does and doesn't.
+
+That's why we built Agent Memory Benchmark (AMB), and why we're making it fully open.
+
+<!-- truncate -->
+
+## "Best" is more than accuracy
+
+When we say we want Hindsight to be the best AI memory system, we're not talking about a leaderboard position. We're talking about a complete system that performs across dimensions that actually matter in production:
+
+- **Accuracy** — does the agent answer questions correctly using its memory?
+- **Speed** — how long does retain and recall actually take?
+- **Cost** — how many tokens does the system consume per operation?
+- **Usability** — how much configuration, tuning, and infrastructure does it need to work?
+
+A system that scores 90% accuracy but costs $10 per user per day is not better than a system that scores 82% and costs $0.10. A system that requires three inference providers and a graph database to set up is not better than one that works out of the box.
+
+Benchmarks tend to flatten this. They measure one axis — usually accuracy on a fixed dataset — and declare a winner. We think that's misleading. AMB starts from accuracy because it's the hardest to fake, but the goal over time is to make all four dimensions measurable and comparable.
+
+## The problem with existing benchmarks
+
+LoComo and LongMemEval are solid datasets. They were designed carefully, and they genuinely test memory systems — which is why they became the standard.
+
+The problem is when they were designed. Both datasets come from an era of 32k context windows, when fitting a long conversation into a single model call wasn't possible. The entire premise of those benchmarks was that you *couldn't* just stuff everything into context — you needed a memory system to retrieve the right facts selectively.
+
+That era is over. State-of-the-art models now have million-token context windows. On most LoComo and LongMemEval instances, a naive "dump everything into context" approach scores competitively — not because it's a good memory architecture, but because retrieval has become the easy part. The benchmarks that were designed to stress retrieval now mostly measure whether your LLM can read.
+
+This creates a false picture. A system that's cheap, fast, and architecturally sound at scale will score similarly to a brute-force context-stuffer on these datasets. The benchmark can no longer tell them apart.
+
+There's a second problem: both datasets were built around chatbot use cases — conversation history between two people, question-answering over past sessions. That was the dominant paradigm when they were designed. It isn't anymore. Agents today don't just answer questions about their conversation history; they research, plan, execute multi-step tasks, and build knowledge across many different interactions and sources. The memory problems that arise in agentic workflows are fundamentally different from chatbot recall.
+
+LoComo and LongMemEval are still a valid foundation — the question formats are good, the evaluation methodology is reasonable, and they remain useful for catching regressions. But they only cover one slice of the problem. AMB is adding datasets that focus on agentic tasks: memory across tool calls, knowledge built from document research, preferences applied to multi-step decisions. That's where evaluation needs to go.
+
+## Open results, reproducibly
+
+We believe the only credible benchmark result is one you can reproduce yourself.
+
+AMB publishes everything:
+
+- The evaluation harness ([github.com/vectorize-io/agent-memory-benchmark](https://github.com/vectorize-io/agent-memory-benchmark))
+- The exact methodology — how ingestion works, how recall is scored, how the LLM judge is prompted
+
+The evaluation choices that look like implementation details are actually where results get made or broken: the judge prompt, the answer generation prompt, the models used for each. Small changes to any of these can swing accuracy scores by double digits. We publish all of them. You can disagree with our choices, fork them, and run differently — and that's a legitimate result too, as long as you say what you changed.
+
+The evaluation harness is not coupled to Hindsight's internals. The methodology doesn't assume any specific retrieval strategy. Anyone can plug in a different memory backend, run the same harness, and get a comparable result.
+
+## Datasets in AMB v1
+
+| Dataset | What it stress-tests |
+|---|---|
+| **[LoComo](https://arxiv.org/abs/2402.17753)** | Multi-hop and temporal reasoning across long multi-session conversations |
+| **[LongMemEval](https://arxiv.org/abs/2410.10813)** | Knowledge updates and belief revision — does the system handle facts that change over time? |
+| **[LifeBench](https://arxiv.org/abs/2504.20945)** | Multi-source personalization across a realistic long user history |
+| **[MemBench](https://arxiv.org/abs/2505.13590)** | Memory at different abstraction levels — low-level facts vs. high-level inferences |
+| **[MemSim](https://arxiv.org/abs/2409.17037)** | Conditional, comparative, and aggregative questions that require synthesizing across memories |
+| **[PersonaMem](https://arxiv.org/abs/2504.05187)** | Preference tracking — does the system remember what the user actually cares about? |
+
+These are the foundation. They're not the ceiling.
+
+## Explore before you run
+
+A benchmark score without context is just a number. Before you decide whether a dataset's results are meaningful for your use case, you need to understand what the dataset actually contains.
+
+AMB ships with a dataset explorer that lets you browse the full contents of any dataset: the raw conversations and documents that get ingested, the individual queries, and the gold answers used for evaluation. You can read the actual questions, see the source material the system was supposed to draw from, and judge for yourself whether the benchmark reflects the kind of memory problem your application faces.
+
+This matters because most benchmarks are built around specific assumptions about what "memory" means. A dataset built from daily-life conversations between two people tests different things than one built from long research sessions or multi-source document collections. A score on one doesn't automatically transfer to the other.
+
+Exploring the data before running is the fastest way to decide which benchmarks are worth your time — and to interpret results honestly once you have them.
+
+<ImageCarousel images={[
+  { src: '/img/blog/amb/explorer-0.png', alt: 'Dataset explorer — all datasets', caption: 'All datasets available in AMB' },
+  { src: '/img/blog/amb/explorer-1.png', alt: 'Dataset explorer — dataset split', caption: 'Inspect a dataset split' },
+  { src: '/img/blog/amb/explorer-2.png', alt: 'Dataset explorer — query view', caption: 'Inspect individual queries and gold answers' },
+  { src: '/img/blog/amb/explorer-3.png', alt: 'Dataset explorer — document view', caption: 'Read the source documents the system ingested' },
+]} />
+
+## Hindsight on the new baseline
+
+To establish a reference point for AMB, we re-ran Hindsight against the datasets using the same harness. The last published results came from [our paper](https://arxiv.org/abs/2512.12818), which used version 0.1.0. We've shipped dozens of features and improvements since then. Here's where v0.4.19 lands in single-query mode:
+
+| Dataset | Accuracy |
+|---|---|
+| LoComo | **92.0%** |
+| LongMemEval | **94.6%** |
+| LifeBench | **71.5%** |
+| PersonaMem | **86.6%** |
+
+These are our all-time best results. Attribution across dozens of changes is never clean, but we believe the three most meaningful contributors are:
+
+- **Observations** — automatic knowledge consolidation that synthesizes higher-order insights from accumulated facts, giving recall access to a richer representation of what the agent has learned
+- **Better retain process** — more accurate fact extraction means the right information gets stored in the first place; garbage in, garbage out applies directly to memory recall
+- **Retrieval algorithm** — the retrieval pipeline has been substantially reworked, with meaningfully better accuracy, while preserving the same semantic interface that users already rely on
+
+These results will serve as the reference point for AMB going forward. Every future Hindsight release will be measured against them.
+
+<ImageCarousel images={[
+  { src: '/img/blog/amb/results-locomo.png', alt: 'Hindsight results on LoComo', caption: 'LoComo — 92.0%' },
+  { src: '/img/blog/amb/results-longmemeval.png', alt: 'Hindsight results on LongMemEval', caption: 'LongMemEval — 94.6%' },
+  { src: '/img/blog/amb/results-lifebench.png', alt: 'Hindsight results on LifeBench', caption: 'LifeBench — 71.5%' },
+  { src: '/img/blog/amb/results-personamem.png', alt: 'Hindsight results on PersonaMem', caption: 'PersonaMem — 86.6%' },
+]} />
+
+## Two modes, two tradeoffs
+
+LLM orchestration is evolving fast, and there isn't one right way to build a memory-augmented agent. AMB reflects that by supporting two distinct evaluation modes.
+
+**Single-query**: one retrieval call against the memory system, results passed directly to the LLM for answer generation. Fast, predictable, low latency. The tradeoff is coverage — a single query may not surface everything needed for multi-hop questions where the answer requires connecting facts from different parts of the memory.
+
+**Agentic**: the LLM drives retrieval through tool calls, issuing multiple queries, inspecting results, and deciding when it has enough to answer. Consistently better on complex and multi-hop questions. The tradeoff is latency and cost — more round-trips, more tokens, more time.
+
+Both are legitimate architectures depending on what you're building. A customer support agent where response time matters looks different from a research assistant where thoroughness does. AMB lets you run both modes against the same dataset and compare the results directly — accuracy, latency, and token cost side by side — so you can make that tradeoff deliberately rather than by default.
+
+## What's next
+
+We want AMB to grow into the most comprehensive collection of agent memory datasets available. The gaps we know are real: none of the current datasets stress memory at scale, none test agentic settings where the agent decides what to retain, and multilingual memory is entirely uncovered. We're working on adding datasets that address these dimensions — and we want the community involved in that process.
+
+Longer term, we're exploring self-serve dataset uploads: a way for researchers and practitioners to contribute benchmark datasets directly, run them against the same evaluation harness, and publish results under a shared methodology. If you have a dataset that would stress-test memory systems in ways the current set doesn't, we want to hear from you.
+
+## Try it
+
+AMB is live at **[agentmemorybenchmark.ai](https://agentmemorybenchmark.ai/)**.
+
+The repo is at **[github.com/vectorize-io/agent-memory-benchmark](https://github.com/vectorize-io/agent-memory-benchmark)** — follow the instructions there to run the benchmarks against your own system and upload your results to the leaderboard.
+
+If something is broken, confusing, or missing — open an issue, submit a PR, or reach out directly. We'd rather hear the hard feedback now than six months from now.

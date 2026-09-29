@@ -1,0 +1,71 @@
+[project]
+name = "hindsight-crewai"
+version = "0.4.20"
+description = "CrewAI memory integration via Hindsight - persistent memory for AI agent crews"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "crewai",
+    "agents",
+    "hindsight",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "crewai>=0.86.0,<1.10",  # 1.10+ renamed Storage -> StorageBackend; needs migration
+    "hindsight-client>=0.4.0",
+    # Transitive dependency security fixes
+    "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption
+    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
+    "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
+    "requests>=2.33.0", # Insecure temp file reuse in extract_zipped_paths()
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/crewai"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_crewai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.uv]
+# crewai hard-pins `json-repair==0.25.2`, which carries a high-severity
+# unbounded-CPU DoS (GHSA-xf7x-x43h-rpqh, fixed in 0.60.1). The pin persists
+# through the latest crewai, and crewai uses exactly one symbol from the
+# package -- `repair_json`, in tool_usage.py and agents/parser.py -- so the
+# override is narrow. Revisit if crewai relaxes the pin itself.
+override-dependencies = ["json-repair>=0.60.1"]

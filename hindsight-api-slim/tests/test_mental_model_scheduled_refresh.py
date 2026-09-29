@@ -1,0 +1,395 @@
+"""Tests for cron-scheduled mental model refresh.
+
+Covers the discovery routine ``public.mental_models_with_cron()`` and the
+maintenance-loop job ``MaintenanceLoop._run_scheduled_mm_refresh``: a model is
+refreshed only when its cron schedule is *due* AND it is *stale* (new memories in
+its scope since the last refresh). Deterministic — no LLM, refresh submission is
+monkeypatched.
+"""
+
+import asyncio
+import json
+import uuid
+
+import pytest
+
+from hindsight_api.api.http import MentalModelTrigger
+from hindsight_api.engine.maintenance import MaintenanceLoop
+from hindsight_api.engine.memory_engine import MemoryEngine
+
+
+def test_refresh_cron_and_auto_refresh_are_mutually_exclusive():
+    """A trigger cannot set both refresh_after_consolidation and refresh_cron."""
+    # Either alone is fine.
+    MentalModelTrigger(refresh_after_consolidation=True)
+    MentalModelTrigger(refresh_cron="0 3 * * *")
+    # Both together is rejected.
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        MentalModelTrigger(refresh_after_consolidation=True, refresh_cron="0 3 * * *")
+
+
+async def _make_bank(memory: MemoryEngine, request_context) -> str:
+    bank_id = f"mmcron-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    return bank_id
+
+
+async def _insert_mm(
+    conn,
+    bank_id: str,
+    *,
+    refresh_cron: str | None,
+    last_refreshed_offset: str,
+    tags: list[str] | None = None,
+) -> str:
+    """Insert a pinned mental model. ``last_refreshed_offset`` is an interval
+    string applied as ``now() - INTERVAL <offset>`` (e.g. '1 day', '0 seconds')."""
+    mm_id = f"mm-{uuid.uuid4().hex}"
+    trigger = {"refresh_after_consolidation": False}
+    if refresh_cron is not None:
+        trigger["refresh_cron"] = refresh_cron
+    await conn.execute(
+        f"""
+        INSERT INTO mental_models
+          (id, bank_id, subtype, name, source_query, content, tags, trigger, last_refreshed_at)
+        VALUES ($1, $2, 'pinned', 'sched model', 'what changed', 'body', $3, $4::jsonb,
+                now() - INTERVAL '{last_refreshed_offset}')
+        """,
+        mm_id,
+        bank_id,
+        tags or [],
+        json.dumps(trigger),
+    )
+    return mm_id
+
+
+async def _insert_fact(conn, bank_id: str, tags: list[str] | None = None) -> None:
+    await conn.execute(
+        "INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at, updated_at) "
+        "VALUES ($1, $2, 'a fresh fact', 'experience', $3, now(), now())",
+        uuid.uuid4(),
+        bank_id,
+        tags or [],
+    )
+
+
+def _patch_submit(memory: MemoryEngine, monkeypatch) -> list[str]:
+    submitted: list[str] = []
+
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
+        submitted.append(mental_model_id)
+        return {"operation_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
+    return submitted
+
+
+def _stall_worker(memory: MemoryEngine, monkeypatch) -> None:
+    """Queue operations without executing them.
+
+    Reproduces the condition the duplicate waves were observed under (#3210): the
+    ops stay pending because completions stalled fleet-wide.
+    """
+
+    async def _never_runs(task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", _never_runs)
+
+
+async def _mark_processing(memory: MemoryEngine, operation_id: str) -> None:
+    """Put a queued operation into the state a worker claim leaves it in."""
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE async_operations SET status = 'processing' WHERE operation_id = $1",
+            uuid.UUID(operation_id),
+        )
+
+
+async def _count_refresh_ops(memory: MemoryEngine, bank_id: str) -> int:
+    async with memory._pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM async_operations WHERE bank_id = $1 AND operation_type = 'refresh_mental_model'",
+            bank_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_operations_name_the_model_they_refreshed(memory: MemoryEngine, request_context, monkeypatch):
+    """The operations *list* carries `mental_model_id` for a refresh.
+
+    These operations have no `document_id`, and the list carries no `result_metadata`
+    either, so without it the log cannot say which model an operation refreshed — a bank
+    with hundreds of models is undiagnosable from the list alone. The single-operation
+    read already answers it through `result_metadata`, so it gets no duplicate field.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    submitted = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context
+    )
+
+    listed = await memory.list_operations(bank_id=bank, request_context=request_context)
+    refreshes = [op for op in listed["operations"] if op["task_type"] == "refresh_mental_model"]
+    assert len(refreshes) == 1
+    assert refreshes[0]["mental_model_id"] == mm_id
+    # The field this used to be the only handle on is still null for these ops, which is
+    # exactly why mental_model_id is needed.
+    assert refreshes[0]["document_id"] is None
+
+    # The single-operation read answers the same question through result_metadata.
+    status = await memory.get_operation_status(
+        bank_id=bank, operation_id=submitted["operation_id"], request_context=request_context
+    )
+    assert status["result_metadata"]["mental_model_id"] == mm_id
+
+
+@pytest.mark.asyncio
+async def test_refresh_cron_round_trips_through_create_and_get(memory: MemoryEngine, request_context):
+    """refresh_cron set on a mental model's trigger persists and reads back."""
+    bank = await _make_bank(memory, request_context)
+    created = await memory.create_mental_model(
+        bank_id=bank,
+        name="scheduled model",
+        source_query="what changed",
+        content="body",
+        trigger={"refresh_after_consolidation": False, "refresh_cron": "0 3 * * *"},
+        request_context=request_context,
+    )
+    fetched = await memory.get_mental_model(bank, created["id"], request_context=request_context)
+    assert fetched["trigger"]["refresh_cron"] == "0 3 * * *"
+
+
+@pytest.mark.asyncio
+async def test_routine_returns_cron_models_excludes_plain_and_in_flight(memory: MemoryEngine, request_context):
+    """The discovery routine returns models with a cron schedule and excludes both
+    cron-less models and models with an in-flight refresh operation."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        cron_mm = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        plain_mm = await _insert_mm(conn, bank, refresh_cron=None, last_refreshed_offset="1 day")
+        in_flight_mm = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'refresh_mental_model', 'processing', $3::jsonb)
+            """,
+            uuid.uuid4(),
+            bank,
+            json.dumps({"mental_model_id": in_flight_mm}),
+        )
+        rows = await conn.fetch(
+            "SELECT mental_model_id FROM public.mental_models_with_cron() WHERE bank_id = $1",
+            bank,
+        )
+
+    returned = {r["mental_model_id"] for r in rows}
+    assert cron_mm in returned
+    assert plain_mm not in returned  # no cron -> not a candidate
+    assert in_flight_mm not in returned  # already being refreshed -> excluded
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_due_and_stale_model_is_refreshed(memory: MemoryEngine, request_context, monkeypatch):
+    """A model whose cron is due and that has new memories in scope is refreshed."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)  # newer than last_refreshed_at -> stale
+
+    submitted = _patch_submit(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert mm_id in submitted
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_scheduled_refresh_is_marked_automatic(memory: MemoryEngine, request_context, monkeypatch):
+    """A cron refresh is subject to the minimum-interval floor.
+
+    Nobody asked for this refresh individually, so it is exactly what
+    ``min_refresh_interval_seconds`` rate-limits (#3480). The flag lives in the submit's
+    task payload, and dropping it here would silently exempt the whole cron path — with
+    no failing test anywhere, because the floor simply never engages.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)
+
+    recorded: dict[str, bool] = {}
+
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
+        recorded[mental_model_id] = automatic
+        return {"operation_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert recorded[mm_id] is True
+
+
+@pytest.mark.asyncio
+async def test_due_but_not_stale_model_is_skipped(memory: MemoryEngine, request_context, monkeypatch):
+    """A model whose cron is due but whose scope has no new memories is skipped —
+    a scheduled refresh must not burn an LLM call to regenerate identical content."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        # Cron is due (last refresh a day ago), but no memory_units in this fresh
+        # bank are newer than last_refreshed_at, so the model is not stale.
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+
+    submitted = _patch_submit(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert mm_id not in submitted
+
+
+@pytest.mark.asyncio
+async def test_concurrent_scheduled_submits_queue_one_refresh(memory: MemoryEngine, request_context, monkeypatch):
+    """Two schedulers enqueueing the same due model at once queue exactly one op.
+
+    Regression for #3210: the maintenance loop runs in every process, and the
+    in-flight guard in ``mental_models_with_cron()`` is a *read* — every process saw
+    the same "nothing in flight" snapshot and inserted its own operation, so a few
+    hundred due models became thousands of queued refreshes. The enqueue now does the
+    in-flight check under the bank row lock, inside the inserting transaction.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    first, second = await asyncio.gather(
+        memory.submit_async_refresh_mental_model(
+            bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+        ),
+        memory.submit_async_refresh_mental_model(
+            bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+        ),
+    )
+
+    assert await _count_refresh_ops(memory, bank) == 1
+    # The loser reports the winner's operation rather than a fresh one, so the
+    # maintenance loop can count it as "already in flight".
+    deduped = second if second.get("deduplicated") else first
+    kept = first if second.get("deduplicated") else second
+    assert deduped["deduplicated"] is True
+    assert deduped["operation_id"] == kept["operation_id"]
+
+
+@pytest.mark.asyncio
+async def test_user_triggered_refresh_still_queues_while_one_is_processing(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """An explicit refresh still queues while a scheduled one is *running*.
+
+    Only a running refresh needs a second operation: it may have read the source query
+    before the user edited it, so a user asking for a refresh has new intent that the
+    in-flight run cannot be assumed to cover. (A merely *queued* refresh does cover it —
+    see test_user_triggered_refresh_folds_into_a_queued_one.)
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    scheduled = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+    )
+    await _mark_processing(memory, scheduled["operation_id"])
+    manual = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert manual["operation_id"] != scheduled["operation_id"]
+    assert await _count_refresh_ops(memory, bank) == 2
+
+
+@pytest.mark.asyncio
+async def test_not_due_model_is_skipped_even_when_stale(memory: MemoryEngine, request_context, monkeypatch):
+    """A model whose cron has not elapsed since the last refresh is not refreshed,
+    even when new memories exist — the cron gate, not just staleness, must hold."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        # Yearly cron (Jan 1); last refresh seconds ago -> the most recent fire is
+        # well before last_refreshed_at, so it is not due.
+        mm_id = await _insert_mm(conn, bank, refresh_cron="0 0 1 1 *", last_refreshed_offset="5 seconds")
+        await _insert_fact(conn, bank)  # stale, but cron not due
+
+    submitted = _patch_submit(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert mm_id not in submitted
+
+
+@pytest.mark.asyncio
+async def test_failed_model_is_not_requeued_until_a_refresh_succeeds(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """#4532: a failed refresh leaves the model stale, so every scheduler tick used to
+    queue it again and pay the LLM for the same failure, forever. After a failure the
+    automatic triggers leave it alone; an explicit refresh still runs, and a success
+    resumes them."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)
+    _stall_worker(memory, monkeypatch)
+    await memory._record_mental_model_refresh_failure(
+        bank, mm_id, outcome="refresh_failed_error", failure_reason="unexpected_error", error_message="boom"
+    )
+
+    loop = MaintenanceLoop(memory)
+    await loop._run_scheduled_mm_refresh()
+    await loop._run_scheduled_mm_refresh()
+    assert await _count_refresh_ops(memory, bank) == 0
+
+    await memory.submit_async_refresh_mental_model(bank_id=bank, mental_model_id=mm_id, request_context=request_context)
+    assert await _count_refresh_ops(memory, bank) == 1
+
+    async with memory._pool.acquire() as conn:
+        await conn.execute("UPDATE mental_models SET last_refreshed_at = now() WHERE id = $1", mm_id)
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_cut_off_by_the_wall_timeout_counts_as_failed(memory: MemoryEngine, request_context):
+    """The wall ceiling cancels the refresh before its own failure handling runs, so
+    the poller's notification has to record it, or the scheduler re-queues it."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+
+    await memory.on_task_wall_timeout(
+        {"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id}, None, "timed out"
+    )
+
+    assert await memory._automatic_refresh_paused(bank, mm_id) is True
+
+
+@pytest.mark.asyncio
+async def test_the_failure_is_visible_on_the_model_and_cleared_by_a_success(memory: MemoryEngine, request_context):
+    """`last_refresh_failed_at` is what the UI reads to say a model has stopped
+    refreshing itself, so it has to be on the read and gone again after a success."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron=None, last_refreshed_offset="1 day")
+
+    await memory._record_mental_model_refresh_failure(
+        bank, mm_id, outcome="refresh_failed_error", failure_reason="unexpected_error", error_message="boom"
+    )
+    failed = await memory.get_mental_model(bank, mm_id, request_context=request_context)
+    assert failed["last_refresh_failed_at"] is not None
+    listed = await memory.list_mental_models(bank, request_context=request_context)
+    assert listed.items[0]["last_refresh_failed_at"] == failed["last_refresh_failed_at"]
+
+    await memory.update_mental_model(bank, mm_id, content="a fresh answer", request_context=request_context)
+    refreshed = await memory.get_mental_model(bank, mm_id, request_context=request_context)
+    assert refreshed["last_refresh_failed_at"] is None
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False

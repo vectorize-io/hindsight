@@ -1,0 +1,1173 @@
+"""Memory Defense — the OSS regex extension end to end.
+
+Sections:
+  * policy parsing (unit)
+  * regex screening (unit)
+  * extension loading (unit)
+  * extension-context wiring (unit)
+  * bank config validation (DB)
+  * retain: allow / redact / block / webhook (DB)
+  * document-body scrubbing (DB)
+  * redact_document_body in isolation (unit)
+"""
+
+import json
+import uuid
+
+import pytest
+
+from hindsight_api.config import HindsightConfig
+from hindsight_api.extensions.builtin.memory_defense_regex import MemoryDefenseRegexExtension
+from hindsight_api.extensions.loader import ExtensionLoadError, load_extension
+from hindsight_api.extensions.memory_defense import (
+    _ASCII_TOKEN_START,
+    _REDACTION_PATTERNS,
+    DefenseAction,
+    MemoryDefenseExtension,
+    _fingerprint_value,
+    apply_redaction,
+    parse_policy,
+)
+from tests.conftest import enable_audit_default
+
+_BOUNDARY_REDACTION_SAMPLES = {
+    "anthropic_key": "sk-ant-" + "A" * 20,
+    "openai_project_key": "sk-proj-" + "A" * 48,
+    "openai_admin_key": "sk-admin-" + "A" * 40,
+    "openai_key": "sk-" + "A" * 20,
+    "google_api_key": "AIza" + "A" * 35,
+    "google_oauth_token": "ya29." + "A" * 20,
+    "xai_key": "xai-" + "A" * 40,
+    "groq_key": "gsk_" + "A" * 20,
+    # 32 hex from token_hex(16) plus a hex signature; hsk_sys_ is covered by
+    # test_hindsight_system_key_is_redacted below.
+    "hindsight_key": "hsk_" + "a" * 32 + "_" + "b" * 16,
+    "huggingface_token": "hf_" + "A" * 30,
+    "replicate_token": "r8_" + "A" * 30,
+    "perplexity_key": "pplx-" + "A" * 40,
+    "databricks_token": "dapi" + "A" * 32,
+    "aws_access_key": "AKIA" + "A" * 16,
+    "aws_session_token": "ASIA" + "A" * 16,
+    "digitalocean_token": "dop_v1_" + "a" * 64,
+    "github_fg_pat": "github_pat_" + "A" * 60,
+    "github_token": "ghp_" + "A" * 36,
+    "github_app_token": "ghs_" + "A" * 36,
+    "github_user_token": "ghu_" + "A" * 36,
+    "github_refresh": "ghr_" + "A" * 36,
+    "github_oauth": "gho_" + "A" * 36,
+    "gitlab_pat": "glpat-" + "A" * 20,
+    "npm_token": "npm_" + "A" * 30,
+    "pypi_token": "pypi-AgEIcHlwaS5vcmc" + "A" * 20,
+    "stripe_secret": "sk_test_" + "A" * 20,
+    "stripe_restricted": "rk_test_" + "A" * 20,
+    "square_token": "sq0abc-" + "A" * 22,
+    "braintree_token": "access_token$production$" + "a" * 16 + "$" + "a" * 32,
+    "slack_token": "xoxb-" + "A" * 10,
+    "twilio_api_key": "SK" + "a" * 32,
+    "twilio_account_sid": "AC" + "a" * 32,
+    "sendgrid_key": "SG." + "A" * 22 + "." + "A" * 43,
+    "mailgun_key": "key-" + "A" * 32,
+    "discord_bot": "M" + "A" * 23 + "." + "A" * 6 + "." + "A" * 27,
+    "telegram_bot": "12345678:" + "A" * 35,
+    "shopify_token": "shpat_" + "a" * 32,
+    "jwt": "eyJ" + "A" * 10 + ".eyJ" + "A" * 10 + "." + "A" * 10,
+    "credit_card": "4111 1111 1111 1111",
+    "ssn_us": "123-45-6789",
+}
+
+_NON_BOUNDARY_REDACTION_SAMPLES = {
+    "aws_secret_key": "aws_secret_access_key=" + "A" * 40,
+    "slack_webhook": "https://hooks.slack.com/services/T" + "A" * 8 + "/B" + "A" * 8 + "/" + "A" * 20,
+    "db_url_postgres": "postgresql://user:password@localhost/db",
+    "db_url_mysql": "mysql://user:password@localhost/db",
+    "db_url_mongodb": "mongodb://user:password@localhost/db",
+    "private_key_pem": "-----BEGIN PRIVATE KEY-----",
+}
+
+_ALL_REDACTION_SAMPLES = _BOUNDARY_REDACTION_SAMPLES | _NON_BOUNDARY_REDACTION_SAMPLES
+
+# ---------------------------------------------------------------------------
+# Policy parsing (unit)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_minimal_policy() -> None:
+    policy = parse_policy({"enabled": True})
+    assert policy.enabled is True
+    assert policy.rules == ()
+
+
+def test_parse_policy_with_rule() -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]})
+    assert {r.on for r in policy.rules} == {"sensitive_data"}
+    assert policy.rules[0].action is DefenseAction.REDACT
+
+
+def test_parse_policy_accepts_block_action() -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]})
+    assert policy.rules[0].action is DefenseAction.BLOCK
+
+
+def test_parse_policy_rejects_invalid_action() -> None:
+    # Use a valid ``on`` so the parser progresses to action validation.
+    with pytest.raises(ValueError, match="action"):
+        parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "lol"}]})
+
+
+@pytest.mark.parametrize("on", [None, "", 123])
+def test_parse_policy_rejects_empty_or_non_string_on(on: object) -> None:
+    with pytest.raises(ValueError, match="invalid on"):
+        parse_policy({"enabled": True, "rules": [{"on": on, "action": "block"}]})
+
+
+@pytest.mark.parametrize(
+    "detector",
+    [
+        "sensitive_data",
+        "prompt_injection",
+        "size_anomaly",
+        "protected_keys",
+        "detect_secrets",
+        "base64_decode",
+        "llm_screen",
+        # An unknown future name passes too: the parser doesn't gate ``on``
+        # against a fixed roster.
+        "some_future_cloud_detector",
+    ],
+)
+def test_parse_policy_accepts_any_detector_name(detector: str) -> None:
+    """The parser accepts any non-empty detector name so cloud-shape policies
+    pass through the OSS PATCH layer unchanged. The OSS regex extension only
+    actually screens ``sensitive_data``; the rest are silent no-ops here and
+    are dispatched by downstream extensions (e.g. hindsight-cloud)."""
+    policy = parse_policy({"enabled": True, "rules": [{"on": detector, "action": "block"}]})
+    assert len(policy.rules) == 1
+    assert policy.rules[0].on == detector
+    assert policy.rules[0].action is DefenseAction.BLOCK
+
+
+def test_disabled_policy_is_inert() -> None:
+    policy = parse_policy({"enabled": False, "rules": [{"on": "sensitive_data", "action": "redact"}]})
+    assert policy.enabled is False
+
+
+def test_defense_action_string_round_trip() -> None:
+    assert DefenseAction("redact") is DefenseAction.REDACT
+    assert DefenseAction.BLOCK.value == "block"
+
+
+# ---------------------------------------------------------------------------
+# Fingerprinting (unit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # Length > 15 → first-4 + ellipsis + last-4.
+        ("ghp_" + "A" * 36, "ghp_...AAAA"),
+        ("AKIA" + "B" * 16, "AKIA...BBBB"),
+        ("sk-ant-" + "Z" * 40, "sk-a...ZZZZ"),
+        # Length 6–15 → first-2 + ellipsis + last-2.
+        ("123-45-6789", "12...89"),
+        ("xoxb-12345", "xo...45"),
+        # Length < 6 → fully masked; we don't preview anything.
+        ("abcde", "[redacted]"),
+        ("", "[redacted]"),
+    ],
+)
+def test_fingerprint_value_shape(value: str, expected: str) -> None:
+    """_fingerprint_value never returns the raw value and uses length-aware
+    bracketing so short matches don't leak material."""
+    out = _fingerprint_value(value)
+    assert out == expected
+    if value:
+        assert value not in out, f"raw value leaked into fingerprint: {out!r}"
+
+
+def test_apply_redaction_hits_carry_fingerprinted_previews() -> None:
+    """apply_redaction returns per-match fingerprinted previews — one entry
+    per matched substring — with the raw secret nowhere present in the hits."""
+    s1 = "ghp_" + "A" * 36
+    s2 = "AKIA" + "B" * 16
+    s3 = "123-45-6789"
+    content = f"rotate {s1}, drop {s2}, also ssn {s3}"
+
+    result = apply_redaction(content)
+
+    # Same-shape labels still flow to matched_types (deduplicated).
+    assert set(result.matched_types) >= {"github_token", "aws_access_key", "ssn_us"}
+
+    # One hit per matched substring; raw secret never appears.
+    by_detector = {h["detector"]: h["preview"] for h in result.hits}
+    assert by_detector["github_token"] == "ghp_...AAAA"
+    assert by_detector["aws_access_key"] == "AKIA...BBBB"
+    assert by_detector["ssn_us"] == "12...89"
+    for h in result.hits:
+        assert s1 not in h["preview"]
+        assert s2 not in h["preview"]
+        assert s3 not in h["preview"]
+
+
+def test_apply_redaction_multiple_hits_per_pattern() -> None:
+    """Two matches of the same pattern produce two hits — receivers can count
+    occurrences, not just types."""
+    a = "ghp_" + "A" * 36
+    b = "ghp_" + "B" * 36
+    content = f"old {a} new {b}"
+    result = apply_redaction(content)
+
+    gh_hits = [h for h in result.hits if h["detector"] == "github_token"]
+    assert len(gh_hits) == 2
+    previews = {h["preview"] for h in gh_hits}
+    assert previews == {"ghp_...AAAA", "ghp_...BBBB"}
+
+
+# ---------------------------------------------------------------------------
+# Regex screening (unit)
+# ---------------------------------------------------------------------------
+
+
+def test_redaction_samples_cover_every_pattern() -> None:
+    """Every built-in detector must have data, including its boundary class."""
+    pattern_labels = {label for label, _ in _REDACTION_PATTERNS}
+    boundary_labels = {label for label, pattern in _REDACTION_PATTERNS if pattern.startswith(_ASCII_TOKEN_START)}
+
+    assert len(pattern_labels) == len(_REDACTION_PATTERNS), "detector labels must be unique"
+    assert pattern_labels == set(_ALL_REDACTION_SAMPLES)
+    assert boundary_labels == set(_BOUNDARY_REDACTION_SAMPLES)
+
+
+@pytest.mark.parametrize("escape", [r"\b", r"\B", r"\w", r"\W"])
+def test_redaction_patterns_do_not_use_unicode_word_classes(escape: str) -> None:
+    """No built-in pattern may lean on Unicode-aware word semantics.
+
+    ``re`` treats CJK characters as word characters, so ``\\b``/``\\w`` skip a
+    secret butted up against Chinese text (#3566). Boundaries must be spelled
+    with ``_ascii_token_pattern`` instead.
+    """
+    offenders = [label for label, pattern in _REDACTION_PATTERNS if escape in pattern]
+
+    assert offenders == [], f"{escape} is Unicode-aware; use _ascii_token_pattern instead"
+
+
+@pytest.mark.parametrize(("label", "secret"), _ALL_REDACTION_SAMPLES.items())
+def test_each_redaction_pattern_matches_valid_sample(label: str, secret: str) -> None:
+    result = apply_redaction(secret)
+
+    assert result.content == f"[REDACTED:{label}]"
+    assert result.matched_types == [label]
+
+
+@pytest.fixture
+def regex_defense() -> MemoryDefenseRegexExtension:
+    return MemoryDefenseRegexExtension({})
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "score: 0.1234567890123456",
+        "timestamp_ms: 1700000000000",
+        "task_id: aaaaaaaa-bbbb-cccc-1234-123456789012",
+        "ports: 8000 8080 8888 9999",
+        "count: 123456",
+        "score: 0.123456",
+        # A checksum alone cannot distinguish a card-shaped decimal or UUID tail.
+        "score: 0.4111111111111111",
+        "task_id: aaaaaaaa-bbbb-cccc-4111-111111111111",
+        "task_id: 41111111-1111-1111-1111-111111111111",
+        "value: 4111111111111111.25",
+        "card typo: 4111 1111 1111 1112",
+        "placeholder: 0000 0000 0000 0000",
+    ],
+)
+def test_credit_card_rejects_technical_values(content: str) -> None:
+    result = apply_redaction(content)
+    assert result.content == content
+    assert result.matched_types == []
+    assert result.hits == []
+
+
+@pytest.mark.parametrize(
+    "card",
+    [
+        "4111111111111111",
+        "4111 1111 1111 1111",
+        "4111-1111-1111-1111",
+        "4222222222222",
+        "378282246310005",
+        "5555555555554444",
+    ],
+)
+@pytest.mark.parametrize("template", ["{}", "卡号{}请删除", "Card: {}.", "card-{}", "-{}", "{}.Next", "{}-expires"])
+def test_credit_card_keeps_valid_test_numbers(card: str, template: str) -> None:
+    result = apply_redaction(template.format(card))
+    assert result.content == template.format("[REDACTED:credit_card]")
+    assert result.matched_types == ["credit_card"]
+    assert result.hits == [{"detector": "credit_card", "preview": _fingerprint_value(card)}]
+
+
+@pytest.mark.parametrize("action", ["redact", "block"])
+@pytest.mark.parametrize("prefix", ["card: ", "2026 ", "2026 2026 "])
+@pytest.mark.parametrize(
+    "card",
+    ["4111 1111 1111 1111", "４１１１１１１１１１１１１１１１", "٤١١١١١١١١١١١١١١١", "４١11 １１١1 1111 1111"],
+)
+async def test_credit_card_policy_preserves_overlapping_and_unicode_matches(
+    regex_defense: MemoryDefenseRegexExtension, action: str, prefix: str, card: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(
+        policy=policy, bank_id="test", document_id=None, content=prefix + card, tags=[]
+    )
+    assert decision.action == DefenseAction(action)
+    assert decision.matched_types == ["credit_card"]
+    assert decision.hits == [{"detector": "credit_card", "preview": _fingerprint_value(card)}]
+    assert decision.redacted_content == (prefix + "[REDACTED:credit_card]" if action == "redact" else None)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "０.4111111111111111",
+        "4111111111111111.٢",
+        "0.４１１１１１１１１１１１１１１１",
+        "٤١١١١١١١١١١١١١١١.25",
+        "４1111111111111111",
+        "4111111111111111٤",
+        "００٠٠ 0000 ００٠٠ 0000",
+        "٤١١١ ١١١١ ١١١١ ١١١٢",
+    ],
+)
+@pytest.mark.parametrize("action", ["redact", "block"])
+async def test_credit_card_policy_rejects_unicode_non_cards(
+    regex_defense: MemoryDefenseRegexExtension, action: str, content: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(policy=policy, bank_id="test", document_id=None, content=content, tags=[])
+    assert decision.action is DefenseAction.ALLOW
+    assert decision.matched_types == []
+    assert decision.hits == []
+    assert decision.redacted_content is None
+
+
+def test_credit_card_overlapping_search_preserves_multiple_hits() -> None:
+    # Both year-prefixed candidates fail Luhn, unlike "2026 5555 5555 5555".
+    content = "2026 4111 1111 1111 1111; 2025 5555 5555 5555 4444; 2026"
+    result = apply_redaction(content)
+    assert result.content == "2026 [REDACTED:credit_card]; 2025 [REDACTED:credit_card]; 2026"
+    assert result.matched_types == ["credit_card"]
+    assert result.hits == [
+        {"detector": "credit_card", "preview": "4111...1111"},
+        {"detector": "credit_card", "preview": "5555...4444"},
+    ]
+
+
+def test_credit_card_filters_each_match_without_losing_other_detectors() -> None:
+    content = "1700000000000; 4111 1111 1111 1111; 8000 8080 8888 9999; 5555555555554444; 123-45-6789"
+    result = apply_redaction(content)
+    assert result.content == (
+        "1700000000000; [REDACTED:credit_card]; 8000 8080 8888 9999; [REDACTED:credit_card]; [REDACTED:ssn_us]"
+    )
+    assert result.matched_types == ["credit_card", "ssn_us"]
+    assert result.hits == [
+        {"detector": "credit_card", "preview": "4111...1111"},
+        {"detector": "credit_card", "preview": "5555...4444"},
+        {"detector": "ssn_us", "preview": "12...89"},
+    ]
+
+
+@pytest.mark.parametrize("action", ["redact", "block"])
+@pytest.mark.parametrize("content", ["score: 0.4111111111111111", "4111 1111 1111 1111"])
+async def test_credit_card_policy_uses_validated_matches(
+    regex_defense: MemoryDefenseRegexExtension, action: str, content: str
+) -> None:
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": action}]})
+    decision = await regex_defense.screen(policy=policy, bank_id="test", document_id=None, content=content, tags=[])
+    if content.startswith("score:"):
+        assert decision.action is DefenseAction.ALLOW
+        assert decision.matched_types == []
+        assert decision.hits == []
+        assert decision.redacted_content is None
+    else:
+        assert decision.action == DefenseAction(action)
+        assert decision.matched_types == ["credit_card"]
+        assert decision.hits == [{"detector": "credit_card", "preview": "4111...1111"}]
+        assert decision.redacted_content == ("[REDACTED:credit_card]" if action == "redact" else None)
+
+
+@pytest.fixture
+def redact_policy() -> dict:
+    return {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}
+
+
+@pytest.mark.asyncio
+async def test_screen_allows_innocuous_content(regex_defense, redact_policy) -> None:
+    decision = await regex_defense.screen(
+        policy=parse_policy(redact_policy),
+        bank_id="b1",
+        document_id="d1",
+        content="The Q3 roadmap meeting is on Friday.",
+        tags=["session:abc"],
+    )
+    assert decision.action is DefenseAction.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_screen_redacts_secret(regex_defense, redact_policy) -> None:
+    secret = "ghp_" + "A" * 36
+    decision = await regex_defense.screen(
+        policy=parse_policy(redact_policy),
+        bank_id="b1",
+        document_id="d1",
+        content=f"rotate this token: {secret}",
+        tags=[],
+    )
+    assert decision.action is DefenseAction.REDACT
+    assert decision.redacted_content is not None
+    assert secret not in decision.redacted_content
+    assert "[REDACTED:github_token]" in decision.redacted_content
+    assert "github_token" in decision.matched_types
+    # The decision carries a per-match fingerprinted preview — never the raw
+    # value — so SIEM receivers can correlate without the secret crossing
+    # the wire.
+    assert decision.hits, "OSS should populate at least one hit"
+    hit = decision.hits[0]
+    assert hit["detector"] == "github_token"
+    assert hit["preview"] == "ghp_...AAAA"
+    assert secret not in hit["preview"]
+
+
+@pytest.mark.parametrize(("label", "secret"), _BOUNDARY_REDACTION_SAMPLES.items())
+@pytest.mark.parametrize("template", ["测试{secret}", "{secret}配置", "测试{secret}配置"])
+def test_apply_redaction_matches_secret_adjacent_to_cjk(label: str, secret: str, template: str) -> None:
+    """Every ASCII token detector must match when CJK characters touch it."""
+    content = template.format(secret=secret)
+    result = apply_redaction(content)
+
+    assert result.content.count(f"[REDACTED:{label}]") == 1
+    assert label in result.matched_types
+
+
+@pytest.mark.parametrize(("label", "secret"), _BOUNDARY_REDACTION_SAMPLES.items())
+def test_apply_redaction_does_not_match_partial_ascii_token(label: str, secret: str) -> None:
+    """No ASCII token detector may match inside a larger ASCII token."""
+    content = "X" + secret
+    result = apply_redaction(content)
+
+    assert result.content == content
+    assert result.matched_types == []
+
+
+@pytest.mark.asyncio
+async def test_screen_blocks_secret(regex_defense) -> None:
+    """A sensitive_data rule with action=block returns BLOCK (no redacted content)."""
+    policy = parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]})
+    secret = "AKIA" + "A" * 16
+    decision = await regex_defense.screen(
+        policy=policy,
+        bank_id="b1",
+        document_id="d1",
+        content=f"key={secret}",
+        tags=[],
+    )
+    assert decision.action is DefenseAction.BLOCK
+    assert decision.redacted_content is None
+    assert "aws_access_key" in decision.matched_types
+
+
+@pytest.mark.asyncio
+async def test_screen_allows_when_no_sensitive_data_rule(regex_defense) -> None:
+    policy = parse_policy({"enabled": True, "rules": []})
+    decision = await regex_defense.screen(
+        policy=policy, bank_id="b1", document_id="d1", content="ghp_" + "Z" * 36, tags=[]
+    )
+    assert decision.action is DefenseAction.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_screen_disabled_policy_is_inert(regex_defense) -> None:
+    policy = parse_policy({"enabled": False, "rules": [{"on": "sensitive_data", "action": "redact"}]})
+    decision = await regex_defense.screen(
+        policy=policy, bank_id="b1", document_id="d1", content="ghp_" + "Z" * 36, tags=[]
+    )
+    assert decision.action is DefenseAction.ALLOW
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "ghp_" + "A" * 36,
+        "sk-ant-" + "B" * 40,
+        "sk-" + "C" * 30,
+        "AKIA" + "D" * 16,
+    ],
+)
+async def test_screen_redacts_known_patterns(payload: str, regex_defense, redact_policy) -> None:
+    d = await regex_defense.screen(
+        policy=parse_policy(redact_policy),
+        bank_id="b",
+        document_id="d",
+        content=f"my key is {payload}",
+        tags=[],
+    )
+    assert d.action is DefenseAction.REDACT, f"expected redact for {payload!r}, got {d.action}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "The roadmap meeting is on Friday",
+        "Product launch planning notes",
+        "Reminder about Tuesday",
+    ],
+)
+async def test_screen_allows_benign_payloads(payload: str, regex_defense, redact_policy) -> None:
+    d = await regex_defense.screen(
+        policy=parse_policy(redact_policy), bank_id="b", document_id="d", content=payload, tags=[]
+    )
+    assert d.action is DefenseAction.ALLOW
+
+
+# ---------------------------------------------------------------------------
+# Extension loading (unit)
+# ---------------------------------------------------------------------------
+
+
+def test_regex_is_default_when_no_env(monkeypatch) -> None:
+    monkeypatch.delenv("HINDSIGHT_API_MEMORY_DEFENSE_EXTENSION", raising=False)
+    ext = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension) or MemoryDefenseRegexExtension({})
+    assert isinstance(ext, MemoryDefenseRegexExtension)
+
+
+def test_custom_extension_loaded_from_env(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "HINDSIGHT_API_MEMORY_DEFENSE_EXTENSION",
+        "hindsight_api.extensions.builtin.memory_defense_regex:MemoryDefenseRegexExtension",
+    )
+    ext = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension)
+    assert isinstance(ext, MemoryDefenseRegexExtension)
+
+
+def test_malformed_extension_path_raises(monkeypatch) -> None:
+    monkeypatch.setenv("HINDSIGHT_API_MEMORY_DEFENSE_EXTENSION", "no_colon_here")
+    with pytest.raises(ExtensionLoadError):
+        load_extension("MEMORY_DEFENSE", MemoryDefenseExtension)
+
+
+def test_non_subclass_extension_raises(monkeypatch) -> None:
+    monkeypatch.setenv("HINDSIGHT_API_MEMORY_DEFENSE_EXTENSION", "builtins:dict")
+    with pytest.raises(ExtensionLoadError):
+        load_extension("MEMORY_DEFENSE", MemoryDefenseExtension)
+
+
+# ---------------------------------------------------------------------------
+# Extension-context wiring (unit)
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_engine():
+    """Construct a MemoryEngine with minimal env config (no network/GPU).
+
+    Uses the "none" LLM provider and a mocked embeddings model so __init__
+    runs without external calls; the pool is never started (no DB access).
+    """
+    import os
+    from unittest.mock import MagicMock, patch
+
+    mock_embeddings = MagicMock()
+    mock_embeddings.dimension = 384
+
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import MemoryEngine
+
+    with patch.dict(
+        os.environ,
+        {
+            "HINDSIGHT_API_LLM_PROVIDER": "none",
+            "HINDSIGHT_API_LLM_MODEL": "none",
+            "HINDSIGHT_API_LLM_API_KEY": "test-key",
+        },
+        clear=False,
+    ):
+        clear_config_cache()
+        engine = MemoryEngine(db_url="postgresql://localhost/hindsight_test", embeddings=mock_embeddings)
+
+    # Constructing the engine above repopulated the process-global config cache
+    # from the patched env (provider="none" forces retain_extraction_mode="chunks").
+    # Now that the patched env is gone, drop that cache so the leaked "none"/chunks
+    # config does not bleed into other tests on this xdist worker — their retains
+    # would silently skip entity extraction (0 unit_entities) and fail unrelated
+    # assertions. The next get_config() rebuilds from the real env.
+    clear_config_cache()
+    return engine
+
+
+def test_engine_memory_defense_shares_ext_ctx() -> None:
+    """The defense extension's context is the engine's _ext_ctx, and webhook_manager
+    starts None (it is wired in initialize())."""
+    engine = _make_minimal_engine()
+    assert engine._memory_defense._context is engine._ext_ctx
+    assert engine._ext_ctx.webhook_manager is None
+    # One context shared by every request: per-request tenant state on it is last-writer-wins (#4372).
+    assert not hasattr(engine._ext_ctx, "current_schema")
+
+
+# ---------------------------------------------------------------------------
+# Bank config validation (DB)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_accepts_and_persists_policy(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-cfg-1", json={})
+    r = await api_client.patch(
+        "/v1/default/banks/md-cfg-1/config",
+        json={
+            "updates": {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}}
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    r2 = await api_client.get("/v1/default/banks/md-cfg-1/config")
+    assert r2.json()["config"]["memory_defense"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_invalid_action(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-cfg-2", json={})
+    # Valid ``on`` so the parser reaches action validation.
+    r = await api_client.patch(
+        "/v1/default/banks/md-cfg-2/config",
+        json={
+            "updates": {
+                "memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "delete_everything"}]}
+            }
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "action" in str(r.json()["detail"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_patch_accepts_cloud_only_detector(api_client) -> None:
+    # A cloud-only detector the OSS extension doesn't implement still persists
+    # through the PATCH layer (it's a silent no-op here, dispatched downstream).
+    await api_client.put("/v1/default/banks/md-cfg-3", json={})
+    r = await api_client.patch(
+        "/v1/default/banks/md-cfg-3/config",
+        json={
+            "updates": {"memory_defense": {"enabled": True, "rules": [{"on": "prompt_injection", "action": "block"}]}}
+        },
+    )
+    assert r.status_code == 200, r.text
+    r2 = await api_client.get("/v1/default/banks/md-cfg-3/config")
+    assert r2.json()["config"]["memory_defense"]["rules"][0]["on"] == "prompt_injection"
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_empty_detector(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-cfg-4", json={})
+    r = await api_client.patch(
+        "/v1/default/banks/md-cfg-4/config",
+        json={"updates": {"memory_defense": {"enabled": True, "rules": [{"on": "", "action": "redact"}]}}},
+    )
+    assert r.status_code == 422, r.text
+    assert "on" in str(r.json()["detail"]).lower()
+
+
+# ---------------------------------------------------------------------------
+# Retain: allow / redact / block / webhook (DB)
+# ---------------------------------------------------------------------------
+
+_REDACT_POLICY = {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}}
+
+
+async def _set_policy(api_client, bank: str, updates: dict) -> None:
+    r = await api_client.patch(f"/v1/default/banks/{bank}/config", json={"updates": updates})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_retain_allows_clean_content(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-retain-1", json={})
+    await _set_policy(api_client, "md-retain-1", _REDACT_POLICY)
+    r = await api_client.post(
+        "/v1/default/banks/md-retain-1/memories",
+        json={"items": [{"content": "the meeting is friday"}]},
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_retain_stores_redacted_text(api_client, memory, request_context) -> None:
+    await api_client.put("/v1/default/banks/md-retain-2", json={})
+    await _set_policy(api_client, "md-retain-2", _REDACT_POLICY)
+    secret = "ghp_" + "A" * 36
+    r = await api_client.post(
+        "/v1/default/banks/md-retain-2/memories",
+        json={"items": [{"content": f"my token is {secret}"}]},
+    )
+    assert r.status_code == 200, r.text
+    listing = await memory.list_memory_units("md-retain-2", limit=1000, request_context=request_context)
+    texts = [item["text"] for item in listing["items"]]
+    assert all(secret not in t for t in texts), texts
+
+
+@pytest.mark.asyncio
+async def test_retain_blocks_secret_item(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-retain-3", json={})
+    await _set_policy(
+        api_client,
+        "md-retain-3",
+        {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]}},
+    )
+    # A single item that contains a secret is fully blocked → 422.
+    secret = "sk-ant-" + "B" * 40
+    r = await api_client.post(
+        "/v1/default/banks/md-retain-3/memories",
+        json={"items": [{"content": f"key={secret}"}]},
+    )
+    assert r.status_code == 422, r.text
+    # Content with no sensitive_data hit still passes (nothing to block).
+    r2 = await api_client.post(
+        "/v1/default/banks/md-retain-3/memories",
+        json={"items": [{"content": "the roadmap meeting is on friday"}]},
+    )
+    assert r2.status_code == 200, r2.text
+
+
+@pytest.mark.asyncio
+async def test_mixed_retain_preserves_input_positions_in_results_and_hook(
+    pg0_db_url, query_analyzer, request_context
+) -> None:
+    from hindsight_api.engine.memory_engine import MemoryEngine
+    from hindsight_api.engine.task_backend import SyncTaskBackend
+    from tests.test_extensions import TrackingValidator
+    from tests.test_llm_reasoning_effort_env import DummyCrossEncoder
+    from tests.test_retain_same_document_concurrency import _StubEmbeddings
+
+    validator = TrackingValidator({})
+    memory = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=_StubEmbeddings(),
+        cross_encoder=DummyCrossEncoder(),
+        query_analyzer=query_analyzer,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+        operation_validator=validator,
+    )
+    await memory.initialize()
+    memory._config_resolver._global_config.enable_auto_consolidation = False
+    bank = f"md-retain-mixed-order-{uuid.uuid4().hex[:8]}"
+    await memory.update_bank_config(
+        bank,
+        {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]}},
+        request_context=request_context,
+    )
+    # Each document is processed as its own group, with a blocked item before
+    # the item that creates memories.
+    contents = [
+        {"content": "key=" + "ghp_" + "A" * 36, "document_id": "doc-a"},
+        {"content": "Alice lives in Paris.", "document_id": "doc-a"},
+        {"content": "key=" + "sk-ant-" + "B" * 40, "document_id": "doc-b"},
+        {"content": "Bob enjoys hiking.", "document_id": "doc-b"},
+    ]
+
+    try:
+        memory_ids = await memory.retain_batch_async(bank, contents, request_context=request_context)
+
+        assert len(memory_ids) == len(contents)
+        assert memory_ids[0] == []
+        assert memory_ids[1]
+        assert memory_ids[2] == []
+        assert memory_ids[3]
+        assert len(validator.post_retain_calls) == 1
+        hook_result = validator.post_retain_calls[0]
+        assert hook_result.contents == contents
+        assert hook_result.unit_ids == memory_ids
+    finally:
+        await memory.close()
+
+
+async def _memory_defense_webhook_events(memory, bank: str) -> list[dict]:
+    """Return the fully-parsed WebhookEvent bodies of the memory_defense.triggered
+    deliveries queued for ``bank``. The webhook_delivery task_payload nests the
+    serialized event under ``payload`` (a JSON string)."""
+    async with memory._pool.acquire() as conn:
+        # Order most-recent-first so callers using ``events[0]`` always see
+        # the latest queued delivery — otherwise pollution from earlier test
+        # runs against the same bank surfaces stale payloads.
+        rows = await conn.fetch(
+            "SELECT task_payload FROM async_operations "
+            "WHERE operation_type = 'webhook_delivery' AND bank_id = $1 "
+            "ORDER BY created_at DESC",
+            bank,
+        )
+    events: list[dict] = []
+    for row in rows:
+        task = row["task_payload"]
+        if isinstance(task, str):
+            task = json.loads(task)
+        if task.get("event_type") != "memory_defense.triggered":
+            continue
+        events.append(json.loads(task["payload"]))
+    return events
+
+
+@pytest.mark.asyncio
+async def test_retain_fires_webhook_on_redact(api_client, memory) -> None:
+    """A redact decision queues a memory_defense.triggered delivery whose payload
+    reports the action, detector, and matched pattern labels."""
+    bank = "md-retain-wh"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    wr = await api_client.post(
+        f"/v1/default/banks/{bank}/webhooks",
+        json={"url": "https://example.com/hook", "event_types": ["memory_defense.triggered"]},
+    )
+    assert wr.status_code in {200, 201}, wr.text
+    await _set_policy(api_client, bank, _REDACT_POLICY)
+
+    secret = "ghp_" + "A" * 36
+    rr = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": f"rotate {secret}"}]},
+    )
+    assert rr.status_code == 200, rr.text
+
+    events = await _memory_defense_webhook_events(memory, bank)
+    assert len(events) >= 1, events
+    ev = events[0]
+    assert ev["event"] == "memory_defense.triggered"
+    assert ev["status"] == "redact"
+    data = ev["data"]
+    assert data["action"] == "redact"
+    assert data["detector"] == "sensitive_data"
+    assert "github_token" in data["matched_types"]
+    assert data["message"]
+    # The webhook payload carries a per-match fingerprinted preview — the raw
+    # secret never crosses the wire, but a SIEM can still correlate against
+    # its credential inventory using the leading provider prefix + trailing
+    # discriminator (e.g. `ghp_...AAAA`). Populated by OSS as of #2157.
+    hits = data.get("hits") or []
+    assert any(h.get("detector") == "github_token" and h.get("preview") == "ghp_...AAAA" for h in hits), hits
+    for h in hits:
+        assert secret not in (h.get("preview") or ""), "raw secret leaked into preview"
+
+
+@pytest.mark.asyncio
+async def test_retain_fires_webhook_on_block(api_client, memory) -> None:
+    """A block decision also fires the webhook (before the 422 is raised), with
+    action=block in the payload."""
+    bank = "md-retain-wh-block"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    wr = await api_client.post(
+        f"/v1/default/banks/{bank}/webhooks",
+        json={"url": "https://example.com/hook", "event_types": ["memory_defense.triggered"]},
+    )
+    assert wr.status_code in {200, 201}, wr.text
+    await _set_policy(
+        api_client,
+        bank,
+        {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]}},
+    )
+
+    secret = "AKIA" + "A" * 16
+    rr = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": f"key {secret}"}]},
+    )
+    assert rr.status_code == 422, rr.text  # all items blocked
+
+    events = await _memory_defense_webhook_events(memory, bank)
+    assert any(ev["data"]["action"] == "block" for ev in events), events
+    blocked = next(ev for ev in events if ev["data"]["action"] == "block")
+    assert blocked["status"] == "block"
+    assert blocked["data"]["detector"] == "sensitive_data"
+    assert "aws_access_key" in blocked["data"]["matched_types"]
+
+
+@pytest.mark.asyncio
+async def test_retain_writes_audit_log(api_client, memory) -> None:
+    """A non-allow decision writes a 'memory_defense' audit entry recording the
+    action taken and what matched (when audit logging is enabled)."""
+    import asyncio
+
+    # Audit logging is hierarchical (env -> tenant -> bank) and defaults off.
+    # Enable it deployment-wide for this case: the logger flag covers actions
+    # with no bank in scope, enable_audit_default sets the resolver default the
+    # per-bank gate reads.
+    memory._audit_logger._enabled = True
+    enable_audit_default(memory, True)
+    try:
+        bank = "md-audit"
+        await api_client.put(f"/v1/default/banks/{bank}", json={})
+        await _set_policy(api_client, bank, _REDACT_POLICY)
+
+        secret = "ghp_" + "A" * 36
+        rr = await api_client.post(
+            f"/v1/default/banks/{bank}/memories",
+            json={"items": [{"content": f"rotate {secret}", "document_id": "doc-audit"}]},
+        )
+        assert rr.status_code == 200, rr.text
+
+        # Audit writes are fire-and-forget — poll briefly for the row.
+        row = None
+        for _ in range(20):
+            async with memory._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT action, transport, metadata FROM audit_log "
+                    "WHERE bank_id = $1 AND action = 'memory_defense' ORDER BY started_at DESC LIMIT 1",
+                    bank,
+                )
+            if row is not None:
+                break
+            await asyncio.sleep(0.1)
+        assert row is not None, "no memory_defense audit entry written"
+        meta = row["metadata"]
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        assert meta["action"] == "redact"
+        assert meta["detector"] == "sensitive_data"
+        assert "github_token" in meta["matched_types"]
+        assert meta["document_id"] == "doc-audit"
+    finally:
+        memory._audit_logger._enabled = False
+
+
+# ---------------------------------------------------------------------------
+# Document-body scrubbing (DB)
+# ---------------------------------------------------------------------------
+#
+# Regression coverage for the "ghp_AAA... persists in raw documents" leak:
+# per-chunk screen() mutates the chunk content, but the document body is built
+# either from the raw dict or from full_document_body (the FULL original
+# body for oversized inputs). Both paths must be scrubbed.
+
+# Mix of secret patterns covered by the redactor (keys, tokens, PII, DB URLs).
+_SECRETS = {
+    "ssn": "123-45-6789",
+    "github_pat": "ghp_" + "A" * 36,
+    "github_app": "ghs_" + "B" * 36,
+    "anthropic": "sk-ant-" + "C" * 40,
+    "xai": "xai-" + "D" * 40,
+    "groq": "gsk_" + "E" * 30,
+    "huggingface": "hf_" + "F" * 35,
+    "stripe_live": "sk_live_" + "G" * 30,
+    "twilio_sid": "AC" + "0" * 32,
+    "sendgrid": "SG." + "H" * 22 + "." + "I" * 43,
+    "aws_access": "AKIA" + "J" * 16,
+    "postgres_url": "postgres://user:p4ssw0rd@db.example.com:5432/app",
+}
+
+
+@pytest.mark.asyncio
+async def test_scrubs_secrets_from_document_body(api_client) -> None:
+    bank = "md-doc-body-1"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    await _set_policy(api_client, bank, _REDACT_POLICY)
+
+    doc_id = "leak-test-doc-1"
+    body = "Audit log:\n" + "\n".join(f"- {label} = {value}" for label, value in _SECRETS.items())
+    r = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": body, "document_id": doc_id}]},
+    )
+    assert r.status_code == 200, r.text
+
+    # 1) Memory units must not contain ANY secret value verbatim.
+    r2 = await api_client.get(f"/v1/default/banks/{bank}/memories/list", params={"limit": 200})
+    for label, value in _SECRETS.items():
+        for unit in r2.json()["items"]:
+            assert value not in unit["text"], f"memory_unit leaked {label}={value!r}: {unit['text']!r}"
+
+    # 2) Document body must not contain ANY secret value verbatim.
+    r3 = await api_client.get(f"/v1/default/banks/{bank}/documents/{doc_id}")
+    assert r3.status_code == 200, r3.text
+    original_text = r3.json()["original_text"]
+    for label, value in _SECRETS.items():
+        assert value not in original_text, f"document.original_text leaked {label}={value!r}"
+
+
+@pytest.mark.asyncio
+async def test_scrubs_ssn_from_short_message(api_client) -> None:
+    bank = "md-doc-body-ssn"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    await _set_policy(api_client, bank, _REDACT_POLICY)
+
+    doc_id = "ssn-1"
+    ssn = "123-45-6789"
+    body = f"The user pasted their ssn us for debugging: {ssn} — please scrub and rotate."
+    r = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": body, "document_id": doc_id}]},
+    )
+    assert r.status_code == 200, r.text
+
+    r3 = await api_client.get(f"/v1/default/banks/{bank}/documents/{doc_id}")
+    assert r3.status_code == 200, r3.text
+    original_text = r3.json()["original_text"]
+    assert ssn not in original_text, f"document.original_text leaked SSN: {original_text!r}"
+    assert "[REDACTED:ssn_us]" in original_text, original_text
+
+
+@pytest.mark.asyncio
+async def test_scrubs_secrets_in_multi_doc_batch(api_client) -> None:
+    """Multiple items with distinct document_ids in a single POST trigger the
+    multi-doc grouping recursion in retain_batch(); screening must run for each."""
+    bank = "md-multi-doc-batch"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    await _set_policy(api_client, bank, _REDACT_POLICY)
+
+    secrets = [
+        ("anthropic", "sk-ant-" + "A" * 40),
+        ("xai", "xai-" + "G" * 80),
+        ("databricks", "dapi" + "L" * 32),
+        ("ssn", "123-45-6789"),
+    ]
+    items = [
+        {"content": f"User pasted {label}: {value} — scrub it.", "document_id": f"multi-doc-{label}"}
+        for label, value in secrets
+    ]
+    r = await api_client.post(f"/v1/default/banks/{bank}/memories", json={"items": items})
+    assert r.status_code == 200, r.text
+
+    for label, value in secrets:
+        r2 = await api_client.get(f"/v1/default/banks/{bank}/documents/multi-doc-{label}")
+        assert r2.status_code == 200, r2.text
+        assert value not in r2.json()["original_text"], f"{label} leaked in multi-doc batch"
+
+
+@pytest.mark.asyncio
+async def test_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
+    """A single content item over retain_batch_tokens is chunked and carries the
+    FULL original body in full_document_body, which bypasses per-chunk
+    screen() — the orchestrator must scrub it before persisting."""
+    bank = "md-doc-body-oversized"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    await _set_policy(api_client, bank, _REDACT_POLICY)
+
+    secret = "ghp_" + "Z" * 36
+    ssn = "987-65-4321"
+    padding = ("The quick brown fox jumps over the lazy dog. " * 50 + "\n") * 5  # ~12KB
+    body = f"Audit:\n{padding}\nCredential: {secret}\nUser SSN: {ssn}\n{padding}{padding}{padding}"  # >45KB
+
+    doc_id = "oversized-leak-1"
+    r = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": body, "document_id": doc_id}]},
+    )
+    assert r.status_code == 200, r.text
+
+    r3 = await api_client.get(f"/v1/default/banks/{bank}/documents/{doc_id}")
+    assert r3.status_code == 200, r3.text
+    original_text = r3.json()["original_text"]
+    assert secret not in original_text, "oversized document.original_text leaked github token"
+    assert ssn not in original_text, "oversized document.original_text leaked SSN"
+
+
+# ---------------------------------------------------------------------------
+# redact_document_body: the oversized-item scrubber, in isolation
+# ---------------------------------------------------------------------------
+
+
+def _defense_config(memory_defense: dict | None) -> HindsightConfig:
+    """A real resolved config carrying the given raw memory_defense policy.
+
+    Not a stub: ``redact_document_body`` reads ``config.memory_defense`` directly,
+    and a partial stand-in would raise AttributeError rather than exercise the parse.
+    """
+    import dataclasses
+
+    from hindsight_api.config import _get_raw_config
+
+    return dataclasses.replace(_get_raw_config(), memory_defense=memory_defense)
+
+
+@pytest.mark.parametrize("card", ["4111 1111 1111 1111", "４１１１１１１１１１１１１１１１", "٤١١١١١١١١١١١١١١١"])
+def test_redact_document_body_preserves_overlapping_and_unicode_matches(card: str) -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    out = redact_document_body(
+        "2026 " + card,
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+    assert out == "2026 [REDACTED:credit_card]"
+
+
+def test_redact_document_body_preserves_technical_values_and_scrubs_cards() -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    technical = "score: 0.4111111111111111; task_id: aaaaaaaa-bbbb-cccc-4111-111111111111; "
+    out = redact_document_body(
+        technical + "card: 4111 1111 1111 1111",
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+    assert out == technical + "card: [REDACTED:credit_card]"
+
+
+def test_redact_document_body_scrubs_when_the_policy_redacts():
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    secret = "ghp_" + "Q" * 36
+    out = redact_document_body(
+        f"deploy key: {secret}",
+        _defense_config({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]}),
+    )
+
+    assert secret not in out
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {"enabled": False, "rules": [{"on": "sensitive_data", "action": "redact"}]},
+        # Enabled, but no rule names the detector this OSS path screens for.
+        {"enabled": True, "rules": [{"on": "something_else", "action": "redact"}]},
+    ],
+    ids=["absent", "disabled", "no_sensitive_data_rule"],
+)
+def test_redact_document_body_passes_the_body_through_when_not_screening(policy):
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    assert redact_document_body(body, _defense_config(policy)) == body
+
+
+def test_redact_document_body_raises_on_a_malformed_policy():
+    """A policy that will not parse fails the retain instead of skipping screening.
+
+    This used to be wrapped in ``except Exception: return body``, which returned the
+    body unscrubbed. Fail-open is the wrong default for a security control, and the
+    catch bought nothing: ``retain_batch`` parses the same ``config.memory_defense``
+    unguarded, so the retain died moments later anyway — only without the traceback
+    saying why, and without any sign that screening had been skipped first.
+    """
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    body = "deploy key: ghp_" + "Q" * 36
+    malformed = {"enabled": True, "rules": [{"on": "sensitive_data", "action": "obliterate"}]}
+
+    with pytest.raises(ValueError, match="invalid action"):
+        redact_document_body(body, _defense_config(malformed))
+
+
+def test_redact_document_body_rejects_global_config():
+    """Handed global config, it raises rather than silently skipping screening.
+
+    ``memory_defense`` is bank-configurable, so ``StaticConfigProxy`` refuses it with
+    ConfigFieldAccessError — an AttributeError subclass the old blanket catch also
+    swallowed, turning a wrong-config bug into a silently unscrubbed document body.
+    """
+    from hindsight_api.config import ConfigFieldAccessError, StaticConfigProxy, _get_raw_config
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    with pytest.raises(ConfigFieldAccessError, match="memory_defense"):
+        redact_document_body("deploy key: ghp_" + "Q" * 36, StaticConfigProxy(_get_raw_config()))

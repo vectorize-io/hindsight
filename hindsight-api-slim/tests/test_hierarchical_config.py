@@ -1,0 +1,900 @@
+"""
+Tests for hierarchical configuration system.
+
+Tests config resolution hierarchy (global → tenant → bank),
+key normalization, API endpoints, validation, and caching.
+"""
+
+import json
+import uuid
+
+import pytest
+
+from hindsight_api.config import HindsightConfig, normalize_config_dict, normalize_config_key
+from hindsight_api.config_resolver import BankConfigPersistenceConflictError, ConfigResolver
+from hindsight_api.extensions.tenant import TenantExtension
+from hindsight_api.models import RequestContext
+
+
+class MockTenantExtension(TenantExtension):
+    """Mock tenant extension for testing tenant-level config."""
+
+    def __init__(self, tenant_config: dict):
+        self.tenant_config = tenant_config
+
+    async def authenticate(self, context):
+        from hindsight_api.extensions.tenant import TenantContext
+
+        return TenantContext(schema_name="public")
+
+    async def list_tenants(self):
+        from hindsight_api.extensions.tenant import Tenant
+
+        return [Tenant(schema="public")]
+
+    async def get_tenant_config(self, context):
+        """Return mock tenant config."""
+        return self.tenant_config
+
+
+class _FakeBankOps:
+    """Dialect ops stub. Bank creation issues no index DDL (#3485), so this is bare."""
+
+
+class FakeBankConfigBackend:
+    """Minimal backend for ConfigResolver bank-config tests."""
+
+    def __init__(self):
+        self.config: dict[str, object] = {}
+        self.ops = _FakeBankOps()
+
+    def acquire(self):
+        return FakeBankConfigConnection(self)
+
+    def transaction(self):
+        return FakeBankConfigConnection(self)
+
+
+class FakeBankConfigConnection:
+    def __init__(self, backend: FakeBankConfigBackend):
+        self.backend = backend
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def fetchrow(self, query, bank_id):
+        return {"config": self.backend.config}
+
+    async def fetchval(self, query, *args):
+        # ensure_bank_exists INSERT ... ON CONFLICT DO NOTHING RETURNING bank_id.
+        # Return None to simulate the bank already existing (no index creation).
+        return None
+
+    async def execute(self, query, updates_json, bank_id):
+        self.backend.config.update(json.loads(updates_json))
+        # Mirror the driver's "<CMD> <rowcount>" status: this fake stands in for
+        # a bank that already exists, so the UPDATE matches its single row.
+        return "UPDATE 1"
+
+
+@pytest.mark.asyncio
+async def test_config_key_normalization():
+    """Test that env var keys are normalized to Python field names."""
+    # Test basic normalization
+    assert normalize_config_key("HINDSIGHT_API_LLM_PROVIDER") == "llm_provider"
+    assert normalize_config_key("HINDSIGHT_API_LLM_MODEL") == "llm_model"
+    assert normalize_config_key("HINDSIGHT_API_RETAIN_LLM_PROVIDER") == "retain_llm_provider"
+
+    # Test already normalized keys
+    assert normalize_config_key("llm_provider") == "llm_provider"
+    assert normalize_config_key("llm_model") == "llm_model"
+
+    # Test dict normalization
+    input_dict = {
+        "HINDSIGHT_API_LLM_PROVIDER": "openai",
+        "HINDSIGHT_API_LLM_MODEL": "gpt-4",
+        "llm_base_url": "https://api.openai.com",
+    }
+    expected = {"llm_provider": "openai", "llm_model": "gpt-4", "llm_base_url": "https://api.openai.com"}
+    assert normalize_config_dict(input_dict) == expected
+
+
+@pytest.mark.asyncio
+async def test_hierarchical_fields_categorization():
+    """Test that fields are correctly categorized as configurable, credentials, or static."""
+    configurable = HindsightConfig.get_configurable_fields()
+    credentials = HindsightConfig.get_credential_fields()
+    static = HindsightConfig.get_static_fields()
+
+    # Verify no overlap between configurable and credentials
+    assert len(configurable & credentials) == 0, "Configurable fields should not include credentials"
+
+    # Verify configurable fields include behavioral settings (safe to modify)
+    assert "retain_extraction_mode" in configurable
+    assert "retain_mission" in configurable
+    assert "retain_custom_instructions" in configurable
+    assert "retain_chunk_size" in configurable
+    assert "retain_structured_chunk_size" in configurable
+    assert "enable_observations" in configurable
+    assert "consolidation_llm_batch_size" in configurable
+    assert "consolidation_source_facts_max_tokens" in configurable
+    assert "consolidation_source_facts_max_tokens_per_observation" in configurable
+    assert "observations_mission" in configurable
+    assert "reflect_mission" in configurable
+    assert "disposition_skepticism" in configurable
+    assert "disposition_literalism" in configurable
+    assert "disposition_empathy" in configurable
+
+    # Verify entity labels fields are included
+    assert "entities_allow_free_form" in configurable
+    assert "entity_labels" in configurable
+
+    # Verify other configurable fields
+    assert "retain_default_strategy" in configurable
+    assert "retain_strategies" in configurable
+    assert "max_observations_per_scope" in configurable
+    assert "observation_scope_limits" in configurable
+    assert "consolidation_strategies" in configurable
+    assert "reflect_source_facts_max_tokens" in configurable
+    assert "llm_gemini_safety_settings" in configurable
+    assert "mcp_enabled_tools" in configurable
+    assert "retain_chunk_batch_size" in configurable
+    assert "enable_auto_consolidation" in configurable
+    assert "consolidation_llm_parallelism" in configurable
+    assert "audit_log_enabled" in configurable
+    assert "store_document_text" in configurable
+    assert "enable_text_search" in configurable
+    assert "enable_temporal_retrieval" in configurable
+    assert "enable_graph_retrieval" in configurable
+    assert "enable_reranking" in configurable
+    assert "mental_model_min_refresh_interval_seconds" in configurable
+    assert "knowledge_page_default_trigger" in configurable
+    assert "reflect_default_options" in configurable
+
+    # Verify count is correct
+    assert len(configurable) == 51
+
+    # Verify credential fields (NEVER exposed)
+    assert "llm_api_key" in credentials
+    assert "llm_base_url" in credentials
+    assert "retain_llm_api_key" in credentials
+    assert "reflect_llm_api_key" in credentials
+
+    # Verify static fields include server settings AND non-configurable LLM fields
+    assert "database_url" in static
+    assert "port" in static
+    assert "host" in static
+    assert "embeddings_provider" in static
+    assert "reranker_provider" in static
+    assert "worker_enabled" in static
+    assert "llm_provider" in static  # Not configurable (needs presets)
+    assert "llm_model" in static  # Not configurable (needs presets)
+    assert "graph_retriever" in static  # Performance tuning, not configurable
+    assert "llm_max_concurrent" in static  # Performance tuning, not configurable
+
+
+@pytest.mark.asyncio
+async def test_config_hierarchy_resolution(memory, request_context):
+    """Test that config resolution follows global → tenant → bank hierarchy."""
+    bank_id = "test-hierarchy-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        # Set up mock tenant extension with tenant-level config (use configurable fields only)
+        tenant_config = {"retain_chunk_size": 5000, "retain_extraction_mode": "tenant-mode"}
+        mock_tenant = MockTenantExtension(tenant_config)
+
+        # Create config resolver with mock tenant extension
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=mock_tenant)
+
+        # Test 1: Global config only (no overrides)
+        context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+        config = await resolver.get_bank_config(bank_id, context)
+
+        # Should have configurable fields from global config (NOT credentials or llm_provider/model)
+        assert "retain_chunk_size" in config  # Configurable field
+        assert "llm_api_key" not in config  # Credential - never exposed
+        assert "llm_provider" not in config  # Not configurable (needs presets)
+
+        # Test 2: Add tenant-level overrides
+        config = await resolver.get_bank_config(bank_id, context)
+
+        # Should apply tenant overrides (only configurable fields)
+        assert config["retain_chunk_size"] == 5000  # Tenant override
+        assert config["retain_extraction_mode"] == "tenant-mode"  # Tenant override
+
+        # Test 3: Add bank-level overrides (should take precedence)
+        await resolver.update_bank_config(
+            bank_id,
+            {"retain_chunk_size": 2000, "retain_extraction_mode": "bank-mode"},  # Override tenant settings
+            context,
+        )
+
+        # Config should reflect changes immediately (no caching)
+        config = await resolver.get_bank_config(bank_id, context)
+
+        # Bank overrides should take precedence over tenant
+        assert config["retain_chunk_size"] == 2000  # Bank override wins
+        assert config["retain_extraction_mode"] == "bank-mode"  # Bank override wins
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_config_null_consolidation_overrides_use_server_defaults():
+    """JSON null bank overrides should behave like Server Default.
+
+    Regression test for #1619: the dashboard can send null for observation
+    config fields. Those nulls must not flow into consolidation as None.
+    """
+    bank_id = "test-null-consolidation-config-bank"
+    fields = (
+        "consolidation_llm_batch_size",
+        "consolidation_source_facts_max_tokens",
+        "consolidation_source_facts_max_tokens_per_observation",
+        "max_observations_per_scope",
+    )
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+    explicit_overrides = {
+        "consolidation_llm_batch_size": 7,
+        "consolidation_source_facts_max_tokens": 2048,
+        "consolidation_source_facts_max_tokens_per_observation": 256,
+        "max_observations_per_scope": 3,
+    }
+
+    await resolver.update_bank_config(bank_id, explicit_overrides)
+    config = await resolver.resolve_full_config(bank_id)
+    for field_name, expected in explicit_overrides.items():
+        assert getattr(config, field_name) == expected
+
+    await resolver.update_bank_config(bank_id, {field_name: None for field_name in fields})
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    global_config = resolver._global_config
+    for field_name in fields:
+        assert getattr(resolved_config, field_name) == getattr(global_config, field_name)
+        assert getattr(resolved_config, field_name) is not None
+
+    bank_overrides = await resolver._load_bank_config(bank_id)
+    for field_name in fields:
+        assert field_name not in bank_overrides
+
+
+@pytest.mark.asyncio
+async def test_retain_chunking_null_overrides_use_server_defaults():
+    """JSON null retain chunking overrides should behave like Server Default."""
+    bank_id = "test-null-retain-chunking-config-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": 5000,
+            "retain_structured_chunk_size": 7000,
+        },
+    )
+    config = await resolver.resolve_full_config(bank_id)
+    assert config.retain_chunk_size == 5000
+    assert config.retain_structured_chunk_size == 7000
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": None,
+            "retain_structured_chunk_size": None,
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    global_config = resolver._global_config
+    assert resolved_config.retain_chunk_size == global_config.retain_chunk_size
+    assert resolved_config.retain_structured_chunk_size == global_config.retain_structured_chunk_size
+
+
+@pytest.mark.asyncio
+async def test_retain_chunking_validation_uses_null_cleared_chunk_size():
+    """Chunking validation should apply JSON null tombstones before checking final values."""
+    bank_id = "test-null-retain-chunking-validation-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": 5000,
+            "retain_structured_chunk_size": 7000,
+        },
+    )
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": None,
+            "retain_structured_chunk_size": 4000,
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    assert resolved_config.retain_chunk_size == resolver._global_config.retain_chunk_size
+    assert resolved_config.retain_structured_chunk_size == 4000
+
+
+@pytest.mark.asyncio
+async def test_existing_retain_strategy_structured_chunking_survives_chunk_size_changes():
+    """Top-level chunk size updates can exceed existing structured chunk caps."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    bank_id = "test-existing-retain-strategy-chunking-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_strategies": {
+                "jsonl": {
+                    "retain_structured_chunk_size": 4000,
+                },
+            },
+        },
+    )
+
+    await resolver.update_bank_config(bank_id, {"retain_chunk_size": 5000})
+
+    config = await resolver.resolve_full_config(bank_id)
+    strategy_config = apply_strategy(config, "jsonl")
+    assert strategy_config.retain_chunk_size == 5000
+    assert strategy_config.retain_structured_chunk_size == 4000
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_chunking_null_matches_apply_strategy_semantics():
+    """Strategy null values are direct overrides, not bank-config tombstones."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    bank_id = "test-retain-strategy-null-chunking-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_structured_chunk_size": 5000,
+            "retain_strategies": {
+                "large-turns": {
+                    "retain_chunk_size": 8000,
+                    "retain_structured_chunk_size": None,
+                },
+            },
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    strategy_config = apply_strategy(resolved_config, "large-turns")
+    assert strategy_config.retain_chunk_size == 8000
+    assert strategy_config.retain_structured_chunk_size is None
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"retain_chunk_size": "5000"},
+        {"retain_chunk_size": 5000.5},
+        {"retain_chunk_size": True},
+        {"retain_structured_chunk_size": "5000"},
+        {"retain_structured_chunk_size": 5000.5},
+        {"retain_structured_chunk_size": False},
+    ],
+)
+@pytest.mark.asyncio
+async def test_retain_chunking_raw_patch_values_must_be_integers(updates):
+    """Raw config PATCH values should fail as 400-style ValueError, not TypeError."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config("test-retain-chunking-malformed-patch-bank", updates)
+
+    error_message = str(exc_info.value)
+    assert "must be an integer" in error_message
+    assert "HINDSIGHT_API_" not in error_message
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_chunk_size_null_rejected_with_value_error():
+    """Strategy retain_chunk_size cannot be null because apply_strategy would use it directly."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config(
+            "test-retain-strategy-null-chunk-size-bank",
+            {
+                "retain_strategies": {
+                    "bad": {
+                        "retain_chunk_size": None,
+                    },
+                },
+            },
+        )
+
+    error_message = str(exc_info.value)
+    assert "Invalid retain strategy 'bad'" in error_message
+    assert "retain_chunk_size must be an integer" in error_message
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_non_object_rejected_with_value_error():
+    """Strategy entries must be objects so apply_strategy cannot fail later."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config(
+            "test-retain-strategy-non-object-bank",
+            {
+                "retain_strategies": {
+                    "bad": "not-a-dict",
+                },
+            },
+        )
+
+    assert "Invalid retain strategy 'bad': must be an object" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_chunk_size_must_remain_below_max_completion_tokens():
+    """Strategy chunk-size overrides must preserve the existing retain output-token invariant."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config(
+            "test-retain-strategy-max-completion-bank",
+            {
+                "retain_strategies": {
+                    "bad": {
+                        "retain_chunk_size": 64000,
+                    },
+                },
+            },
+        )
+
+    error_message = str(exc_info.value)
+    assert "Invalid retain strategy 'bad'" in error_message
+    assert "retain_max_completion_tokens" in error_message
+    assert "must be greater than retain_chunk_size" in error_message
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_structured_chunk_size_can_be_below_same_update_chunk_size():
+    """Strategy structured chunk size can be lower than the top-level chunk size."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        "test-retain-strategy-chunking-bank",
+        {
+            "retain_chunk_size": 5000,
+            "retain_strategies": {
+                "jsonl": {
+                    "retain_structured_chunk_size": 4000,
+                },
+            },
+        },
+    )
+
+    config = await resolver.resolve_full_config("test-retain-strategy-chunking-bank")
+    strategy_config = apply_strategy(config, "jsonl")
+    assert strategy_config.retain_chunk_size == 5000
+    assert strategy_config.retain_structured_chunk_size == 4000
+
+
+@pytest.mark.asyncio
+async def test_config_validation_rejects_static_fields(memory, request_context):
+    """Test that attempting to override static fields raises ValueError."""
+    bank_id = "test-validation-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Test 1: Configurable fields should work
+        await resolver.update_bank_config(bank_id, {"retain_chunk_size": 4000, "retain_extraction_mode": "verbose"})
+
+        # Test 2: Static fields should raise ValueError
+        with pytest.raises(ValueError, match="Cannot override static"):
+            await resolver.update_bank_config(bank_id, {"port": 9000})
+
+        with pytest.raises(ValueError, match="Cannot override static"):
+            await resolver.update_bank_config(bank_id, {"database_url": "postgresql://fake"})
+
+        with pytest.raises(ValueError, match="Cannot override static"):
+            await resolver.update_bank_config(bank_id, {"embeddings_provider": "openai"})
+
+        # Test 3: Credential fields should raise ValueError
+        with pytest.raises(ValueError, match="Cannot set credential fields"):
+            await resolver.update_bank_config(bank_id, {"llm_api_key": "sk-fake"})
+
+        # Test 4: Non-configurable LLM fields should raise ValueError (need presets)
+        with pytest.raises(ValueError, match="Cannot override static"):
+            await resolver.update_bank_config(bank_id, {"llm_model": "gpt-4"})
+
+        # Test 5: Mix of configurable and static should fail
+        with pytest.raises(ValueError, match="Cannot override static"):
+            await resolver.update_bank_config(bank_id, {"retain_chunk_size": 4000, "port": 9000})
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_validation_rejects_malformed_entity_labels(memory, request_context):
+    """Test that passing strings instead of LabelGroup dicts to entity_labels raises ValueError.
+
+    Regression test for the fix in PR #902: entity_labels PATCH must validate the
+    format before saving to prevent silent corruption that previously caused 500s on
+    subsequent retain calls (reported in issue #946).
+    """
+    bank_id = "test-entity-labels-validation"
+
+    try:
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # String list instead of LabelGroup dicts must raise ValueError, not silently accept.
+        # Previously this produced HTTP 200, then 500 on the next retain call (issue #946).
+        with pytest.raises(ValueError, match="Invalid entity_labels format"):
+            await resolver.update_bank_config(
+                bank_id,
+                {"entity_labels": ["person", "client", "tool"]},
+            )
+
+        # The correct LabelGroup format must succeed
+        await resolver.update_bank_config(
+            bank_id,
+            {
+                "entity_labels": [
+                    {
+                        "key": "kind",
+                        "type": "value",
+                        "values": [{"value": "person"}, {"value": "client"}],
+                    }
+                ]
+            },
+        )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_freshness_across_updates(memory, request_context):
+    """Test that config changes are immediately visible (no stale cache)."""
+    bank1 = "freshness-test-1"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank1, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Test 1: Initial config reflects global defaults
+        config1 = await resolver.get_bank_config(bank1, None)
+        initial_chunk_size = config1["retain_chunk_size"]
+
+        # Test 2: Update config
+        await resolver.update_bank_config(bank1, {"retain_chunk_size": 4000})
+
+        # Test 3: Next call should see updated value immediately (no stale cache)
+        config2 = await resolver.get_bank_config(bank1, None)
+        assert config2["retain_chunk_size"] == 4000
+
+        # Test 4: Multiple updates are all immediately visible
+        await resolver.update_bank_config(bank1, {"retain_chunk_size": 4500})
+        config3 = await resolver.get_bank_config(bank1, None)
+        assert config3["retain_chunk_size"] == 4500
+
+        # Test 5: Reset restores global defaults immediately
+        await resolver.reset_bank_config(bank1)
+        config4 = await resolver.get_bank_config(bank1, None)
+        assert config4["retain_chunk_size"] == initial_chunk_size  # Back to global default
+
+        # Test 6: Each call returns a fresh config dict (not a cached reference)
+        config5 = await resolver.get_bank_config(bank1, None)
+        config6 = await resolver.get_bank_config(bank1, None)
+        assert config5 is not config6  # Different object instances
+
+    finally:
+        await memory.delete_bank(bank1, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_update_bank_config_rejects_missing_bank(memory, request_context):
+    """The resolver must not report success while discarding the overrides.
+
+    Bank creation moved out of the resolver and into MemoryEngine, so a caller
+    that skips provisioning would otherwise UPDATE zero rows and silently no-op
+    while returning normally (the failure mode #1940 originally fixed).
+    """
+    bank_id = f"test-resolver-missing-bank-{uuid.uuid4().hex[:8]}"
+    resolver = ConfigResolver(backend=memory._backend)
+
+    with pytest.raises(BankConfigPersistenceConflictError, match="does not exist"):
+        await resolver.update_bank_config(bank_id, {"enable_observations": False}, request_context)
+
+    profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+    assert profile is None
+
+
+@pytest.mark.asyncio
+async def test_config_reset_to_defaults(memory, request_context):
+    """Test that resetting config removes all bank-specific overrides."""
+    bank_id = "test-reset-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Add bank-specific overrides
+        await resolver.update_bank_config(
+            bank_id,
+            {
+                "retain_chunk_size": 5500,
+                "retain_extraction_mode": "custom",
+                "retain_custom_instructions": "Custom instructions",
+            },
+        )
+
+        # Verify overrides applied
+        config = await resolver.get_bank_config(bank_id, None)
+        assert config["retain_chunk_size"] == 5500
+        assert config["retain_extraction_mode"] == "custom"
+        assert config["retain_custom_instructions"] == "Custom instructions"
+
+        # Reset to defaults
+        await resolver.reset_bank_config(bank_id)
+
+        # Verify overrides removed (back to global defaults)
+        config_reset = await resolver.get_bank_config(bank_id, None)
+        assert config_reset["retain_chunk_size"] != 5500  # Should be global default
+        assert config_reset["retain_extraction_mode"] != "custom"  # Should be global default
+
+        # Verify bank_config is empty
+        bank_overrides = await resolver._load_bank_config(bank_id)
+        assert bank_overrides == {}
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_supports_both_key_formats(memory, request_context):
+    """Test that API accepts both env var and Python field formats."""
+    bank_id = "test-key-format-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Test 1: Python field format
+        await resolver.update_bank_config(bank_id, {"retain_chunk_size": 7000})
+
+        config = await resolver.get_bank_config(bank_id, None)
+        assert config["retain_chunk_size"] == 7000
+
+        # Test 2: Env var format (should be normalized)
+        await resolver.update_bank_config(bank_id, {"HINDSIGHT_API_RETAIN_CHUNK_SIZE": 8000})
+
+        config = await resolver.get_bank_config(bank_id, None)
+        assert config["retain_chunk_size"] == 8000
+
+        # Test 3: Mixed format in same request
+        await resolver.update_bank_config(
+            bank_id,
+            {
+                "retain_chunk_size": 9000,  # Python format
+                "HINDSIGHT_API_RETAIN_EXTRACTION_MODE": "verbose",  # Env format
+            },
+        )
+
+        config = await resolver.get_bank_config(bank_id, None)
+        assert config["retain_chunk_size"] == 9000
+        assert config["retain_extraction_mode"] == "verbose"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_only_configurable_fields_stored(memory, request_context):
+    """Test that only configurable fields are stored in bank config."""
+    bank_id = "test-filter-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Add valid configurable field
+        await resolver.update_bank_config(bank_id, {"retain_chunk_size": 3500})
+
+        # Load bank config and verify only configurable fields present
+        bank_overrides = await resolver._load_bank_config(bank_id)
+
+        for key in bank_overrides.keys():
+            assert key in HindsightConfig.get_configurable_fields(), f"Non-configurable field {key} in bank config"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_get_bank_config_no_static_or_credential_fields_leak(memory, request_context):
+    """
+    SECURITY TEST: Verify get_bank_config() only returns configurable fields (no static/credentials).
+
+    This prevents leaking sensitive system configuration like database URLs,
+    API keys, LLM providers/models, worker counts, etc. when retrieving bank configuration.
+    """
+    bank_id = "test-security-bank"
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(backend=memory._backend)
+
+        # Get bank config
+        config = await resolver.get_bank_config(bank_id, None)
+
+        # Get field categorizations
+        configurable_fields = HindsightConfig.get_configurable_fields()
+        credential_fields = HindsightConfig.get_credential_fields()
+
+        # SECURITY: Verify ONLY configurable fields are returned (NO static, NO credentials)
+        for key in config.keys():
+            assert key in configurable_fields, (
+                f"SECURITY VIOLATION: Non-configurable field '{key}' returned by get_bank_config(). "
+                f"Only configurable fields should be returned to prevent leaking system config."
+            )
+            assert key not in credential_fields, (
+                f"SECURITY VIOLATION: Credential field '{key}' returned by get_bank_config(). "
+                f"Credentials must NEVER be exposed via API."
+            )
+
+        # SECURITY: Verify specific sensitive fields are NOT present
+        sensitive_fields = [
+            "database_url",
+            "api_port",
+            "host",
+            "worker_count",  # Infrastructure
+            "llm_api_key",
+            "llm_base_url",  # Credentials
+            "retain_llm_api_key",
+            "reflect_llm_api_key",  # More credentials
+            "llm_provider",
+            "llm_model",  # Not configurable (need presets)
+        ]
+        for field in sensitive_fields:
+            assert field not in config, (
+                f"SECURITY VIOLATION: Sensitive field '{field}' returned by get_bank_config(). "
+                f"Must not be exposed via bank config API."
+            )
+
+        # Verify we have the expected configurable fields (small set)
+        expected_configurable = [
+            "retain_chunk_size",
+            "retain_structured_chunk_size",
+            "retain_extraction_mode",
+            "enable_observations",
+        ]
+        for field in expected_configurable:
+            assert field in config, f"Expected configurable field '{field}' missing from config"
+
+        # Should have a small number of configurable fields (not hundreds)
+        assert len(config) < 60, f"Too many fields returned: {len(config)}"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_config_permissions_system(memory, request_context):
+    """
+    Test that tenant extension can control which fields banks are allowed to modify.
+
+    Tests get_allowed_config_fields() permission system.
+    """
+    bank_id = "test-permissions-bank"
+
+    class PermissionTenantExtension(TenantExtension):
+        """Mock tenant extension with configurable permissions."""
+
+        def __init__(self, allowed_fields: set[str] | None):
+            self.allowed_fields = allowed_fields
+
+        async def authenticate(self, context):
+            from hindsight_api.extensions.tenant import TenantContext
+
+            return TenantContext(schema_name="public")
+
+        async def list_tenants(self):
+            from hindsight_api.extensions.tenant import Tenant
+
+            return [Tenant(schema="public")]
+
+        async def get_allowed_config_fields(self, context, bank_id):
+            """Return configured allowed fields."""
+            return self.allowed_fields
+
+    try:
+        # Ensure bank exists in database
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        # Test 1: None = allow all configurable fields
+        extension = PermissionTenantExtension(allowed_fields=None)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
+
+        await resolver.update_bank_config(
+            bank_id, {"retain_chunk_size": 4000, "retain_extraction_mode": "verbose"}, request_context
+        )
+        config = await resolver.get_bank_config(bank_id, request_context)
+        assert config["retain_chunk_size"] == 4000
+        assert config["retain_extraction_mode"] == "verbose"
+
+        # Reset for next test
+        await resolver.reset_bank_config(bank_id)
+
+        # Test 2: Specific set = only those fields allowed
+        extension = PermissionTenantExtension(allowed_fields={"retain_chunk_size"})
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
+
+        # Should allow retain_chunk_size
+        await resolver.update_bank_config(bank_id, {"retain_chunk_size": 5000}, request_context)
+        config = await resolver.get_bank_config(bank_id, request_context)
+        assert config["retain_chunk_size"] == 5000
+
+        # Should reject retain_extraction_mode (not in allowed list)
+        with pytest.raises(ValueError, match="Not allowed to modify fields"):
+            await resolver.update_bank_config(bank_id, {"retain_extraction_mode": "verbose"}, request_context)
+
+        # Should reject mix of allowed and disallowed
+        with pytest.raises(ValueError, match="Not allowed to modify fields"):
+            await resolver.update_bank_config(
+                bank_id, {"retain_chunk_size": 6000, "retain_extraction_mode": "verbose"}, request_context
+            )
+
+        # Reset for next test
+        await resolver.reset_bank_config(bank_id)
+
+        # Test 3: Empty set = no modifications allowed (read-only)
+        extension = PermissionTenantExtension(allowed_fields=set())
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
+
+        with pytest.raises(ValueError, match="Not allowed to modify fields"):
+            await resolver.update_bank_config(bank_id, {"retain_chunk_size": 7000}, request_context)
+
+        # Test 4: get_bank_config should filter response based on permissions
+        extension = PermissionTenantExtension(allowed_fields={"retain_chunk_size", "enable_observations"})
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
+
+        config = await resolver.get_bank_config(bank_id, request_context)
+
+        # Should only return allowed fields
+        assert "retain_chunk_size" in config
+        assert "enable_observations" in config
+        # Other configurable fields should be filtered out
+        assert "retain_extraction_mode" not in config
+        assert "retain_custom_instructions" not in config
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

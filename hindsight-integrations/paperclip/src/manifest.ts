@@ -1,0 +1,146 @@
+import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
+
+const manifest: PaperclipPluginManifestV1 = {
+  id: "paperclip-plugin-hindsight",
+  apiVersion: 1,
+  version: "0.4.0",
+  displayName: "Hindsight Memory",
+  author: "Vectorize <support@vectorize.io>",
+  description:
+    "Persistent long-term memory for Paperclip agents. Automatically recalls relevant context before each run and retains agent output after — so every agent gets smarter over time.",
+  categories: ["automation"],
+  capabilities: [
+    "events.subscribe",
+    "agent.tools.register",
+    "plugin.state.read",
+    "plugin.state.write",
+    "http.outbound",
+    "secrets.read-ref",
+    "agents.read",
+    "issues.read",
+    "issue.comments.read",
+  ],
+  entrypoints: {
+    worker: "./dist/worker.js",
+  },
+  instanceConfigSchema: {
+    type: "object",
+    required: ["hindsightApiUrl"],
+    properties: {
+      hindsightApiUrl: {
+        type: "string",
+        title: "Hindsight API URL",
+        description:
+          "Base URL of your Hindsight instance. Defaults to Hindsight Cloud. Use http://localhost:8888 for self-hosted.",
+        default: "https://api.hindsight.vectorize.io",
+      },
+      hindsightApiKeyRef: {
+        // `format` drives the host's secret picker; the picker writes a
+        // { type: "secret_ref", secretId } object, and the host validates the raw
+        // config with Ajv before extracting refs — so the schema has to admit that
+        // object as well as a plain string (a pasted value or a legacy UUID).
+        format: "secret-ref",
+        title: "Hindsight API Key (secret ref)",
+        description:
+          "Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
+        oneOf: [
+          { type: "string" },
+          {
+            type: "object",
+            required: ["type", "secretId"],
+            properties: {
+              type: { const: "secret_ref" },
+              secretId: { type: "string" },
+              version: { type: "string" },
+            },
+          },
+        ],
+      },
+      dynamicBankId: {
+        type: "boolean",
+        title: "Dynamic Bank ID",
+        description:
+          "When true (default), bank ID is derived from bankGranularity. Set false and provide bankId to use a static shared bank.",
+        default: true,
+      },
+      bankId: {
+        type: "string",
+        title: "Static Bank ID",
+        description:
+          "Static bank ID used when dynamicBankId is false. All agents sharing this value read/write the same memory bank.",
+      },
+      bankGranularity: {
+        type: "array",
+        title: "Bank Granularity",
+        description:
+          "Controls memory isolation when dynamicBankId is true. Default ['company', 'agent'] gives each agent its own bank per company. Add 'user' for per-user memory isolation (useful for GDPR compliance).",
+        items: { type: "string", enum: ["company", "agent", "user"] },
+        default: ["company", "agent"],
+      },
+      recallBudget: {
+        type: "string",
+        title: "Recall Budget",
+        description: "'low' is fastest, 'mid' balances speed and depth, 'high' is most thorough.",
+        enum: ["low", "mid", "high"],
+        default: "mid",
+      },
+      requestTimeoutMs: {
+        type: "number",
+        title: "Request Timeout (ms)",
+        description:
+          "Timeout for each request to Hindsight. Raise it for self-hosted instances where recall on long issue descriptions takes longer than the default.",
+        minimum: 1000,
+        default: 15000,
+      },
+      autoRetain: {
+        type: "boolean",
+        title: "Auto-retain on Run Finished",
+        description: "Automatically retain agent run output to Hindsight when a run completes.",
+        default: true,
+      },
+      enabledAgentIds: {
+        type: "array",
+        title: "Enabled Agent IDs",
+        description:
+          "Restrict Hindsight recall/retain to these agent IDs only. Leave empty to enable for all agents (default).",
+        items: { type: "string" },
+      },
+    },
+  },
+  tools: [
+    {
+      name: "hindsight_recall",
+      displayName: "Recall from Memory",
+      description:
+        "Search Hindsight long-term memory for context relevant to a query. Use this before starting a task to surface relevant past decisions, preferences, and knowledge.",
+      parametersSchema: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: {
+            type: "string",
+            description: "What to search for in memory",
+          },
+        },
+      },
+    },
+    {
+      name: "hindsight_retain",
+      displayName: "Save to Memory",
+      description:
+        "Store important facts, decisions, or outcomes in Hindsight long-term memory for future runs.",
+      parametersSchema: {
+        type: "object",
+        required: ["content"],
+        properties: {
+          content: {
+            type: "string",
+            description: "The content to store in memory",
+          },
+        },
+      },
+    },
+  ],
+};
+
+export default manifest;

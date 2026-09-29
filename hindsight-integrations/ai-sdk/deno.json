@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "vitest": "./tests/vitest-compat.ts",
+    "ai": "npm:ai@^6",
+    "zod": "npm:zod@^4"
+  }
+}

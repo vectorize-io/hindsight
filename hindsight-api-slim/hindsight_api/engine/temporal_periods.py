@@ -1,0 +1,234 @@
+"""Explicit period extraction helpers for DateparserQueryAnalyzer.
+
+This module keeps the public period-extraction API and the non-Chinese period
+rules. Chinese rules live in chinese_temporal_periods.py because that rule set is
+substantially larger and has different boundary behavior from whitespace-based
+languages.
+"""
+
+import calendar
+import re
+import unicodedata
+from datetime import datetime, timedelta
+
+DateRange = tuple[datetime, datetime]
+
+
+class NoTemporalConstraintSentinel:
+    pass
+
+
+NO_TEMPORAL_CONSTRAINT = NoTemporalConstraintSentinel()
+
+__all__ = [
+    "NO_TEMPORAL_CONSTRAINT",
+    "extract_period",
+    "is_embedded_cjk_dateparser_match",
+]
+
+
+def _is_cjk_character(char: str) -> bool:
+    return "\u4e00" <= char <= "\u9fff"
+
+
+def is_embedded_cjk_dateparser_match(query: str, matched_text: str) -> bool:
+    from hindsight_api.engine.chinese_temporal_periods import (
+        is_embedded_cjk_dateparser_match as chinese_is_embedded_cjk_dateparser_match,
+    )
+
+    return chinese_is_embedded_cjk_dateparser_match(query, matched_text)
+
+
+def _constraint(start: datetime, end: datetime) -> DateRange:
+    return (
+        start.replace(hour=0, minute=0, second=0, microsecond=0),
+        end.replace(hour=23, minute=59, second=59, microsecond=999999),
+    )
+
+
+def _month_end(year: int, month: int) -> datetime:
+    return datetime(year, month, calendar.monthrange(year, month)[1])
+
+
+# A four-digit year on its own is ambiguous — dateparser reads every isolated
+# integer as one, which is how port and ticket numbers became temporal
+# constraints (issue #3250). What disambiguates it is the word introducing it:
+# "in 2019" is a year, "port 2019" is not. dateparser cannot make that call (it
+# returns the identical span "2019" for both), so the rule lives here, where the
+# whole query is still in hand and periods already resolve to a full range.
+#
+# Deliberately excludes "since"/"from", which open an interval ending now rather
+# than selecting the named year — collapsing those to Jan-Dec would be a
+# narrower window than asked for.
+_YEAR_ONLY_RE = re.compile(
+    r"\b(?:in|during|throughout|year|en|durante|a[nñ]o|nel|anno|dans|pendant|ann[ée]e|im|w[äa]hrend|jahr|в)\s+"
+    r"(?P<year>\d{4})\b(?![-/.]\d)",
+    re.IGNORECASE,
+)
+
+
+def _extract_non_chinese_period(
+    query: str, reference_date: datetime
+) -> DateRange | NoTemporalConstraintSentinel | None:
+    if re.search(r"\b(yesterday|ayer|ieri|hier|gestern|вчера)\b", query, re.IGNORECASE):
+        d = reference_date - timedelta(days=1)
+        return _constraint(d, d)
+
+    if re.search(r"\b(позавчера)\b", query, re.IGNORECASE):
+        d = reference_date - timedelta(days=2)
+        return _constraint(d, d)
+
+    if re.search(r"\b(today|hoy|oggi|aujourd\'?hui|heute|сегодня)\b", query, re.IGNORECASE):
+        return _constraint(reference_date, reference_date)
+
+    if re.search(r"\b(a\s+)?couple\s+(of\s+)?days?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=3), reference_date - timedelta(days=1))
+
+    if re.search(r"\b(a\s+)?few\s+days?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
+
+    if re.search(r"\b(пару|пар[ыу]?)\s+дн(?:ей|я)\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=3), reference_date - timedelta(days=1))
+
+    if re.search(r"\bнесколько\s+дней\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
+
+    if re.search(r"\b(a\s+)?couple\s+(of\s+)?weeks?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
+
+    if re.search(r"\b(a\s+)?few\s+weeks?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
+
+    if re.search(r"\b(пару|пар[ыу]?)\s+недель\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
+
+    if re.search(r"\bнесколько\s+недель\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
+
+    if re.search(r"\b(a\s+)?couple\s+(of\s+)?months?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=90), reference_date - timedelta(days=30))
+
+    if re.search(r"\b(a\s+)?few\s+months?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
+
+    if re.search(r"\b(пару|пар[ыу]?)\s+месяцев\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=90), reference_date - timedelta(days=30))
+
+    if re.search(r"\bнесколько\s+месяцев\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
+
+    if re.search(
+        r"\b(last\s+week|la\s+semana\s+pasada|la\s+settimana\s+scorsa|la\s+semaine\s+derni[eè]re|letzte\s+woche"
+        r"|(?:на\s+)?прошлой\s+неделе|прошлая\s+неделя)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        start = reference_date - timedelta(days=reference_date.weekday() + 7)
+        return _constraint(start, start + timedelta(days=6))
+
+    if re.search(
+        r"\b(last\s+month|el\s+mes\s+pasado|il\s+mese\s+scorso|le\s+mois\s+dernier|letzten?\s+monat"
+        r"|(?:в\s+)?прошлом\s+месяце|прошлый\s+месяц)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        first = reference_date.replace(day=1)
+        end = first - timedelta(days=1)
+        start = end.replace(day=1)
+        return _constraint(start, end)
+
+    if re.search(
+        r"\b(last\s+year|el\s+a[ñn]o\s+pasado|l\'anno\s+scorso|l\'ann[ée]e\s+derni[eè]re|letztes?\s+jahr"
+        r"|(?:в\s+)?прошлом\s+году|прошлый\s+год)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        year = reference_date.year - 1
+        return _constraint(datetime(year, 1, 1), datetime(year, 12, 31))
+
+    if re.search(
+        r"\b(last\s+weekend|el\s+fin\s+de\s+semana\s+pasado|lo\s+scorso\s+fine\s+settimana|le\s+week-?end\s+dernier"
+        r"|letztes?\s+wochenende|(?:на\s+|в\s+)?прошлых?\s+выходных|прошлые\s+выходные)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        # Step back to the Saturday that opened the previous weekend. On a
+        # weekend day the arithmetic lands on the weekend in progress -- 0 days
+        # back on Saturday, 1 on Sunday -- so both roll back a further week.
+        # "last weekend" asked on a Sunday means the one before this one, not
+        # the day before and today. Matches the "last week" rule above, which
+        # already steps a full week past the current one.
+        days_since_sat = (reference_date.weekday() + 2) % 7
+        if days_since_sat <= 1:
+            days_since_sat += 7
+        sat = reference_date - timedelta(days=days_since_sat)
+        return _constraint(sat, sat + timedelta(days=1))
+
+    month_patterns = {
+        "january|enero|gennaio|janvier|januar|январ[ьяе]": 1,
+        "february|febrero|febbraio|f[ée]vrier|februar|феврал[ьяе]": 2,
+        "march|marzo|mars|m[äa]rz|март[ае]?": 3,
+        "april|abril|aprile|avril|апрел[ьяе]": 4,
+        "may|mayo|maggio|mai|ма[йяе]": 5,
+        "june|junio|giugno|juin|juni|июн[ьяе]": 6,
+        "july|julio|luglio|juillet|juli|июл[ьяе]": 7,
+        "august|agosto|ao[uû]t|август[ае]?": 8,
+        "september|septiembre|settembre|septembre|сентябр[ьяе]": 9,
+        "october|octubre|ottobre|octobre|oktober|октябр[ьяе]": 10,
+        "november|noviembre|novembre|ноябр[ьяе]": 11,
+        "december|diciembre|dicembre|d[ée]cembre|dezember|декабр[ьяе]": 12,
+    }
+    for pattern, month_num in month_patterns.items():
+        # Skip when a day number precedes the month ("13 июля 2026", "13 July 2026"):
+        # that is an exact date, and collapsing it to the whole month loses precision.
+        # dateparser resolves those correctly, so let them fall through to it.
+        if re.search(rf"\b\d{{1,2}}\s+({pattern})\b", query, re.IGNORECASE):
+            continue
+        match = re.search(rf"\b({pattern})\s+(\d{{4}})\b", query, re.IGNORECASE)
+        if match:
+            year = int(match.group(2))
+            if year < datetime.min.year:
+                # "june 0000" — an explicit but unrepresentable year. Treat it
+                # as no constraint rather than crashing recall or letting the
+                # dateparser fallback invent a different date (issue #3217).
+                return NO_TEMPORAL_CONSTRAINT
+            start = datetime(year, month_num, 1)
+            return _constraint(start, _month_end(year, month_num))
+
+    year_only = _YEAR_ONLY_RE.search(query)
+    if year_only:
+        year = int(year_only.group("year"))
+        # A year with no month or day beside it is only credible near the
+        # reference date. "listening in 8080" is a port someone happened to
+        # phrase with a preposition, and a year-8080 window is the silent
+        # empty-arm failure of issue #3250 all over again.
+        #
+        # Implausible years fall through rather than returning
+        # NO_TEMPORAL_CONSTRAINT (which the month rule uses for "june 0000"):
+        # the sentinel would drop a genuine date elsewhere in the same query,
+        # and there is nothing to protect against downstream any more — the
+        # dateparser fallback now rejects bare integers on its own.
+        # max() with datetime.min.year keeps "in 0000" out of datetime() for a
+        # reference date low enough that the window would otherwise admit it.
+        if max(datetime.min.year, reference_date.year - 120) <= year <= reference_date.year + 20:
+            return _constraint(datetime(year, 1, 1), datetime(year, 12, 31))
+
+    return None
+
+
+def extract_period(query: str, reference_date: datetime) -> DateRange | NoTemporalConstraintSentinel | None:
+    """Extract explicit period-based temporal expressions.
+
+    Non-Chinese rules are kept here. Chinese rules are delegated to
+    chinese_temporal_periods.py and are skipped entirely for non-CJK queries.
+    """
+    query = unicodedata.normalize("NFKC", query)
+
+    if any(_is_cjk_character(char) for char in query):
+        from hindsight_api.engine.chinese_temporal_periods import extract_chinese_period
+
+        chinese_result = extract_chinese_period(query, reference_date)
+        if chinese_result is not None:
+            return chinese_result
+
+    return _extract_non_chinese_period(query, reference_date)

@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hindsight-embed"
+version = "0.10.2"
+description = "Hindsight embedded CLI - local memory operations without a server"
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.14.3",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+hindsight-embed = "hindsight_embed.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_embed"]
+# Ship the control center's static SPA assets (incl. self-hosted fonts).
+artifacts = ["hindsight_embed/control_center/static/**/*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "ty>=0.0.1",
+    "pytest>=8.0.0",
+    # Tests only: drive the control center's HTTP server as a client.
+    "httpx>=0.27.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Tests are formatted (via `ruff format`) but excluded from lint rules, which
+# are too noisy for test code (unused imports/vars, import ordering).
+exclude = [
+    "tests/**",
+]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "TID251", # banned-api: outbound HTTP is aiohttp, async only
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module import not at top of file
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"httpx".msg = "Outbound HTTP uses aiohttp (async only): see hindsight_embed/_http_probe.py"
+"requests".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"urllib.request".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"urllib3".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+"http.client".msg = "Sync HTTP is forbidden in production code: use aiohttp (async)"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty]
+# Type checking configuration
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+# Disable noisy rules while keeping important ones
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"

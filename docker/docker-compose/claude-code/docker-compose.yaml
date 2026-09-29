@@ -1,0 +1,44 @@
+name: hindsight-claude-code
+# Run Hindsight with the claude-code LLM provider, using your host machine's
+# Claude Pro/Max subscription credentials.  Linux/amd64 only for now.
+#
+# Quick start:
+#   docker compose -f docker/docker-compose/claude-code/docker-compose.yaml up -d
+#
+# See README.md for prerequisites, post-setup steps, and important caveats.
+
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight-claude-code
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:9999:9999"
+    environment:
+      HOME: /home/hindsight
+      USER: hindsight
+      LOGNAME: hindsight
+      PATH: /usr/local/bin:/usr/bin:/bin:/app/api/.venv/bin
+      HINDSIGHT_API_LLM_PROVIDER: claude-code
+    volumes:
+      # ── Persistent data ────────────────────────────────────────────
+      # Writable pg0 data directory.  Must be writable by HOST_UID.
+      - ${HOME:-.}/.hindsight-docker:/home/hindsight/.pg0
+
+      # ── Claude credentials (read-only, single-file mounts) ────────
+      # A whole-directory :ro mount of ~/.claude silently breaks the
+      # CLI, which writes session/project state at runtime — so we
+      # mount only the two credential files.
+      - ${HOME}/.claude/.credentials.json:/home/hindsight/.claude/.credentials.json:ro
+      - ${HOME}/.claude.json:/home/hindsight/.claude.json:ro
+
+      # ── Claude CLI install (read-only) ─────────────────────────────
+      - ${HOME}/.local/share/claude:/home/hindsight/.local/share/claude:ro
+
+      # ── SDK bundled-binary override ────────────────────────────────
+      # The claude-agent-sdk 0.5.x image bundles v2.1.121 which has a
+      # protocol incompatibility in containers.  Override it with the
+      # host's v2.1.128+ binary.  Drop this mount once claude-agent-sdk
+      # ships with v2.1.128+.
+      - ${HOME}/.local/share/claude/versions/${CLAUDE_CLI_VERSION:-2.1.128}:/app/api/.venv/lib/python3.11/site-packages/claude_agent_sdk/_bundled/claude:ro

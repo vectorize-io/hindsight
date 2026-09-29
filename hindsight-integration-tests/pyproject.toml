@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hindsight-integration-tests"
+version = "0.1.0"
+description = "Integration and E2E tests for Hindsight API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-timeout>=2.4.0",
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    # Transitive dependency security fixes
+    "cryptography>=50.0.0", # GHSA-g6cj-pr64-35w5: Bleichenbacher oracle in PKCS#7 EnvelopedData decryption
+    "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tests"]
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+addopts = "--timeout 120 -v"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

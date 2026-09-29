@@ -1,0 +1,78 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+# Release builds stage the canonical root license in each package context.
+/hindsight-clients/python/LICENSE
+/hindsight-api-slim/LICENSE
+/hindsight-api/LICENSE
+/hindsight-all/LICENSE
+/hindsight-all-slim/LICENSE
+/hindsight-embed/LICENSE
+.mcp.json
+.playwright-mcp/
+.osgrep
+# Virtual environments
+.venv
+
+# Node
+node_modules/
+# Without this, the pattern above matches directories only — a node_modules SYMLINK (what you get
+# pointing a scratch worktree at an installed one) is a file, slips past it, and can be committed.
+node_modules
+
+# Environment variables and local config
+.env
+.env.bak*
+.env.*.bak
+docker-compose.yml
+docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# NLTK data (will be downloaded automatically)
+nltk_data/
+
+# Monitoring stack (Prometheus/Grafana binaries and data)
+.monitoring/
+.pgbouncer/
+
+# Large benchmark datasets (will be downloaded automatically)
+**/longmemeval_s_cleaned.json
+
+# Debug logs
+logs/
+
+.DS_Store
+.sesskey
+
+# Generated docs files
+hindsight-docs/static/llms-full.txt
+
+
+hindsight-dev/benchmarks/locomo/results/
+hindsight-dev/benchmarks/longmemeval/results/
+hindsight-dev/benchmarks/consolidation/results/
+hindsight-dev/benchmarks/perf/results/
+hindsight-dev/benchmarks/results/
+benchmarks/results/
+hindsight-cli/target
+hindsight-clients/rust/target
+.claude/*
+!.claude/skills/
+whats-next.md
+TASK.md
+# Parked / draft integrations that aren't ready to ship
+hindsight-integrations/_drafts/
+# Changelog is now tracked in hindsight-docs/src/pages/changelog.md
+# CHANGELOG.md
+
+blog-post*
+.worktrees/

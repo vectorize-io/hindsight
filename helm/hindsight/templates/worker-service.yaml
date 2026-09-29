@@ -1,0 +1,25 @@
+{{- if .Values.worker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hindsight.fullname" . }}-worker
+  labels:
+    {{- include "hindsight.worker.labels" . | nindent 4 }}
+  {{- if .Values.podAnnotations }}
+  annotations:
+    {{- /* Common Prometheus annotations for metrics scraping */}}
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.worker.service.port | quote }}
+    prometheus.io/path: "/metrics"
+  {{- end }}
+spec:
+  # Headless service for StatefulSet (enables stable DNS names like worker-0.worker.namespace)
+  clusterIP: None
+  ports:
+  - port: {{ .Values.worker.service.port }}
+    targetPort: {{ .Values.worker.service.targetPort }}
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "hindsight.worker.selectorLabels" . | nindent 4 }}
+{{- end }}

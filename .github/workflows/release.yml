@@ -1,0 +1,668 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release-python-packages:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    # Each package is built from its own directory, so stage the repository's
+    # canonical license inside each isolated build context.
+    - name: Stage Python package licenses
+      run: |
+        for package in \
+          hindsight-clients/python \
+          hindsight-api-slim \
+          hindsight-api \
+          hindsight-all \
+          hindsight-all-slim \
+          hindsight-embed; do
+          cp LICENSE "$package/LICENSE"
+        done
+
+    # Build all packages
+    - name: Build hindsight-client
+      working-directory: ./hindsight-clients/python
+      run: uv build --out-dir dist
+
+    - name: Build hindsight-api-slim
+      working-directory: ./hindsight-api-slim
+      run: uv build --out-dir dist
+
+    - name: Build hindsight-api
+      working-directory: ./hindsight-api
+      run: uv build --out-dir dist
+
+    - name: Build hindsight-all
+      working-directory: ./hindsight-all
+      run: uv build --out-dir dist
+
+    - name: Build hindsight-all-slim
+      working-directory: ./hindsight-all-slim
+      run: uv build --out-dir dist
+
+    - name: Build hindsight-embed
+      working-directory: ./hindsight-embed
+      run: uv build --out-dir dist
+
+    - name: Verify Python package licenses
+      run: |
+        for package in \
+          hindsight-clients/python \
+          hindsight-api-slim \
+          hindsight-api \
+          hindsight-all \
+          hindsight-all-slim \
+          hindsight-embed; do
+          wheel=$(find "$package/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          sdist=$(find "$package/dist" -maxdepth 1 -name '*.tar.gz' -print -quit)
+
+          unzip -Z1 "$wheel" | grep -Eq '\.dist-info/licenses/LICENSE$'
+          unzip -p "$wheel" '*/METADATA' | grep -Fxq 'License-Expression: MIT'
+          unzip -p "$wheel" '*/METADATA' | grep -Fxq 'License-File: LICENSE'
+          tar -tzf "$sdist" | grep -Eq '/LICENSE$'
+        done
+
+    # Publish in order (client and api-slim first, then api/all wrappers which depend on them)
+    - name: Publish hindsight-client to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-clients/python/dist
+        skip-existing: true
+
+    - name: Publish hindsight-api-slim to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-api-slim/dist
+        skip-existing: true
+
+    - name: Publish hindsight-api to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-api/dist
+        skip-existing: true
+
+    - name: Publish hindsight-all to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-all/dist
+        skip-existing: true
+
+    - name: Publish hindsight-all-slim to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-all-slim/dist
+        skip-existing: true
+
+    - name: Publish hindsight-embed to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-embed/dist
+        skip-existing: true
+
+    # Upload artifacts for GitHub release
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: python-packages
+        path: |
+          hindsight-clients/python/dist/*
+          hindsight-api-slim/dist/*
+          hindsight-api/dist/*
+          hindsight-all/dist/*
+          hindsight-all-slim/dist/*
+          hindsight-embed/dist/*
+        retention-days: 1
+
+  release-typescript-client:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci --workspace=hindsight-clients/typescript
+
+    - name: Build
+      run: npm run build --workspace=hindsight-clients/typescript
+
+    - name: Publish to npm
+      working-directory: ./hindsight-clients/typescript
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack for GitHub release
+      working-directory: ./hindsight-clients/typescript
+      run: npm pack
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: typescript-client
+        path: hindsight-clients/typescript/*.tgz
+        retention-days: 1
+
+  release-hindsight-all-npm:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci --workspace=hindsight-all-npm
+
+    - name: Build
+      run: npm run build --workspace=hindsight-all-npm
+
+    - name: Publish to npm
+      working-directory: ./hindsight-all-npm
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack for GitHub release
+      working-directory: ./hindsight-all-npm
+      run: npm pack
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: hindsight-all-npm
+        path: hindsight-all-npm/*.tgz
+        retention-days: 1
+
+  release-control-plane:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build TypeScript client (dependency)
+      run: npm run build --workspace=hindsight-clients/typescript
+
+    - name: Fix platform-specific native modules
+      run: |
+        # npm ci installs from lockfile which may have wrong platform binaries
+        # Delete hoisted native modules and reinstall for current platform
+        rm -rf node_modules/lightningcss node_modules/@tailwindcss
+        npm install lightningcss @tailwindcss/postcss @tailwindcss/node
+
+    - name: Build
+      run: npm run build --workspace=hindsight-control-plane
+
+    - name: Verify standalone build
+      run: test -f hindsight-control-plane/standalone/server.js || (echo 'standalone/server.js missing - build failed' && exit 1)
+
+    - name: Publish to npm
+      working-directory: ./hindsight-control-plane
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public --ignore-scripts 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack for GitHub release
+      working-directory: ./hindsight-control-plane
+      run: npm pack
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: control-plane
+        path: hindsight-control-plane/*.tgz
+        retention-days: 1
+
+  release-rust-cli:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: hindsight
+            asset_name: hindsight-linux-amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: hindsight
+            asset_name: hindsight-darwin-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: hindsight
+            asset_name: hindsight-darwin-arm64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: hindsight
+            asset_name: hindsight-linux-arm64
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Build
+      working-directory: hindsight-cli
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Install cargo-about
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-about@0.9.1
+
+    - name: Verify cargo-about
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      run: cargo about --version
+
+    # The build above only fetches crates for this target; cargo-about resolves
+    # the graph for every target platform, so fetch for all of them (that is what
+    # `cargo fetch` without --target does) before the --offline generate.
+    - name: Fetch crate sources for the license scan
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      working-directory: hindsight-cli
+      run: cargo fetch
+
+    - name: Generate license manifest
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      working-directory: hindsight-cli
+      run: mkdir -p ../artifacts && cargo about generate --offline --manifest-path Cargo.toml --config about.toml about.hbs --output-file ../artifacts/THIRD_PARTY_LICENSES.txt
+
+    - name: Verify license files
+      if: matrix.asset_name == 'hindsight-linux-amd64'
+      run: |
+        test -s LICENSE
+        test -s artifacts/THIRD_PARTY_LICENSES.txt
+        grep -Fq "THIRD-PARTY SOFTWARE LICENSES" artifacts/THIRD_PARTY_LICENSES.txt
+
+    - name: Prepare artifact
+      run: |
+        mkdir -p artifacts
+        cp hindsight-cli/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+        if [ "${{ matrix.asset_name }}" = "hindsight-linux-amd64" ]; then
+          cp LICENSE artifacts/LICENSE
+        fi
+        chmod +x artifacts/${{ matrix.asset_name }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: rust-cli-${{ matrix.asset_name }}
+        path: artifacts/*
+        retention-days: 1
+
+  release-docker-images:
+    name: Release Docker (${{ matrix.image_name }}${{ matrix.tag_suffix }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      matrix:
+        include:
+          - target: api-only
+            image_name: hindsight-api
+            tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
+            build_args: ""
+          - target: api-only
+            image_name: hindsight-api
+            tag_suffix: "-slim"
+            dockerfile: docker/standalone/Dockerfile
+            build_args: |
+              INCLUDE_LOCAL_MODELS=false
+              PRELOAD_ML_MODELS=false
+          - target: cp-only
+            image_name: hindsight-control-plane
+            tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
+            build_args: ""
+          - target: standalone
+            image_name: hindsight
+            tag_suffix: ""
+            dockerfile: docker/standalone/Dockerfile
+            build_args: ""
+          - target: standalone
+            image_name: hindsight
+            tag_suffix: "-slim"
+            dockerfile: docker/standalone/Dockerfile
+            build_args: |
+              INCLUDE_LOCAL_MODELS=false
+              PRELOAD_ML_MODELS=false
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Extract metadata for release tags
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+        flavor: |
+          latest=auto
+          suffix=${{ matrix.tag_suffix }}
+        tags: |
+          type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+          type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+          type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+          type=raw,value=latest
+
+    # TODO: Re-enable smoke test when disk space issue is resolved
+    # # Step 1: Build for local testing (single platform, no push)
+    # # This creates an identical image to what will be released, just for one platform
+    # - name: Build image for testing
+    #   uses: docker/build-push-action@v7
+    #   with:
+    #     context: .
+    #     file: docker/standalone/Dockerfile
+    #     target: ${{ matrix.target }}
+    #     push: false
+    #     load: true
+    #     tags: ${{ matrix.image_name }}:test
+    #     cache-from: type=gha
+    #     cache-to: type=gha,mode=max
+
+    # # Step 2: Test the image before pushing anything
+    # - name: Smoke test - verify container starts
+    #   env:
+    #     GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    #   run: ./docker/test-image.sh "${{ matrix.image_name }}:test" "${{ matrix.target }}"
+
+    # Build multi-platform and push to release tags
+    - name: Build and push release images
+      id: build
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: ${{ matrix.dockerfile }}
+        target: ${{ matrix.target }}
+        build-args: ${{ matrix.build_args }}
+        push: true
+        platforms: linux/amd64,linux/arm64
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Sign published images
+      env:
+        TAGS: ${{ steps.meta.outputs.tags }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        set -euo pipefail
+        refs=()
+        while IFS= read -r tag; do
+          [[ -z "${tag}" ]] && continue
+          refs+=("${tag}@${DIGEST}")
+        done <<< "${TAGS}"
+        cosign sign --yes "${refs[@]}"
+
+    - name: Verify signature on primary tag
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        cosign verify "${IMAGE}@${DIGEST}" \
+          --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@.*" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  release-helm-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Helm
+      uses: azure/setup-helm@v5
+      with:
+        version: 'latest'
+
+    - name: Log in to GHCR
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+    - name: Lint Helm chart
+      run: helm lint helm/hindsight
+
+    - name: Package Helm chart
+      run: helm package helm/hindsight --destination ./helm-packages
+
+    - name: Push to GHCR OCI
+      run: helm push helm-packages/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: helm-chart
+        path: helm-packages/*.tgz
+        retention-days: 1
+
+  create-github-release:
+    runs-on: ubuntu-latest
+    needs: [release-python-packages, release-typescript-client, release-hindsight-all-npm, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Extract version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Download Python packages
+      uses: actions/download-artifact@v8
+      with:
+        name: python-packages
+        path: ./artifacts/python-packages
+
+    - name: Download TypeScript client
+      uses: actions/download-artifact@v8
+      with:
+        name: typescript-client
+        path: ./artifacts/typescript-client
+
+    - name: Download Control Plane
+      uses: actions/download-artifact@v8
+      with:
+        name: control-plane
+        path: ./artifacts/control-plane
+
+    - name: Download hindsight-embed npm wrapper
+      uses: actions/download-artifact@v8
+      with:
+        name: hindsight-all-npm
+        path: ./artifacts/hindsight-all-npm
+
+    - name: Download Rust CLI (Linux)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-linux-amd64
+        path: ./artifacts/rust-cli-linux
+
+    - name: Download Rust CLI (Linux ARM)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-linux-arm64
+        path: ./artifacts/rust-cli-linux-arm64
+
+    - name: Download Rust CLI (macOS Intel)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-darwin-amd64
+        path: ./artifacts/rust-cli-darwin-amd64
+
+    - name: Download Rust CLI (macOS ARM)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-darwin-arm64
+        path: ./artifacts/rust-cli-darwin-arm64
+
+    - name: Download Helm chart
+      uses: actions/download-artifact@v8
+      with:
+        name: helm-chart
+        path: ./artifacts/helm-chart
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        # Python packages
+        cp artifacts/python-packages/hindsight-clients/python/dist/* release-assets/ || true
+        cp artifacts/python-packages/hindsight-api-slim/dist/* release-assets/ || true
+        cp artifacts/python-packages/hindsight-api/dist/* release-assets/ || true
+        cp artifacts/python-packages/hindsight-all/dist/* release-assets/ || true
+        cp artifacts/python-packages/hindsight-all-slim/dist/* release-assets/ || true
+        cp artifacts/python-packages/hindsight-embed/dist/* release-assets/ || true
+        # TypeScript client
+        cp artifacts/typescript-client/*.tgz release-assets/ || true
+        # hindsight-embed npm wrapper
+        cp artifacts/hindsight-all-npm/*.tgz release-assets/ || true
+        # Control Plane
+        cp artifacts/control-plane/*.tgz release-assets/ || true
+        # Rust CLI binaries
+        cp artifacts/rust-cli-linux/hindsight-linux-amd64 release-assets/ || true
+        cp artifacts/rust-cli-linux-arm64/hindsight-linux-arm64 release-assets/ || true
+        cp artifacts/rust-cli-darwin-amd64/hindsight-darwin-amd64 release-assets/ || true
+        cp artifacts/rust-cli-darwin-arm64/hindsight-darwin-arm64 release-assets/ || true
+        # Rust CLI license files (shared by all four platform binaries)
+        cp artifacts/rust-cli-linux/LICENSE release-assets/
+        cp artifacts/rust-cli-linux/THIRD_PARTY_LICENSES.txt release-assets/
+        test -s release-assets/LICENSE
+        test -s release-assets/THIRD_PARTY_LICENSES.txt
+        # Helm chart
+        cp artifacts/helm-chart/*.tgz release-assets/ || true
+        ls -la release-assets/
+
+    # Created as a draft so every asset is attached BEFORE the release is
+    # published. With immutable releases enabled a published release is sealed,
+    # and assets uploaded after publication are rejected.
+    - name: Create GitHub Release (draft)
+      uses: softprops/action-gh-release@v3
+      with:
+        files: release-assets/*
+        generate_release_notes: true
+        draft: true
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: v${{ steps.get_version.outputs.VERSION }}
+      run: gh release edit "$TAG" --draft=false --latest

@@ -1,0 +1,32 @@
+version: 0.1.0
+type: plugin
+author: vectorize
+name: hindsight
+label:
+  en_US: Hindsight
+description:
+  en_US: "Persistent long-term memory for Dify workflows. Three tools — Retain, Recall, Reflect — give your agents and workflows memory that survives across runs. Works with Hindsight Cloud or any self-hosted Hindsight instance."
+icon: icon.png
+resource:
+  memory: 268435456
+  permission:
+    tool:
+      enabled: true
+plugins:
+  tools:
+    - provider/hindsight.yaml
+meta:
+  version: 0.0.1
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+created_at: 2026-05-01T00:00:00Z
+privacy: PRIVACY.md
+verified: false
+tags:
+  - utilities
+  - productivity

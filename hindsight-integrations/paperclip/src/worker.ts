@@ -1,0 +1,442 @@
+/**
+ * paperclip-plugin-hindsight — worker entrypoint.
+ *
+ * Gives Paperclip agents persistent long-term memory via Hindsight.
+ *
+ * Lifecycle:
+ *   agent.run.started      → fetch the run's issue, recall relevant memories,
+ *                            cache them in plugin state for the run.
+ *   issue.comment.created  → retain the full comment body to Hindsight (this is
+ *                            the durable signal — it covers both user comments
+ *                            and agent-authored comments).
+ *   agent.run.finished     → no-op (Paperclip's lifecycle payload does not
+ *                            carry run output; subscription kept for future use).
+ *
+ * Agent tools (callable mid-run):
+ *   hindsight_recall(query)   → search memory, returns relevant context
+ *   hindsight_retain(content) → store content in memory immediately
+ */
+
+import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
+import type { EnvSecretRefBinding, PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
+import { HindsightClient, formatMemories } from "./client.js";
+import { deriveBankId, extractUserFromIssue } from "./bank.js";
+
+interface PluginConfig {
+  hindsightApiUrl: string;
+  /**
+   * Reference stored by the host's secret picker for the `format: "secret-ref"`
+   * field. The host fails closed on a bare string, so it travels through as-is.
+   */
+  hindsightApiKeyRef?: EnvSecretRefBinding;
+  bankId?: string;
+  dynamicBankId?: boolean;
+  bankGranularity?: Array<"company" | "agent" | "user">;
+  recallBudget?: "low" | "mid" | "high";
+  requestTimeoutMs?: number;
+  autoRetain?: boolean;
+  enabledAgentIds?: string[];
+}
+
+interface RunStartedPayload {
+  agentId: string;
+  runId: string;
+  issueId?: string | null;
+}
+
+interface RunFinishedPayload {
+  agentId: string;
+  runId: string;
+}
+
+interface CommentCreatedPayload {
+  commentId?: string;
+  bodySnippet?: string;
+  agentId?: string | null;
+  runId?: string | null;
+}
+
+async function getConfig(ctx: {
+  config: { get(): Promise<Record<string, unknown>> };
+}): Promise<PluginConfig> {
+  return (await ctx.config.get()) as unknown as PluginConfig;
+}
+
+async function resolveApiKey(
+  ctx: Pick<PluginContext, "secrets">,
+  config: PluginConfig,
+  companyId: string
+): Promise<string | undefined> {
+  if (!config.hindsightApiKeyRef) return undefined;
+  // configPath identifies which binding to read when a plugin holds several
+  // secrets; companyId scopes the lookup to the run's company.
+  const resolved = await ctx.secrets.resolve(config.hindsightApiKeyRef, {
+    companyId,
+    configPath: "hindsightApiKeyRef",
+  });
+  return resolved ?? undefined;
+}
+
+function isAgentEnabled(config: PluginConfig, agentId: string | undefined | null): boolean {
+  const allowlist = config.enabledAgentIds;
+  if (!allowlist || allowlist.length === 0) return true;
+  return !!agentId && allowlist.includes(agentId);
+}
+
+const plugin = definePlugin({
+  async setup(ctx) {
+    ctx.logger.info("Hindsight memory plugin starting");
+
+    // ---------------------------------------------------------------------------
+    // agent.run.started — recall memories using the issue's title + description
+    //
+    // Paperclip's lifecycle payload only includes runId/agentId/issueId/etc.,
+    // so we fetch the issue via ctx.issues.get to obtain the title/description
+    // we need for a meaningful recall query.
+    // ---------------------------------------------------------------------------
+    ctx.events.on("agent.run.started", async (event) => {
+      const payload = event.payload as RunStartedPayload;
+      const config = await getConfig(ctx);
+      const { agentId, runId, issueId } = payload;
+      const companyId = event.companyId;
+      if (!isAgentEnabled(config, agentId)) return;
+      if (!issueId || !companyId) return;
+
+      let issue;
+      try {
+        issue = await ctx.issues.get(issueId, companyId);
+      } catch (err) {
+        ctx.logger.warn("Failed to fetch issue for recall", {
+          runId,
+          issueId,
+          error: String(err),
+        });
+        return;
+      }
+      if (!issue) return;
+
+      const query = [issue.title, issue.description].filter(Boolean).join("\n");
+      if (!query.trim()) return;
+
+      // Extract userId from the specific issue being worked on (not an
+      // arbitrary one from list). This is only used when bankGranularity
+      // includes "user".
+      const userId = config.bankGranularity?.includes("user")
+        ? extractUserFromIssue(issue)
+        : undefined;
+
+      // Cache userId so tool calls within this run can derive the same bank ID
+      if (userId) {
+        await ctx.state.set({ scopeKind: "run", scopeId: runId, stateKey: "user-id" }, userId);
+      }
+
+      try {
+        const apiKey = await resolveApiKey(ctx, config, companyId);
+        const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
+        const bankId = deriveBankId({ companyId, agentId, userId }, config);
+
+        const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
+
+        const memories = formatMemories(response.results);
+        if (memories) {
+          await ctx.state.set(
+            { scopeKind: "run", scopeId: runId, stateKey: "recalled-memories" },
+            memories
+          );
+          // Remember which query produced the cache, so the recall tool only
+          // reuses it for that same query.
+          await ctx.state.set(
+            { scopeKind: "run", scopeId: runId, stateKey: "recalled-query" },
+            query
+          );
+          ctx.logger.info("Recalled memories for run", {
+            runId,
+            bankId,
+            count: response.results.length,
+          });
+        }
+      } catch (err) {
+        // Non-fatal: agent runs without memory context.
+        ctx.logger.warn("Failed to recall memories on run start", {
+          runId,
+          error: String(err),
+        });
+      }
+    });
+
+    // ---------------------------------------------------------------------------
+    // issue.comment.created — retain the full comment body
+    //
+    // Paperclip's comment-created event payload only carries a 120-char snippet,
+    // so we fetch the full comment via ctx.issues.listComments. Comments are the
+    // primary durable record of agent + user output, so this captures both.
+    // ---------------------------------------------------------------------------
+    ctx.events.on("issue.comment.created", async (event) => {
+      const config = await getConfig(ctx);
+      if (config.autoRetain === false) return;
+
+      const companyId = event.companyId;
+      const issueId = event.entityId;
+      const payload = (event.payload ?? {}) as CommentCreatedPayload;
+      const commentId = payload.commentId;
+      const payloadAgentId = payload.agentId ?? null;
+      if (!issueId || !companyId || !commentId) return;
+
+      let body = "";
+      try {
+        const comments = await ctx.issues.listComments(issueId, companyId);
+        const match = comments.find((c) => c.id === commentId);
+        if (match && typeof match.body === "string") body = match.body;
+      } catch (err) {
+        // Fall back to the truncated snippet if listComments isn't available.
+        if (typeof payload.bodySnippet === "string") {
+          body = payload.bodySnippet;
+        } else {
+          ctx.logger.warn("Failed to fetch comment body", {
+            commentId,
+            error: String(err),
+          });
+          return;
+        }
+      }
+      if (!body.trim()) return;
+
+      // Bank attribution: comments authored by an agent belong in that agent's
+      // bank; user/system comments fall back to the issue's assignee.
+      let bankAgentId: string | null = payloadAgentId;
+      let userId: string | undefined;
+      let issueForAttribution;
+      if (!bankAgentId || config.bankGranularity?.includes("user")) {
+        try {
+          issueForAttribution = await ctx.issues.get(issueId, companyId);
+          if (!bankAgentId) {
+            bankAgentId = issueForAttribution?.assigneeAgentId ?? null;
+          }
+          if (config.bankGranularity?.includes("user") && issueForAttribution) {
+            userId = extractUserFromIssue(issueForAttribution);
+          }
+        } catch {
+          /* ignore — userId stays undefined, bankAgentId fallback already handled */
+        }
+      }
+
+      if (!bankAgentId) {
+        ctx.logger.info("Skipping retain — no agent attribution available", {
+          commentId,
+          issueId,
+        });
+        return;
+      }
+
+      if (!isAgentEnabled(config, bankAgentId)) {
+        ctx.logger.debug("Skipping retain — agent not in enabled list", {
+          commentId,
+          agentId: bankAgentId,
+        });
+        return;
+      }
+
+      try {
+        const apiKey = await resolveApiKey(ctx, config, companyId);
+        const client = new HindsightClient(config.hindsightApiUrl, apiKey, config.requestTimeoutMs);
+        const bankId = deriveBankId({ companyId, agentId: bankAgentId, userId }, config);
+        await client.retain(bankId, body, commentId, {
+          agentId: bankAgentId,
+          companyId,
+          issueId,
+          commentId,
+        });
+        ctx.logger.info("Retained comment to memory", { commentId, bankId });
+      } catch (err) {
+        ctx.logger.warn("Failed to retain comment", {
+          commentId,
+          error: String(err),
+        });
+      }
+    });
+
+    // ---------------------------------------------------------------------------
+    // agent.run.finished — no-op
+    //
+    // Paperclip's run-lifecycle payload only includes status/timing fields and
+    // does not carry the agent's output. Retention now flows through the
+    // issue.comment.created handler above. The subscription is kept so the
+    // plugin remains visible in the event subscription list and so future
+    // payload additions (e.g. an output reference) can be picked up here.
+    // ---------------------------------------------------------------------------
+    ctx.events.on("agent.run.finished", async (event) => {
+      const payload = event.payload as RunFinishedPayload;
+      const config = await getConfig(ctx);
+      if (!isAgentEnabled(config, payload?.agentId)) return;
+      ctx.logger.debug(
+        "agent.run.finished received (no-op; retention handled by issue.comment.created)",
+        { runId: payload?.runId }
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // Tool: hindsight_recall
+    // ---------------------------------------------------------------------------
+    ctx.tools.register(
+      "hindsight_recall",
+      {
+        displayName: "Recall from Memory",
+        description: "Search Hindsight long-term memory for context relevant to a query.",
+        parametersSchema: {
+          type: "object",
+          required: ["query"],
+          properties: {
+            query: { type: "string", description: "What to search for" },
+          },
+        },
+      },
+      async (params: unknown, runCtx: ToolRunContext) => {
+        const { query } = params as { query: string };
+        const config = await getConfig(ctx);
+
+        // Read userId cached by agent.run.started for consistent bank derivation
+        let userId: string | undefined;
+        if (config.bankGranularity?.includes("user")) {
+          const cachedUserId = await ctx.state.get({
+            scopeKind: "run",
+            scopeId: runCtx.runId,
+            stateKey: "user-id",
+          });
+          if (cachedUserId && typeof cachedUserId === "string") userId = cachedUserId;
+        }
+
+        const bankId = deriveBankId(
+          { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
+          config
+        );
+
+        // Reuse the run-start recall only when the agent asks the same query;
+        // any other query must hit Hindsight, otherwise mid-run lookups would
+        // always get the issue-level memories back.
+        const cached = await ctx.state.get({
+          scopeKind: "run",
+          scopeId: runCtx.runId,
+          stateKey: "recalled-memories",
+        });
+        const cachedQuery = await ctx.state.get({
+          scopeKind: "run",
+          scopeId: runCtx.runId,
+          stateKey: "recalled-query",
+        });
+        if (
+          cached &&
+          typeof cached === "string" &&
+          typeof cachedQuery === "string" &&
+          cachedQuery.trim() === query.trim()
+        ) {
+          return { content: cached };
+        }
+
+        // Live recall fallback
+        try {
+          const apiKey = await resolveApiKey(ctx, config, runCtx.companyId);
+          const client = new HindsightClient(
+            config.hindsightApiUrl,
+            apiKey,
+            config.requestTimeoutMs
+          );
+          const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
+          const memories = formatMemories(response.results);
+          return { content: memories || "No relevant memories found." };
+        } catch (err) {
+          return { content: `Memory recall failed: ${String(err)}` };
+        }
+      }
+    );
+
+    // ---------------------------------------------------------------------------
+    // Tool: hindsight_retain
+    // ---------------------------------------------------------------------------
+    ctx.tools.register(
+      "hindsight_retain",
+      {
+        displayName: "Save to Memory",
+        description:
+          "Store important facts, decisions, or outcomes in Hindsight long-term memory for future runs.",
+        parametersSchema: {
+          type: "object",
+          required: ["content"],
+          properties: {
+            content: {
+              type: "string",
+              description: "The content to store in memory",
+            },
+          },
+        },
+      },
+      async (params: unknown, runCtx: ToolRunContext) => {
+        const { content } = params as { content: string };
+        const config = await getConfig(ctx);
+
+        // Read userId cached by agent.run.started for consistent bank derivation
+        let userId: string | undefined;
+        if (config.bankGranularity?.includes("user")) {
+          const cached = await ctx.state.get({
+            scopeKind: "run",
+            scopeId: runCtx.runId,
+            stateKey: "user-id",
+          });
+          if (cached && typeof cached === "string") userId = cached;
+        }
+
+        const bankId = deriveBankId(
+          { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
+          config
+        );
+
+        try {
+          const apiKey = await resolveApiKey(ctx, config, runCtx.companyId);
+          const client = new HindsightClient(
+            config.hindsightApiUrl,
+            apiKey,
+            config.requestTimeoutMs
+          );
+          await client.retain(bankId, content, undefined, {
+            agentId: runCtx.agentId,
+            companyId: runCtx.companyId,
+            runId: runCtx.runId,
+          });
+          return { content: "Memory saved." };
+        } catch (err) {
+          return { content: `Failed to save memory: ${String(err)}` };
+        }
+      }
+    );
+
+    ctx.logger.info("Hindsight memory plugin ready");
+  },
+
+  async onHealth() {
+    return { status: "ok" };
+  },
+
+  async onValidateConfig(config) {
+    const c = config as Partial<PluginConfig>;
+    if (!c.hindsightApiUrl?.trim()) {
+      return { ok: false, errors: ["hindsightApiUrl is required"] };
+    }
+
+    try {
+      const client = new HindsightClient(c.hindsightApiUrl, undefined, c.requestTimeoutMs);
+      const healthy = await client.health();
+      if (!healthy) {
+        return {
+          ok: false,
+          errors: [`Cannot reach Hindsight at ${c.hindsightApiUrl}`],
+        };
+      }
+    } catch (err) {
+      return { ok: false, errors: [`Connection failed: ${String(err)}`] };
+    }
+
+    return { ok: true };
+  },
+});
+
+export default plugin;
+runWorker(plugin, import.meta.url);

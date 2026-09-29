@@ -1,0 +1,348 @@
+"""Tests for the native ZeroEntropy zembed embeddings provider."""
+
+import base64
+import struct
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from aiohttp import web
+from pydantic import BaseModel
+
+from tests.aiohttp_stub import stub_server
+
+ZEROENTROPY_ENV_VARS = [
+    "HINDSIGHT_API_EMBEDDINGS_PROVIDER",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE",
+    "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY",
+    "HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES",
+    "HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET",
+    "HINDSIGHT_API_RERANKER_PROVIDER",
+    "HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY",
+    "HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL",
+    "HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL",
+    "ZEROENTROPY_API_KEY",
+]
+
+
+class CapturedZeroEntropyEmbedRequest(BaseModel):
+    model: str
+    input: list[str]
+    input_type: str
+    dimensions: int
+    encoding_format: str
+    latency: str | None = None
+
+
+@pytest.fixture(autouse=True)
+def clean_zeroentropy_env(monkeypatch):
+    from hindsight_api.config import clear_config_cache
+
+    for env_var in ZEROENTROPY_ENV_VARS:
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "rrf")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+    clear_config_cache()
+
+    yield
+
+    clear_config_cache()
+
+
+def test_zeroentropy_config_defaults():
+    from hindsight_api.config import HindsightConfig
+
+    config = HindsightConfig.from_env()
+
+    assert config.embeddings_zeroentropy_model == "zembed-1"
+    assert config.embeddings_zeroentropy_base_url == "https://api.zeroentropy.dev"
+    assert config.embeddings_zeroentropy_dimensions == 1280
+    assert config.embeddings_zeroentropy_encoding_format == "float"
+    assert config.embeddings_zeroentropy_batch_size == 100
+    assert config.embeddings_zeroentropy_latency is None
+
+
+def test_zeroentropy_create_from_env(monkeypatch):
+    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings, create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL", "zembed-1")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL", "https://ze.example")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS", "640")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT", "base64")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE", "2")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY", "fast")
+
+    embeddings = create_embeddings_from_env()
+
+    assert isinstance(embeddings, ZeroEntropyEmbeddings)
+    assert embeddings.api_key == "ze-test"
+    assert embeddings.model == "zembed-1"
+    assert embeddings.base_url == "https://ze.example"
+    assert embeddings.dimensions == 640
+    assert embeddings.encoding_format == "base64"
+    assert embeddings.batch_size == 2
+    assert embeddings.latency == "fast"
+
+
+def test_zeroentropy_create_from_env_requires_api_key(monkeypatch):
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"):
+        create_embeddings_from_env()
+
+
+def test_zeroentropy_create_from_env_uses_standard_api_key_env(monkeypatch):
+    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings, create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+    monkeypatch.setenv("ZEROENTROPY_API_KEY", "ze-standard")
+
+    embeddings = create_embeddings_from_env()
+
+    assert isinstance(embeddings, ZeroEntropyEmbeddings)
+    assert embeddings.api_key == "ze-standard"
+
+
+def test_zeroentropy_rejects_invalid_dimension(monkeypatch):
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS", "1024")
+
+    with pytest.raises(ValueError, match="must be one of"):
+        create_embeddings_from_env()
+
+
+def test_zeroentropy_rejects_invalid_encoding_format(monkeypatch):
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "zeroentropy")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT", "binary")
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT"):
+        create_embeddings_from_env()
+
+
+def _json_handler(respond: Callable[[dict[str, Any], web.Request], Any]):
+    """An upstream that answers every request with ``respond(body, request)`` as JSON."""
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response(respond(await request.json(), request))
+
+    return handler
+
+
+async def _ready(base_url: str, **kwargs: Any):
+    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings
+
+    embeddings = ZeroEntropyEmbeddings(api_key="ze-test", base_url=base_url, **kwargs)
+    await embeddings.initialize()  # no startup probe: nothing reaches the stub
+    return embeddings
+
+
+async def test_zeroentropy_encode_documents_batches_and_sends_expected_payload():
+    requests: list[CapturedZeroEntropyEmbedRequest] = []
+
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        requests.append(CapturedZeroEntropyEmbedRequest.model_validate(body))
+        assert request.path == "/v1/models/embed"
+        assert request.headers["authorization"] == "Bearer ze-test"
+        return {"results": [{"embedding": [float(i), 0.0]} for i, _ in enumerate(body["input"])]}
+
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, batch_size=2, latency="fast")
+        vectors = await embeddings.encode_documents(["alpha", "beta", "gamma"])
+
+    assert len(vectors) == 3
+    assert [request.input for request in requests] == [["alpha", "beta"], ["gamma"]]
+    assert all(request.model == "zembed-1" for request in requests)
+    assert all(request.input_type == "document" for request in requests)
+    assert all(request.dimensions == 1280 for request in requests)
+    assert all(request.encoding_format == "float" for request in requests)
+    assert all(request.latency == "fast" for request in requests)
+
+
+async def test_zeroentropy_omits_latency_when_unset():
+    seen_bodies: list[dict] = []
+
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        seen_bodies.append(body)
+        return {"results": [{"embedding": [1.0, 2.0]}]}
+
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, latency=None)
+        await embeddings.encode_documents(["alpha"])
+
+    assert "latency" not in seen_bodies[0]
+
+
+async def test_zeroentropy_encode_query_sends_query_input_type():
+    seen_input_types: list[str] = []
+
+    def respond(body: dict[str, Any], request: web.Request) -> Any:
+        seen_input_types.append(CapturedZeroEntropyEmbedRequest.model_validate(body).input_type)
+        return {"results": [{"embedding": [1.0, 2.0]}]}
+
+    async with stub_server(_json_handler(respond)) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280)
+        assert await embeddings.encode_query(["where is this?"]) == [[1.0, 2.0]]
+
+    assert seen_input_types == ["query"]
+
+
+async def test_zeroentropy_base64_response_is_decoded():
+    encoded = base64.b64encode(struct.pack("<2f", 0.25, 0.5)).decode("ascii")
+
+    async with stub_server(_json_handler(lambda body, request: {"results": [{"embedding": encoded}]})) as base_url:
+        embeddings = await _ready(base_url, dimensions=1280, encoding_format="base64")
+        assert await embeddings.encode_documents(["alpha"]) == [[0.25, 0.5]]
+
+
+def test_zeroentropy_reranker_create_from_env_uses_base_url(monkeypatch):
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.cross_encoder import ZeroEntropyCrossEncoder, create_cross_encoder_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "zeroentropy")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL", "https://rerank.example")
+    clear_config_cache()
+
+    encoder = create_cross_encoder_from_env()
+
+    assert isinstance(encoder, ZeroEntropyCrossEncoder)
+    assert encoder.base_url == "https://rerank.example"
+    assert encoder._client.rerank_url == "https://rerank.example/v1/models/rerank"
+
+
+@pytest.mark.asyncio
+async def test_embedding_utils_routes_query_embeddings_to_provider_hook():
+    from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
+
+    class QueryAwareEmbeddings:
+        # 1-element vectors below — declare a matching dimension so the
+        # post-encode validation in generate_embeddings_batch passes (the
+        # EmbeddingsBackend Protocol requires a `dimension` property).
+        dimension = 1
+
+        async def encode(self, texts: list[str]) -> list[list[float]]:
+            raise AssertionError("query embeddings should not use the generic encode method")
+
+        async def encode_query(self, texts: list[str]) -> list[list[float]]:
+            return [[float(len(text))] for text in texts]
+
+    vectors = await generate_embeddings_batch(QueryAwareEmbeddings(), ["query text"], input_type="query")
+
+    assert vectors == [[10.0]]
+
+
+@pytest.mark.asyncio
+async def test_embedding_utils_routes_document_embeddings_to_provider_hook():
+    from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
+
+    class DocumentAwareEmbeddings:
+        # 1-element vectors below — declare a matching dimension so the
+        # post-encode validation in generate_embeddings_batch passes (the
+        # EmbeddingsBackend Protocol requires a `dimension` property).
+        dimension = 1
+
+        async def encode(self, texts: list[str]) -> list[list[float]]:
+            raise AssertionError("document embeddings should not use the generic encode method")
+
+        async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+            return [[float(len(text))] for text in texts]
+
+    vectors = await generate_embeddings_batch(DocumentAwareEmbeddings(), ["document text"], input_type="document")
+
+    assert vectors == [[13.0]]
+
+
+# ── bounded retry/backoff (issue #4103 for the native Gemini provider; same gap here) ──
+#
+# Before this a single 429 or 5xx from the upstream failed the whole
+# retain/consolidation operation. These pin the same contract the LiteLLM, Gemini and
+# Cohere backends hold.
+
+
+async def _encode_against(responses: list[int]) -> tuple[int, list[list[float]] | Exception, Any]:
+    """Encode one text against an upstream that replays ``responses`` (HTTP status codes) in order."""
+    from hindsight_api.engine.embeddings import RetryPolicy
+
+    calls = {"n": 0}
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        status = responses[min(calls["n"], len(responses) - 1)]
+        calls["n"] += 1
+        if status != 200:
+            return web.json_response({"error": "upstream"}, status=status)
+        body = CapturedZeroEntropyEmbedRequest.model_validate(await request.json())
+        return web.json_response({"results": [{"embedding": [0.1, 0.2]} for _ in body.input]})
+
+    async with stub_server(handler) as base_url:
+        # Fast policy so these tests exercise the retry logic, not the sleeps.
+        embeddings = await _ready(
+            base_url,
+            dimensions=1280,
+            batch_size=2,
+            retry_policy=RetryPolicy(max_retries=3, initial_backoff=0.01, max_backoff=0.02, budget_seconds=5.0),
+        )
+        try:
+            result: list[list[float]] | Exception = await embeddings.encode_documents(["alpha"])
+        except Exception as exc:
+            result = exc
+    return calls["n"], result, embeddings
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408])
+async def test_zeroentropy_transient_status_then_success(status):
+    calls, result, _ = await _encode_against([status, 200])
+
+    assert result == [[0.1, 0.2]]
+    assert calls == 2
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+async def test_zeroentropy_permanent_client_errors_fail_fast(status):
+    """Auth and validation failures must not be retried — retrying cannot fix them."""
+    calls, result, _ = await _encode_against([status])
+
+    assert isinstance(result, RuntimeError)
+    assert "ZeroEntropy embedding request failed" in str(result)
+    assert calls == 1
+
+
+async def test_zeroentropy_exhausted_retries_propagate_the_diagnostic_error():
+    """Retries are bounded, and an exhausted request still reaches the caller wrapped."""
+    calls, result, embeddings = await _encode_against([503])
+
+    assert isinstance(result, RuntimeError)
+    assert "ZeroEntropy embedding request failed" in str(result)
+    assert calls == embeddings.retry_policy.max_retries + 1
+
+
+def test_zeroentropy_create_from_env_wires_the_configured_policy(monkeypatch):
+    """The provider honours HINDSIGHT_API_EMBEDDINGS_* like the LiteLLM backends do."""
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.embeddings import ZeroEntropyEmbeddings, create_embeddings_from_env
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY", "ze-test")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES", "7")
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET", "42.5")
+    clear_config_cache()
+
+    embeddings = create_embeddings_from_env()
+
+    assert isinstance(embeddings, ZeroEntropyEmbeddings)
+    assert embeddings.retry_policy.max_retries == 7
+    assert embeddings.retry_policy.budget_seconds == 42.5

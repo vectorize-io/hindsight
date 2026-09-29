@@ -1,0 +1,1351 @@
+"""
+OpenTelemetry metrics instrumentation for Hindsight API.
+
+This module provides metrics for:
+- Operation latency (retain, recall, reflect) with percentiles
+- Token usage (input/output) per operation
+- Per-bank granularity via labels
+- LLM call latency and token usage with scope dimension
+- HTTP request metrics (latency, count by endpoint/method/status)
+- Process metrics (CPU, memory, file descriptors, threads)
+- Database connection pool metrics
+"""
+
+import asyncio
+import importlib
+import logging
+import os
+import random
+import re
+
+_resource_mod = importlib.import_module("resource") if importlib.util.find_spec("resource") else None
+import threading
+import time
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Callable, NamedTuple
+
+from opentelemetry import metrics
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
+from opentelemetry.sdk.resources import Resource
+
+if TYPE_CHECKING:
+    import asyncpg
+
+
+def _get_tenant() -> str:
+    """Get current tenant (schema) from context for metrics labeling."""
+    # Import here to avoid circular imports
+    from hindsight_api.engine.memory_engine import get_current_schema
+
+    return get_current_schema()
+
+
+def _is_client_cancellation(exc: BaseException) -> bool:
+    """Whether *exc* is a client-disconnect cancellation rather than a failure.
+
+    An abandoned recall/reflect raises OperationCancelledError (issue #2122);
+    the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
+    api/http.py run_cancellable_on_disconnect). The exception itself, or any
+    link in its ``__cause__`` chain, being an OperationCancelledError marks it
+    as a cancellation. Matching on the cause chain rather than a bare status
+    code avoids misclassifying an unrelated 499 as a cancellation. Per the
+    engine contract a cancellation is "not a failure to retry or report"
+    (cancellation.OperationCancelledError), so it must not be counted against
+    ``hindsight.operation.total``.
+    """
+    # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
+    from hindsight_api.cancellation import OperationCancelledError
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()  # guard against a cyclic __cause__ chain
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, OperationCancelledError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__
+    return False
+
+
+# Custom bucket boundaries for operation duration (in seconds)
+# Fine granularity in 0-30s range where most operations complete
+DURATION_BUCKETS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0)
+
+# LLM duration buckets (finer granularity for faster LLM calls)
+LLM_DURATION_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0)
+
+# HTTP request duration buckets (millisecond-level for fast endpoints)
+HTTP_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
+
+# How often the backlog / queue-depth gauge caches are refreshed (seconds).
+# The counts are aggregate COUNT queries, so a background task refreshes a
+# cache and the observable gauges read from it — keeping the /metrics scrape
+# path synchronous (the same reason the db-pool gauges read cached state).
+BACKLOG_METRICS_REFRESH_SECONDS = 30
+
+
+class _AsyncOpKey(NamedTuple):
+    """Cache / label key for the async-operation queue gauge."""
+
+    tenant: str
+    operation_type: str
+    status: str
+    bank_id: str | None
+
+
+class _BacklogKey(NamedTuple):
+    """Cache / label key for the consolidation backlog and failed gauges."""
+
+    tenant: str
+    bank_id: str | None
+
+
+def get_token_bucket(token_count: int) -> str:
+    """
+    Convert a token count to a bucket label for use as a dimension.
+
+    This allows analyzing token usage patterns without high-cardinality issues.
+
+    Buckets:
+    - "0-100": Very small requests/responses
+    - "100-500": Small requests/responses
+    - "500-1k": Medium requests/responses
+    - "1k-5k": Large requests/responses
+    - "5k-10k": Very large requests/responses
+    - "10k-50k": Huge requests/responses
+    - "50k+": Extremely large requests/responses
+
+    Args:
+        token_count: Number of tokens
+
+    Returns:
+        Bucket label string
+    """
+    if token_count < 100:
+        return "0-100"
+    elif token_count < 500:
+        return "100-500"
+    elif token_count < 1000:
+        return "500-1k"
+    elif token_count < 5000:
+        return "1k-5k"
+    elif token_count < 10000:
+        return "5k-10k"
+    elif token_count < 50000:
+        return "10k-50k"
+    else:
+        return "50k+"
+
+
+# Template unbounded id segments before a path is used as the low-cardinality
+# "endpoint" metric label. A raw per-bank path segment (e.g. user-123) would
+# otherwise create one never-evicted OTel series per bank.
+_METRIC_BANK_SEGMENT_RE = re.compile(r"(/banks/)[^/]+")
+_METRIC_UUID_RE = re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_METRIC_NUMERIC_ID_RE = re.compile(r"/\d+(?=/|$)")
+
+
+def normalize_http_endpoint(path: str) -> str:
+    """Template high-cardinality id segments in an HTTP path for safe metric labeling.
+
+    Collapses the "/banks/<id>" segment (any bank id, including non-numeric ones like
+    "user-123"), UUIDs, and numeric ids to placeholders so the "endpoint" metric label
+    has bounded cardinality. Analogous to get_token_bucket for token counts.
+    """
+    path = _METRIC_BANK_SEGMENT_RE.sub(r"\g<1>{bank_id}", path)
+    path = _METRIC_UUID_RE.sub("/{id}", path)
+    path = _METRIC_NUMERIC_ID_RE.sub("/{id}", path)
+    return path
+
+
+logger = logging.getLogger(__name__)
+
+# Global meter instance
+_meter = None
+
+
+#: Event-loop lag in seconds. Healthy is well under 10 ms; a saturated loop runs into seconds.
+LOOP_LAG_BUCKETS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)
+
+
+def initialize_metrics(service_name: str = "hindsight-api", service_version: str = "1.0.0"):
+    """
+    Initialize OpenTelemetry metrics with Prometheus exporter.
+
+    This should be called once during application startup.
+
+    Args:
+        service_name: Name of the service for resource attributes
+        service_version: Version of the service
+
+    Returns:
+        PrometheusMetricReader instance (for accessing metrics endpoint)
+    """
+    global _meter
+
+    # Create resource with service information
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": service_version,
+        }
+    )
+
+    # Create Prometheus metric reader
+    prometheus_reader = PrometheusMetricReader()
+
+    # Create view with custom bucket boundaries for duration histogram
+    duration_view = View(
+        instrument_name="hindsight.operation.duration",
+        aggregation=ExplicitBucketHistogramAggregation(boundaries=DURATION_BUCKETS),
+    )
+
+    # Create view with custom bucket boundaries for LLM duration histogram
+    llm_duration_view = View(
+        instrument_name="hindsight.llm.duration",
+        aggregation=ExplicitBucketHistogramAggregation(boundaries=LLM_DURATION_BUCKETS),
+    )
+
+    # Create view with custom bucket boundaries for HTTP request duration histogram
+    http_duration_view = View(
+        instrument_name="hindsight.http.duration",
+        aggregation=ExplicitBucketHistogramAggregation(boundaries=HTTP_DURATION_BUCKETS),
+    )
+
+    # Create meter provider with Prometheus exporter and custom views
+    provider = MeterProvider(
+        resource=resource,
+        metric_readers=[prometheus_reader],
+        views=[
+            duration_view,
+            llm_duration_view,
+            http_duration_view,
+            View(
+                instrument_name="hindsight.event_loop.lag",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=LOOP_LAG_BUCKETS),
+            ),
+        ],
+    )
+
+    # Set the global meter provider
+    metrics.set_meter_provider(provider)
+
+    # Get meter for this application
+    _meter = metrics.get_meter(__name__)
+
+    return prometheus_reader
+
+
+def get_meter():
+    """Get the global meter instance."""
+    if _meter is None:
+        raise RuntimeError("Metrics not initialized. Call initialize_metrics() first.")
+    return _meter
+
+
+class MetricsCollectorBase:
+    """Base class for metrics collectors."""
+
+    @contextmanager
+    def record_operation(
+        self,
+        operation: str,
+        bank_id: str,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Context manager to record operation duration and status."""
+        raise NotImplementedError
+
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Record a single completed operation with an explicit success label."""
+        raise NotImplementedError
+
+    def record_llm_call(
+        self,
+        provider: str,
+        model: str,
+        scope: str,
+        duration: float,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
+    ):
+        """
+        Record metrics for an LLM call.
+
+        Args:
+            provider: LLM provider name (openai, anthropic, gemini, groq, ollama, lmstudio)
+            model: Model name
+            scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
+            duration: Call duration in seconds
+            input_tokens: Number of input/prompt tokens (total)
+            output_tokens: Number of output/completion tokens visible in candidates
+            success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached rate
+            thoughts_tokens: Reasoning tokens (billed as output, hidden from candidates)
+        """
+        raise NotImplementedError
+
+    @contextmanager
+    def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):
+        """Context manager to record HTTP request metrics."""
+        raise NotImplementedError
+
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
+        """Record the fact-extraction outcome of one document processed by retain."""
+        raise NotImplementedError
+
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """Record how long a caller waited to acquire a pooled DB connection."""
+        raise NotImplementedError
+
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a retain."""
+        raise NotImplementedError
+
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
+        """Record one operation-validator hook (`hook` is "pre" or "post")."""
+        raise NotImplementedError
+
+    def record_recall_phase(self, phase: str, seconds: float, *, diagnostic: bool = False):
+        """Record one phase of a recall.
+
+        `diagnostic` marks a phase that is a SUBSET of another rather than a sibling of it, so a
+        consumer summing phases into a request total can exclude them instead of double-counting.
+        """
+        raise NotImplementedError
+
+    def record_loop_stall(self, stall_seconds: float):
+        """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
+        raise NotImplementedError
+
+    def record_loop_lag(self, lag_seconds: float):
+        """Record one event-loop lag sample (see ``hindsight_api.loop_lag``).
+
+        A no-op here rather than abstract: the probe calls it on every tick, and a collector that
+        predates it must not kill the probe.
+        """
+
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """Record one consolidation LLM batch call that failed.
+
+        `failed_consolidation` is a gauge over rows carrying `consolidation_failed_at`,
+        so it reports facts left STUCK — never a call that failed and whose facts the
+        caller's adaptive bisection then rescued. A run can burn dozens of schema-invalid
+        calls, drop every delete they carried, and still end with that gauge at 0 and
+        `observations_deleted` at 0, indistinguishable from a healthy run (#4151, #4152).
+        This counter is the missing signal: it counts calls, not stuck rows.
+        """
+        raise NotImplementedError
+
+    def set_db_pool(self, pool: "asyncpg.Pool"):
+        """Set the database pool for metrics collection."""
+        pass
+
+
+class NoOpMetricsCollector(MetricsCollectorBase):
+    """No-op metrics collector that does nothing. Used when metrics are disabled."""
+
+    @contextmanager
+    def record_operation(
+        self,
+        operation: str,
+        bank_id: str,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """No-op context manager."""
+        yield
+
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """No-op operation result recording."""
+        pass
+
+    def record_llm_call(
+        self,
+        provider: str,
+        model: str,
+        scope: str,
+        duration: float,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
+    ):
+        """No-op LLM call recording."""
+        pass
+
+    @contextmanager
+    def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):
+        """No-op HTTP request recording."""
+        yield
+
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
+        """No-op retain document outcome recording."""
+        pass
+
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """No-op DB acquire-wait recording."""
+        pass
+
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        pass
+
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
+        pass
+
+    def record_recall_phase(self, phase: str, seconds: float, *, diagnostic: bool = False):
+        pass
+
+    def record_loop_stall(self, stall_seconds: float):
+        """No-op loop-stall recording."""
+        pass
+
+    def record_loop_lag(self, lag_seconds: float):
+        """No-op loop-lag recording."""
+        pass
+
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """No-op consolidation batch-failure recording."""
+        pass
+
+
+class MetricsCollector(MetricsCollectorBase):
+    """
+    Collector for Hindsight API metrics.
+
+    Provides methods to record latency and token usage for operations.
+    """
+
+    def __init__(self):
+        self.meter = get_meter()
+        from .config import get_config
+
+        self._include_bank_id = get_config().metrics_include_bank_id
+        self._include_tenant = get_config().metrics_include_tenant
+        self._record_diagnostic_phases = get_config().recall_diagnostic_phases
+        self._recall_phase_sample_every = get_config().recall_phase_sample_every
+
+        # Operation latency histogram (in seconds)
+        # Records duration of retain, recall, reflect operations
+        self.operation_duration = self.meter.create_histogram(
+            name="hindsight.operation.duration", description="Duration of Hindsight operations in seconds", unit="s"
+        )
+
+        # Operation counter (success/failure)
+        self.operation_total = self.meter.create_counter(
+            name="hindsight.operation.total", description="Total number of operations executed", unit="operations"
+        )
+
+        # LLM call latency histogram (in seconds)
+        # Records duration of LLM API calls with provider, model, and scope dimensions
+        self.llm_duration = self.meter.create_histogram(
+            name="hindsight.llm.duration", description="Duration of LLM API calls in seconds", unit="s"
+        )
+
+        # LLM token usage counters with bucket labels
+        self.llm_tokens_input = self.meter.create_counter(
+            name="hindsight.llm.tokens.input", description="Number of input tokens for LLM calls", unit="tokens"
+        )
+
+        self.llm_tokens_output = self.meter.create_counter(
+            name="hindsight.llm.tokens.output", description="Number of output tokens from LLM calls", unit="tokens"
+        )
+
+        # LLM call counter (success/failure)
+        self.llm_calls_total = self.meter.create_counter(
+            name="hindsight.llm.calls.total", description="Total number of LLM API calls", unit="calls"
+        )
+
+        # Cached input tokens (subset of input_tokens billed at the cached rate).
+        # Useful for tracking prompt-cache hit-rate independently of total
+        # input volume. provider.scope.model labels matche llm_tokens_input.
+        self.llm_tokens_cached_input = self.meter.create_counter(
+            name="hindsight.llm.tokens.cached_input",
+            description="Number of cached input tokens (billed at cached rate) for LLM calls",
+            unit="tokens",
+        )
+
+        # Thinking / reasoning tokens (Gemini 2.5+ family). Billed at the
+        # output rate by the provider but invisible to candidates_token_count.
+        # Surfacing them as a distinct counter is required for honest cost
+        # attribution: a workload that "looks cheap" by output volume can be
+        # silently expensive if the model is doing long reasoning chains.
+        self.llm_tokens_thoughts = self.meter.create_counter(
+            name="hindsight.llm.tokens.thoughts",
+            description="Number of reasoning/thinking tokens emitted by the model "
+            "(billed as output but not surfaced in candidates)",
+            unit="tokens",
+        )
+
+        # Per-document retain outcome. The point of this counter is the
+        # ``outcome=no_facts`` series: a document whose extraction legitimately
+        # produced zero facts is stored but unreachable via recall/reflect (only
+        # memory_units carry embeddings), and nothing else in the system reports
+        # it — the operation still completes successfully. Alert on it to catch a
+        # retain_mission that silently excludes more than intended (issue #3040).
+        self.retain_documents_total = self.meter.create_counter(
+            name="hindsight.retain.documents.total",
+            description="Documents processed by retain, labelled by extraction outcome (facts/no_facts)",
+            unit="documents",
+        )
+
+        # HTTP request metrics
+        self.http_request_duration = self.meter.create_histogram(
+            name="hindsight.http.duration", description="Duration of HTTP requests in seconds", unit="s"
+        )
+
+        self.http_requests_total = self.meter.create_counter(
+            name="hindsight.http.requests.total", description="Total number of HTTP requests", unit="requests"
+        )
+
+        self.http_requests_in_progress = self.meter.create_up_down_counter(
+            name="hindsight.http.requests.in_progress",
+            description="Number of HTTP requests in progress",
+            unit="requests",
+        )
+
+        # Runtime-stall observability: how long callers wait for a pooled DB
+        # connection (pool-exhaustion signal) and detected event-loop stalls
+        # (blocked-loop signal). See loop_watchdog.py and db/pool_instrumentation.py.
+        self.db_acquire_wait = self.meter.create_histogram(
+            name="hindsight.db.pool.acquire_wait",
+            description="Time spent waiting to acquire a pooled database connection",
+            unit="s",
+        )
+        # Where a retain's wall time goes, per phase. Retain crosses four subsystems -- chunking,
+        # the embedder, the memories store and Postgres -- and until this existed a slow retain in
+        # production could only be attributed by reasoning about which of them was likely, which
+        # got it wrong: the store's share was assumed to be Postgres. Phases overlap when
+        # sub-batches run concurrently, so the sum exceeds the retain's duration by design; read a
+        # phase against `hindsight.retain.duration`, not against the others.
+        self.retain_phase_duration = self.meter.create_histogram(
+            name="hindsight.retain.phase.duration",
+            description="Time attributed to one phase of a retain (phases overlap under concurrency)",
+            unit="s",
+        )
+        self.retain_phase_calls = self.meter.create_counter(
+            name="hindsight.retain.phase.calls",
+            description="Number of times a retain phase ran -- the round-trip count per phase",
+            unit="calls",
+        )
+        # The operation validator runs OUTSIDE the recall/retain timers -- `validate_*` before the
+        # work starts and `on_*_complete` after it ends -- so whatever it does is invisible in the
+        # `[phases]` accounting, which measures only the inner search. A validator that reaches a
+        # database (billing does: an org row and a pricing table, uncached, on a small control
+        # pool) is then latency nobody can see. Labelled by hook so the pre-check and the
+        # post-charge are separable: they fail differently and are fixed differently.
+        self.validator_phase_duration = self.meter.create_histogram(
+            name="hindsight.validator.phase.duration",
+            description="Time in an operation-validator hook, which runs outside the operation's own timer",
+            unit="s",
+        )
+        # A recall's phases, from the same tracer that writes the `[phases]` log line. That line is
+        # per-request and lives in a log; this is the aggregate, so "where does a recall's time go"
+        # is answerable across a window without grepping. `hindsight.operation.duration` for a
+        # recall is one opaque number, and subtracting the store's own timings from it left the
+        # remainder -- hydration, entity build, token filtering, serialization -- as a residual
+        # nobody could attribute. On a measured window that residual was 37% of the request.
+        #
+        # `diagnostic` separates subsets from siblings: some phases are children of another
+        # (a per-arm timing inside parallel_retrieval), and summing them with their parent
+        # double-counts. Sum `diagnostic="false"` to get the request; read the rest for detail.
+        self.recall_phase_duration = self.meter.create_histogram(
+            name="hindsight.recall.phase.duration",
+            description="Time attributed to one phase of a recall (diagnostic phases are subsets, not siblings)",
+            unit="s",
+            # Buckets in SECONDS, sized for phases that take milliseconds. Without them the
+            # SDK default applies -- 0, 5, 10, 25, ... -- which for a unit of seconds means
+            # the first bucket is everything under five seconds. Every recall phase landed
+            # in it, so the histogram could report a mean but no percentile: asked for the
+            # p99 of a phase it answered 2500ms for all fifteen of them, which is simply the
+            # midpoint of that first bucket. A mean cannot explain a tail, and the tail is
+            # what a phase breakdown is for.
+            explicit_bucket_boundaries_advisory=[
+                0.001,
+                0.0025,
+                0.005,
+                0.01,
+                0.025,
+                0.05,
+                0.075,
+                0.1,
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                2.5,
+                5.0,
+                10.0,
+            ],
+        )
+        # Consolidation batch calls that failed. Labelled by failure class so the two
+        # populations stay separable: `retry` is transport-shaped and usually self-heals,
+        # while `fail_fast` is the model emitting something the response schema rejects —
+        # the case that silently drains the delete path (#4152). Neither reaches
+        # `failed_consolidation`, which only counts facts bisection could not rescue.
+        self.consolidation_batch_failures = self.meter.create_counter(
+            name="hindsight.consolidation.batch_failures",
+            description=(
+                "Consolidation LLM batch calls that failed, by failure class -- "
+                "including those whose facts adaptive bisection later rescued"
+            ),
+            unit="calls",
+        )
+        self.event_loop_stalls = self.meter.create_counter(
+            name="hindsight.event_loop.stalls",
+            description="Number of detected event-loop stalls (loop blocked past the watchdog threshold)",
+            unit="stalls",
+        )
+        self.event_loop_stall_duration = self.meter.create_histogram(
+            name="hindsight.event_loop.stall_duration",
+            description="Duration of detected event-loop stalls in seconds",
+            unit="s",
+        )
+        # How long a ready coroutine waited for the loop (see hindsight_api.loop_lag). Unlike a
+        # stall, which only counts blocks past a threshold, this is the whole distribution, so a
+        # loop that is busy but never blocked still shows up.
+        self.event_loop_lag = self.meter.create_histogram(
+            name="hindsight.event_loop.lag",
+            description="Event-loop lag: extra time a ready coroutine waited before it ran",
+            unit="s",
+        )
+
+        # Process metrics (observable gauges - collected on scrape)
+        self._setup_process_metrics()
+
+        # DB pool metrics holder (set via set_db_pool)
+        self._db_pool: "asyncpg.Pool | None" = None
+
+        # Backlog / queue-depth gauge caches, refreshed by a background task
+        # (see _setup_backlog_metrics) so the scrape path stays synchronous.
+        self._async_ops_counts: dict[_AsyncOpKey, int] = {}
+        self._consolidation_backlog: dict[_BacklogKey, int] = {}
+        self._consolidation_failed: dict[_BacklogKey, int] = {}
+        self._backlog_task: "asyncio.Task | None" = None
+
+    def _tenant_attrs(self) -> dict[str, str]:
+        """The ``tenant`` (schema) label, gated behind ``metrics_include_tenant`` (off by default).
+
+        Per-tenant labels are high-cardinality: a deployment accrues one series set per schema,
+        which multiplies through every histogram bucket and can overwhelm the metrics backend on
+        a deployment with many tenants. Off by default, opt-in for small deployments — mirroring
+        ``metrics_include_bank_id``.
+        """
+        return {"tenant": _get_tenant()} if self._include_tenant else {}
+
+    @contextmanager
+    def record_operation(
+        self,
+        operation: str,
+        bank_id: str,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """
+        Context manager to record operation duration and status.
+
+        Usage:
+            with metrics.record_operation("recall", bank_id="user123", source="api", budget="mid", max_tokens=4096):
+                # ... perform operation
+                pass
+
+        Args:
+            operation: Operation name (retain, recall, reflect, consolidation)
+            bank_id: Memory bank ID
+            source: Source of the operation (api, reflect, internal)
+            budget: Optional budget level (low, mid, high)
+            max_tokens: Optional max tokens for the operation
+        """
+        start_time = time.time()
+        success = True
+        cancelled = False
+        try:
+            yield
+        except Exception as exc:
+            # A client disconnect cancels the operation cooperatively (#2122),
+            # raised as OperationCancelledError and re-raised by the HTTP layer
+            # as HTTPException(499) from it. An abandoned request is neither a
+            # success nor a failure, so it is excluded from the metric entirely
+            # rather than inflating either the failure or the success rate on
+            # hindsight.operation.total.
+            if _is_client_cancellation(exc):
+                cancelled = True
+            else:
+                success = False
+            raise
+        finally:
+            if not cancelled:
+                self.record_operation_result(
+                    operation,
+                    bank_id,
+                    success=success,
+                    duration=time.time() - start_time,
+                    source=source,
+                    budget=budget,
+                    max_tokens=max_tokens,
+                )
+
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Record a single completed operation (duration + count) with a success label.
+
+        Direct (non-context-manager) recording for code paths that need explicit
+        success control rather than the exception-based ``record_operation`` — e.g.
+        the async worker, where deferrals/retries are not terminal outcomes and must
+        not be counted as completions.
+        """
+        attributes = {
+            "operation": operation,
+            "source": source,
+            **self._tenant_attrs(),
+        }
+        if self._include_bank_id:
+            attributes["bank_id"] = bank_id
+        if budget:
+            attributes["budget"] = budget
+        if max_tokens:
+            attributes["max_tokens"] = str(max_tokens)
+        attributes["success"] = str(success).lower()
+
+        # Record duration
+        self.operation_duration.record(duration, attributes)
+
+        # Record operation count
+        self.operation_total.add(1, attributes)
+
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
+        """Record one document's retain outcome.
+
+        ``memory_unit_count == 0`` means fact extraction ran and returned
+        nothing, so the document is stored but unreachable through recall/reflect
+        until it is reprocessed.
+        """
+        attributes = {
+            **self._tenant_attrs(),
+            "outcome": "facts" if memory_unit_count > 0 else "no_facts",
+        }
+        if self._include_bank_id:
+            attributes["bank_id"] = bank_id
+
+        self.retain_documents_total.add(1, attributes)
+
+    def record_llm_call(
+        self,
+        provider: str,
+        model: str,
+        scope: str,
+        duration: float,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
+    ):
+        """
+        Record metrics for an LLM call.
+
+        Args:
+            provider: LLM provider name (openai, anthropic, gemini, groq, ollama, lmstudio)
+            model: Model name
+            scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
+            duration: Call duration in seconds
+            input_tokens: Number of input/prompt tokens (total, including cached portion)
+            output_tokens: Number of output/completion tokens visible in candidates
+            success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached
+                rate (Gemini context caching). Defaults to 0 when caching is
+                disabled or the provider doesn't surface this field.
+            thoughts_tokens: Reasoning/thinking tokens (Gemini 2.5+ family).
+                Billed at the output rate but not counted in candidates.
+                Defaults to 0 for providers that don't emit thoughts.
+        """
+        # Base attributes for all metrics
+        base_attributes = {
+            "provider": provider,
+            "model": model,
+            "scope": scope,
+            "success": str(success).lower(),
+            **self._tenant_attrs(),
+        }
+
+        # Record duration
+        self.llm_duration.record(duration, base_attributes)
+
+        # Record call count
+        self.llm_calls_total.add(1, base_attributes)
+
+        # Record tokens with bucket labels for cardinality control
+        if input_tokens > 0:
+            input_attributes = {
+                **base_attributes,
+                "token_bucket": get_token_bucket(input_tokens),
+            }
+            self.llm_tokens_input.add(input_tokens, input_attributes)
+
+        if output_tokens > 0:
+            output_attributes = {
+                **base_attributes,
+                "token_bucket": get_token_bucket(output_tokens),
+            }
+            self.llm_tokens_output.add(output_tokens, output_attributes)
+
+        if cached_input_tokens > 0:
+            self.llm_tokens_cached_input.add(
+                cached_input_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(cached_input_tokens)},
+            )
+
+        if thoughts_tokens > 0:
+            self.llm_tokens_thoughts.add(
+                thoughts_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(thoughts_tokens)},
+            )
+
+    @contextmanager
+    def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):
+        """
+        Context manager to record HTTP request metrics.
+
+        Usage:
+            status_code = [200]  # Use list for mutability
+            with metrics.record_http_request("GET", "/api/banks", lambda: status_code[0]):
+                # ... handle request
+                status_code[0] = response.status_code
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            endpoint: Request endpoint path
+            status_code_getter: Callable that returns the status code after request completes
+        """
+        start_time = time.time()
+        base_attributes = {"method": method, "endpoint": endpoint}
+
+        # Track in-progress
+        self.http_requests_in_progress.add(1, base_attributes)
+
+        try:
+            yield
+        finally:
+            duration = time.time() - start_time
+            status_code = status_code_getter()
+            status_class = f"{status_code // 100}xx"
+
+            attributes = {
+                **base_attributes,
+                "status_code": str(status_code),
+                "status_class": status_class,
+                **self._tenant_attrs(),
+            }
+
+            # Record duration and count
+            self.http_request_duration.record(duration, attributes)
+            self.http_requests_total.add(1, attributes)
+
+            # Decrement in-progress
+            self.http_requests_in_progress.add(-1, base_attributes)
+
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """Record how long a caller waited to acquire a pooled DB connection."""
+        self.db_acquire_wait.record(wait_seconds)
+
+    def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a retain. `store` labels which memories backend served it, so a
+        store-owned bank's profile is separable from a Postgres one on the same deployment."""
+        attrs = {"phase": phase, **self._tenant_attrs()}
+        if store:
+            attrs["store"] = store
+        self.retain_phase_duration.record(seconds, attrs)
+        self.retain_phase_calls.add(calls, attrs)
+
+    def record_validator_phase(self, operation: str, hook: str, seconds: float):
+        """Record one operation-validator hook. `hook` is "pre" or "post"."""
+        attrs = {"operation": operation, "hook": hook, **self._tenant_attrs()}
+        self.validator_phase_duration.record(seconds, attrs)
+
+    def record_recall_phase(self, phase: str, seconds: float, *, diagnostic: bool = False):
+        """Record one phase of a recall.
+
+        `diagnostic` marks a phase that is a SUBSET of another rather than a sibling of it — a
+        per-arm timing inside `parallel_retrieval`, say — so a consumer summing phases into a
+        request total can exclude them instead of double-counting.
+        """
+        if diagnostic and not self._record_diagnostic_phases:
+            return
+        # Opt-in sampling: ~10 phases per recall each go through OTel's aggregation, which was
+        # ~4.6% of a recall-heavy API's busy CPU. Sampling each call independently at 1/N keeps
+        # every phase's distribution (and so its percentiles) unbiased; only the histogram's
+        # absolute counts scale by 1/N. Default 1 records every call, exactly as before.
+        if self._recall_phase_sample_every > 1 and random.random() * self._recall_phase_sample_every >= 1.0:
+            return
+        attrs = {"phase": phase, **self._tenant_attrs(), "diagnostic": str(bool(diagnostic)).lower()}
+        # One instrument, not two: the histogram already carries `_count` for this attribute set,
+        # so the parallel counter was recording the same measurement a second time — and OTel's
+        # consume_measurement path, not the record call, is what costs.
+        self.recall_phase_duration.record(seconds, attrs)
+
+    def record_loop_stall(self, stall_seconds: float):
+        """Record a detected event-loop stall. Called from the watchdog thread."""
+        self.event_loop_stalls.add(1)
+        self.event_loop_stall_duration.record(stall_seconds)
+
+    def record_loop_lag(self, lag_seconds: float):
+        """Record one event-loop lag sample. Called by the probe on every tick."""
+        self.event_loop_lag.record(lag_seconds)
+
+    def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
+        """Record one failed consolidation LLM batch call.
+
+        Called only on the exception path, so the successful batch costs nothing.
+        `error_type` is the exception class name — `ValidationError` is the #4152
+        signature — and is bounded by the exception types the LLM layer can raise.
+        """
+        self.consolidation_batch_failures.add(
+            1, {"failure_class": failure_class, "error_type": error_type, **self._tenant_attrs()}
+        )
+
+    def _setup_process_metrics(self):
+        """Set up observable gauges for process metrics."""
+        if _resource_mod is None:
+            return  # Skip process metrics on Windows
+
+        def get_cpu_times(_options):
+            """Get process CPU times."""
+            try:
+                rusage = _resource_mod.getrusage(_resource_mod.RUSAGE_SELF)
+                yield metrics.Observation(rusage.ru_utime, {"type": "user"})
+                yield metrics.Observation(rusage.ru_stime, {"type": "system"})
+            except Exception:
+                pass
+
+        def get_memory_usage(_options):
+            """Get process memory usage in bytes."""
+            try:
+                rusage = _resource_mod.getrusage(_resource_mod.RUSAGE_SELF)
+                # ru_maxrss is in kilobytes on Linux, bytes on macOS
+                max_rss = rusage.ru_maxrss
+                if os.uname().sysname == "Linux":
+                    max_rss *= 1024  # Convert KB to bytes
+                yield metrics.Observation(max_rss, {"type": "rss_max"})
+            except Exception:
+                pass
+
+        def get_open_file_descriptors(_options):
+            """Get number of open file descriptors."""
+            try:
+                # Try to count open FDs by checking /proc on Linux
+                if os.path.exists("/proc/self/fd"):
+                    count = len(os.listdir("/proc/self/fd"))
+                    yield metrics.Observation(count)
+                else:
+                    # Fallback: use resource limits
+                    soft, hard = _resource_mod.getrlimit(_resource_mod.RLIMIT_NOFILE)
+                    yield metrics.Observation(soft, {"limit": "soft"})
+            except Exception:
+                pass
+
+        def get_thread_count(_options):
+            """Get number of active threads."""
+            try:
+                yield metrics.Observation(threading.active_count())
+            except Exception:
+                pass
+
+        # Create observable gauges
+        self.meter.create_observable_gauge(
+            name="hindsight.process.cpu.seconds",
+            callbacks=[get_cpu_times],
+            description="Process CPU time in seconds",
+            unit="s",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.process.memory.bytes",
+            callbacks=[get_memory_usage],
+            description="Process memory usage in bytes",
+            unit="By",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.process.open_fds",
+            callbacks=[get_open_file_descriptors],
+            description="Number of open file descriptors",
+            unit="{fds}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.process.threads",
+            callbacks=[get_thread_count],
+            description="Number of active threads",
+            unit="{threads}",
+        )
+
+    def set_db_pool(self, pool: "asyncpg.Pool"):
+        """
+        Set the database pool for metrics collection.
+
+        Args:
+            pool: asyncpg connection pool instance
+        """
+        self._db_pool = pool
+        self._setup_db_pool_metrics()
+        from .config import get_config
+
+        if get_config().metrics_backlog_enabled:
+            self._setup_backlog_metrics()
+
+    def _setup_db_pool_metrics(self):
+        """Set up observable gauges for database pool metrics."""
+
+        def get_pool_size(_options):
+            """Get current pool size."""
+            if self._db_pool is not None:
+                try:
+                    yield metrics.Observation(self._db_pool.get_size())
+                except Exception:
+                    pass
+
+        def get_pool_free_size(_options):
+            """Get number of free connections in pool."""
+            if self._db_pool is not None:
+                try:
+                    yield metrics.Observation(self._db_pool.get_idle_size())
+                except Exception:
+                    pass
+
+        def get_pool_min_size(_options):
+            """Get pool minimum size."""
+            if self._db_pool is not None:
+                try:
+                    yield metrics.Observation(self._db_pool.get_min_size())
+                except Exception:
+                    pass
+
+        def get_pool_max_size(_options):
+            """Get pool maximum size."""
+            if self._db_pool is not None:
+                try:
+                    yield metrics.Observation(self._db_pool.get_max_size())
+                except Exception:
+                    pass
+
+        def get_pool_waiting(_options):
+            """Number of callers currently blocked waiting to acquire a connection.
+
+            asyncpg does not expose this; it's tracked in db/pool_instrumentation.py.
+            This is the gauge that actually distinguishes pool exhaustion (a high,
+            sustained value) from a merely busy-but-healthy pool.
+            """
+            try:
+                from .engine.db.pool_instrumentation import waiting_count
+
+                yield metrics.Observation(waiting_count())
+            except Exception:
+                pass
+
+        # Create observable gauges for pool metrics
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.size",
+            callbacks=[get_pool_size],
+            description="Current number of connections in the pool",
+            unit="{connections}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.idle",
+            callbacks=[get_pool_free_size],
+            description="Number of idle connections in the pool",
+            unit="{connections}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.min",
+            callbacks=[get_pool_min_size],
+            description="Minimum pool size",
+            unit="{connections}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.max",
+            callbacks=[get_pool_max_size],
+            description="Maximum pool size",
+            unit="{connections}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.waiting",
+            callbacks=[get_pool_waiting],
+            description="Callers currently blocked waiting to acquire a pooled connection",
+            unit="{connections}",
+        )
+
+    def _setup_backlog_metrics(self):
+        """Observable gauges for the async-operation queue and the
+        consolidation backlog.
+
+        These mirror fields the bank-stats endpoint already computes
+        (``operations_by_status``, ``pending_consolidation``,
+        ``failed_consolidation``) but expose them as scrapable gauges, so
+        queue depth and backlog can be trended and alerted on instead of only
+        polled per-bank over HTTP. The two motivating questions both come for
+        free here: "is the worker keeping up?" (async-op queue) and "is the
+        knowledge base caught up?" (consolidation backlog) — including the
+        ``processing`` state, which is the only signal that surfaces a hung
+        operation stuck holding a worker slot.
+
+        Counts are aggregate ``COUNT`` queries, so a background task refreshes
+        a cache every ``BACKLOG_METRICS_REFRESH_SECONDS`` and these callbacks
+        read it — keeping the scrape path synchronous, the same approach as
+        the db-pool gauges above.
+        """
+        if self._backlog_task is not None:
+            return  # already started for this collector
+
+        def get_async_operations(_options):
+            for key, value in list(self._async_ops_counts.items()):
+                attrs = {"tenant": key.tenant, "operation_type": key.operation_type, "status": key.status}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
+                yield metrics.Observation(value, attrs)
+
+        def get_consolidation_backlog(_options):
+            for key, value in list(self._consolidation_backlog.items()):
+                attrs = {"tenant": key.tenant}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
+                yield metrics.Observation(value, attrs)
+
+        def get_consolidation_failed(_options):
+            for key, value in list(self._consolidation_failed.items()):
+                attrs = {"tenant": key.tenant}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
+                yield metrics.Observation(value, attrs)
+
+        self.meter.create_observable_gauge(
+            name="hindsight.async_operations",
+            callbacks=[get_async_operations],
+            description="Async operations in a non-terminal state, by operation_type and status "
+            "(pending=queued backlog, processing=in-flight, failed=stranded)",
+            unit="{operations}",
+        )
+        self.meter.create_observable_gauge(
+            name="hindsight.consolidation.backlog",
+            callbacks=[get_consolidation_backlog],
+            description="Source memories (experience/world) still queued for consolidation into "
+            "observations; excludes permanently failed ones, which are in hindsight.consolidation.failed",
+            unit="{memories}",
+        )
+        self.meter.create_observable_gauge(
+            name="hindsight.consolidation.failed",
+            callbacks=[get_consolidation_failed],
+            description="Source memories whose consolidation permanently failed "
+            "(recoverable via the consolidation recovery endpoint)",
+            unit="{memories}",
+        )
+
+        # Drive the caches from a background task on the running loop.
+        # set_db_pool runs during async startup, so a loop is normally present;
+        # if not, the gauges simply stay empty rather than crashing collection.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No running event loop; backlog metrics disabled")
+            return
+        # Process-lifetime task: there is no collector teardown hook to cancel it
+        # on, so it's torn down with the event loop at process shutdown. If a
+        # shutdown path is ever added, cancel self._backlog_task there.
+        self._backlog_task = loop.create_task(self._backlog_refresh_loop())
+
+    async def _backlog_refresh_loop(self):
+        """Periodically refresh the backlog / queue-depth caches."""
+        while True:
+            try:
+                await self._refresh_backlog()
+            except Exception:
+                logger.debug("Backlog metrics refresh failed", exc_info=True)
+            await asyncio.sleep(BACKLOG_METRICS_REFRESH_SECONDS)
+
+    async def _refresh_backlog(self):
+        """Recount the async-operation queue and consolidation backlog across
+        every provisioned Hindsight schema.
+
+        Per-bank labels are gated behind ``metrics_include_bank_id`` (off by
+        default) to keep cardinality bounded; when off, counts are aggregated
+        per tenant/schema. All SQL here is PostgreSQL-specific (``FILTER``,
+        ``information_schema``), which is consistent with this collector
+        already being bound to an asyncpg pool.
+        """
+        if self._db_pool is None:
+            return
+
+        async_ops: dict[_AsyncOpKey, int] = {}
+        backlog: dict[_BacklogKey, int] = {}
+        failed: dict[_BacklogKey, int] = {}
+        per_bank = self._include_bank_id
+        bank_sel = "bank_id, " if per_bank else ""
+        bank_grp = " GROUP BY bank_id" if per_bank else ""
+
+        async with self._db_pool.acquire() as conn:
+            # memory_units is the central per-tenant table; its presence marks a
+            # provisioned Hindsight schema.
+            schema_rows = await conn.fetch(
+                "SELECT table_schema FROM information_schema.tables WHERE table_name = 'memory_units'"
+            )
+            for schema_row in schema_rows:
+                schema = schema_row["table_schema"]
+
+                # Worker queue depth — mirrors operations_by_status, split by
+                # operation_type. Terminal states (completed/cancelled) are
+                # excluded on purpose: a gauge of finished work grows without
+                # bound and says nothing about current load.
+                # Index: idx_async_operations_status.
+                ops_grp = "operation_type, status" + (", bank_id" if per_bank else "")
+                try:
+                    rows = await conn.fetch(
+                        f"SELECT operation_type, status, {bank_sel}COUNT(*) AS count "
+                        f'FROM "{schema}".async_operations '
+                        "WHERE status IN ('pending', 'processing', 'failed') "
+                        f"GROUP BY {ops_grp}"
+                    )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = _AsyncOpKey(schema, row["operation_type"] or "unknown", row["status"], bank)
+                        async_ops[key] = async_ops.get(key, 0) + int(row["count"])
+                except Exception:
+                    logger.debug("Async-ops queue query failed for schema %s", schema, exc_info=True)
+
+                # Consolidation backlog + stranded counts. Two separate COUNT(*)
+                # queries rather than one with two FILTERs — each WHERE matches a
+                # partial-index predicate exactly:
+                #   idx_memory_units_unconsolidated        WHERE consolidated_at IS NULL ...
+                #   idx_memory_units_consolidation_failed  WHERE consolidation_failed_at IS NOT NULL ...
+                # GROUP BY bank_id still composes — bank_id is each index's lead column.
+                #
+                # The backlog gauge is disjoint from the failed gauge: it carries the
+                # consolidator's own `consolidation_failed_at IS NULL` (see
+                # reads.find_unconsolidated), so a permanently failed fact does not hold
+                # the backlog above zero forever and "backlog > 0 for N minutes" stays an
+                # alertable condition. That extra term is not in the partial index's
+                # predicate, so it is a cheap recheck on the rows the index already
+                # returned — the failed set is tiny by construction.
+                #
+                # The backlog count runs with seqscan disabled in a scoped
+                # transaction. The partial index matches its predicate, but
+                # `consolidated_at IS NULL` is true for a large fraction of the
+                # table (every observation has a null consolidated_at), so the
+                # planner misjudges selectivity and otherwise seq-scans the whole
+                # (largest) table on every refresh — verified on a 114k-row table
+                # via EXPLAIN: seq scan ~92 ms vs index scan ~0.1 ms. SET LOCAL
+                # forces the index path and resets at transaction end. The failed
+                # count below needs no such nudge: `consolidation_failed_at IS NOT
+                # NULL` is rare, so its index is chosen on cost.
+                try:
+                    async with conn.transaction():
+                        await conn.execute("SET LOCAL enable_seqscan = off")
+                        rows = await conn.fetch(
+                            f"SELECT {bank_sel}COUNT(*) AS count "
+                            f'FROM "{schema}".memory_units '
+                            "WHERE consolidated_at IS NULL AND consolidation_failed_at IS NULL "
+                            "AND fact_type IN ('experience', 'world')"
+                            f"{bank_grp}"
+                        )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = _BacklogKey(schema, bank)
+                        backlog[key] = backlog.get(key, 0) + int(row["count"])
+                except Exception:
+                    logger.debug("Consolidation backlog query failed for schema %s", schema, exc_info=True)
+
+                try:
+                    rows = await conn.fetch(
+                        f"SELECT {bank_sel}COUNT(*) AS count "
+                        f'FROM "{schema}".memory_units '
+                        "WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')"
+                        f"{bank_grp}"
+                    )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = _BacklogKey(schema, bank)
+                        failed[key] = failed.get(key, 0) + int(row["count"])
+                except Exception:
+                    logger.debug("Consolidation failed query failed for schema %s", schema, exc_info=True)
+
+        self._async_ops_counts = async_ops
+        self._consolidation_backlog = backlog
+        self._consolidation_failed = failed
+
+
+# Global metrics collector instance (defaults to no-op)
+_metrics_collector: MetricsCollectorBase = NoOpMetricsCollector()
+
+
+def get_metrics_collector() -> MetricsCollectorBase:
+    """
+    Get the global metrics collector instance.
+
+    Returns a no-op collector if metrics are not initialized.
+    """
+    return _metrics_collector
+
+
+def create_metrics_collector() -> MetricsCollector:
+    """
+    Create and set the global metrics collector.
+
+    Should be called after initialize_metrics().
+
+    The collector it replaces is *not* remembered here — callers that can shut
+    down (the API lifespan, tests) should snapshot ``get_metrics_collector()``
+    first and hand it back to ``reset_metrics_collector()`` on teardown.
+    """
+    global _metrics_collector
+    _metrics_collector = MetricsCollector()
+    return _metrics_collector
+
+
+def reset_metrics_collector(collector: MetricsCollectorBase | None = None) -> None:
+    """
+    Restore the global metrics collector, undoing ``create_metrics_collector()``.
+
+    Pass the collector that was installed beforehand to put it back; with no
+    argument the process falls back to the default no-op collector. Without
+    this, an app that starts once leaves a live ``MetricsCollector`` (and its
+    reference to a now-closed DB pool) installed for the rest of the process.
+    """
+    global _metrics_collector
+    _metrics_collector = collector if collector is not None else NoOpMetricsCollector()
