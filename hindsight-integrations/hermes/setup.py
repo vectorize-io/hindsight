@@ -25,7 +25,9 @@ from .settings import (
 _MODE_VALUES = ["cloud", "local_embedded", "local_external"]
 _MODE_ITEMS = [
     ("Cloud", "Hindsight Cloud API (lightweight, just needs an API key)"),
-    ("Local Embedded", "Run Hindsight locally (downloads ~200MB, needs LLM key)"),
+    # Measured from the resolved wheel set: 482 MB on macOS arm64, 3.2 GB on Linux x86_64
+    # (the CUDA wheels torch pulls there). "~200MB" was wrong by 1.5x / 16x.
+    ("Local Embedded", "Run Hindsight locally (downloads 0.5-3 GB, needs LLM key)"),
     ("Local External", "Connect to an existing Hindsight instance"),
 ]
 
@@ -82,6 +84,30 @@ def _prompt_embedded_llm(llm_provider: str, provider_config: dict, env_writes: d
     env_writes["HINDSIGHT_LLM_API_KEY"] = llm_key or _load_simple_env(hermes_env).get("HINDSIGHT_LLM_API_KEY", "")
 
 
+def _check_mode_dependencies(mode: str) -> None:
+    """Report whether what this mode needs in-process is importable.
+
+    There is nothing to install here any more. Every mode needs only ``hindsight-client`` plus,
+    for local_embedded, ``hindsight-embed`` — both declared in this plugin's ``pyproject.toml``
+    and installed with the plugin. The Hindsight server is no longer a dependency of this venv:
+    local_embedded starts it as a separate process (an installed ``hindsight-api`` binary, else
+    ``uvx hindsight-api``), which is what makes the mode installable on package-manager Hermes at
+    all — ``hindsight-all`` cannot resolve against Hermes' pinned extras.
+    """
+    from .embedded import _check_local_runtime, _local_runtime_hint
+
+    if mode != "local_embedded":
+        print("  ✓ Dependencies up to date")
+        return
+    available, reason = _check_local_runtime()
+    if available:
+        print("  ✓ Dependencies up to date")
+        print("  The Hindsight server runs as a separate process; first use downloads it if needed.")
+        return
+    print(f"  ⚠ Missing from this environment: {reason}")
+    print(f" {_local_runtime_hint(reason).strip()}")
+
+
 def run_setup(provider, hermes_home: str, config: dict) -> None:
     """Interactive wizard — installs only the deps the selected mode needs."""
     from hermes_cli.config import save_config
@@ -112,18 +138,7 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
         provider_config["llm_provider"] = llm_provider
 
     print("\n  Checking dependencies...")
-    # Environment-aware install: sealed hosted venvs redirect to the durable data volume.
-    from tools.lazy_deps import install_specs
-
-    deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
-    outcome = install_specs(deps, timeout=120)
-    if outcome.ok:
-        print("  ✓ Dependencies up to date")
-    elif outcome.blocked:
-        print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
-    else:
-        print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
-        print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
+    _check_mode_dependencies(mode)
 
     if mode == "cloud":
         print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")

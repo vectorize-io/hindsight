@@ -43,13 +43,35 @@ Dependencies in `pyproject.toml` are installed into the Hermes venv automaticall
 
 `hermes plugins enable` is *not* what activates a memory provider — Hermes treats providers as
 `kind: exclusive` and its plugin-enable gate deliberately skips them. A provider is activated by
-`memory.provider: <name>` in `config.yaml`, which `hermes memory setup` writes. Setup also installs
-the mode-dependent extras (`local_embedded` needs `hindsight-all`, not just the client), so
-`plugins install` on its own leaves the provider reporting "not available" in embedded mode.
+`memory.provider: <name>` in `config.yaml`, which `hermes memory setup` writes.
 
-`local_embedded` mode needs `hindsight-all`, which `pyproject.toml` deliberately does not declare
-(it would push the local-ML stack onto cloud-mode users). The setup wizard installs it, and
-`embedded.py::_ensure_local_runtime` self-installs it on the availability check as a backstop.
+### How `local_embedded` runs
+
+The Hindsight server is **not** a dependency of Hermes' venv. `local_embedded` starts it as a
+separate process — an installed `hindsight-api` binary, else a `uvx hindsight-api` fallback that
+gets its own environment — and talks HTTP to it. This venv keeps only `hindsight-client` and
+`hindsight-embed`, both declared in `pyproject.toml`, so every mode installs with the plugin and
+nothing has to be fetched at runtime.
+
+That is not a size optimisation, it is the only shape that installs. `hindsight-all` pulls the whole
+`hindsight-api-slim` tree, which cannot resolve against Hermes' pinned extras: api-slim needs
+`protobuf>=7.35.1` while `mem0ai==2.0.10` and `modal==1.5.5` cap it below 7.0, and
+`opentelemetry-semantic-conventions>=0.65b0` while `mistralai==2.4.8` caps it below 0.61. Relaxing
+one pin only uncovers the next. It is also 482 MB on macOS arm64 and 3.2 GB on Linux x86_64 (the
+CUDA wheels torch pulls there) that cloud-mode users would pay for nothing.
+
+`_new_embedded_client` therefore composes what the old `hindsight.HindsightEmbedded` wrapper composed
+internally — `hindsight_embed.get_embed_manager()` plus `hindsight_client.Hindsight` — instead of
+importing it. **Existing embedded users keep everything**: the profile decides the daemon, so the
+database (`~/.pg0/instances/hindsight-embed-<profile>/`) and the profile env
+(`~/.hindsight/profiles/<profile>.env`) are the same files, read the same way. No migration step, no
+re-setup.
+
+The plugin no longer calls `tools.lazy_deps.install_specs` from anywhere. On package-manager Hermes
+that is a retired shim which handed the process to the updater and exited instead of installing, so
+every `hermes` invocation became a ~40s "update" that drained `hermes-gateway` and still left the
+import missing (NousResearch/hermes-agent#126494, fixed upstream in af26acab73 to raise
+`ImportError`). There is nothing left for it to install.
 
 ## Coming from the built-in provider
 
@@ -319,11 +341,11 @@ by setting the same flags back to `true`.
 Check `hermes memory status` reports `hindsight` as the active provider and `Status: available`. In
 `memory_mode: context` the tools are hidden on purpose.
 
-**`Status: not available` in `local_embedded`** — the embedded runtime (`hindsight-all`) isn't
-installed. The plugin self-installs it on the availability check; if that is blocked
-(`security.allow_lazy_installs: false`, or a sealed venv) install it yourself:
-`uv pip install --python "$(hermes doctor --python-path)" hindsight-all`, or re-run
-`hermes memory setup`.
+**`Status: not available` in `local_embedded`** — this plugin's own packages
+(`hindsight-client`, `hindsight-embed`) are missing from the environment, which happens when a venv
+rebuild dropped the plugin member. Run `hermes plugins install hindsight` (or `hermes memory setup`)
+to reinstall them. The Hindsight server is *not* needed in that venv — it runs as a separate
+process, and first use downloads it if no `hindsight-api` binary is present yet.
 
 **`Timeout context manager should be used inside a task`** — `hindsight-embed` 0.10.0. Run
 `hermes plugins update hindsight` to move to the 0.10.1 floor.
