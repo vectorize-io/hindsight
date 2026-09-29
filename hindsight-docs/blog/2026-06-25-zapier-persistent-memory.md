@@ -19,7 +19,7 @@ The Hindsight app for Zapier closes that gap, and it does it in both directions.
 
 ## TL;DR
 
-- The Hindsight Zapier app gives any Zap access to persistent memory, across [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted instance.
+- The Hindsight Zapier app gives any Zap access to persistent memory, across [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a self-hosted instance.
 - **Three actions:** Retain (store content), Recall (search a bank), Reflect (an LLM-synthesized, memory-grounded answer).
 - **Three triggers** (instant, via REST Hooks): Retain Completed, Consolidation Completed, Memory Defense Triggered. These let a memory event *start* a Zap. They use Hindsight's webhook API, which is available on self-hosted instances and on Hindsight Cloud's enterprise plan; it isn't enabled on Cloud by default. The three actions work on any plan.
 - The Bank field is a dynamic dropdown; type a new bank id and it's created on first use.
@@ -89,7 +89,7 @@ Triggers work self-hosted, where the webhook API is available out of the box. (O
 
 ## Setup
 
-1. Sign up at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup); the free tier is enough to start.
+1. Sign up at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io); the free tier is enough to start.
 2. Grab an API key (`hsk_...`) from the dashboard.
 3. In Zapier, add a Hindsight action or trigger to a Zap and connect your account with the API key (and API URL, if self-hosting).
 4. Pick a bank from the dropdown (or type a new id), and you're storing and recalling memory inside your Zaps.

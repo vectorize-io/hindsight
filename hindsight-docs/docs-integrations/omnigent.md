@@ -17,7 +17,7 @@ pip install "omnigent[memory]"
 export HINDSIGHT_API_KEY=hsk_...
 ```
 
-Get an API key from [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), or point at a self-hosted server with `HINDSIGHT_API_URL`.
+Get an API key from [Hindsight Cloud](https://ui.hindsight.vectorize.io), or point at a self-hosted server with `HINDSIGHT_API_URL`.
 
 ## Setup
 

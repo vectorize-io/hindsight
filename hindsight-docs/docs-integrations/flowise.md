@@ -43,10 +43,10 @@ pnpm start  # opens http://localhost:3000
 ## Setup
 
 :::tip Hindsight Cloud (recommended)
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — no infrastructure to run. Skip straight to creating your credential below.
+[Sign up free](https://ui.hindsight.vectorize.io) — no infrastructure to run. Skip straight to creating your credential below.
 :::
 
-1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host](/developer/installation)
+1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io) (free tier) or [self-host](/developer/installation)
 2. **Get an API key** from the Hindsight dashboard
 3. **In Flowise**, create a new credential of type **Hindsight API**:
    - **API URL** — defaults to `https://api.hindsight.vectorize.io` (Cloud); change for self-hosted

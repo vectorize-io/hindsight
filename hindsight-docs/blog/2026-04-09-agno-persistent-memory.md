@@ -23,7 +23,7 @@ Adding persistent memory does not require building a custom RAG pipeline or main
 - Three lines of setup: install the package, create `HindsightTools`, pass it to `Agent`.
 - `memory_instructions()` preloads relevant memories into `Agent(instructions=[...])` on every run, so the agent starts each conversation with context.
 - Per-user bank isolation works automatically via `user_id` or a custom `bank_resolver`.
-- [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) skips local setup entirely. Two lines of config and you are running.
+- [Hindsight Cloud](https://ui.hindsight.vectorize.io) skips local setup entirely. Two lines of config and you are running.
 
 ## The Problem: Agno Has No Persistent Memory
 
@@ -82,7 +82,7 @@ hindsight-api
 
 This starts Hindsight locally at `http://localhost:8888`. The only external dependency is an LLM API key for entity extraction.
 
-Prefer not to self-host? Use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and skip this step entirely.
+Prefer not to self-host? Use [Hindsight Cloud](https://ui.hindsight.vectorize.io) and skip this step entirely.
 
 ### Step 2: Install the Agno integration
 
@@ -302,12 +302,12 @@ Skip the memory layer for one-shot agents that never interact with the same user
 | Memory setup | None | `pip install hindsight-agno` |
 | Recall mechanism | Not available | Semantic search via tool or instructions |
 | Per-user isolation | No | Via `user_id` or `bank_resolver` |
-| Hosting | N/A | Local or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) |
+| Hosting | N/A | Local or [Hindsight Cloud](https://ui.hindsight.vectorize.io) |
 
 ## Next Steps
 
-- **Hindsight Cloud**: [Sign up free](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud**: [Sign up free](https://ui.hindsight.vectorize.io)
 - **Try it locally**: `pip install hindsight-all hindsight-agno agno` and run the example above
 - **Config reference**: [Agno integration docs](/sdks/integrations/agno)
 - **Explore other integrations**: [Pydantic AI](/sdks/integrations/pydantic-ai), [LangGraph](/sdks/integrations/langgraph), [CrewAI](/sdks/integrations/crewai)
-- **Inspect the knowledge graph**: Use the [Hindsight Cloud dashboard](https://ui.hindsight.vectorize.io/signup) to browse extracted facts, entities, and relationships
+- **Inspect the knowledge graph**: Use the [Hindsight Cloud dashboard](https://ui.hindsight.vectorize.io) to browse extracted facts, entities, and relationships

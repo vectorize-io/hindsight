@@ -20,7 +20,7 @@ The `hindsight-hermes` pip plugin described in this post is deprecated. Hermes n
 - Hermes Agent's built-in memory is local file-based — no structure, no retrieval intelligence, no cross-machine sync
 - `hindsight-hermes` is a pip-installable plugin that registers Hindsight retain/recall/reflect as native Hermes tools
 - One `pip install`, three environment variables, disable the built-in `memory` tool, and you're done
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (zero infra) or self-hosted
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (zero infra) or self-hosted
 
 ## The problem: good memory, but it could go further
 
@@ -57,7 +57,7 @@ You have two options: Hindsight Cloud (no setup) or self-hosted.
 
 **Option A: Hindsight Cloud**
 
-1. [Sign up at Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)
+1. [Sign up at Hindsight Cloud](https://ui.hindsight.vectorize.io)
 2. Create a memory bank in the dashboard and copy your API key
 3. Your base URL is `https://api.hindsight.vectorize.io`
 

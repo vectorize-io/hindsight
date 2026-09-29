@@ -24,7 +24,7 @@ This post is a walkthrough of the new Hindsight plugin for Obsidian. It syncs yo
 - **Every answer cites its source notes.** Click a citation to open the note. A reasoning disclosure shows what each step queried.
 - **Your vault is canonical.** Sync is one-way (Obsidian to Hindsight), and chat conversations are **not stored by default**. Hindsight never becomes a second source of truth.
 - **Implicit scoping:** every note is auto-tagged with its vault, folder, and dates, so you can filter a question to "just the Work vault" or "notes updated this month" without any setup.
-- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io)
 - **Available now** in the [Obsidian community plugin store](https://community.obsidian.md/plugins/hindsight): one-click install.
 
 :::tip Now in the Obsidian community store
@@ -114,7 +114,7 @@ The plugin is in the **Obsidian community store**, so installing it is one click
 
 > Want bleeding-edge beta builds before they hit the store? You can also track them via [BRAT](https://github.com/TfTHacker/obsidian42-brat) by adding the repository [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian).
 
-Then point it at Hindsight. The recommended path is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io/signup), grab an API key, and paste it into **Settings → Hindsight**. No server to run; sync and reflect happen against Cloud.
+Then point it at Hindsight. The recommended path is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io), grab an API key, and paste it into **Settings → Hindsight**. No server to run; sync and reflect happen against Cloud.
 
 Prefer to self-host? Run Hindsight locally and set the API URL to your instance:
 
@@ -164,7 +164,7 @@ And three commands from the command palette: **Sync vault now** (full reconcile)
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Obsidian + Hindsight](/sdks/integrations/obsidian)
 - **Install (Obsidian store):** [community.obsidian.md/plugins/hindsight](https://community.obsidian.md/plugins/hindsight)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/obsidian](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/obsidian)

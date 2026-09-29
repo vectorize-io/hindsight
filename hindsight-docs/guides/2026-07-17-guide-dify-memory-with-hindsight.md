@@ -51,7 +51,7 @@ Open the Hindsight plugin and add credentials:
 - **API URL** — defaults to `https://api.hindsight.vectorize.io` (Cloud); change it for a self-hosted server
 - **API Key** — your `hsk_...` key (optional for self-hosted unauthenticated instances)
 
-If you do not have a key yet, [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) on the free tier and grab one from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) a server.
+If you do not have a key yet, [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) on the free tier and grab one from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) a server.
 
 ## Step 3: Wire the tools into a workflow
 

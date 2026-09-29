@@ -225,7 +225,7 @@ A support assistant carries customer context forward. Patterns from interactions
 
 A multi-agent setup uses a shared learning bank so one instance benefits from what another already discovered, compressing the learning curve across the whole team.
 
-You can run it with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) if you want the fastest path, or self-host it if data needs to stay in your own environment.
+You can run it with [Hindsight Cloud](https://ui.hindsight.vectorize.io) if you want the fastest path, or self-host it if data needs to stay in your own environment.
 
 ---
 
@@ -262,7 +262,7 @@ If you want an agent to improve with repeated use, it needs a learning system. O
 
 ## Next Steps
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), the fastest way to add agent memory with no infrastructure
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io), the fastest way to add agent memory with no infrastructure
 - Read the [quickstart](https://hindsight.vectorize.io/developer/api/quickstart) if you want to self-host
 - Explore the [memory banks reference](https://hindsight.vectorize.io/developer/api/memory-banks) for scoping patterns
 - Browse the [integration guides](https://hindsight.vectorize.io/sdks/integrations) to add memory to your existing agents

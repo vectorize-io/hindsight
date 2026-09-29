@@ -12,7 +12,7 @@ Cline's [lifecycle hooks](https://docs.cline.bot/customization/hooks) run small 
 
 ## Prerequisites
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up free, get an API key, and skip self-hosting.
 
 **Self-hosting alternative:**
 

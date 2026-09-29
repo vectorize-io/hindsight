@@ -124,4 +124,4 @@ For persistent memory across machines or shared across multiple Hermes instances
 - **BEAM benchmark results**: [Hindsight Is #1 on BEAM](/blog/2026/04/02/beam-sota)
 - **Quick start**: [/developer/api/quickstart](/developer/api/quickstart)
 - **GitHub**: [github.com/vectorize-io/hindsight](https://github.com/vectorize-io/hindsight)
-- **Cloud**: [ui.hindsight.vectorize.io/signup](https://ui.hindsight.vectorize.io/signup)
+- **Cloud**: [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)

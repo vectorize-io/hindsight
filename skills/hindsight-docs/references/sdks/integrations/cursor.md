@@ -35,7 +35,7 @@ hindsight-cursor init --api-url http://localhost:8888
 # 3. Fully quit and reopen Cursor — plugins load at startup
 ```
 
-Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to get a token, or start Hindsight locally with Docker:
+Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io) to get a token, or start Hindsight locally with Docker:
 
 ```bash
 export OPENAI_API_KEY=your-key

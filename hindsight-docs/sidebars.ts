@@ -222,7 +222,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'link',
-          href: 'https://ui.hindsight.vectorize.io/signup',
+          href: 'https://ui.hindsight.vectorize.io',
           label: 'Cloud',
           customProps: { icon: 'lu-cloud', iconAfter: 'lu-arrow-up-right' },
         },

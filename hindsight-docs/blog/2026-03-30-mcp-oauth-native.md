@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![What's New in Hindsight Cloud: Native OAuth for MCP Clients](/img/blog/hindsight-cloud-mcp-oauth.png)
 
-[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) now supports native OAuth 2.1 for MCP clients. Tools like Claude Code, Claude Desktop, ChatGPT, Cursor, and Windsurf can connect directly to Hindsight's memory API with no API keys to generate, copy, or paste.
+[Hindsight Cloud](https://ui.hindsight.vectorize.io) now supports native OAuth 2.1 for MCP clients. Tools like Claude Code, Claude Desktop, ChatGPT, Cursor, and Windsurf can connect directly to Hindsight's memory API with no API keys to generate, copy, or paste.
 
 This post covers what changed, how to connect each supported client, and when OAuth is the right choice versus a traditional API key.
 
@@ -168,6 +168,6 @@ Only **Owner** or **Admin** users can authorize an MCP client connection. This m
 
 ## Get Started
 
-Native MCP OAuth is available now in all [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) accounts. Add `https://mcp.hindsight.vectorize.io` to your MCP client config and follow the authorization prompt.
+Native MCP OAuth is available now in all [Hindsight Cloud](https://ui.hindsight.vectorize.io) accounts. Add `https://mcp.hindsight.vectorize.io` to your MCP client config and follow the authorization prompt.
 
 For scripted or automated use cases, [API keys](https://hindsight.vectorize.io/developer/retrieval) remain available in the Hindsight Cloud dashboard. Both methods give full access to [recall](https://hindsight.vectorize.io/developer/retrieval), retain, and reflect.

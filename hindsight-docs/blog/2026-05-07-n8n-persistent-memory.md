@@ -21,7 +21,7 @@ We just shipped a fix. **The Hindsight community node adds persistent memory to 
 
 - The new `@vectorize-io/n8n-nodes-hindsight` community node gives any n8n workflow access to Hindsight's persistent memory layer
 - One node, three operations: **Retain** (store), **Recall** (search), **Reflect** (LLM-synthesized answer)
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or [self-hosted Hindsight](https://hindsight.vectorize.io/developer/installation)
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) or [self-hosted Hindsight](https://hindsight.vectorize.io/developer/installation)
 - Install today via Settings → Community Nodes on self-hosted n8n; **n8n Cloud install is pending Verified Node review**
 - Real-use examples below: support workflows that learn from every closed ticket, sales-call coaches that remember every prior touchpoint, Slack bots that build a continuous relationship with the user
 
@@ -121,7 +121,7 @@ After restart, the **Hindsight** node appears in the node panel.
 
 Whether you're on self-hosted or Cloud, you need a Hindsight API credential:
 
-1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host Hindsight](https://hindsight.vectorize.io/developer/installation)
+1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io) (free tier) or [self-host Hindsight](https://hindsight.vectorize.io/developer/installation)
 2. **Get an API key** from the Hindsight dashboard
 3. **In n8n**, create a new **Hindsight API** credential:
    - **API URL**: `https://api.hindsight.vectorize.io` (or your self-hosted URL)
@@ -225,7 +225,7 @@ If you've been building automations in n8n that involve any LLM step, any custom
 
 ## Next Steps
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to get an API key in minutes
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) to get an API key in minutes
 - Install the [Hindsight n8n node](https://www.npmjs.com/package/@vectorize-io/n8n-nodes-hindsight) on your self-hosted n8n
 - Read the [n8n integration docs](https://hindsight.vectorize.io/integrations) for full operation reference
 - Browse the [memory banks reference](https://hindsight.vectorize.io/developer/api/memory-banks) for multi-tenant scoping patterns

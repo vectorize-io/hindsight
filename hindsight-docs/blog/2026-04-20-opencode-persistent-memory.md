@@ -20,7 +20,7 @@ OpenCode gives you a fast, terminal-native AI coding agent. But every session st
 - `@vectorize-io/opencode-hindsight` adds persistent memory via three tools (retain, recall, reflect) and automatic hooks
 - Memories are injected into the system prompt on session start, so the agent has context before you say anything
 - Conversations are auto-captured on idle, and memories survive context window compaction
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (zero setup) or self-hosted
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (zero setup) or self-hosted
 
 ---
 
@@ -96,7 +96,7 @@ npm install @vectorize-io/opencode-hindsight
 
 **Option A: Hindsight Cloud** (zero setup)
 
-Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), generate an API token, and set two environment variables:
+Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io), generate an API token, and set two environment variables:
 
 ```bash
 export HINDSIGHT_API_URL="https://api.hindsight.vectorize.io"
@@ -245,7 +245,7 @@ The plugin is most valuable when you have ongoing project work where decisions, 
 
 ## Next Steps
 
-- **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — zero-config hosting, ready in seconds
+- **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io)** — zero-config hosting, ready in seconds
 - Install the plugin: `npm install @vectorize-io/opencode-hindsight`
 - Read the [OpenCode integration reference](/sdks/integrations/opencode) for full configuration details
 - Try the [quickstart](/developer/api/quickstart) if you prefer self-hosting

@@ -10,9 +10,9 @@ Three tools — **Retain**, **Recall**, **Reflect** — drop into any Dify workf
 
 ## Setup
 
-> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
 
-1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host](https://hindsight.vectorize.io/developer/installation).
+1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io) (free tier) or [self-host](https://hindsight.vectorize.io/developer/installation).
 2. **Get an API key** from the Hindsight dashboard.
 3. **In Dify**, install this plugin (Marketplace or upload `.difypkg`), then add credentials:
    - **API URL**: `https://api.hindsight.vectorize.io` (Cloud) or your self-hosted URL

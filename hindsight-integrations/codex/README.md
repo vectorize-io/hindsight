@@ -20,7 +20,7 @@ Three Codex hooks keep memory in sync automatically:
 
 ## Installation
 
-> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Skip the local daemon entirely.
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io)** — free tier, no self-hosting required. Skip the local daemon entirely.
 
 ```bash
 curl -fsSL https://hindsight.vectorize.io/get-codex | bash
@@ -53,7 +53,7 @@ For personal overrides (stable across updates), create `~/.hindsight/codex.json`
 
 ### Hindsight Cloud (recommended)
 
-> ✨ Sign up free at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting, no LLM API key, no daemon to manage.
+> ✨ Sign up free at [Hindsight Cloud](https://ui.hindsight.vectorize.io) — no self-hosting, no LLM API key, no daemon to manage.
 
 ```json
 {

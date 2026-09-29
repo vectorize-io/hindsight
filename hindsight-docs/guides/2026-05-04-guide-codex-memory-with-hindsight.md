@@ -46,7 +46,7 @@ The installer places the hook scripts under `~/.hindsight/codex/scripts/`, write
 
 ## Step 2: Connect Codex CLI to Hindsight
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — free tier, no self-hosting required.
 
 ```json
 {

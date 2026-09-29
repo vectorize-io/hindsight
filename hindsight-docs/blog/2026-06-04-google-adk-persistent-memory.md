@@ -77,7 +77,7 @@ Requires Python 3.10+, `google-adk>=2.0`, and `hindsight-client>=0.4.0`.
 
 ### 2. Pick a Hindsight Deployment
 
-**Hindsight Cloud** is the fastest path — [sign up free](https://ui.hindsight.vectorize.io/signup), grab an API key, point your code at `https://api.hindsight.vectorize.io`. The integration defaults to the Cloud URL.
+**Hindsight Cloud** is the fastest path — [sign up free](https://ui.hindsight.vectorize.io), grab an API key, point your code at `https://api.hindsight.vectorize.io`. The integration defaults to the Cloud URL.
 
 **Self-hosted**:
 
@@ -297,7 +297,7 @@ No retrieval code to write, no vector store to manage, no schema to design up fr
 
 ## Next Steps
 
-- **Start with Hindsight Cloud**: [sign up](https://ui.hindsight.vectorize.io/signup), grab a key, point your `Runner` at it
+- **Start with Hindsight Cloud**: [sign up](https://ui.hindsight.vectorize.io), grab a key, point your `Runner` at it
 - **Read the [Google ADK integration docs](https://hindsight.vectorize.io/integrations/google-adk)** for the full configuration reference
 - **Pick a `bank_id_template`** that matches your user model — per-user is the safe default
 - **Decide between automatic / explicit / both** — start with `BaseMemoryService` and add tools if and when the agent benefits from mid-turn calls

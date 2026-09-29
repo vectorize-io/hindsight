@@ -19,7 +19,7 @@ AutoGen is Microsoft's open-source framework for building multi-agent systems: c
 - AutoGen agents have no built-in cross-session memory; state resets every run
 - `hindsight-autogen` provides three `FunctionTool` instances for `AssistantAgent`: `hindsight_retain`, `hindsight_recall`, `hindsight_reflect`
 - One pip install, pass `tools=[...]` to your agent, done
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or self-hosted
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) or self-hosted
 
 ## The problem
 
@@ -62,7 +62,7 @@ hindsight-api
 
 Runs locally at `http://localhost:8888` with embedded Postgres, embeddings, and reranking.
 
-Or use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and skip self-hosting.
+Or use [Hindsight Cloud](https://ui.hindsight.vectorize.io) and skip self-hosting.
 
 ## Step 2: Install the integration
 
@@ -194,6 +194,6 @@ Be explicit: persistent memory isn't always the right tool.
 ## Next steps
 
 - **Try it locally:** `pip install hindsight-all hindsight-autogen autogen-agentchat "autogen-ext[openai]"` and run the example above
-- **Use Hindsight Cloud:** Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io/signup)
+- **Use Hindsight Cloud:** Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io)
 - **Benchmark results:** [Why Hindsight leads on BEAM at 10M tokens](https://hindsight.vectorize.io/blog/2026/04/02/beam-sota)
 - **Explore other integrations:** [LlamaIndex](/sdks/integrations/llamaindex), [LangGraph](/sdks/integrations/langgraph), [Pydantic AI](/sdks/integrations/pydantic-ai), [CrewAI](/sdks/integrations/crewai)

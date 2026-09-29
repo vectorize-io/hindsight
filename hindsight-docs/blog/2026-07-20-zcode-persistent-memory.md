@@ -33,7 +33,7 @@ ZCode gives us a cleaner path. Because it embeds the Claude Code agent runtime, 
 
 ## Setup
 
-First, get a key. [Sign up free for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) so there is no daemon to run, or self-host if you prefer (more on that below).
+First, get a key. [Sign up free for Hindsight Cloud](https://ui.hindsight.vectorize.io) so there is no daemon to run, or self-host if you prefer (more on that below).
 
 There are two ways to install, and the first needs no `pip` at all.
 
@@ -139,7 +139,7 @@ Recall runs once before each prompt and retain runs once after each turn. The ho
 
 ## Try it
 
-If you already use ZCode, the fastest way to feel the difference is to install the hooks, work for a session, then start a fresh one the next day and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io/signup), add the marketplace, and install the plugin.
+If you already use ZCode, the fastest way to feel the difference is to install the hooks, work for a session, then start a fresh one the next day and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io), add the marketplace, and install the plugin.
 
 ## Further reading
 

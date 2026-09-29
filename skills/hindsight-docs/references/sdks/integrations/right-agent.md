@@ -26,7 +26,7 @@ right up
 ? hindsight bank id (default: my-agent): <press Enter to accept>
 ```
 
-Get an API key at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup).
+Get an API key at [Hindsight Cloud](https://ui.hindsight.vectorize.io).
 
 The agent auto-retains every turn and auto-recalls relevant context on every new message.
 
@@ -109,4 +109,4 @@ The aggregator reads `HINDSIGHT_API_KEY` at startup and uses it as the fallback 
 
 - [Right Agent on GitHub](https://github.com/onsails/right-agent)
 - [Install guide](https://github.com/onsails/right-agent/blob/master/docs/INSTALL.md)
-- [Hindsight Cloud signup](https://ui.hindsight.vectorize.io/signup)
+- [Hindsight Cloud signup](https://ui.hindsight.vectorize.io)

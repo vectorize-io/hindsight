@@ -23,7 +23,7 @@ Hindsight fixes that. Install it once, and Roo recalls the relevant context befo
 - It uses **both** of Roo's extension points: Hindsight's **MCP tools** (`recall`, `retain`) plus a **custom rules file** that tells Roo when to call them.
 - **Before each task** Roo recalls relevant memories; **after each task** it retains a summary. It can also retain decisions mid-task.
 - Scope memory per project (`.roo/`) or globally (`~/.roo/`).
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (recommended, free to start) or a self-hosted server.
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (recommended, free to start) or a self-hosted server.
 
 ## Why a task-based agent needs memory most
 
@@ -33,7 +33,7 @@ Agent memory is what turns a sequence of isolated tasks into an agent that actua
 
 ## Setup
 
-First, get a Hindsight instance. The easy path is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup): sign up free, grab an API key, nothing to run. (Self-hosting instructions are below if you prefer.)
+First, get a Hindsight instance. The easy path is [Hindsight Cloud](https://ui.hindsight.vectorize.io): sign up free, grab an API key, nothing to run. (Self-hosting instructions are below if you prefer.)
 
 Then install the integration:
 
@@ -149,7 +149,7 @@ Yes. Self-host Hindsight, point the installer at `http://localhost:8888`, and no
 
 ## Try it
 
-If you already use Roo Code, the fastest way to feel the difference is to install the integration, work through a couple of tasks, then start a fresh one tomorrow and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io/signup) and run `hindsight-roo-code install`.
+If you already use Roo Code, the fastest way to feel the difference is to install the integration, work through a couple of tasks, then start a fresh one tomorrow and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io) and run `hindsight-roo-code install`.
 
 ## Further reading
 

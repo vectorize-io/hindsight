@@ -13,7 +13,7 @@ Persistent memory for [oh-my-openagent](https://github.com/code-yeongyu/oh-my-op
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 :::
 
 From the `hindsight-integrations/omo/` directory:

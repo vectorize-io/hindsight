@@ -151,7 +151,7 @@ You can still pass an explicit `client=` (already-configured `Hindsight` instanc
 
 You need a Hindsight account and an API key. Hindsight Cloud is the fastest path:
 
-1. **Sign up** at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup). Free tier is enough to try it end to end.
+1. **Sign up** at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io). Free tier is enough to try it end to end.
 2. **Create an API key** from the dashboard. The format is `hsk_...`.
 3. **Point the client** at Cloud:
    ```python
@@ -187,7 +187,7 @@ Self-hosting works the same way once you point `base_url` at your local instance
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Haystack + Hindsight](/sdks/integrations/haystack)
 - **Source:** [`vectorize-io/hindsight/hindsight-integrations/haystack`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/haystack)
 - **Hindsight API reference:** [API quickstart](/developer/api/quickstart)

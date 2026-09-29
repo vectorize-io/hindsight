@@ -31,7 +31,7 @@ This guide walks through installing the package, setting the required keys, choo
 Before you start, make sure you have:
 
 - Python 3.10 or newer
-- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
+- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a self-hosted server
 - A Superagent API key from [superagent.sh](https://www.superagent.sh)
 - An OpenAI API key (or another [supported LLM provider](https://docs.superagent.sh/sdk)) to back the guard and redact models
 

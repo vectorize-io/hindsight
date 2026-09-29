@@ -31,7 +31,7 @@ This guide walks through installing the CLI, running the installer against your 
 Before you start, make sure you have:
 
 - Roo Code installed and working
-- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
+- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a self-hosted server
 - Python and `pip` available to install the CLI
 
 For self-hosting, run Hindsight locally first:

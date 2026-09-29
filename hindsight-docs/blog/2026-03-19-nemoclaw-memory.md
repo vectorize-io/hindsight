@@ -14,7 +14,7 @@ tags: [tutorial]
 ## TL;DR
 
 - [NemoClaw](https://nemoclaw.ai) sandboxes isolate AI agents — controlled filesystem, processes, and network. That isolation makes persistent memory harder.
-- We connected the `hindsight-openclaw` plugin to a live NemoClaw sandbox using [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). No code changes — one command.
+- We connected the `hindsight-openclaw` plugin to a live NemoClaw sandbox using [Hindsight Cloud](https://ui.hindsight.vectorize.io). No code changes — one command.
 - External API mode is the natural fit: the plugin becomes a thin HTTP client, and the sandbox only needs one egress rule.
 - Memories captured in one session are recalled in the next. The sandbox didn't interfere.
 - The pattern generalizes: sandbox controls what the agent can *do*, memory controls what it *knows*. They compose cleanly.
@@ -263,7 +263,7 @@ There's also an interesting property of `dynamicBankId`:
 - **Enabled** (`true`): each user gets an isolated memory bank. Memories from one user's sessions can't bleed into another's. Use this for multi-tenant deployments.
 - **Disabled** (`false`): a shared bank accumulates context from all sessions. Use this for single-user sandboxes like a personal coding assistant.
 
-> **Want to skip self-hosting?** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) is what we used in this walkthrough — no Docker, no infrastructure. Sign up, grab an API key, and run `npx @vectorize-io/hindsight-nemoclaw setup`.
+> **Want to skip self-hosting?** [Hindsight Cloud](https://ui.hindsight.vectorize.io) is what we used in this walkthrough — no Docker, no infrastructure. Sign up, grab an API key, and run `npx @vectorize-io/hindsight-nemoclaw setup`.
 
 ## Recap
 

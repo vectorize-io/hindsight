@@ -12,7 +12,7 @@ Safety middleware for [Hindsight](https://vectorize.io/hindsight) memory operati
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 :::
 
 ```bash
@@ -25,7 +25,7 @@ Guard and Redact run on every `retain` by default, so the example below calls Su
 
 | Variable             | Purpose                                                                                                                                    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `HINDSIGHT_API_KEY`  | Authenticates your Hindsight Cloud workspace. [Sign up free](https://ui.hindsight.vectorize.io/signup) to grab one.                        |
+| `HINDSIGHT_API_KEY`  | Authenticates your Hindsight Cloud workspace. [Sign up free](https://ui.hindsight.vectorize.io) to grab one.                        |
 | `SUPERAGENT_API_KEY` | Authenticates Superagent's guard/redact calls. [Get one at superagent.sh](https://www.superagent.sh).                                      |
 | `OPENAI_API_KEY`     | Backs the `guard_model` / `redact_model` (e.g. `openai/gpt-4.1-nano`). Any [supported LLM provider](https://docs.superagent.sh/sdk) works. |
 
@@ -35,7 +35,7 @@ export SUPERAGENT_API_KEY=sa-...
 export OPENAI_API_KEY=sk-...
 ```
 
-`SafeHindsight` connects to [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (`https://api.hindsight.vectorize.io`) by default, using `HINDSIGHT_API_KEY`. To target a [self-hosted server](https://hindsight.vectorize.io/developer/installation) instead, pass `hindsight_api_url="http://localhost:8888"`.
+`SafeHindsight` connects to [Hindsight Cloud](https://ui.hindsight.vectorize.io) (`https://api.hindsight.vectorize.io`) by default, using `HINDSIGHT_API_KEY`. To target a [self-hosted server](https://hindsight.vectorize.io/developer/installation) instead, pass `hindsight_api_url="http://localhost:8888"`.
 
 ```python
 import asyncio

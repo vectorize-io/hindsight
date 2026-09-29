@@ -55,7 +55,7 @@ Beyond the automatic recall-and-retain lifecycle, agents also get two tools they
 
 You need a running Hindsight instance. Two options:
 
-**Hindsight Cloud (recommended)**—[Sign up free](https://ui.hindsight.vectorize.io/signup), get an API key, and skip self-hosting entirely. The free tier is enough to test this integration end-to-end.
+**Hindsight Cloud (recommended)**—[Sign up free](https://ui.hindsight.vectorize.io), get an API key, and skip self-hosting entirely. The free tier is enough to test this integration end-to-end.
 
 **Self-hosted**—If you prefer to run everything locally:
 

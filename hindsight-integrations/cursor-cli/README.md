@@ -21,7 +21,7 @@ Four Cursor CLI hooks keep memory in sync automatically:
 
 ## Installation
 
-Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — or run a local server.
+Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — or run a local server.
 
 ```bash
 pip install hindsight-cursor-cli

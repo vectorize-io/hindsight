@@ -83,7 +83,7 @@ npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
 
 The wizard walks you through three modes:
 
-- **Cloud** — managed Hindsight at `https://api.hindsight.vectorize.io`. Paste your [Cloud API token](https://ui.hindsight.vectorize.io/signup) when prompted. No local setup needed — this is the fastest path.
+- **Cloud** — managed Hindsight at `https://api.hindsight.vectorize.io`. Paste your [Cloud API token](https://ui.hindsight.vectorize.io) when prompted. No local setup needed — this is the fastest path.
 - **External API** — your own running Hindsight deployment. Prompts for the URL and, optionally, a token.
 - **Embedded daemon** — spawns a local `hindsight-embed` daemon on this machine. Prompts for the LLM provider and API key.
 
@@ -171,7 +171,7 @@ In this mode, no local daemon starts. The plugin performs a health check against
 [Hindsight] External API health check passed
 ```
 
-> **Want to skip self-hosting entirely?** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) works as the external API endpoint — just use your Cloud URL and API token, or run the wizard with `--mode cloud`. For teams or multi-instance setups where shared memory matters more than local-only, Cloud is the fastest path.
+> **Want to skip self-hosting entirely?** [Hindsight Cloud](https://ui.hindsight.vectorize.io) works as the external API endpoint — just use your Cloud URL and API token, or run the wizard with `--mode cloud`. For teams or multi-instance setups where shared memory matters more than local-only, Cloud is the fastest path.
 
 ## Memory Isolation
 
@@ -309,7 +309,7 @@ And because Hindsight is open source and local-first (or Cloud, if you prefer), 
 
 ## Next Steps
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — the fastest way to get started without running any local infrastructure.
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) — the fastest way to get started without running any local infrastructure.
 - Install the plugin and have a few conversations across different channels. Then open the web UI (`uvx hindsight-embed@latest -p openclaw ui`) to see what was captured (embedded mode).
 - Experiment with different LLM providers for extraction and compare the quality of captured facts.
 - Tune recall with `recallBudget`, `recallMaxTokens`, and `recallContextTurns` to find the right balance for your use case.

@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![What's New in Hindsight Cloud: Multi-Org Support and Credit Transfers](/img/blog/hindsight-cloud-multi-org.png)
 
-Two new features are live in [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup): multiple organizations per account and credit transfers between organizations you own.
+Two new features are live in [Hindsight Cloud](https://ui.hindsight.vectorize.io): multiple organizations per account and credit transfers between organizations you own.
 
 <!-- truncate -->
 
@@ -47,4 +47,4 @@ To transfer credits, go to **Billing** in the source organization and select **T
 
 ## Get Started
 
-Both features are available now in all [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) accounts. Create a new organization from the org switcher, or head to your Billing page to transfer credits between existing organizations.
+Both features are available now in all [Hindsight Cloud](https://ui.hindsight.vectorize.io) accounts. Create a new organization from the org switcher, or head to your Billing page to transfer credits between existing organizations.

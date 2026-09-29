@@ -24,7 +24,7 @@ Persistent memory for [GitHub Copilot CLI](https://docs.github.com/en/copilot/ho
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 ```bash
 # Install the CLI
 pip install hindsight-copilot-cli

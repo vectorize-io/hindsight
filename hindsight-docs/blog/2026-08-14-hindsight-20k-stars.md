@@ -105,7 +105,7 @@ The two most recent releases turn all of that infrastructure outward.
 
 Read the timeline back and the pattern is clear. Nothing here is a prompt trick. It is databases, retrieval strategies, a learning layer, consolidation, ingestion, auth, and operational plumbing: the unglamorous infrastructure that makes memory accurate enough to measure and boring enough to run in production. More than nine hundred changes across sixty-seven releases, and the shape of the thing keeps getting sharper.
 
-We should stay honest: Hindsight is not the most-starred project in the category, and the benchmarks are where we would rather compete anyway. If you have not tried it, start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or self-host in one command from [GitHub](https://github.com/vectorize-io/hindsight). Thank you to everyone who shipped a release, filed an issue, or built something on top. The next version is already in progress.
+We should stay honest: Hindsight is not the most-starred project in the category, and the benchmarks are where we would rather compete anyway. If you have not tried it, start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io) or self-host in one command from [GitHub](https://github.com/vectorize-io/hindsight). Thank you to everyone who shipped a release, filed an issue, or built something on top. The next version is already in progress.
 
 ---
 

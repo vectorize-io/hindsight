@@ -23,7 +23,7 @@ Build a Claude agent that remembers across sessions using Hindsight memory tools
 - **Claude Code CLI** installed and authenticated (`npm install -g @anthropic-ai/claude-code && claude auth login`, or set `ANTHROPIC_API_KEY`)
 - An LLM API key for Hindsight (OpenAI, Gemini, etc.)
 - Hindsight running locally via Docker (see setup below)
-- Alternatively, a [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account (no Docker needed)
+- Alternatively, a [Hindsight Cloud](https://ui.hindsight.vectorize.io) account (no Docker needed)
 
 :::note
 The Claude Agent SDK runs the Claude Code CLI as a subprocess. You need the CLI installed **and** authenticated — either via `claude auth login` or by setting `ANTHROPIC_API_KEY` in your environment.

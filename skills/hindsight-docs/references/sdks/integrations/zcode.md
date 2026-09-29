@@ -9,7 +9,7 @@ Persistent memory for [ZCode](https://zcode.z.ai) — Z.ai's GLM desktop coding 
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 ```bash
 # Install the CLI
 pip install hindsight-zcode

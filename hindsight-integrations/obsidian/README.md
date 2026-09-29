@@ -34,7 +34,7 @@ Your own frontmatter `tags`/`aliases` are carried through too.
 
 ## Installation
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up free, get an API key, and skip self-hosting.
 
 While in beta, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repo [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) — the dedicated plugin repo BRAT installs from (see [Distribution](#distribution--maintainers)) — then enable it under **Settings → Community plugins**.
 

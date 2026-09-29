@@ -21,7 +21,7 @@ Requires Paperclip **2026.720.0 or newer**. Upgrading from an older plugin versi
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — no infrastructure to run. Skip straight to Configuration below.
+[Sign up free](https://ui.hindsight.vectorize.io) — no infrastructure to run. Skip straight to Configuration below.
 **Self-hosting alternative** — run Hindsight locally:
 
 ```bash

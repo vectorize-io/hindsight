@@ -22,7 +22,7 @@ Perplexity excels at research and fact-checking, but you have to re-discover the
 
 ### 1. Create a Hindsight Cloud Account
 
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for Hindsight Cloud.
+[Sign up free](https://ui.hindsight.vectorize.io) for Hindsight Cloud.
 
 ### 2. Add Hindsight as a Connector in Perplexity
 

@@ -34,7 +34,7 @@ pip install hindsight-agentcore
 
 ## Quick Start
 
-> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
 
 ```python
 import os
@@ -200,7 +200,7 @@ adapter = HindsightRuntimeAdapter(bank_resolver=my_resolver)
 
 ## Deployment
 
-**Hindsight Cloud** — [sign up](https://ui.hindsight.vectorize.io/signup), set `hindsight_api_url` to your Cloud endpoint.
+**Hindsight Cloud** — [sign up](https://ui.hindsight.vectorize.io), set `hindsight_api_url` to your Cloud endpoint.
 
 **Self-hosted on AWS** — run Hindsight on ECS/EKS with RDS PostgreSQL (pgvector). Network path stays in your AWS account.
 

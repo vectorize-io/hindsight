@@ -4,7 +4,7 @@ Give your [Vercel Chat SDK](https://github.com/vercel/chat) bots persistent, per
 
 ## Setup
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and you're ready. No infrastructure to run.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up free, get an API key, and you're ready. No infrastructure to run.
 >
 > Self-hosting alternative: [installation guide](https://hindsight.vectorize.io/developer/installation).
 

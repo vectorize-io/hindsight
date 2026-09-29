@@ -38,7 +38,7 @@ This default makes sense when you want full isolation. But when your instances a
 
 ### Step 1: Get a Hindsight API endpoint
 
-The shared bank requires an external Hindsight server that all instances can reach. The fastest option is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up, create a bank, and get an API URL and token.
+The shared bank requires an external Hindsight server that all instances can reach. The fastest option is [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up, create a bank, and get an API URL and token.
 
 If you need full data control, you can [self-host Hindsight](/developer/installation) on your own infrastructure instead.
 
@@ -190,7 +190,7 @@ For most teams, Hindsight Cloud is the right starting point. Create an account, 
 
 ## Checklist
 
-1. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (or self-host) and get your API URL and token
+1. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) (or self-host) and get your API URL and token
 2. Set an extraction LLM API key on each machine
 3. Run `openclaw plugins install @vectorize-io/hindsight-openclaw` on each machine
 4. Add the shared bank config (`dynamicBankId: false` or `dynamicBankGranularity: ["user"]`) to each instance

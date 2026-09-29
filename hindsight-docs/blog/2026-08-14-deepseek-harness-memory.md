@@ -23,7 +23,7 @@ It is also, like every coding agent, completely amnesiac between sessions. Close
 - One command: `npx @vectorize-io/hindsight-coding-agents install dsh`. It installs as a **native Cordis plugin**, so there is no MCP server to run.
 - It is **fully automatic**: a repo's git history and conversations flow into a memory bank in the background, and Harness recalls the relevant context when it starts a task.
 - It also builds and reads **Knowledge Pages**: a self-healing wiki of your architecture, conventions, and decisions that future sessions start from.
-- Memory lives in a Hindsight bank you control, [Cloud](https://ui.hindsight.vectorize.io/signup) or self-hosted, and it is shared across your other tools.
+- Memory lives in a Hindsight bank you control, [Cloud](https://ui.hindsight.vectorize.io) or self-hosted, and it is shared across your other tools.
 
 ## Why a coding agent needs memory most
 
@@ -37,7 +37,7 @@ Harness treats everything as a plugin, so the integration is one too. Install th
 npx @vectorize-io/hindsight-coding-agents install dsh
 ```
 
-That registers a Cordis plugin row that every `dsh` profile composes, using native tools, no MCP needed. Point memory at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), a server you run, or a local daemon; you choose once. (Harness writes its session logs as Zstandard-framed JSONL, which needs Node 22.15+.)
+That registers a Cordis plugin row that every `dsh` profile composes, using native tools, no MCP needed. Point memory at [Hindsight Cloud](https://ui.hindsight.vectorize.io), a server you run, or a local daemon; you choose once. (Harness writes its session logs as Zstandard-framed JSONL, which needs Node 22.15+.)
 
 There is no capture command to remember. From the next session on, memory is automatic.
 

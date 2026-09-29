@@ -21,7 +21,7 @@ pip install hindsight-agno
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 ```python
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

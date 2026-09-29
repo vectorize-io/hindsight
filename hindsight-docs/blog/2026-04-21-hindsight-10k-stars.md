@@ -187,7 +187,7 @@ For production, use Hindsight Cloud. You get:
 - Built-in monitoring and alerts
 - Usage-based pricing
 
-[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and have agent memory running in production within an hour.
+[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) and have agent memory running in production within an hour.
 
 **Path 3: Self-Hosted Infrastructure**
 
@@ -227,7 +227,7 @@ If you're building an agent system and memory matters:
 
 - **Star [the repo](https://github.com/vectorize-io/hindsight)** (totally optional, but hey—it got us here)
 - **Try it locally** — `docker run -p 8000:8000 vectorize/hindsight` (that's it)
-- **Try Hindsight Cloud** — [managed deployment, scaling handled, usage-based pricing](https://ui.hindsight.vectorize.io/signup)
+- **Try Hindsight Cloud** — [managed deployment, scaling handled, usage-based pricing](https://ui.hindsight.vectorize.io)
 - **Join the conversation** — [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions) or [Slack](https://hindsight-space.slack.com)
 
 Thanks for 10k stars. More importantly, thanks for building with us.

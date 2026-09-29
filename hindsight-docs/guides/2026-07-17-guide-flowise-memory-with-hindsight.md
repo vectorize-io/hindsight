@@ -66,7 +66,7 @@ In Flowise, create a new credential of type **Hindsight API**:
 - **API URL** — defaults to `https://api.hindsight.vectorize.io` (Cloud); change it for a self-hosted server
 - **API Key** — your `hsk_...` key (optional for self-hosted unauthenticated instances)
 
-If you don't have a key yet, [sign up free at Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and grab an API key from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) a server. All three tool nodes can share the same credential.
+If you don't have a key yet, [sign up free at Hindsight Cloud](https://ui.hindsight.vectorize.io) and grab an API key from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) a server. All three tool nodes can share the same credential.
 
 ## Step 3: Attach the three tools to an agent
 

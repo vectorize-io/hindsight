@@ -23,7 +23,7 @@ pip install hindsight-pydantic-ai
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 ```python
 from hindsight_client import Hindsight
 from hindsight_pydantic_ai import create_hindsight_tools, memory_instructions

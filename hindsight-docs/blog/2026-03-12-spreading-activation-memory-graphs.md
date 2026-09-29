@@ -14,7 +14,7 @@ Most retrieval systems treat time as a filter. We treat it as a dimension to tra
 
 When an agent gets a question like "What happened during the product launch last March?", a naive "filter by March" query is nowhere near enough. The real answer lives in the story around that window: the prep work in January and February, the domino effects in April, the bugs that nearly killed the demo, the customer reactions that followed. We wanted retrieval that could reconstruct that story, not just return rows.
 
-Temporal spreading activation is how we do it in [Hindsight](https://ui.hindsight.vectorize.io/signup): a time-anchored graph traversal that starts from a temporal window, then walks causal and temporal links to build a coherent sequence of events. The idea draws on [spreading activation theory from cognitive science](https://en.wikipedia.org/wiki/Spreading_activation) — originally proposed by Collins and Loftus in 1975 to model how human memory retrieval works by propagating activation through semantic networks — but adapted here for structured memory graphs with explicit temporal and causal edges.
+Temporal spreading activation is how we do it in [Hindsight](https://ui.hindsight.vectorize.io): a time-anchored graph traversal that starts from a temporal window, then walks causal and temporal links to build a coherent sequence of events. The idea draws on [spreading activation theory from cognitive science](https://en.wikipedia.org/wiki/Spreading_activation) — originally proposed by Collins and Loftus in 1975 to model how human memory retrieval works by propagating activation through semantic networks — but adapted here for structured memory graphs with explicit temporal and causal edges.
 
 ## The problem: time is not just a WHERE clause
 
@@ -361,4 +361,4 @@ Most importantly, the agent no longer treats time as a dumb filter. It treats it
 
 ---
 
-*Hindsight is an AI agent memory system that gives your agents persistent, structured memory with hybrid retrieval. [Learn about the architecture](https://docs.hindsight.vectorize.io/recall), or [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup).*
+*Hindsight is an AI agent memory system that gives your agents persistent, structured memory with hybrid retrieval. [Learn about the architecture](https://docs.hindsight.vectorize.io/recall), or [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io).*

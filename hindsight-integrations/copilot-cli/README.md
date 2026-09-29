@@ -29,7 +29,7 @@ The built-in `general-purpose` subagent does not emit `subagentStart`/`subagentS
 
 ## Installation
 
-Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — or run a local server.
+Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — or run a local server.
 
 ```bash
 pip install hindsight-copilot-cli

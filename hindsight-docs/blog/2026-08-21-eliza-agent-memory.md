@@ -111,9 +111,9 @@ export const character = {
 };
 ```
 
-That is the whole thing: both the recall provider and the retain evaluator are on the moment the agent runs. Memory can live in [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a server you host yourself, and because Hindsight is MIT licensed and self-hosts in one Docker command, a whole fleet of elizaOS agents can run with persistent memory entirely on your own hardware. For the full walkthrough and a verification flow, follow the [elizaOS memory guide](https://hindsight.vectorize.io/guides/2026/07/17/guide-eliza-memory-with-hindsight).
+That is the whole thing: both the recall provider and the retain evaluator are on the moment the agent runs. Memory can live in [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a server you host yourself, and because Hindsight is MIT licensed and self-hosts in one Docker command, a whole fleet of elizaOS agents can run with persistent memory entirely on your own hardware. For the full walkthrough and a verification flow, follow the [elizaOS memory guide](https://hindsight.vectorize.io/guides/2026/07/17/guide-eliza-memory-with-hindsight).
 
-Give your always-on agent a memory that survives its restarts and keeps every user separate. Start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup).
+Give your always-on agent a memory that survives its restarts and keeps every user separate. Start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io).
 
 ---
 

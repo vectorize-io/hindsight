@@ -24,7 +24,7 @@ The new Hindsight integration fixes that. It plugs in as a **context provider**,
 - **Recall is automatic and deterministic.** It runs on the framework's `before_run` hook, so memory is injected before the model sees the prompt. There's no tool the model can forget to call.
 - After each run, `after_run` retains the exchange, so the next run builds on it.
 - Memory lives in a Hindsight **bank** you choose per user, agent, or session, which makes per-user isolation a one-argument change.
-- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io)
 
 ## Why Microsoft Agent Framework Needs Persistent Memory
 
@@ -65,7 +65,7 @@ Install the package:
 pip install hindsight-agent-framework
 ```
 
-The recommended backend is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io/signup), create an API key, and set it once:
+The recommended backend is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io), create an API key, and set it once:
 
 ```bash
 export HINDSIGHT_API_KEY=hsk_your_token
@@ -157,7 +157,7 @@ You can also call `configure(...)` once to set process-wide defaults instead of 
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Microsoft Agent Framework + Hindsight](/sdks/integrations/agent-framework)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/agent-framework](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/agent-framework)
 - **Why hooks beat tools:** [Cline Persistent Memory](https://hindsight.vectorize.io/blog/2026/06/09/cline-persistent-memory)

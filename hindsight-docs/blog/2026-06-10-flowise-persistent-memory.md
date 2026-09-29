@@ -125,7 +125,7 @@ Reflect is the right tool when the agent needs a summary rather than raw facts. 
 
 You need a Hindsight account and an API key. The fastest path is **Hindsight Cloud**.
 
-1. **Sign up** at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup). Free tier is enough to try the integration end to end.
+1. **Sign up** at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io). Free tier is enough to try the integration end to end.
 2. **Create an API key** from the dashboard. It looks like `hsk_...`.
 3. **In Flowise**, open **Credentials** → **Add Credential** → **Hindsight API**:
    - **API URL**: defaults to `https://api.hindsight.vectorize.io`. Leave as-is for Cloud; change for self-hosted (e.g. `http://localhost:8888`).
@@ -207,7 +207,7 @@ It doesn't take prompt engineering to get this behavior; the tool descriptions a
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Flowise + Hindsight](/sdks/integrations/flowise)
 - **Source:** [`vectorize-io/hindsight/hindsight-integrations/flowise`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/flowise)
 - **Hindsight API reference:** [API quickstart](/developer/api/quickstart)

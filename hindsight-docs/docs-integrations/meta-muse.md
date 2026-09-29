@@ -11,7 +11,7 @@ Bring the memory from your other AI tools into [Meta Muse](https://muse.ai), Met
 Muse gets all of your banks, not one. It keeps its own `muse` bank for what you and it do together, and reads your other banks when a question reaches into them.
 
 :::tip Hindsight Cloud (recommended)
-[Sign up free](https://ui.hindsight.vectorize.io/signup). Hindsight Cloud already supports the OAuth sign-in Muse uses, so there is nothing to run or configure.
+[Sign up free](https://ui.hindsight.vectorize.io). Hindsight Cloud already supports the OAuth sign-in Muse uses, so there is nothing to run or configure.
 :::
 
 ## How It Works

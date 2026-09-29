@@ -20,10 +20,10 @@ Zapier connects everything: Gmail, Slack, Sheets, HubSpot, Notion, forms, and th
 ## Setup
 
 :::tip Recommended: Hindsight Cloud
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 :::
 
-1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host](/developer/installation)
+1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io) (free tier) or [self-host](/developer/installation)
 2. **Get an API key** (`hsk_...`) from the Hindsight dashboard
 
 :::note Availability

@@ -15,7 +15,7 @@ support two native extension points that this integration uses:
 
 ## Prerequisites
 
-- A running Hindsight instance ([self-hosted via Docker](https://github.com/vectorize-io/hindsight#quick-start) or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup))
+- A running Hindsight instance ([self-hosted via Docker](https://github.com/vectorize-io/hindsight#quick-start) or [Hindsight Cloud](https://ui.hindsight.vectorize.io))
 - Continue (VS Code or JetBrains extension)
 - Python 3.10+
 

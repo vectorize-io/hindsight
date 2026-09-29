@@ -9,7 +9,7 @@ description: "Add persistent long-term memory to Google's Gemini Spark assistant
 Long-term memory for [Gemini Spark](https://blog.google/products/gemini/gemini-spark/), Google's always-on agentic assistant, via [Hindsight](https://vectorize.io/hindsight)'s MCP server.
 
 :::tip Hindsight Cloud (recommended)
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run. The setup below works with both Cloud and self-hosted Hindsight.
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run. The setup below works with both Cloud and self-hosted Hindsight.
 :::
 
 ## How It Works

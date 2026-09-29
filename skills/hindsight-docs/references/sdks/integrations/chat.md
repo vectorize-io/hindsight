@@ -9,7 +9,7 @@ We built `@vectorize-io/hindsight-chat` to give [Vercel Chat SDK](https://github
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run. Self-hosting? See the [installation guide](../../developer/installation.md).
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run. Self-hosting? See the [installation guide](../../developer/installation.md).
 ## Installation
 
 ```bash

@@ -24,7 +24,7 @@ The Hindsight integration closes that gap the way the AI SDK expects you to exte
 - One call wires them in: `createHindsightTools({ client, bankId })`, then pass the result to `tools`.
 - The design splits responsibility cleanly: the **agent** controls semantic inputs (what to remember, what to search for); your **application** locks infrastructure (the bank, cost budget, tags, async mode). The model can't change the bank ID or blow your token budget.
 - Works with `generateText`, `streamText`, and `ToolLoopAgent`, on any provider (OpenAI, Anthropic, Google, and the rest).
-- Hindsight Cloud means no infrastructure to run. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud means no infrastructure to run. [Sign up free.](https://ui.hindsight.vectorize.io)
 
 ## Why the AI SDK Needs Memory
 
@@ -67,7 +67,7 @@ Install the package alongside the AI SDK and the Hindsight client:
 npm install @vectorize-io/hindsight-ai-sdk @vectorize-io/hindsight-client ai
 ```
 
-The recommended backend is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io/signup), create an API key, and point the client at it. Self-hosting works identically; run the API locally with one command and use its URL instead:
+The recommended backend is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io), create an API key, and point the client at it. Self-hosting works identically; run the API locally with one command and use its URL instead:
 
 ```bash
 uvx hindsight-embed@latest -p myapp daemon start
@@ -243,7 +243,7 @@ The split between semantic and infrastructure inputs is the part worth copying e
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Vercel AI SDK + Hindsight](/sdks/integrations/ai-sdk)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/ai-sdk](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/ai-sdk)
 - **Reflect, explained:** [Mental models and hierarchical retrieval](https://hindsight.vectorize.io/blog/2026/06/05/mental-models-deep-dive)

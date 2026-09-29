@@ -22,7 +22,7 @@ pip install hindsight-strands
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 ```python
 from strands import Agent
 from hindsight_strands import create_hindsight_tools

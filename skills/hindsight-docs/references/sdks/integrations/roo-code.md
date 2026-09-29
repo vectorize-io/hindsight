@@ -9,7 +9,7 @@ Persistent long-term memory for [Roo Code](https://github.com/RooVetGit/Roo-Code
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run.
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run.
 ```bash
 # Install the CLI
 pip install hindsight-roo-code
@@ -115,7 +115,7 @@ The rules file instructs Roo to call these automatically at task start and end. 
 
 A running Hindsight instance:
 
-**Hindsight Cloud (recommended):** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
+**Hindsight Cloud (recommended):** [Sign up](https://ui.hindsight.vectorize.io) — no self-hosting required.
 
 **Self-hosted:**
 ```bash

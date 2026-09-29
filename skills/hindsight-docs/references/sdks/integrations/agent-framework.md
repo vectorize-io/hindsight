@@ -9,7 +9,7 @@ Persistent memory for [Microsoft Agent Framework](https://github.com/microsoft/a
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting required.
 ```bash
 pip install hindsight-agent-framework
 export HINDSIGHT_API_KEY=your-hindsight-key

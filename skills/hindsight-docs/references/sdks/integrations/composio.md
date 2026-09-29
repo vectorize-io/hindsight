@@ -27,7 +27,7 @@ pip install hindsight-composio
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 ```python
 from composio import Composio
 from hindsight_composio import register_hindsight_tools

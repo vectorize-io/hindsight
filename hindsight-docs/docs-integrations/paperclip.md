@@ -25,7 +25,7 @@ Then configure in **Settings → Plugins → Hindsight Memory**.
 Requires Paperclip **2026.720.0 or newer**. Upgrading from an older plugin version? Open the plugin settings and pick the API key secret again: older versions saved the secret's name, and Paperclip now accepts only a reference chosen with the secret picker.
 
 :::tip Hindsight Cloud (recommended)
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — no infrastructure to run. Skip straight to Configuration below.
+[Sign up free](https://ui.hindsight.vectorize.io) — no infrastructure to run. Skip straight to Configuration below.
 :::
 
 **Self-hosting alternative** — run Hindsight locally:

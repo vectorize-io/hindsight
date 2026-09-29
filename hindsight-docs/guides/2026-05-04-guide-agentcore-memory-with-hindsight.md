@@ -44,7 +44,7 @@ pip install hindsight-agentcore
 
 ## Step 2: Connect AgentCore Runtime to Hindsight
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — free tier, no self-hosting required.
 
 ```python
 import os

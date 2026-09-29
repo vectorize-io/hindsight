@@ -221,7 +221,7 @@ In practice, integrating it into a harness looks like this:
 
 The harness keeps doing what it is good at: running the loop, calling tools, managing permissions, rendering output. The memory layer handles the part the harness was never designed to handle.
 
-You can run Hindsight with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) for the fastest path, or self-host if data needs to stay in your environment. Either way, the integration into a harness is the same.
+You can run Hindsight with [Hindsight Cloud](https://ui.hindsight.vectorize.io) for the fastest path, or self-host if data needs to stay in your environment. Either way, the integration into a harness is the same.
 
 ---
 
@@ -249,7 +249,7 @@ If your harness has every tool you need and you still feel like the agent is sta
 
 ## Next Steps
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to add memory to your harness in minutes
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) to add memory to your harness in minutes
 - Read the [quickstart](https://hindsight.vectorize.io/developer/api/quickstart) for self-hosted deployment
 - Browse the [integration guides](https://hindsight.vectorize.io/integrations) for your harness or framework
 - See the [memory banks reference](https://hindsight.vectorize.io/developer/api/memory-banks) for scoping patterns across users, projects, teams, and swarms

@@ -12,7 +12,7 @@ Run the installer once and every Roo Code session automatically recalls past con
 
 ## Prerequisites
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip the self-hosting setup entirely.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up free, get an API key, and skip the self-hosting setup entirely.
 
 **Self-hosting alternative** — run Hindsight locally:
 
