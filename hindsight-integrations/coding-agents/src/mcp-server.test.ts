@@ -112,6 +112,12 @@ describe("resolveProjectCwd", () => {
     ).toBe("/repo");
   });
 
+  it("ignores argv[2] on every other harness — only Cursor's installer passes it", () => {
+    expect(
+      resolveProjectCwd({ HINDSIGHT_MCP_HARNESS: "codex" }, ["node", "mcp.js", "/repo"], "/home")
+    ).toBe("/home");
+  });
+
   it("ignores an uninterpolated ${workspaceFolder} argument", () => {
     expect(
       resolveProjectCwd(
