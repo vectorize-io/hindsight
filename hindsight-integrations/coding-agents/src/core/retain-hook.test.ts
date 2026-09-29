@@ -220,6 +220,44 @@ describe("buildRetain", () => {
     ]);
   });
 
+  it("does not re-append an earlier rollout whose hook lands after the session moved on", async () => {
+    // A -> B -> A -> B, the shape a delayed Stop (or a second process still writing the earlier
+    // rollout) produces. A is a file already in the document, so its late hook replaces rather than
+    // appending its turns a second time — and because the replace rebuilds the document from A
+    // alone, B's next hook appends B back instead of replacing in turn. The cost is bounded either
+    // way; appending on every alternation was not.
+    const segment = (user: string, reply: string) =>
+      [message("user", user), userEvent(user), message("assistant", reply, "final_answer")].join(
+        "\n"
+      );
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const args = {
+      harness: "codex",
+      sessionId: "late-hook-session",
+      readTranscript: readCodexTranscript,
+      cursors: memoryCursorStore(),
+      client: { retain, bank: "test-bank", supportsIdempotentRetain: async () => true },
+    };
+    const fileB = join(root, "rollout-late-b.jsonl");
+    writeFileSync(file, segment("The Atlas connector is amber.", "Noted."));
+    writeFileSync(fileB, segment("The Birch connector is violet.", "Noted too."));
+
+    await buildRetain({ ...args, transcriptPath: file });
+    await buildRetain({ ...args, transcriptPath: fileB });
+    await buildRetain({ ...args, transcriptPath: file });
+    await buildRetain({ ...args, transcriptPath: fileB });
+
+    expect(retain.mock.calls.map((c) => c[5].updateMode)).toEqual([
+      undefined, // A: first write, a replace
+      "append", // B: a continuation segment
+      undefined, // A again: already written, so a replace — NOT its turns a second time
+      "append", // B again: the replace forgot it, so it comes back as a segment
+    ]);
+    // Every append carried one segment's turns, never a whole file replayed on top of itself.
+    for (const call of retain.mock.calls.filter((c) => c[5].updateMode === "append"))
+      expect(call[0].split("\n")).toHaveLength(2);
+  });
+
   it("removes Desktop startup from the retained document, preserves conversation, then appends normally", async () => {
     const startup =
       "<recommended_plugins>Use available tools.</recommended_plugins>\n" +

@@ -216,7 +216,7 @@ export async function retainLiveSession(
     cursors?: RetainCursorStore;
     stamp?: RetainStamp;
     retryUntil?: number;
-    /** The transcript file the turns came from, when there is one — see RetainCursor.path. */
+    /** The transcript file the turns came from, when there is one — see RetainCursor.paths. */
     transcriptPath?: string;
   } = {}
 ): Promise<void> {

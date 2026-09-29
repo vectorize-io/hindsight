@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TransportTurn } from "./chat";
 import {
+  MAX_CURSOR_PATHS,
   PENDING_MAX_AGE_MS,
   PENDING_MAX_BYTES,
+  advancePaths,
   fingerprintTurns,
   memoryCursorStore,
   planRetain,
@@ -150,6 +152,19 @@ describe("planRetain", () => {
       mode: "append",
       fromTurn: 4,
     });
+  });
+
+  it("remembers the files already written, newest last and bounded", () => {
+    expect(advancePaths(["/a"], "/b")).toEqual(["/a", "/b"]);
+    // Re-writing a file we already hold moves it to the end rather than listing it twice, since it
+    // is the one the cursor's turns/fingerprint now describe.
+    expect(advancePaths(["/a", "/b"], "/a")).toEqual(["/b", "/a"]);
+    // No file (the persistent-plugin runtime) leaves the list alone.
+    expect(advancePaths(["/a"], undefined)).toEqual(["/a"]);
+    // A session that keeps moving cannot grow the cursor file without bound.
+    const many = Array.from({ length: MAX_CURSOR_PATHS + 5 }, (_, i) => `/f${i}`);
+    const capped = many.reduce<string[] | undefined>((acc, p) => advancePaths(acc, p), undefined);
+    expect(capped).toEqual(many.slice(-MAX_CURSOR_PATHS));
   });
 
   it("skips when nothing was added since the last write", () => {

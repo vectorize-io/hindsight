@@ -21,7 +21,7 @@
  *                        continuation rollout under the same session id, #4493): nothing was
  *                        rewritten there, the earlier turns simply live in the earlier file, so
  *                        that case appends the new file whole instead of replacing the document
- *                        with it — see `path` below.
+ *                        with it — see `paths` below.
  *   - dirty              a REPLACE was started and not confirmed. There is nothing worth replaying
  *                        (another replace re-establishes the same truth from the same transcript),
  *                        so the next write-back simply replaces again.
