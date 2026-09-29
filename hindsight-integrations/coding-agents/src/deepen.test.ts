@@ -8,9 +8,25 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { buildSync } from "esbuild";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 
-const DEEPEN = join(__dirname, "deepen.ts");
+// Run the real entrypoint as its own process, bundled the way `git-stderr.test.ts` does it.
+let buildDir: string;
+let deepen: string;
+beforeAll(() => {
+  buildDir = mkdtempSync(join(tmpdir(), "deepen-build-"));
+  deepen = join(buildDir, "deepen.cjs");
+  buildSync({
+    entryPoints: [join(__dirname, "deepen.ts")],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: deepen,
+    logLevel: "silent",
+  });
+});
+afterAll(() => rmSync(buildDir, { recursive: true, force: true }));
 
 let home: string;
 let server: Server;
@@ -41,7 +57,7 @@ function runDeepen(): {
   let out = "";
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", DEEPEN, "--repo", __dirname, "--bank", "lease-test", "--api-url", apiUrl],
+    [deepen, "--repo", __dirname, "--bank", "lease-test", "--api-url", apiUrl],
     // TMPDIR holds the lease root, HOME the config/logs: both isolated per test.
     { env: { ...process.env, TMPDIR: home, HOME: home }, stdio: ["ignore", "pipe", "pipe"] }
   );
