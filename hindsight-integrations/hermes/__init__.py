@@ -47,6 +47,7 @@ from .embedded import (
     _start_daemon,
     _stop_daemon,
 )
+from .project import capture_project_context, resolve_git_project
 from .settings import (
     _DEFAULT_API_URL,
     _DEFAULT_IDLE_TIMEOUT,
@@ -63,6 +64,7 @@ from .settings import (
     _normalize_retain_tags,
     _parse_int_setting,
     _resolve_bank_id_template,
+    _template_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -394,6 +396,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._api_url, self._llm_base_url, self._mode = _DEFAULT_API_URL, "", "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
+        self._static_bank_id = "hermes"
+        self._git_project = ""
+        self._bank_resolution_error = ""
+        self._initial_cwd = ""
         self._bank_mission, self._bank_retain_mission = "", None
         self._memory_mode = "hybrid"  # "context", "tools", or "hybrid"
         self._prefetch_method = "recall"  # "recall" or "reflect"
@@ -424,15 +430,15 @@ class HindsightMemoryProvider(MemoryProvider):
         # Server-side async retain ops still in flight: aretain_batch returns on
         # *acceptance*, not durability, so the prefetch gates on these via
         # get_operation_status (a drained local queue is not a read-after-write signal).
-        self._pending_retain_ops: set[str] = set()
+        self._pending_retain_ops: set[tuple[str, str]] = set()
         self._pending_retain_ops_lock = threading.Lock()
-        self._retain_ops_bank_id = ""
         self._apply_retain_policy({})
 
         # Recall: pending prefetch block + count, and the indicator state (recall_status()).
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        self._prefetch_generation = 0
         self._last_recall_returned, self._last_recall_count = False, 0
         self._apply_recall_settings({})
 
@@ -566,7 +572,12 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "bank_id_template",
-                "description": "Optional template to derive bank_id dynamically. Placeholders: {profile}, {workspace}, {platform}, {user}, {session}. Example: hermes-{profile}",
+                "description": "Optional template to derive bank_id dynamically. Placeholders: {profile}, {workspace}, {platform}, {user}, {session}, {gitProject}. Example: hermes-{profile}",
+                "default": "",
+            },
+            {
+                "key": "git_project",
+                "description": "Explicit {gitProject} name; otherwise common Git identity or workspace basename",
                 "default": "",
             },
             {"key": "bank_mission", "description": "Mission/purpose description for the memory bank"},
@@ -752,6 +763,8 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _get_client(self):
         """Return the cached Hindsight client (created once, reused)."""
+        if self._bank_resolution_error:
+            raise RuntimeError(f"Hindsight project routing unavailable: {self._bank_resolution_error}")
         if self._client is None:
             self._client = self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
         return self._client
@@ -822,15 +835,15 @@ class HindsightMemoryProvider(MemoryProvider):
     def _track_retain_ops(self, retain_response, bank_id: str) -> None:
         """Record the async ``operation_id``/``operation_ids`` of an aretain_batch reply
         (pending until recall-visible). No id (older API / sync completion) leaves
-        only the local queue drain as a signal."""
+        only the local queue drain as a signal. Keep each op's bank even when
+        a session template rotates while an older job is still running."""
         raw_ids = [
             getattr(retain_response, "operation_id", None),
             *(getattr(retain_response, "operation_ids", None) or []),
         ]
         if ids := [str(op) for op in raw_ids if op]:
-            self._retain_ops_bank_id = bank_id
             with self._pending_retain_ops_lock:
-                self._pending_retain_ops.update(ids)
+                self._pending_retain_ops.update((bank_id, op_id) for op_id in ids)
 
     def _is_retain_op_complete(self, bank_id: str, op_id: str) -> bool:
         """True when a server-side retain op is done or gone (completed ops are evicted,
@@ -878,20 +891,19 @@ class HindsightMemoryProvider(MemoryProvider):
         join). Trades a possibly-stale recall for liveness; WARNING once per prefetch."""
         while True:
             with self._pending_retain_ops_lock:
-                bank_id = self._retain_ops_bank_id or self._bank_id
                 pending = list(self._pending_retain_ops)
             if not pending:
                 return True
             if self._shutting_down.is_set():
                 return False
-            done: set[str] = set()
-            for op_id in pending:
+            done: set[tuple[str, str]] = set()
+            for bank_id, op_id in pending:
                 if self._shutting_down.is_set():
                     return False
                 if _expired():
                     break
                 if self._is_retain_op_complete(bank_id, op_id):
-                    done.add(op_id)
+                    done.add((bank_id, op_id))
             with self._pending_retain_ops_lock:
                 self._pending_retain_ops.difference_update(done)
                 if not self._pending_retain_ops:
@@ -946,6 +958,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._document_id = _mint_document_id(self._session_id)
         _warn_if_client_outdated()
 
+        self._initial_cwd = str(kwargs.get("cwd") or "").strip()
         self._config = cfg = _load_config()
         for name in _SESSION_KWARGS:
             setattr(self, f"_{name}", str(kwargs.get(name) or "").strip())
@@ -1023,15 +1036,23 @@ class HindsightMemoryProvider(MemoryProvider):
 
         banks = cfg_get(cfg, "banks", "hermes", default={})
         self._bank_id_template = cfg.get("bank_id_template", "") or ""
-        self._bank_id = _resolve_bank_id_template(
-            self._bank_id_template,
-            fallback=cfg.get("bank_id") or banks.get("bankId", "hermes"),
-            profile=self._agent_identity,
-            workspace=self._agent_workspace,
-            platform=self._platform,
-            user=self._user_id,
-            session=self._session_id,
-        )
+        self._static_bank_id = cfg.get("bank_id") or banks.get("bankId", "hermes")
+        self._bank_resolution_error = ""
+        self._git_project = ""
+        if "gitProject" in _template_fields(self._bank_id_template):
+            try:
+                context = capture_project_context(self._initial_cwd)
+                self._git_project = resolve_git_project(
+                    context.cwd, cfg.get("git_project", ""), backend=context.backend
+                )
+            except Exception as exc:
+                # Stock MemoryManager logs initialization failures but keeps the
+                # provider registered. Latch the refusal so later tools/hooks
+                # cannot use the constructor's default bank after this raises.
+                self._bank_resolution_error = str(exc) or type(exc).__name__
+                raise
+            self._bank_resolution_error = ""
+        self._bank_id = self._render_bank_id()
         budget = cfg.get("recall_budget") or cfg.get("budget") or banks.get("budget", "mid")
         self._budget = budget if budget in _VALID_BUDGETS else "mid"
         memory_mode = cfg.get("memory_mode", "hybrid")
@@ -1040,6 +1061,22 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_method = prefetch_method if prefetch_method in {"recall", "reflect"} else "recall"
         self._bank_mission = cfg.get("bank_mission", "")
         self._bank_retain_mission = cfg.get("bank_retain_mission") or None
+
+    def _render_bank_id(self) -> str:
+        # Unknown remote cwd does not collapse project::{gitProject} to project.
+        # Local detection errors raise earlier, never routing to a fallback bank.
+        if "gitProject" in _template_fields(self._bank_id_template) and not self._git_project:
+            return self._static_bank_id
+        return _resolve_bank_id_template(
+            self._bank_id_template,
+            fallback=self._static_bank_id,
+            profile=self._agent_identity,
+            workspace=self._agent_workspace,
+            gitProject=self._git_project,
+            platform=self._platform,
+            user=self._user_id,
+            session=self._session_id,
+        )
 
     def _apply_retain_settings(self, cfg: dict) -> None:
         def _cfg_or_env(key: str, env_var: str, default: str = "") -> Any:
@@ -1177,6 +1214,8 @@ class HindsightMemoryProvider(MemoryProvider):
             _log(f"\n=== Daemon startup failed: {e} ===\n" + traceback.format_exc())
 
     def system_prompt_block(self) -> str:
+        if self._bank_resolution_error:
+            return ""
         mode = self._memory_mode if self._memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         label = "" if mode == "hybrid" else f" ({mode} mode)"
         return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{_SYSTEM_PROMPT_TAILS[mode]}"
@@ -1185,6 +1224,8 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _recall_disabled(self) -> bool:
         """Guards shared by the async and synchronous recall paths."""
+        if self._bank_resolution_error:
+            return True
         why = (
             "tools-only mode"
             if self._memory_mode == "tools"
@@ -1198,9 +1239,9 @@ class HindsightMemoryProvider(MemoryProvider):
             logger.debug("Prefetch: skipped (%s)", why)
         return why is not None
 
-    def _recall(self, query: str) -> list:
+    def _recall(self, query: str, *, bank_id: str | None = None) -> list:
         kwargs: dict = {
-            "bank_id": self._bank_id,
+            "bank_id": self._bank_id if bank_id is None else bank_id,
             "query": query,
             "budget": self._budget,
             "max_tokens": self._recall_max_tokens,
@@ -1212,25 +1253,25 @@ class HindsightMemoryProvider(MemoryProvider):
         resp = self._run_hindsight_operation(lambda client: client.arecall(**kwargs))
         return resp.results or []
 
-    def _reflect(self, query: str) -> str | None:
+    def _reflect(self, query: str, *, bank_id: str | None = None) -> str | None:
+        bank_id = self._bank_id if bank_id is None else bank_id
         resp = self._run_hindsight_operation(
-            lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
+            lambda client: client.areflect(bank_id=bank_id, query=query, budget=self._budget)
         )
         return resp.text
 
-    def _do_recall(self, query: str) -> tuple[str, int]:
+    def _do_recall(self, query: str, *, bank_id: str | None = None) -> tuple[str, int]:
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
         -> (text, memory count); the count is 0 for reflect (synthesis) and on error."""
+        bank_id = self._bank_id if bank_id is None else bank_id
         if self._recall_max_input_chars:
             query = query[: self._recall_max_input_chars]
         try:
             if self._prefetch_method == "reflect":
-                logger.debug("Recall: calling reflect (bank=%s, query_len=%d)", self._bank_id, len(query))
-                return self._reflect(query) or "", 0
-            logger.debug(
-                "Recall: calling recall (bank=%s, query_len=%d, budget=%s)", self._bank_id, len(query), self._budget
-            )
-            results = self._recall(query)
+                logger.debug("Recall: calling reflect (bank=%s, query_len=%d)", bank_id, len(query))
+                return self._reflect(query, bank_id=bank_id) or "", 0
+            logger.debug("Recall: calling recall (bank=%s, query_len=%d, budget=%s)", bank_id, len(query), self._budget)
+            results = self._recall(query, bank_id=bank_id)
             logger.debug("Recall: returned %d results", len(results))
             return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
         except Exception as e:
@@ -1259,6 +1300,8 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_thread.join(timeout=timeout)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        if self._bank_resolution_error:
+            return ""
         # Opt-in: recall synchronously against the *current* message so the
         # injected memories match this turn's query, not the previous turn's.
         # See NousResearch/hermes-agent#5820.
@@ -1279,17 +1322,26 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         # Sync mode recalls live each turn — nothing to prime in the background.
-        if self._recall_sync or self._recall_disabled():
+        if self._bank_resolution_error or self._recall_sync or self._recall_disabled():
             return
+
+        with self._prefetch_lock:
+            # Capture ownership before retain waits or client/loop scheduling.
+            self._prefetch_generation += 1
+            generation, bank_id = self._prefetch_generation, self._bank_id
 
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
             # retain to be recall-visible so the warmed context includes it.
             if self._prefetch_waits_for_retain:
                 self._wait_for_retains_drained(self._prefetch_retain_drain_timeout)
-            text, count = self._do_recall(query)
-            if text:
-                with self._prefetch_lock:
+            if self._shutting_down.is_set():
+                return
+            text, count = self._do_recall(query, bank_id=bank_id)
+            with self._prefetch_lock:
+                # A capped join does not cancel the worker. Only its owner may
+                # publish; empty/error completions never mutate newer worker state.
+                if text and generation == self._prefetch_generation and not self._shutting_down.is_set():
                     self._prefetch_result, self._prefetch_count = text, count
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
@@ -1394,6 +1446,8 @@ class HindsightMemoryProvider(MemoryProvider):
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
         once shutdown() fired so post-exit retains never reach aiohttp during teardown."""
+        if self._bank_resolution_error:
+            return
         why = (
             "auto_retain disabled"
             if not self._auto_retain
@@ -1467,7 +1521,11 @@ class HindsightMemoryProvider(MemoryProvider):
     # -- tools -------------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [] if self._memory_mode == "context" else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
+        return (
+            []
+            if self._bank_resolution_error or self._memory_mode == "context"
+            else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
+        )
 
     def _tool_retain(self, args: dict) -> str:
         content, context = args["content"], args.get("context")
@@ -1503,6 +1561,8 @@ class HindsightMemoryProvider(MemoryProvider):
     }
 
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
+        if self._bank_resolution_error:
+            return tool_error(f"Hindsight project routing unavailable: {self._bank_resolution_error}")
         if tool_name not in self._TOOL_HANDLERS:
             return tool_error(f"Unknown tool: {tool_name}")
         required, handler, failure = self._TOOL_HANDLERS[tool_name]
@@ -1562,15 +1622,22 @@ class HindsightMemoryProvider(MemoryProvider):
             if not self._shutting_down.is_set():
                 self._enqueue_retain(_flush)
 
-        # 2. Drain the old session's in-flight prefetch and drop its result.
-        self._join_prefetch(3.0)
+        # 2. Invalidate BEFORE the bounded join: an old worker can outlive it.
         with self._prefetch_lock:
-            self._prefetch_result = ""
+            self._prefetch_generation += 1
+            self._prefetch_result, self._prefetch_count = "", 0
+            self._last_recall_returned, self._last_recall_count = False, 0
+        self._join_prefetch(3.0)
 
         # 3. Rotate to the new session.
         if parent_session_id:
             self._parent_session_id = str(parent_session_id).strip()
         self._session_id, self._document_id = new_id, _mint_document_id(new_id)
+        # As in #4826, rotate {session} only after old jobs capture their bank.
+        # Project identity remains the initialization snapshot: live cwd/config
+        # changes and deleted worktrees must not redirect queued or future writes.
+        if self._bank_id_template:
+            self._bank_id = self._render_bank_id()
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
         logger.debug(
@@ -1595,6 +1662,10 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
         # Stop accepting retain jobs first so late sync_turn() calls are dropped.
         self._shutting_down.set()
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            self._prefetch_result, self._prefetch_count = "", 0
+            self._last_recall_returned, self._last_recall_count = False, 0
         # The writer finishes in-flight work then exits on the sentinel; the
         # bounded join keeps shutdown predictable even if the daemon is wedged.
         if (writer := self._writer_thread) is not None and writer.is_alive():

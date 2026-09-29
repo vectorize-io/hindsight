@@ -47,6 +47,22 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             key="bank_id", label="Bank ID", kind=KIND_TEXT, default="hermes", aliases=("bankId",), inline=True
         ),
         ProviderField(
+            key="bank_id_template",
+            label="Bank ID template",
+            kind=KIND_TEXT,
+            default="",
+            inline=True,
+            description="Optional template: {profile}, {workspace}, {platform}, {user}, {session}, {gitProject}.",
+        ),
+        ProviderField(
+            key="git_project",
+            label="Git project override",
+            kind=KIND_TEXT,
+            default="",
+            inline=True,
+            description="Explicit {gitProject}; otherwise common Git identity or logical workspace basename.",
+        ),
+        ProviderField(
             key="recall_budget",
             label="Recall budget",
             kind=KIND_SELECT,

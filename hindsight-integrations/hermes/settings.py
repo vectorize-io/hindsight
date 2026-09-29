@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import re
+import string
 from typing import Any, List
 
 # Log under the plugin package's own logger name (loader-path independent).
@@ -118,15 +119,33 @@ def _sanitize_bank_segment(value: str) -> str:
     return re.sub(r"[^\w-]+", "-", str(value)).strip("-_") if value else ""
 
 
+def _template_fields(template: str) -> set[str]:
+    """Parse like str.format (including conversions, escaped braces and nested specs).
+
+    Based on the lazy placeholder routing in #4686; recurse into format specs so
+    a nested {gitProject} cannot evade the opt-in guard.
+    """
+    fields: set[str] = set()
+    try:
+        for _, field, spec, _ in string.Formatter().parse(template):
+            if field:
+                fields.add(field.split(".")[0].split("[")[0])
+            if spec:
+                fields.update(_template_fields(spec))
+    except ValueError:
+        pass  # Rendering logs malformed templates and uses the existing fallback.
+    return fields
+
+
 def _resolve_bank_id_template(template: str, fallback: str, **placeholders: str) -> str:
-    """Render a bank_id template ({profile}, {workspace}, {platform}, {user}, {session}),
+    """Render a bank_id template (including the optional {gitProject} placeholder),
     sanitizing each placeholder; the ``-``/``_`` runs empty placeholders leave are
     collapsed (``hermes-{user}`` -> ``hermes``). Empty/invalid template -> *fallback*."""
     if not template:
         return fallback
     try:
         rendered = template.format(**{k: _sanitize_bank_segment(v) for k, v in placeholders.items()})
-    except (KeyError, IndexError) as exc:
+    except (KeyError, IndexError, ValueError, AttributeError, TypeError) as exc:
         logger.warning("Invalid bank_id_template %r: %s — using fallback %r", template, exc, fallback)
         return fallback
     return re.sub(r"([-_])\1+", r"\1", rendered).strip("-_") or fallback
