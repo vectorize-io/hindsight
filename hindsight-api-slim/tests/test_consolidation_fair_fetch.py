@@ -12,7 +12,6 @@ group's whole backlog. Two levels:
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.engine.consolidation import consolidator as C
+from hindsight_api.engine.memories import StoredMemory
 from hindsight_api.engine.memory_engine import MemoryEngine
 from tests.test_consolidation_scope_parallelism import (  # noqa: F401  (fixture import)
     _mock_llm_one_obs_per_fact,
@@ -28,22 +28,25 @@ from tests.test_consolidation_scope_parallelism import (  # noqa: F401  (fixture
 )
 
 
-@dataclass
-class _Fact:
-    """The only attributes ``_fair_group_slice`` reads off a stored memory."""
+def _mem(tags: list[str], observation_scopes: Any = None) -> StoredMemory:
+    """A candidate fact carrying only what the grouping key reads: tags and scope spec."""
+    return StoredMemory(
+        unit_id=str(uuid.uuid4()),
+        text="a fact",
+        fact_type="experience",
+        tags=tags,
+        observation_scopes=observation_scopes,
+    )
 
-    tags: list[str]
-    observation_scopes: Any = None
 
-
-def _keys(memories: list[_Fact]) -> list[tuple[str, ...]]:
+def _keys(memories: list[StoredMemory]) -> list[tuple[str, ...]]:
     return [C._consolidation_batch_key({"tags": m.tags, "observation_scopes": m.observation_scopes}) for m in memories]
 
 
 class TestFairGroupSlice:
     def test_one_group_holding_the_oldest_facts_does_not_take_the_whole_round(self):
         # 20 untagged facts first (the draining backlog), then one fact in each of 3 groups.
-        oldest_first = [_Fact([]) for _ in range(20)] + [_Fact([f"user:{n}"]) for n in ("alice", "bob", "carol")]
+        oldest_first = [_mem([]) for _ in range(20)] + [_mem([f"user:{n}"]) for n in ("alice", "bob", "carol")]
 
         taken = C._fair_group_slice(oldest_first, limit=8, quota=2)
 
@@ -52,7 +55,7 @@ class TestFairGroupSlice:
 
     def test_fills_the_round_from_the_groups_that_have_facts(self):
         # Only two groups exist, so the quota cannot fill an 8-fact round: take what there is.
-        oldest_first = [_Fact([]) for _ in range(20)] + [_Fact(["user:alice"]) for _ in range(20)]
+        oldest_first = [_mem([]) for _ in range(20)] + [_mem(["user:alice"]) for _ in range(20)]
 
         taken = C._fair_group_slice(oldest_first, limit=8, quota=2)
 
@@ -60,13 +63,13 @@ class TestFairGroupSlice:
         assert len(set(_keys(taken))) == 2
 
     def test_stops_at_the_limit(self):
-        taken = C._fair_group_slice([_Fact([f"user:{i}"]) for i in range(50)], limit=8, quota=2)
+        taken = C._fair_group_slice([_mem([f"user:{i}"]) for i in range(50)], limit=8, quota=2)
         assert len(taken) == 8
 
     def test_keys_on_the_resolved_scope_not_raw_tags(self):
         # Two memories with different tags both target the untagged ``shared`` scope, so they
         # are ONE group and share the quota — the grouping key the dispatcher uses, not tags.
-        oldest_first = [_Fact(["user:alice"], "shared"), _Fact(["user:bob"], "shared")]
+        oldest_first = [_mem(["user:alice"], "shared"), _mem(["user:bob"], "shared")]
 
         taken = C._fair_group_slice(oldest_first, limit=8, quota=1)
 
@@ -81,14 +84,13 @@ async def _insert(conn, bank_id: str, text: str, tags: list[str], created_at: da
     """
     await conn.execute(
         """
-        INSERT INTO memory_units (id, bank_id, text, fact_type, tags, observation_scopes, created_at)
-        VALUES ($1, $2, $3, 'experience', $4, $5::jsonb, $6)
+        INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at)
+        VALUES ($1, $2, $3, 'experience', $4, $5)
         """,
         uuid.uuid4(),
         bank_id,
         text,
         tags,
-        None,
         created_at,
     )
 
