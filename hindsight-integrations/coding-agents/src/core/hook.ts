@@ -345,7 +345,12 @@ export async function buildHookOutput(args: {
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
-    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: cfg.autoInject !== "reflect" }));
+    blocks.push(
+      buildRosterRefresh(pages, {
+        reflectOnNewGoals: cfg.autoInject !== "reflect",
+        extra: cfg.toolGuideExtra,
+      })
+    );
   }
   const kept = blocks.filter(Boolean);
 

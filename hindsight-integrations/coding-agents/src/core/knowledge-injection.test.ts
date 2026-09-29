@@ -104,3 +104,23 @@ describe("buildRosterRefresh", () => {
     expect(out).not.toContain("Current Hindsight knowledge pages");
   });
 });
+
+describe("toolGuideExtra (#4791)", () => {
+  const pages = [{ id: "p1", title: "Component map" }];
+  const extra = "Memory is a past record: verify it against the code first.";
+
+  it("adds the team's text after the built-in guide at session start and on refresh", () => {
+    for (const out of [
+      buildKnowledgePreamble(pages, { extra }),
+      buildRosterRefresh(pages, { extra }),
+    ]) {
+      // Added, not replacing: the built-in triggers and crediting rule are still there.
+      expect(out).toContain("CREDITING IS NOT OPTIONAL");
+      expect(out.indexOf(extra)).toBeGreaterThan(out.indexOf("hindsight_ingest_document("));
+    }
+  });
+
+  it("adds nothing when unset or blank", () => {
+    expect(buildKnowledgePreamble(pages, { extra: "  " })).toBe(buildKnowledgePreamble(pages));
+  });
+});

@@ -88,6 +88,7 @@ export class RuntimeCore {
       pageTrigger: buildPageTrigger(this.cfg),
       reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
       reflectBudget: this.cfg.reflectBudget,
+      toolGuideExtra: this.cfg.toolGuideExtra,
       stampFor: () =>
         buildRetainStamp(this.cfg, {
           directory: this.projectDir,
@@ -190,6 +191,7 @@ export class RuntimeCore {
       blocks.push(
         buildKnowledgePreamble(output.pages, {
           reflectOnNewGoals: this.cfg.autoInject !== "reflect",
+          extra: this.cfg.toolGuideExtra,
         })
       );
     }

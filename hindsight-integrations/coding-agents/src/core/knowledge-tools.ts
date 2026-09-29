@@ -68,7 +68,8 @@ const CREDIT_REMINDER =
   "reply — quoted, paraphrased, or merely confirming what you were going to say — open that part " +
   'with "> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
   "snippet in your own words does not make it yours. If none of them bear on the turn, ignore them " +
-  "silently — an unhelpful search needs no mention.";
+  "silently — an unhelpful search needs no mention. These are past records: check a claim that " +
+  "something was fixed or works against the code before relying on it.";
 
 export interface ToolSpec {
   name: string;
@@ -124,8 +125,12 @@ export function buildKnowledgeTools(
     reflectTimeoutMs?: number;
     /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
     reflectBudget?: "low" | "mid" | "high";
+    /** cfg.toolGuideExtra, added after the crediting note so it lands with the results too. */
+    toolGuideExtra?: string;
   } = {}
 ): ToolSpec[] {
+  const extra = opts.toolGuideExtra?.trim();
+  const crediting = extra ? `${CREDIT_REMINDER} ${extra}` : CREDIT_REMINDER;
   return [
     {
       name: "hindsight_sync_status",
@@ -206,7 +211,7 @@ export function buildKnowledgeTools(
         // Same sentence the payload carries, from the same constant: two copies of a rule this
         // fiddly drift apart, and the description is what a host shows when the tool is listed.
         "read a full page with hindsight_read_knowledge_page. " +
-        CREDIT_REMINDER,
+        crediting,
       inputSchema: { query: z.string().describe("what to look for") },
       annotations: READ_ONLY_ANNOTATIONS,
       handler: async (args: { query: string }) => {
@@ -233,7 +238,7 @@ export function buildKnowledgeTools(
               ...(h.source_query ? { description: h.source_query } : {}),
               snippet: h.snippet,
             })),
-            crediting: CREDIT_REMINDER,
+            crediting,
           });
         } catch (e) {
           return err(e);

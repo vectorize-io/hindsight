@@ -201,9 +201,16 @@ function serialize(
   return next;
 }
 
-/** The `context` of a session write-back when `retainContext` is unset. */
+/**
+ * The `context` of a session write-back when `retainContext` is unset. The second sentence keeps an
+ * agent's own "fixed"/"passes" a claim: stored as fact, a later session applied it without checking
+ * the code (#4791). It lives here rather than in the bank's retain mission because the mission is
+ * seeded once and never reaches a bank that already has one; the context rides on every write.
+ */
 export const DEFAULT_RETAIN_CONTEXT =
-  "conversation between the user and you (the coding agent): user turns are the user's words and decisions, assistant turns are yours";
+  "conversation between the user and you (the coding agent): user turns are the user's words and " +
+  "decisions, assistant turns are yours. When an assistant turn says something is fixed, passes or " +
+  'works, record it as the agent\'s claim ("the agent reported X fixed"), not as an established fact.';
 
 /**
  * Live write-back: upsert a running session under a stable document_id, sending only what is new.

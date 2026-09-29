@@ -148,6 +148,11 @@ export interface RawConfig {
    *  back empty on it: those set `{"types": ["world", "experience"]}`, or `{"types": null}` for
    *  every type. */
   recallOptions?: Record<string, unknown>;
+  /** Your own guidance for how the agent should treat memory, added AFTER the built-in tool guide
+   *  (SessionStart and every refresh) and after the crediting note that comes back with
+   *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
+   *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
+  toolGuideExtra?: string;
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -326,6 +331,7 @@ export interface Config {
   autoInject: AutoInject;
   pageSearchLimit: number;
   recallOptions: Record<string, unknown>;
+  toolGuideExtra?: string;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -639,6 +645,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       !Array.isArray(raw.recallOptions)
         ? { ...raw.recallOptions }
         : {},
+    toolGuideExtra:
+      typeof raw.toolGuideExtra === "string" && raw.toolGuideExtra.trim()
+        ? raw.toolGuideExtra
+        : undefined,
     // Every turn, not every tenth. The guide is what tells the agent WHEN to reach for memory, and
     // at a cadence of 10 a normal session is told once, on turn 1, and never again. Measured over
     // 40 real Claude Code turns, moving this from 10 to 1 took searches from 15% of turns to 32.5%
@@ -769,6 +779,7 @@ const ENV_KEYS = {
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
+  toolGuideExtra: "HINDSIGHT_TOOL_GUIDE_EXTRA",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",

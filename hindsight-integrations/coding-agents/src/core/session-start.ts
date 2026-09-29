@@ -312,6 +312,7 @@ export async function buildSessionStartContext(args: {
   }
   const additionalContext = buildKnowledgePreamble(pages, {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
+    extra: cfg.toolGuideExtra,
   });
   const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
 
