@@ -206,9 +206,53 @@ Config file: `~/.hermes/hindsight/config.json`
 | Key | Default | Description |
 |-----|---------|-------------|
 | `bank_id` | `hermes` | Memory bank name (static fallback used when `bank_id_template` is unset or resolves empty) |
-| `bank_id_template` | — | Optional template to derive the bank name dynamically. Placeholders: `{profile}`, `{workspace}`, `{platform}`, `{user}`, `{session}`. Example: `hermes-{profile}` isolates memory per active Hermes profile. Empty placeholders collapse cleanly (e.g. `hermes-{user}` with no user becomes `hermes`). |
+| `bank_id_template` | — | Optional template to derive the bank name dynamically. Placeholders: `{profile}`, `{workspace}`, `{platform}`, `{user}`, `{session}`, `{gitProject}`. `{gitProject}` opts into worktree-aware project routing (see below). Example: `hermes-{profile}` isolates memory per active Hermes profile. Empty placeholders collapse cleanly (e.g. `hermes-{user}` with no user becomes `hermes`). |
+| `git_project` | — | Explicit name for `{gitProject}`, before Git discovery or basename fallback. Ignored unless the template requests `{gitProject}`. |
 | `bank_mission` | — | Reflect mission (identity/framing for reflect reasoning). Applied via Banks API. |
 | `bank_retain_mission` | — | Retain mission (steers what gets extracted). Applied via Banks API. |
+
+### Project-scoped banks (opt-in)
+
+The default bank remains `hermes`; existing templates and `{workspace}` keep their
+current behavior. In stock Hermes, `agent_workspace` is a logical label (currently
+`hermes`), **not** a filesystem path. This integration never replaces that label.
+
+To select a project bank, set `bank_id_template` to `project::{gitProject}`. Resolution:
+
+1. A nonempty `git_project` is the explicit name (useful for remote workspaces or
+   sharing a bank across clones with different directory names).
+2. For a **local** terminal backend, read Git's filesystem layout. A checkout and
+   all its linked worktrees use the common repository name, even from subdirectories.
+   Hidden bare hubs such as `project/.bare` use `project`; standalone bare repositories
+   retain their directory name, including a `.git` suffix.
+3. Only a completed local search proving **no repository** uses the initial cwd's
+   basename. Missing/deleted directories, permissions, malformed/dangling `.git` or
+   `commondir` pointers and other detection errors disable project routing, rather
+   than silently creating a different bank. Fix the path/permissions or configure
+   `git_project`, then start a fresh provider/session.
+
+There is no Git subprocess, spawn timeout or inherited `GIT_DIR`/`GIT_COMMON_DIR`
+selection. Repository I/O happens only when the template requests `{gitProject}`
+and no explicit override is set. Names use the existing template sanitization;
+repositories with the same name can share a bank. Use explicit names or include
+`{profile}` if that sharing is unwanted.
+
+For **remote/container backends**, the plugin preserves the explicit override or
+uses the **logical cwd basename**. This is **not remote Git discovery**: remote linked
+worktrees are not automatically unified. No terminal backend is launched and no
+host repository is inspected to identify a remote project. With no known remote cwd,
+`bank_id` is used unchanged, not a partially rendered project prefix.
+
+Context comes from optional stock Hermes `cwd`, then scoped session cwd, then the
+profile's scoped `TERMINAL_CWD`; host cwd is a last resort only for a local backend.
+The backend is also scope-aware. An unavailable/refused scope is never bypassed,
+including when `cwd` or `git_project` is explicit.
+
+Project identity is captured at provider initialization and remains frozen across
+turns and session switches on that provider. Changing cwd/config or deleting a
+worktree mid-session cannot redirect memory. A newly initialized provider captures
+fresh context. `{session}` does rotate on a session switch, after old retain jobs
+capture their bank; pending server operations retain their original bank ownership.
 
 ### Recall
 
@@ -399,6 +443,34 @@ Hermes Agent is not on PyPI, so `tests/conftest.py` stubs the Hermes core interf
 plugin imports (`MemoryProvider`, the secret scope, `cfg_get`, ...) and loads this directory
 as a package, the way Hermes' plugin loader does. A recording fake client stands in for the
 Hindsight SDK so the tests assert what the provider actually sends.
+
+### Stock Hermes compatibility tests
+
+`integration/test_stock_workspace.py` runs **separately** from `tests/` (whose
+conftest installs stubs). Put a stock Hermes checkout on `PYTHONPATH` and use an
+isolated environment containing its test dependencies plus this plugin's dependencies.
+Set `HOME`, `HERMES_HOME`, and `HERMES_RUNTIME_DIR` to disposable directories **before**
+importing Hermes; never run these tests against live profile config.
+
+```bash
+PYTHONPATH=/path/to/stock-hermes /path/to/isolated-venv/bin/python -m pytest \
+  hindsight-integrations/hermes/integration/test_stock_workspace.py -q
+```
+
+Verified against stock Hermes `09581cacaa8db3b3241dbbabe76a351a2ce14f60` using
+real caller kwargs, gateway profile scopes and `MemoryManager.initialize_all`,
+including polluted ambient environment A/B/A routing and refusal scopes. The tests
+block terminal/daemon launches and network clients; they do not require a server.
+`agent.runtime_cwd.scoped_session_cwd` and `tools.terminal_scope.terminal_env` are
+**internal host APIs**, not a stable plugin compatibility contract. If they move,
+`{gitProject}` fails closed; old templates do not import them. No custom Hermes
+bridge, `workspace_backend` kwarg or `agent_workspace` reinterpretation is required.
+
+Implementation overlap: #4686 supplies the lazy parsed-template routing approach
+and per-bank pending-operation ownership; its `{project}`, repository config trust,
+multibank writes/recall and home-directory exclusion are deliberately not included.
+#4826 covers the `{session}` rotation fixed here too, with frozen project identity
+added to that rendering path. No mission/notice changes are included.
 
 Things to know when changing this plugin:
 
