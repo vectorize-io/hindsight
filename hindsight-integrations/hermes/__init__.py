@@ -391,7 +391,7 @@ class HindsightMemoryProvider(MemoryProvider):
     def __init__(self):
         self._config = self._api_key = self._client = None
         self._embedded_url = None
-        self._api_url, self._llm_base_url, self._mode = _DEFAULT_API_URL, "", "cloud"
+        self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
         self._bank_mission, self._bank_retain_mission = "", None
@@ -1019,7 +1019,6 @@ class HindsightMemoryProvider(MemoryProvider):
         self._api_key = _cloud_api_key(cfg)
         default_url = _DEFAULT_LOCAL_URL if self._mode in {"local_embedded", "local_external"} else _DEFAULT_API_URL
         self._api_url = cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "") or default_url
-        self._llm_base_url = cfg.get("llm_base_url", "")
 
         banks = cfg_get(cfg, "banks", "hermes", default={})
         self._bank_id_template = cfg.get("bank_id_template", "") or ""
@@ -1153,8 +1152,8 @@ class HindsightMemoryProvider(MemoryProvider):
             # scope on this thread) but the file does, a rewrite would destroy the
             # only key copy the daemon subprocess can read. Skip the write AND the
             # stop: restarting the daemon now would boot it keyless, which is the
-            # exact outage this guards against. _get_client() above already passed
-            # whatever key WAS available into the in-process client kwargs.
+            # exact outage this guards against. _get_client() below sends the daemon
+            # whatever key WAS available (config, secret scope, or the file itself).
             if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)

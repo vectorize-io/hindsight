@@ -14,6 +14,7 @@ from hindsight_embed._http_probe import ProbeResponse
 from hindsight_embed.daemon_embed_manager import (
     DaemonEmbedManager,
     _detach_popen_kwargs,
+    _strip_parent_interpreter_env,
     _terminate_startup_process,
 )
 
@@ -88,6 +89,52 @@ def test_startup_fails_fast_when_daemon_exits(tmp_path, monkeypatch):
         assert manager._start_daemon_locked({}, "test", paths) is False
 
     manager.is_running.assert_called_once()  # the pre-spawn check only
+
+
+def _spawned_env(manager, tmp_path, monkeypatch) -> dict:
+    """Run _start_daemon_locked up to the spawn and return the env Popen received."""
+    process = _running_process()
+    process.poll.return_value = 1  # exit at once so the startup loop ends
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _seconds: None)
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process) as popen:
+        manager._start_daemon_locked({}, "test", paths)
+    return popen.call_args.kwargs["env"]
+
+
+def test_uvx_fallback_does_not_inherit_the_parent_interpreter_env(tmp_path, monkeypatch):
+    """A host that finds its own site-packages via PYTHONPATH (Hermes' package-manager install
+    exports its Python 3.14 generation) must not hand that directory to uvx's own interpreter:
+    hindsight-api would import the host's pydantic and fail on the missing compiled extension."""
+    monkeypatch.setenv("PYTHONPATH", "/host/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/host/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/host/venv")
+    monkeypatch.setenv("PATH", "/host/venv/bin:/usr/bin")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["uvx", "hindsight-api@0.0.0"])
+
+    env = _spawned_env(manager, tmp_path, monkeypatch)
+
+    assert "PYTHONPATH" not in env and "PYTHONHOME" not in env and "VIRTUAL_ENV" not in env
+    assert env["PATH"] == "/host/venv/bin:/usr/bin"  # uvx itself is found through PATH
+    assert env["HINDSIGHT_API_DAEMON_LOG"] == str(tmp_path / "daemon.log")
+
+
+def test_installed_binary_keeps_the_parent_interpreter_env(tmp_path, monkeypatch):
+    """A `pip install --target` layout (issue #1240) needs PYTHONPATH to import hindsight_api;
+    the scrub applies only to the uvx fallback."""
+    monkeypatch.setenv("PYTHONPATH", "/target")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["/target/bin/hindsight-api"])
+
+    env = _spawned_env(manager, tmp_path, monkeypatch)
+
+    assert env["PYTHONPATH"] == "/target"
+
+
+def test_strip_parent_interpreter_env_leaves_everything_else():
+    env = {"PYTHONPATH": "x", "PYTHONSAFEPATH": "1", "HINDSIGHT_API_LLM_MODEL": "m", "HOME": "/h"}
+    assert _strip_parent_interpreter_env(env) == {"HINDSIGHT_API_LLM_MODEL": "m", "HOME": "/h"}
 
 
 @_posix_only
