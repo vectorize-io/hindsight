@@ -98,8 +98,12 @@ def _cloud_api_key(config: dict) -> str:
 
 
 def _maybe_upgrade_client() -> None:
-    """Auto-upgrade an outdated hindsight-client via the environment-aware lazy_deps
-    installer (sealed hosted venvs redirect to the durable target)."""
+    """Auto-upgrade an outdated hindsight-client when this build exposes an installer.
+
+    ``tools.lazy_deps`` in newer Hermes builds is a relaunch shim rather than an installer
+    (see ``embedded._optional_dependency_installer``), in which case we log the manual pip
+    command and carry on instead of exiting the process.
+    """
     try:
         from importlib.metadata import version as pkg_version
 
@@ -110,9 +114,18 @@ def _maybe_upgrade_client() -> None:
             logger.warning(
                 "hindsight-client %s is outdated (need >=%s), attempting upgrade...", installed, _MIN_CLIENT_VERSION
             )
-            from tools.lazy_deps import install_specs
+            from .embedded import _optional_dependency_installer
 
-            outcome = install_specs([f"hindsight-client>={_MIN_CLIENT_VERSION}"], timeout=120)
+            installer = _optional_dependency_installer()
+            if installer is None:
+                logger.warning(
+                    "hindsight-client %s is outdated (need >=%s). Run: uv pip install 'hindsight-client>=%s'",
+                    installed,
+                    _MIN_CLIENT_VERSION,
+                    _MIN_CLIENT_VERSION,
+                )
+                return
+            outcome = installer([f"hindsight-client>={_MIN_CLIENT_VERSION}"], timeout=120)
             if outcome.ok:
                 logger.info("hindsight-client upgraded to >=%s", _MIN_CLIENT_VERSION)
             elif outcome.blocked:
