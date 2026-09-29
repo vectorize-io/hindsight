@@ -8836,7 +8836,15 @@ class MemoryEngine(MemoryEngineInterface):
                     query_embedding=str(query_embedding),
                     query_text=query,
                     limit=thinking_budget,
-                    temporal_window=temporal_window,
+                    # The field is declared `tuple[datetime, datetime] | None`, and a store that
+                    # claims the recall reads it as one. `temporal_window` is a `TemporalWindow`
+                    # here, so it is unpacked at the boundary rather than handed over as the model
+                    # -- the same conversion the pipeline below does for `recall_unified`.
+                    # `FullRecallRequest` does not validate at construction, so passing the model
+                    # through surfaces only inside the store, as a TypeError on the first index.
+                    temporal_window=(
+                        (temporal_window.start, temporal_window.end) if temporal_window is not None else None
+                    ),
                     tags=tags,
                     tags_match=tags_match,
                     tag_groups=tag_groups,
