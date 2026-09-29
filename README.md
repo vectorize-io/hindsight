@@ -39,6 +39,12 @@ It eliminates the shortcomings of alternative techniques such as RAG and knowled
 
 ---
 
+## Launch video
+
+<a href="assets/hindsight-launch.mp4"><img src="assets/hindsight-launch.jpg" width="400" alt="Hindsight launch video"></a>
+
+A 22-second 1:1 launch video with sound ([captions](assets/hindsight-launch.srt)). Click the poster to play.
+
 ## Memory Performance & Accuracy
 
 Hindsight is the most accurate agent memory system ever tested according to benchmark performance. It has achieved state-of-the-art performance on the LongMemEval benchmark, widely used to assess memory system performance across a variety of conversational AI scenarios. The current reported performance of Hindsight and other agent memory solutions as of January 2026 is shown here:
