@@ -133,7 +133,7 @@ def _start_daemon(config: dict[str, str], profile: str) -> str:
     return manager.get_url(profile)
 
 
-def _stop_embedded_daemon(profile: str) -> bool:
+def _stop_daemon(profile: str) -> bool:
     """Stop the daemon for *profile* (used when the profile env drifted and must be re-read).
     The database lives outside the process, so a stop loses no data."""
     try:
@@ -145,7 +145,7 @@ def _stop_embedded_daemon(profile: str) -> bool:
         return False
 
 
-def _embedded_daemon_is_running(profile: str) -> bool:
+def _daemon_is_running(profile: str) -> bool:
     """Whether the daemon for *profile* is up (used for status reporting, never to gate a call:
     the retry path in ``_run_hindsight_operation`` recreates the client, which restarts it)."""
     try:

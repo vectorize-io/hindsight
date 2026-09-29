@@ -90,13 +90,13 @@ def test_a_daemon_that_will_not_start_raises_naming_the_profile(monkeypatch):
 
 def test_daemon_status_and_stop_never_raise(monkeypatch):
     calls = _fake_embed_module(monkeypatch)
-    assert embedded._embedded_daemon_is_running("hermes") is True
-    assert embedded._stop_embedded_daemon("hermes") is True
+    assert embedded._daemon_is_running("hermes") is True
+    assert embedded._stop_daemon("hermes") is True
     assert calls["stop"] == "hermes"
 
     monkeypatch.setitem(sys.modules, "hindsight_embed", SimpleNamespace())  # no get_embed_manager
-    assert embedded._embedded_daemon_is_running("hermes") is False
-    assert embedded._stop_embedded_daemon("hermes") is False
+    assert embedded._daemon_is_running("hermes") is False
+    assert embedded._stop_daemon("hermes") is False
 
 
 def test_the_plugin_never_depends_on_hindsight_all_again():
@@ -120,3 +120,28 @@ def test_the_plugin_never_depends_on_hindsight_all_again():
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     assert alias.name not in banned_modules, f"{name}:{node.lineno} imports {alias.name}"
+
+
+def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(monkeypatch, tmp_path):
+    """Ordering is load-bearing: the daemon reads the profile .env at boot, so a drifted file must
+    be rewritten (and a running daemon stopped) BEFORE the client is built — building it is what
+    starts the daemon now. Booting first would pin the stale values for the life of the process.
+    """
+    from hindsight_hermes import HindsightMemoryProvider
+
+    order = []
+    provider = HindsightMemoryProvider()
+    provider._config = {"profile": "orderingtest", "llm_provider": "ollama"}
+
+    monkeypatch.setattr("hindsight_hermes._load_simple_env", lambda path: {"STALE": "1"})
+    monkeypatch.setattr("hindsight_hermes._build_embedded_profile_env", lambda cfg: {"FRESH": "1"})
+    monkeypatch.setattr("hindsight_hermes._may_rewrite_profile_env", lambda cfg: True)
+    monkeypatch.setattr("hindsight_hermes._embedded_profile_env_path", lambda cfg: tmp_path / "p.env")
+    monkeypatch.setattr("hindsight_hermes._materialize_embedded_profile_env", lambda cfg: order.append("rewrote env"))
+    monkeypatch.setattr("hindsight_hermes._daemon_is_running", lambda profile: True)
+    monkeypatch.setattr("hindsight_hermes._stop_daemon", lambda profile: order.append("stopped daemon"))
+    monkeypatch.setattr(type(provider), "_get_client", lambda self: order.append("built client"))
+
+    provider._daemon_start_worker()
+
+    assert order == ["rewrote env", "stopped daemon", "built client"]

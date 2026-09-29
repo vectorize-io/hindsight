@@ -36,7 +36,7 @@ from .embedded import (
     _RETRIABLE_CONNECTION_MARKERS,
     _build_embedded_profile_env,
     _check_local_runtime,
-    _embedded_daemon_is_running,
+    _daemon_is_running,
     _embedded_llm_api_key,
     _embedded_profile_env_path,
     _export_port_health_grace_timeout,
@@ -45,7 +45,7 @@ from .embedded import (
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
     _start_daemon,
-    _stop_embedded_daemon,
+    _stop_daemon,
 )
 from .settings import (
     _DEFAULT_API_URL,
@@ -1158,9 +1158,9 @@ class HindsightMemoryProvider(MemoryProvider):
             if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)
-                    if _embedded_daemon_is_running(profile):
+                    if _daemon_is_running(profile):
                         _log("\n=== Config changed, restarting daemon ===\n")
-                        _stop_embedded_daemon(profile)
+                        _stop_daemon(profile)
                 else:
                     logger.warning(
                         "Hindsight profile env for %r holds an LLM API key this process cannot see "
