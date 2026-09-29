@@ -548,6 +548,26 @@ _GO_DURATION_RE = re.compile(r"(?P<amount>\d+(?:\.\d+)?)(?P<unit>ms|s|m|h|d)")
 _GO_DURATION_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 
 
+def _asks_for_reasoning_effort_none(e: APIStatusError) -> bool:
+    """Whether OpenAI rejected function tools and named ``reasoning_effort="none"`` as the fix.
+
+    Some OpenAI reasoning models refuse function tools on /v1/chat/completions at
+    any effort level *including an absent one* -- verified for gpt-5.6-terra and
+    gpt-6-luna (#4891):
+
+        Function tools with reasoning_effort are not supported for gpt-6-luna in
+        /v1/chat/completions. To use function tools, use /v1/responses or set
+        reasoning_effort to 'none'.
+
+    The error carries its own remedy, so match on that rather than on a model name:
+    the set of affected models is OpenAI's to grow, and reflect (a tool-calling
+    loop) otherwise fails outright until the operator discovers the setting.
+    """
+    # The remedy lives in the response body, not in the exception's own message.
+    message = _summarize_status_error(e, body_max=1000)
+    return "reasoning_effort" in message and "'none'" in message
+
+
 def _parse_go_duration_seconds(text: str) -> float | None:
     total = 0.0
     pos = 0
@@ -1032,7 +1052,7 @@ class OpenAICompatibleLLM(LLMInterface):
         return any(x in model_lower for x in ["gpt-4o", "gpt-4.1", "gpt-4-", "gpt-3.5"])
 
     def _supports_reasoning_model(self) -> bool:
-        """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek).
+        """Check if the current model is a reasoning model (o1, o3, GPT-5/6, DeepSeek).
 
         **Deprecated as a capability check — this list is frozen. Do not add models to
         it.** Guessing capability from a name never worked outside OpenAI's own products:
@@ -1052,7 +1072,7 @@ class OpenAICompatibleLLM(LLMInterface):
             # DeepSeek model as a reasoning model injects reasoning_effort,
             # which conflicts with thinking-disabled flash calls.
             return any(x in model_lower for x in ["v4-pro", "reasoner", "r1", "thinking"])
-        return any(x in model_lower for x in ["gpt-5", "o1", "o3"])
+        return any(x in model_lower for x in ["gpt-5", "gpt-6", "o1", "o3"])
 
     def _get_max_reasoning_tokens(self) -> int | None:
         """Get max reasoning tokens for reasoning models."""
@@ -1677,10 +1697,14 @@ class OpenAICompatibleLLM(LLMInterface):
 
         last_exception = None
 
-        for attempt in range(max_retries + 1):
+        # Mutable budget rather than a fixed range: the reasoning_effort repair below
+        # grants one extra attempt, since it changes the request instead of retrying it.
+        attempts_allowed = max_retries + 1
+        attempt = -1
+        while (attempt := attempt + 1) < attempts_allowed:
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{attempts_allowed}")
                     response = await asyncio.wait_for(
                         self._client.chat.completions.create(**call_params), timeout=self.timeout
                     )
@@ -1767,15 +1791,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 status_code = getattr(e, "status_code", None) or getattr(
                     getattr(e, "response", None), "status_code", None
                 )
-                if attempt < max_retries:
+                if attempt + 1 < attempts_allowed:
                     logger.warning(
                         f"Connection error in tool call ({self.provider}/{self.model}, scope={scope}, "
-                        f"attempt {attempt + 1}/{max_retries + 1}, HTTP {status_code}): {describe_llm_error(e)}"
+                        f"attempt {attempt + 1}/{attempts_allowed}, HTTP {status_code}): {describe_llm_error(e)}"
                     )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 logger.error(
-                    f"Connection error in tool call after {max_retries + 1} attempts "
+                    f"Connection error in tool call after {attempts_allowed} attempts "
                     f"({self.provider}/{self.model}, scope={scope}): {describe_llm_error(e)}"
                 )
                 raise
@@ -1796,15 +1820,28 @@ class OpenAICompatibleLLM(LLMInterface):
                 )
 
                 last_exception = e
-                if attempt < max_retries:
+
+                # Apply the remedy the API just named, once, and retry immediately
+                # (no backoff -- nothing is overloaded, the request shape was wrong).
+                if call_params.get("reasoning_effort") != "none" and _asks_for_reasoning_effort_none(e):
+                    logger.warning(
+                        f"{self.provider}/{self.model} rejects function tools unless reasoning_effort "
+                        f'is "none"; retrying with it (scope={scope}). Set '
+                        "HINDSIGHT_API_LLM_PROVIDER=openai-responses to keep reasoning on the tool path."
+                    )
+                    call_params["reasoning_effort"] = "none"
+                    attempts_allowed += 1
+                    continue
+
+                if attempt + 1 < attempts_allowed:
                     logger.warning(
                         f"APIStatusError in tool call ({self.provider}/{self.model}, scope={scope}, "
-                        f"attempt {attempt + 1}/{max_retries + 1}): {_summarize_status_error(e)}"
+                        f"attempt {attempt + 1}/{attempts_allowed}): {_summarize_status_error(e)}"
                     )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 logger.error(
-                    f"API error in tool call after {max_retries + 1} attempts "
+                    f"API error in tool call after {attempts_allowed} attempts "
                     f"({self.provider}/{self.model}, scope={scope}): {_summarize_status_error(e)}"
                 )
                 raise

@@ -64,7 +64,7 @@ See [Configuration](./configuration.md#llm-provider) for setup examples.
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
 
-Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
+Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. (Hindsight retries that 400 once with `reasoning_effort="none"` so the call still succeeds — but it succeeds without reasoning.) The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
 
 Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
 
