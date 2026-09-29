@@ -366,6 +366,10 @@ def document_from_sections(payload: dict) -> StructuredDocument:
         for raw_block in raw_section.get("blocks") or []:
             if raw_block is None:
                 continue
+            if isinstance(raw_block, dict):
+                raw_block = raw_block.get("text")
+                if raw_block is None:
+                    continue
             text = normalize_block_text(str(raw_block))
             if not text.strip():
                 continue

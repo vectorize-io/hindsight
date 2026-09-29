@@ -84,6 +84,11 @@ class TestDocumentFromSections:
         doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": ["One para.\n\nTwo para."]}]})
         assert [b.text for b in doc.sections[0].blocks] == ["One para.", "Two para."]
 
+    def test_dict_block_uses_its_text_field(self):
+        doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": [{"text": "One para."}]}]})
+        assert [b.text for b in doc.sections[0].blocks] == ["One para."]
+        assert render_document(doc) == "## T\n\nOne para.\n"
+
     def test_blank_lines_inside_a_fence_do_not_split(self):
         fence = "```python\ndef f():\n\n    return 1\n```"
         doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": [fence]}]})
