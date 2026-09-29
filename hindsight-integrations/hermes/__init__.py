@@ -438,6 +438,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        self._prefetch_generation = 0
         self._last_recall_returned, self._last_recall_count = False, 0
         self._apply_recall_settings({})
 
@@ -1238,9 +1239,9 @@ class HindsightMemoryProvider(MemoryProvider):
             logger.debug("Prefetch: skipped (%s)", why)
         return why is not None
 
-    def _recall(self, query: str) -> list:
+    def _recall(self, query: str, *, bank_id: str | None = None) -> list:
         kwargs: dict = {
-            "bank_id": self._bank_id,
+            "bank_id": self._bank_id if bank_id is None else bank_id,
             "query": query,
             "budget": self._budget,
             "max_tokens": self._recall_max_tokens,
@@ -1252,25 +1253,25 @@ class HindsightMemoryProvider(MemoryProvider):
         resp = self._run_hindsight_operation(lambda client: client.arecall(**kwargs))
         return resp.results or []
 
-    def _reflect(self, query: str) -> str | None:
+    def _reflect(self, query: str, *, bank_id: str | None = None) -> str | None:
+        bank_id = self._bank_id if bank_id is None else bank_id
         resp = self._run_hindsight_operation(
-            lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
+            lambda client: client.areflect(bank_id=bank_id, query=query, budget=self._budget)
         )
         return resp.text
 
-    def _do_recall(self, query: str) -> tuple[str, int]:
+    def _do_recall(self, query: str, *, bank_id: str | None = None) -> tuple[str, int]:
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
         -> (text, memory count); the count is 0 for reflect (synthesis) and on error."""
+        bank_id = self._bank_id if bank_id is None else bank_id
         if self._recall_max_input_chars:
             query = query[: self._recall_max_input_chars]
         try:
             if self._prefetch_method == "reflect":
-                logger.debug("Recall: calling reflect (bank=%s, query_len=%d)", self._bank_id, len(query))
-                return self._reflect(query) or "", 0
-            logger.debug(
-                "Recall: calling recall (bank=%s, query_len=%d, budget=%s)", self._bank_id, len(query), self._budget
-            )
-            results = self._recall(query)
+                logger.debug("Recall: calling reflect (bank=%s, query_len=%d)", bank_id, len(query))
+                return self._reflect(query, bank_id=bank_id) or "", 0
+            logger.debug("Recall: calling recall (bank=%s, query_len=%d, budget=%s)", bank_id, len(query), self._budget)
+            results = self._recall(query, bank_id=bank_id)
             logger.debug("Recall: returned %d results", len(results))
             return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
         except Exception as e:
@@ -1324,14 +1325,23 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._bank_resolution_error or self._recall_sync or self._recall_disabled():
             return
 
+        with self._prefetch_lock:
+            # Capture ownership before retain waits or client/loop scheduling.
+            self._prefetch_generation += 1
+            generation, bank_id = self._prefetch_generation, self._bank_id
+
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
             # retain to be recall-visible so the warmed context includes it.
             if self._prefetch_waits_for_retain:
                 self._wait_for_retains_drained(self._prefetch_retain_drain_timeout)
-            text, count = self._do_recall(query)
-            if text:
-                with self._prefetch_lock:
+            if self._shutting_down.is_set():
+                return
+            text, count = self._do_recall(query, bank_id=bank_id)
+            with self._prefetch_lock:
+                # A capped join does not cancel the worker. Only its owner may
+                # publish; empty/error completions never mutate newer worker state.
+                if text and generation == self._prefetch_generation and not self._shutting_down.is_set():
                     self._prefetch_result, self._prefetch_count = text, count
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
@@ -1612,10 +1622,12 @@ class HindsightMemoryProvider(MemoryProvider):
             if not self._shutting_down.is_set():
                 self._enqueue_retain(_flush)
 
-        # 2. Drain the old session's in-flight prefetch and drop its result.
-        self._join_prefetch(3.0)
+        # 2. Invalidate BEFORE the bounded join: an old worker can outlive it.
         with self._prefetch_lock:
-            self._prefetch_result = ""
+            self._prefetch_generation += 1
+            self._prefetch_result, self._prefetch_count = "", 0
+            self._last_recall_returned, self._last_recall_count = False, 0
+        self._join_prefetch(3.0)
 
         # 3. Rotate to the new session.
         if parent_session_id:
@@ -1650,6 +1662,10 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
         # Stop accepting retain jobs first so late sync_turn() calls are dropped.
         self._shutting_down.set()
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            self._prefetch_result, self._prefetch_count = "", 0
+            self._last_recall_returned, self._last_recall_count = False, 0
         # The writer finishes in-flight work then exits on the sentinel; the
         # bounded join keeps shutdown predictable even if the daemon is wedged.
         if (writer := self._writer_thread) is not None and writer.is_alive():
