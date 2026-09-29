@@ -1513,6 +1513,21 @@ describe("grok-build installer", () => {
     expect(readJson(hooksPath(ctx))).toEqual({ hooks: { Stop: [mine] } });
   });
 
+  // readJson returns {} for any top-level value that is not a plain object, so a hand-mangled
+  // file is replaced rather than merged into and written back out as an array.
+  it("replaces a Grok hooks file that is not a JSON object", () => {
+    const ctx = makeCtx();
+    mkdirSync(dirname(hooksPath(ctx)), { recursive: true });
+    writeFileSync(hooksPath(ctx), '["junk"]');
+    expect(run(["install", "grok-build"], ctx)).toBe(0);
+    const file = readJson(hooksPath(ctx));
+    // Spreading the array in would have left a stray "0": "junk" beside the hooks.
+    expect(Object.keys(file)).toEqual(["hooks"]);
+    expect(Object.keys(file.hooks)).toEqual(
+      expect.arrayContaining(["SessionStart", "UserPromptSubmit", "Stop"])
+    );
+  });
+
   it("replaces a Grok hooks file whose hooks are not an object", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(hooksPath(ctx)), { recursive: true });

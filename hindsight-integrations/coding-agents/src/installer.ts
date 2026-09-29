@@ -107,9 +107,17 @@ function isPlainObject(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * JSON.parse accepts non-object top-level values (`[]`, `null`, a number), and every caller here
+ * treats the result as an object it can index and merge into — an array config would be written
+ * back out as an array, quietly replacing the host's file with something it cannot load. A
+ * top-level value that is not a plain object is as broken as an unparseable file, so both fall
+ * back to `{}`.
+ */
 function readJson(path: string): Record<string, any> {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return isPlainObject(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -1411,8 +1419,7 @@ const grok: HarnessInstaller = {
     writeFileSync(path, next);
 
     const hooksPath = grokHooksPath(c);
-    const read = readJson(hooksPath);
-    const file = isPlainObject(read) ? read : {};
+    const file = readJson(hooksPath);
     const hooks = isPlainObject(file.hooks) ? file.hooks : {};
     mergeHarnessHooks(hooks, "grok-build", c.dist);
     writeJson(hooksPath, { ...file, hooks });
@@ -1434,8 +1441,7 @@ const grok: HarnessInstaller = {
     }
     const hooksPath = grokHooksPath(c);
     if (existsSync(hooksPath)) {
-      const read = readJson(hooksPath);
-      const file = isPlainObject(read) ? read : {};
+      const file = readJson(hooksPath);
       if (isPlainObject(file.hooks)) {
         stripHarnessHooks(file.hooks, "grok-build");
         if (!Object.keys(file.hooks).length) delete file.hooks;
