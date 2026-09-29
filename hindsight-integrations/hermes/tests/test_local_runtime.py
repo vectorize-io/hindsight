@@ -48,7 +48,9 @@ def test_an_unrelated_import_failure_gets_no_install_hint(monkeypatch):
     assert embedded._local_runtime_hint(status.reason) == ""
 
 
-def _fake_embed_module(monkeypatch, *, running=True, url="http://127.0.0.1:54321"):
+def _fake_embed_module(monkeypatch, *, running=True, url="http://127.0.0.1:54321", scrubs=True):
+    """Stand in for hindsight_embed. *scrubs* says whether the installed release drops our
+    PYTHONPATH from the daemon child itself (the release after 0.10.2 does)."""
     calls = {}
 
     class _Manager:
@@ -67,7 +69,15 @@ def _fake_embed_module(monkeypatch, *, running=True, url="http://127.0.0.1:54321
             calls["stop"] = profile
             return True
 
-    monkeypatch.setitem(sys.modules, "hindsight_embed", SimpleNamespace(get_embed_manager=lambda: _Manager()))
+    manager_module = SimpleNamespace()
+    if scrubs:
+        manager_module._strip_parent_interpreter_env = lambda env: env
+    monkeypatch.setitem(
+        sys.modules,
+        "hindsight_embed",
+        SimpleNamespace(get_embed_manager=lambda: _Manager(), daemon_embed_manager=manager_module),
+    )
+    monkeypatch.setitem(sys.modules, "hindsight_embed.daemon_embed_manager", manager_module)
     return calls
 
 
@@ -145,3 +155,67 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
     provider._daemon_start_worker()
 
     assert order == ["rewrote env", "stopped daemon", "built client"]
+
+
+def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch):
+    """hindsight-embed <= 0.10.2 copies os.environ into the daemon, so Hermes' PYTHONPATH (its own
+    3.14 generation) reaches a server that uvx may run on another Python — which then imports
+    Hermes' pydantic and dies. Start it from a child that never had those variables."""
+    calls = _fake_embed_module(monkeypatch, running=False, scrubs=False)
+    monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    recorded = {}
+
+    def _run(cmd, **kwargs):
+        recorded["cmd"] = cmd
+        recorded.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(embedded.subprocess, "run", _run)
+
+    assert embedded._start_daemon({"HINDSIGHT_API_LLM_API_KEY": "sk-secret"}, "hermes") == "http://127.0.0.1:54321"
+    assert "ensure_running" not in calls  # started by the child, not in this process
+    assert "PYTHONPATH" not in recorded["env"] and "VIRTUAL_ENV" not in recorded["env"]
+    assert recorded["env"]["PATH"] == "/usr/bin"  # everything else is inherited
+    # the key travels on stdin; argv is visible to every user on the box
+    assert "sk-secret" not in " ".join(recorded["cmd"])
+    assert "sk-secret" in recorded["input"]
+
+
+def test_a_new_embed_is_left_to_scrub_the_env_itself(monkeypatch):
+    calls = _fake_embed_module(monkeypatch, scrubs=True)
+    monkeypatch.setattr(
+        embedded.subprocess, "run", lambda *a, **k: pytest.fail("must not spawn a helper when embed scrubs")
+    )
+
+    assert embedded._start_daemon({}, "hermes") == "http://127.0.0.1:54321"
+    assert calls["ensure_running"] == ({}, "hermes")
+
+
+def test_a_running_daemon_is_reused_instead_of_respawning_the_helper(monkeypatch):
+    _fake_embed_module(monkeypatch, running=True, scrubs=False)
+    monkeypatch.setattr(
+        embedded.subprocess, "run", lambda *a, **k: pytest.fail("must not spawn a helper for a live daemon")
+    )
+
+    assert embedded._start_daemon({}, "hermes") == "http://127.0.0.1:54321"
+
+
+def test_a_failing_helper_raises_naming_the_profile(monkeypatch):
+    _fake_embed_module(monkeypatch, running=False, scrubs=False)
+    monkeypatch.setattr(
+        embedded.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="ModuleNotFoundError: pydantic_core"),
+    )
+
+    with pytest.raises(RuntimeError, match="hermes"):
+        embedded._start_daemon({}, "hermes")
+
+
+def test_an_unreadable_embed_defaults_to_the_safe_path(monkeypatch):
+    """If we cannot tell whether the installed embed scrubs the env, assume it does not: the child
+    is correct either way, while skipping it on a release that needs it breaks the daemon."""
+    monkeypatch.setitem(sys.modules, "hindsight_embed", SimpleNamespace())  # no daemon_embed_manager
+    assert embedded._embed_scrubs_parent_env() is False

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +112,73 @@ def _local_runtime_hint(reason: str | None) -> str:
     return ""
 
 
+# Interpreter-selection variables of this process: meaningful only for the interpreter that set
+# them. hindsight-embed drops them from the daemon child itself since the release after 0.10.2;
+# on 0.10.1/0.10.2 we have to keep them away from it ourselves (see _start_daemon_in_clean_child).
+_PARENT_INTERPRETER_ENV = frozenset({"PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "VIRTUAL_ENV"})
+
+# Ask the installed hindsight-embed to start the daemon, reading the config off stdin so an LLM
+# API key never appears in the process list.
+_DAEMON_START_SNIPPET = (
+    "import json, sys\n"
+    "from hindsight_embed import get_embed_manager\n"
+    "sys.exit(0 if get_embed_manager().ensure_running(json.load(sys.stdin), sys.argv[1]) else 1)\n"
+)
+
+# Generous: the first start on a machine with no hindsight-api binary downloads the server through
+# uvx before the manager's own 180s health deadline even begins.
+_DAEMON_START_TIMEOUT = 900
+
+
+def _embed_scrubs_parent_env() -> bool:
+    """Whether the installed hindsight-embed keeps our PYTHONPATH out of the daemon child itself.
+
+    Unreadable for any reason reads as "no", so the safe path (our own clean child) is the default.
+    """
+    try:
+        from hindsight_embed import daemon_embed_manager
+
+        return hasattr(daemon_embed_manager, "_strip_parent_interpreter_env")
+    except Exception:
+        return False
+
+
+def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
+    """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
+
+    Workaround for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process.
+    Hermes' package-manager install exports ``PYTHONPATH=<repo>:<its 3.14 generation>``
+    (pm/environments.py), and the daemon usually runs through ``uvx hindsight-api`` on whatever
+    Python uv picks. When those minor versions differ the server imports Hermes' pydantic and dies
+    on ``ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'``; when they happen to
+    match it works, which is why this fails on some machines and not others.
+
+    Deliberately NOT done by scrubbing ``os.environ`` around ``ensure_running``: that hole would be
+    process-wide for the whole spawn *and* health wait — minutes while uvx downloads the server on
+    a first run — and Hermes' own children rely on that PYTHONPATH. A child process confines it.
+    """
+    env = {key: value for key, value in os.environ.items() if key not in _PARENT_INTERPRETER_ENV}
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile],
+            input=json.dumps(config),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_DAEMON_START_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not start the Hindsight daemon helper for profile %r: %s", profile, exc)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "Hindsight daemon helper failed for profile %r: %s",
+            profile,
+            (result.stderr or result.stdout or "").strip()[-500:],
+        )
+    return result.returncode == 0
+
+
 def _start_daemon(config: dict[str, str], profile: str) -> str:
     """Start (or reuse) the out-of-process daemon for *profile* and return its base URL.
 
@@ -128,7 +197,11 @@ def _start_daemon(config: dict[str, str], profile: str) -> str:
     from hindsight_embed import get_embed_manager
 
     manager = get_embed_manager()
-    if not manager.ensure_running(config, profile):
+    if _embed_scrubs_parent_env():
+        started = manager.ensure_running(config, profile)
+    else:
+        started = manager.is_running(profile) or _start_daemon_in_clean_child(config, profile)
+    if not started:
         raise RuntimeError(f"Failed to start the Hindsight daemon for profile {profile!r}")
     return manager.get_url(profile)
 
