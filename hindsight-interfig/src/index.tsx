@@ -304,7 +304,11 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
           }}
         >
           {item.logo != null ? (
-            <img src={item.logo} alt={String(item.label ?? '')} style={{ display: 'block', height: 36, marginBottom: 12 }} />
+            <img
+              src={item.logo}
+              alt={typeof item.label === 'string' ? item.label : ''}
+              style={{ display: 'block', height: 36, marginBottom: 12 }}
+            />
           ) : (
             item.label != null && (
               <div

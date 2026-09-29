@@ -63,3 +63,9 @@ test('a figure with no steps still draws its boxes', () => {
   assert.ok(svg.includes('Agent') && svg.includes('Memories'));
   assert.ok(!svg.includes('<animateMotion'), 'nothing to animate');
 });
+
+test('a frame with a logo keeps its text title: the SVG draws no images', () => {
+  const svg = toSvg({ ...fig, layout: { ...fig.layout, label: 'Hindsight', logo: '/img/logo.png' } });
+  assert.match(svg, />HINDSIGHT</);
+  assert.doesNotMatch(svg, /logo\.png|<image/);
+});
