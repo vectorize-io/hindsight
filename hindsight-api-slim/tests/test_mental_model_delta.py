@@ -1443,12 +1443,15 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.parametrize("history_enabled", [True, False], ids=["history-on", "history-off"])
     async def test_delta_skip_loop_escalates_to_full_regeneration(
         self,
         memory: MemoryEngine,
         request_context: RequestContext,
         patch_reflect,
         patch_llm_call,
+        monkeypatch,
+        history_enabled: bool,
     ):
         """A wedged delta unwedges itself after the escalation threshold (#4875).
 
@@ -1458,6 +1461,10 @@ class TestDeltaRefreshPlumbing:
         failures the next refresh rebuilds the baseline with a full
         regeneration instead of attempting a third doomed delta.
         """
+        monkeypatch.setenv("HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY", str(history_enabled).lower())
+        from hindsight_api.config import clear_config_cache
+
+        clear_config_cache()
         bank_id = f"test-delta-escalation-{uuid.uuid4().hex[:8]}"
         await memory.ensure_bank_profile(bank_id, request_context=request_context)
 
@@ -1501,6 +1508,22 @@ class TestDeltaRefreshPlumbing:
             )
             assert preserved["content"] == existing
 
+        async with memory._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT delta_all_skip_streak FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+        assert row["delta_all_skip_streak"] == 2
+        if not history_enabled:
+            async with memory._pool.acquire() as conn:
+                history_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM mental_model_history WHERE bank_id = $1 AND mental_model_id = $2",
+                    bank_id,
+                    mm["id"],
+                )
+            assert history_count == 0  # Recovery must not silently turn on audit storage.
+
         # The streak is at the threshold, so this refresh escalates instead of
         # attempting a third delta against the wedged baseline: it writes the
         # full-regeneration candidate outright and the model unwedges.
@@ -1509,6 +1532,13 @@ class TestDeltaRefreshPlumbing:
         )
         assert refreshed is not None
         assert "Full regeneration." in refreshed["content"]
+        async with memory._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT delta_all_skip_streak FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+        assert row["delta_all_skip_streak"] == 0
 
         # The streak broke with the success, so the refresh after it is free to
         # run as a delta again — and still fails cleanly, not silently.
@@ -1517,6 +1547,39 @@ class TestDeltaRefreshPlumbing:
                 bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
             )
 
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_non_delta_failure_resets_all_skip_streak(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        """A different failure breaks the consecutive delta all-skipped streak."""
+        bank_id = f"test-delta-streak-reset-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+        for reason in ("delta_ops_all_skipped", "unexpected_error"):
+            await memory._record_mental_model_refresh_failure(
+                bank_id,
+                mm["id"],
+                outcome="refresh_failed_error",
+                failure_reason=reason,
+                error_message="test failure",
+            )
+        async with memory._pool.acquire() as conn:
+            streak = await conn.fetchval(
+                "SELECT delta_all_skip_streak FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+        assert streak == 0
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_delta_partial_skip_applies_the_rest_and_records_it(
