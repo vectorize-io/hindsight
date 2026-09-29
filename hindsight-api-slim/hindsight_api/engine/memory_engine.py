@@ -11482,15 +11482,20 @@ class MemoryEngine(MemoryEngineInterface):
                     # Match delete_document's bank-before-data order. Otherwise a
                     # bank delete could hold its documents while waiting for the
                     # bank row held by a concurrent document delete.
-                    await conn.fetchrow(
+                    bank_row = await conn.fetchrow(
                         f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
                     )
+                    # Deleting a bank that was never created is a no-op that reports zero, not an
+                    # error. A store that owns its storage has no namespace for such a bank, and
+                    # counting in it faults rather than answering zero, so it must not be asked:
+                    # every store_owned_for() below is gated on the bank row actually being there.
+                    bank_present = bank_row is not None
                     if fact_type:
                         from .memories import get_memories as _get_memories_for_scope
 
                         _scope_store = _get_memories_for_scope()
-                        _scope_store_owned = _scope_store.store_owned_for(bank_id)
+                        _scope_store_owned = bank_present and _scope_store.store_owned_for(bank_id)
 
                         # For source memory types, capture ids so we can invalidate
                         # dependent observations AFTER the delete below. Running the
@@ -11581,7 +11586,7 @@ class MemoryEngine(MemoryEngineInterface):
                         from .memories import get_memories as _get_memories_for_delete
 
                         _del_store = _get_memories_for_delete()
-                        if not _del_store.store_owned_for(bank_id):
+                        if not (bank_present and _del_store.store_owned_for(bank_id)):
                             units_count = await conn.fetchval(
                                 f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id
                             )
@@ -11723,7 +11728,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import DeletePredicate, get_memories
 
         store = get_memories()
-        if store.store_owned_for(bank_id):
+        if bank_present and store.store_owned_for(bank_id):
             # Three cases, and the middle one is the whole point. `delete_bank_profile` is what
             # separates "delete this bank" from "clear this bank's memories" — the API's clear
             # endpoint calls in with it False, and the bank goes on existing afterwards.
