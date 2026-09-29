@@ -123,6 +123,12 @@ export interface ClientOpts {
    *  the key mid-session 401'd every call until the host restarted (#3600). Consulted only on a
    *  401, so the happy path never touches the filesystem. See `core/host-client.ts`. */
   tokenProvider?: () => string | undefined;
+  /** How long one request may spend waiting out rate limits (HTTP 429) before it throws
+   *  `RateLimitedError`. Default 0: a hook answers to its host's deadline and must fail fast.
+   *  Background work that has nobody waiting on it (deepen) sets this, because a 429 it does not
+   *  wait out is an item missing from the bank — deepen used to log "failed to enqueue" and carry
+   *  on, dropping about a third of a repo's chats against a rate-limited Hindsight Cloud. */
+  rateLimitPatienceMs?: number;
 }
 
 export interface RetainOpts {
@@ -275,6 +281,11 @@ const RETRY_AFTER_FLOOR_MS = 10 * 1000;
  */
 const RETRY_AFTER_CEILING_MS = 60 * 1000;
 
+/** First wait when a request is rate-limited and `Retry-After` asks for less (Cloud sends "0"),
+ *  doubled per attempt up to RETRY_AFTER_CEILING_MS. Jittered, so a pool of workers that all got
+ *  the 429 together does not come back together. */
+const RATE_LIMIT_BACKOFF_MS = 1000;
+
 /**
  * What the agent gets back from reading one page.
  *
@@ -318,6 +329,7 @@ export class HindsightClient {
   readonly observationScopes: ObservationScopes;
   readonly pageSearchLimit: number;
   readonly recallOptions: Record<string, unknown>;
+  private readonly rateLimitPatienceMs: number;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
@@ -333,6 +345,7 @@ export class HindsightClient {
     // module-level object, and handing every client the same reference makes one caller's
     // mutation everyone's.
     this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
+    this.rateLimitPatienceMs = o.rateLimitPatienceMs ?? 0;
   }
 
   /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
@@ -408,13 +421,23 @@ export class HindsightClient {
   ): Promise<Response> {
     // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
     // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
-    const r = await this.fetchWithAuth(url, {
-      method,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (r.status === 429 && !tolerate.includes(429))
-      throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
+    const payload = body ? JSON.stringify(body) : undefined;
+    let r: Response;
+    for (let attempt = 0, waited = 0; ; attempt++) {
+      r = await this.fetchWithAuth(url, {
+        method,
+        body: payload,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (r.status !== 429 || tolerate.includes(429)) break;
+      const asked = retryAfterMs(r.headers.get("retry-after"));
+      const backoff = Math.min(RETRY_AFTER_CEILING_MS, RATE_LIMIT_BACKOFF_MS * 2 ** attempt);
+      const wait =
+        Math.min(RETRY_AFTER_CEILING_MS, Math.max(asked, backoff)) * (1 + Math.random() / 2);
+      if (waited + wait > this.rateLimitPatienceMs) throw new RateLimitedError(asked);
+      await sleep(wait);
+      waited += wait;
+    }
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
       throw new Error(
         `${method} ${url} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`

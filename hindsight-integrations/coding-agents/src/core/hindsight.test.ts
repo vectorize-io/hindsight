@@ -731,3 +731,57 @@ describe("package.json", () => {
     expect(pkg.dependencies ?? {}).toEqual({});
   });
 });
+
+describe("HindsightClient rate-limit patience", () => {
+  const retainOnce = (client: HindsightClient) =>
+    client.retain("chat body", "developer chat", "chat:1", [], "conversation");
+
+  it("fails fast on a 429 by default — a hook answers to its host's deadline", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(429, {}, { "Retry-After": "0" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    await expect(retainOnce(client)).rejects.toMatchObject({ code: "rate_limited" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits out 429s and lands the write when given patience", async () => {
+    // Cloud answers "Retry-After: 0"; deepen used to log "failed to enqueue" and drop the item.
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(429, {}, { "Retry-After": "0" }))
+      .mockResolvedValueOnce(jsonResponse(429, {}, { "Retry-After": "0" }))
+      .mockResolvedValueOnce(jsonResponse(200, { operation_id: "op-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      rateLimitPatienceMs: 60_000,
+    });
+    const p = retainOnce(client);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await p;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(client.opIds).toEqual(["op-1"]);
+    // the same payload every time — a retry must not change what is written
+    const bodies = fetchMock.mock.calls.map((c) => (c[1] as RequestInit).body);
+    expect(new Set(bodies).size).toBe(1);
+  });
+
+  it("gives up with RateLimitedError once the patience is spent", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => jsonResponse(429, {}, { "Retry-After": "0" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      rateLimitPatienceMs: 5_000,
+    });
+    const p = retainOnce(client);
+    const settled = expect(p).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(fetchMock.mock.calls.length).toBeLessThan(6);
+  });
+});

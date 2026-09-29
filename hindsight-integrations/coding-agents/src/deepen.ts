@@ -135,6 +135,9 @@ async function main() {
       project: PAGE_PROJECT,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
+      // Nobody waits on a background seed, and a 429 it gives up on is history missing from the
+      // bank until some later session happens to re-run it.
+      rateLimitPatienceMs: 10 * 60 * 1000,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
