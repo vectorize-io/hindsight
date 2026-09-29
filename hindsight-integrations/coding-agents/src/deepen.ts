@@ -224,7 +224,8 @@ async function main() {
           const shas = execFileSync(
             "git",
             ["-C", REPO!, "rev-list", `-n`, String(DEEPEN_DIFF_TARGET), "HEAD"],
-            { encoding: "utf8", windowsHide: true }
+            // `install` runs this with inherited stdio: an empty repo's HEAD error must not print.
+            { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
           )
             .trim()
             .split("\n")
