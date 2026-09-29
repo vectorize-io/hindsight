@@ -13,12 +13,16 @@ type would pass while the engine still handed over the model.
 """
 
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 
 import pytest
 
 from hindsight_api.engine.memories import set_memories
+from hindsight_api.engine.memories.base import FullRecallRequest
+from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import RecallResult
+from hindsight_api.models import RequestContext
 from tests.test_memories_extension import InMemoryMemories
 
 WINDOW_START = datetime(2023, 4, 1, tzinfo=timezone.utc)
@@ -28,39 +32,40 @@ WINDOW_END = datetime(2023, 6, 30, 23, 59, 59, tzinfo=timezone.utc)
 class _RecordingStore(InMemoryMemories):
     """Claims the recall and keeps the window it was handed, exactly as it arrived."""
 
-    def __init__(self):
+    def __init__(self, bank_id: str) -> None:
         super().__init__({})
+        self.bank_id = bank_id
         #: Sentinel rather than ``None``: "never called" and "called with no window" differ here.
-        self.seen = "not-called"
+        self.seen: object = "not-called"
 
-    async def full_recall(self, request):
+    async def full_recall(self, request: FullRecallRequest) -> RecallResult:
         self.seen = request.temporal_window
         return RecallResult(results=[])
 
 
 @pytest.fixture
-def restore_default_store():
+def restore_default_store() -> Iterator[None]:
     yield
     set_memories(None)
 
 
-async def _claiming_bank(memory, request_context) -> tuple[str, _RecordingStore]:
+async def _claiming_store(memory: MemoryEngine, request_context: RequestContext) -> _RecordingStore:
     bank_id = f"so-temporal-{uuid.uuid4().hex[:8]}"
-    store = _RecordingStore()
+    store = _RecordingStore(bank_id)
     set_memories(store)
     # The store owns the facts, never the bank row, so create it the way a retain would.
     await memory.ensure_bank_profile(bank_id, request_context=request_context)
-    return bank_id, store
+    return store
 
 
 @pytest.mark.asyncio
 async def test_a_claiming_store_receives_the_window_as_a_tuple(
     api_client, memory, request_context, restore_default_store
 ):
-    bank_id, store = await _claiming_bank(memory, request_context)
+    store = await _claiming_store(memory, request_context)
 
     response = await api_client.post(
-        f"/v1/default/banks/{bank_id}/memories/recall",
+        f"/v1/default/banks/{store.bank_id}/memories/recall",
         json={
             "query": "what shipped that quarter",
             "types": ["world"],
@@ -79,10 +84,10 @@ async def test_a_claiming_store_receives_the_window_as_a_tuple(
 @pytest.mark.asyncio
 async def test_no_window_stays_none(api_client, memory, request_context, restore_default_store):
     """The conversion must not invent a window for a recall that asked for none."""
-    bank_id, store = await _claiming_bank(memory, request_context)
+    store = await _claiming_store(memory, request_context)
 
     response = await api_client.post(
-        f"/v1/default/banks/{bank_id}/memories/recall",
+        f"/v1/default/banks/{store.bank_id}/memories/recall",
         json={"query": "what shipped that quarter", "types": ["world"], "limit": 10},
     )
 
