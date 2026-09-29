@@ -14,6 +14,7 @@ from hindsight_embed._http_probe import ProbeResponse
 from hindsight_embed.daemon_embed_manager import (
     DaemonEmbedManager,
     _detach_popen_kwargs,
+    _runs_a_foreign_interpreter,
     _strip_parent_interpreter_env,
     _terminate_startup_process,
 )
@@ -118,6 +119,36 @@ def test_uvx_fallback_does_not_inherit_the_parent_interpreter_env(tmp_path, monk
     assert "PYTHONPATH" not in env and "PYTHONHOME" not in env and "VIRTUAL_ENV" not in env
     assert env["PATH"] == "/host/venv/bin:/usr/bin"  # uvx itself is found through PATH
     assert env["HINDSIGHT_API_DAEMON_LOG"] == str(tmp_path / "daemon.log")
+
+
+def test_the_dev_uv_run_command_does_not_inherit_it_either(tmp_path, monkeypatch):
+    """`uv run --project <api-slim>` resolves that project's own environment, so it is as foreign
+    as uvx: a monorepo checkout under a host that exports PYTHONPATH would hit the same crash."""
+    monkeypatch.setenv("PYTHONPATH", "/host/venv/lib/python3.14/site-packages")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(
+        return_value=["uv", "run", "--project", "/repo/hindsight-api-slim", "--extra", "all", "hindsight-api"]
+    )
+
+    assert "PYTHONPATH" not in _spawned_env(manager, tmp_path, monkeypatch)
+
+
+def test_a_resolved_launcher_path_is_still_recognised(tmp_path, monkeypatch):
+    """The guard matches the basename: the sibling candidates in _find_api_command are returned
+    resolved, so resolving the launcher too must not silently stop the scrub."""
+    monkeypatch.setenv("PYTHONPATH", "/host/site-packages")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["/opt/tools/uvx", "hindsight-api@0.0.0"])
+
+    assert "PYTHONPATH" not in _spawned_env(manager, tmp_path, monkeypatch)
+
+
+def test_only_uv_launchers_count_as_foreign():
+    assert _runs_a_foreign_interpreter(["uvx", "hindsight-api@1.0.0"])
+    assert _runs_a_foreign_interpreter(["uv", "run", "--project", "/x", "hindsight-api"])
+    assert _runs_a_foreign_interpreter(["/opt/bin/uvx.exe", "hindsight-api@1.0.0"])
+    assert not _runs_a_foreign_interpreter(["/venv/bin/hindsight-api"])
+    assert not _runs_a_foreign_interpreter(["/target/bin/hindsight-api"])
 
 
 def test_installed_binary_keeps_the_parent_interpreter_env(tmp_path, monkeypatch):
