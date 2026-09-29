@@ -4,9 +4,9 @@ import { Flow, type Figure } from '../src';
 /** The page `scripts/export.mjs` records: one figure, alone on the page, one step at a time.
  *  It stays blank until the recorder calls `startExport`, so no frames are wasted before the step begins. */
 const DARK = { accent: '#3396e8', fg: '#e3e3e3', muted: '#9aa0a6', bg: '#1b1b1d', surface: '#242526', border: '#3a3b3c' };
-/** `--bold`: darker text and borders, for a clip watched small in a feed. */
+/** A clip is watched small in a feed: darker text and borders than the docs site uses… */
 const BOLD = { fg: '#0b1220', muted: '#374151', border: '#94a3b8' };
-/** `--bold` also keeps every box and edge at full strength, and enlarges the caption and card text. */
+/** …every box and edge at full strength, and a bigger caption and card text. */
 const BOLD_CSS = `
 .interfig [data-fig]{border-width:1.5px !important;opacity:1 !important}
 .interfig svg path[stroke-opacity="0.35"]{stroke-opacity:.85}
@@ -15,11 +15,10 @@ const BOLD_CSS = `
 `;
 const ZOOM = 1.3;
 
-/** `--zoom`: a camera that follows the moving packets in close, and pulls back out between hops.
+/** A camera that follows the moving packets in close, and pulls back out between hops.
  *  It moves the figure's canvas only, so the step label and narration under it stay in view. */
-function useCamera(on: boolean) {
+function useCamera() {
   useEffect(() => {
-    if (!on) return;
     const cam = { x: 0, y: 0, s: 1 };
     let raf = 0;
     const tick = () => {
@@ -61,7 +60,7 @@ function useCamera(on: boolean) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [on]);
+  }, []);
 }
 
 declare global {
@@ -77,9 +76,7 @@ declare global {
 
 export function ExportPage({ figure, dark }: { figure: Figure; dark: boolean }) {
   const [step, setStep] = useState<number | null>(null);
-  const params = new URLSearchParams(location.search);
-  const bold = params.has('bold');
-  useCamera(params.has('zoom'));
+  useCamera();
 
   useEffect(() => {
     window.exportSteps = (figure.props.steps ?? []).map((s, i) => (typeof s.label === 'string' ? s.label : `step-${i + 1}`));
@@ -103,14 +100,14 @@ export function ExportPage({ figure, dark }: { figure: Figure; dark: boolean }) 
           '.interfig button[aria-label="Full screen"], .interfig button[title="Playback speed"], .interfig button[aria-label="Pause"], .interfig button[aria-label="Play"] { display: none !important }'
         }
       </style>
-      {bold && <style>{BOLD_CSS}</style>}
+      <style>{BOLD_CSS}</style>
       {/* `key` restarts the figure on the wanted step: Flow plays the active step from its first beat. */}
       {step != null && (
         <Flow
           key={step}
           {...figure.props}
           steps={(figure.props.steps ?? []).slice(step, step + 1)}
-          theme={dark ? DARK : bold ? { ...figure.props.theme, ...BOLD } : figure.props.theme}
+          theme={dark ? DARK : { ...figure.props.theme, ...BOLD }}
         />
       )}
     </div>

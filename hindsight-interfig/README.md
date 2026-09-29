@@ -68,12 +68,11 @@ npm run export                                  # everything
 npm run export -- what-hindsight-does tempr     # only these figures
 npm run export -- --2x                          # play at 2x: half as long, same frames
 npm run export -- --square                      # pad to 1:1, for feeds that crop to a square
-npm run export -- --dark --gif                  # dark theme, and GIFs beside the MP4s
-npm run export -- --zoom --bold                 # a camera that follows the packets in close; darker text, bigger captions
+npm run export -- --dark                        # dark theme
 ```
 
-MP4 is the one to post: same quality at a fraction of a GIF's size (a 23s clip is ~2.7 MB against ~12 MB).
-Use `--gif` where a file has to autoplay inline, like a README.
+Clips are made for a feed: a camera follows the moving packets in close, and text, lines and captions are darker and
+bigger than on the docs site. MP4 only: the same clip as a GIF was ~4x the size and blurry.
 
 Needs `npx playwright install chromium` once, and `ffmpeg` on PATH.
 

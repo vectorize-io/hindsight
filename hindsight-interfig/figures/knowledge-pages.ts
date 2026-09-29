@@ -2,7 +2,7 @@ import { createElement as h, type ReactNode } from 'react';
 import type { Figure, FigRow } from '../src';
 
 // "Knowledge Pages" for hindsight-docs/docs/developer/knowledge-pages.mdx, also exported as a square
-// social clip (`npm run export -- knowledge-pages --square --zoom --bold`). One straight story:
+// social clip (`npm run export -- knowledge-pages --square`). One straight story:
 // A team's tools retain what happened → Hindsight learns from it → the "Deploying the API" page
 // updates itself → another client asks, and gets the answer from the updated page.
 // Two frames make it plain what is yours and what Hindsight runs.
