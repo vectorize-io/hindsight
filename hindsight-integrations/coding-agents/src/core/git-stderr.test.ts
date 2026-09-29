@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -199,5 +199,22 @@ describe("background git stderr isolation", () => {
     `
       )
     ).toContain("syncing git history (1/300)");
+  });
+
+  it("every git call in the shipped code captures stderr", () => {
+    // Structural guard: a new git call that forgets `stdio` reprints git's `fatal:` into the
+    // host's terminal (#4328, #4525), and no behavioural test exists for the call nobody wrote.
+    const src = fileURLToPath(new URL("..", import.meta.url));
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" }).filter(
+      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.startsWith("e2e")
+    );
+    const calls = files.flatMap((f) =>
+      [...readFileSync(join(src, f), "utf8").matchAll(/execFileSync\(\s*"git"[^;]*/g)].map((m) => ({
+        file: f,
+        captures: /stdio: \["ignore", "pipe", "pipe"\]/.test(m[0]),
+      }))
+    );
+    expect(calls.length).toBeGreaterThanOrEqual(5);
+    expect(calls.filter((c) => !c.captures)).toEqual([]);
   });
 });
