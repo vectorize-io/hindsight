@@ -4,7 +4,12 @@
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
+import {
+  advancePaths,
+  fingerprintTurns,
+  planRetain,
+  type RetainCursorStore,
+} from "./retain-cursor";
 import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
 import { uuidV5 } from "./uuid";
@@ -269,6 +274,15 @@ async function writeSession(
     bank: client.bank,
     path: transcriptPath,
   });
+  // Which files the document holds after this write-back. A replace rebuilds it from THIS file
+  // alone, so it forgets the others — which is what lets the file it dropped be appended back as a
+  // segment on its next hook, rather than replacing again.
+  const paths =
+    plan.mode === "replace"
+      ? transcriptPath
+        ? [transcriptPath]
+        : undefined
+      : advancePaths(cursor?.paths, transcriptPath);
   // Appends built but never confirmed. A replace rewrites the whole document from the same
   // transcript, so it SUBSUMES them; on every other path they go out first, oldest first, before
   // anything new — the document only ever grows in transcript order.
@@ -314,7 +328,7 @@ async function writeSession(
     turns: turns.length,
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
-    ...(transcriptPath ? { path: transcriptPath } : {}),
+    ...(paths ? { paths } : {}),
     ...(appendSupported ? { appendSupported: true } : {}),
   };
   // Still ours to retry only while the cursor holds the claim we write below.

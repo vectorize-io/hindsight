@@ -101,7 +101,7 @@ describe("planRetain", () => {
     // (#4493). Its turns are not a continuation of the prefix we wrote — they are the turns that
     // come AFTER it — so a replace would drop everything the earlier file contributed.
     const fileA = turns(4);
-    const cursor = { ...cursorFor(fileA, 4), path: "/rollouts/a.jsonl" };
+    const cursor = { ...cursorFor(fileA, 4), paths: ["/rollouts/a.jsonl"] };
     const fileB = turns(2, 100);
     expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
       mode: "append",
@@ -116,7 +116,7 @@ describe("planRetain", () => {
 
   it("does not re-append a continuation file that was already written", () => {
     const fileB = turns(2, 100);
-    const cursor = { ...cursorFor(fileB, 2), path: "/rollouts/b.jsonl" };
+    const cursor = { ...cursorFor(fileB, 2), paths: ["/rollouts/a.jsonl", "/rollouts/b.jsonl"] };
     expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
       mode: "skip",
     });
@@ -127,10 +127,25 @@ describe("planRetain", () => {
     });
   });
 
+  it("does not re-append an earlier file whose hook arrives after the session moved on", () => {
+    // A -> B retained, then a late Stop for A (a delayed hook, or a second process still writing the
+    // earlier rollout). Against the latest path alone every alternation reads as a brand-new segment
+    // and appends the whole file again, without bound. A is a file we already wrote, so it is not a
+    // segment: this replaces, exactly as it did before #4493.
+    const fileA = turns(4);
+    const cursor = {
+      ...cursorFor(turns(2, 100), 2),
+      paths: ["/rollouts/a.jsonl", "/rollouts/b.jsonl"],
+    };
+    expect(planRetain(fileA, cursor, { ...SUPPORTED, path: "/rollouts/a.jsonl" })).toEqual({
+      mode: "replace",
+    });
+  });
+
   it("does not duplicate a resumed transcript that copies the earlier turns", () => {
     // A new file that REPEATS the retained prefix is an ordinary extension, not a new segment.
     const fileA = turns(4);
-    const cursor = { ...cursorFor(fileA, 4), path: "/rollouts/a.jsonl" };
+    const cursor = { ...cursorFor(fileA, 4), paths: ["/rollouts/a.jsonl"] };
     expect(planRetain(turns(6), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
       mode: "append",
       fromTurn: 4,
