@@ -232,6 +232,23 @@ Retained documents use stable session-scoped IDs derived from the OpenClaw `sess
 
 `retainContext` is sent separately from the transcript content and gives Hindsight's extraction LLM interpretation guidance for the retained document. The default is designed for OpenClaw transcripts: it explains that sender/channel/provider metadata is operational routing data, that assistant-role first-person statements belong to the AI assistant, and that bank IDs or tags should not be treated as the discussed project. Sender/channel/provider stay in retain request metadata/context and are not prepended into retained transcript content.
 
+## Native memory capability
+
+When `hindsight-openclaw` holds OpenClaw's exclusive `memory` slot, it also registers
+OpenClaw's native memory capability (opt out with `"nativeCapability": false`). This
+backs the surfaces OpenClaw drives through the slot plugin with Hindsight recall:
+
+- the Control UI **Memory** page (provider status shows `hindsight`, embedding probe
+  hits the configured Hindsight API),
+- the `active-memory` plugin's proactive recall and its manager surface,
+- `openclaw doctor` memory status and the `plugin-sdk/memory-host-search` helpers.
+
+The capability never injects into prompts: prompt-side memory stays with the
+autoRecall hook, so enabling it cannot double-inject. Banks resolve through the same
+path as hooks and knowledge tools (`agentBankMap`, static `bankId`, and
+`dynamicBankGranularity` all apply). If you re-enable `active-memory`, disable one of
+`autoRecall` or `active-memory` to avoid duplicate pre-reply memory injection.
+
 ## OpenClaw compatibility
 
 Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.9.x**. The plugin reads both the old and the new conversation-metadata labels, so plugin and OpenClaw versions do not need to match.
