@@ -341,7 +341,12 @@ export class HindsightClient {
   }
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
+    // `identity`: the server gzips bodies >= 1 KB, and some hosts (DSH runs plugins on its own
+    // fetch) hand back the compressed bytes undecoded, so `.json()` dies on the gzip magic (#4868).
+    const h: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept-Encoding": "identity",
+    };
     if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;
   }

@@ -660,3 +660,31 @@ describe("HindsightClient.recallObservations", () => {
     });
   });
 });
+
+/**
+ * #4868: the server gzips bodies >= 1 KB, and DSH runs plugins on a fetch that returns those bytes
+ * undecoded — so every tool died in `.json()` on the gzip magic. Asking for `identity` means the
+ * server never compresses, whatever fetch the host provides.
+ */
+describe("HindsightClient response encoding", () => {
+  it("asks the server not to compress responses", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await new HindsightClient({ apiUrl: "http://x", bank: "b" }).req("GET", "http://x/thing");
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Accept-Encoding")).toBe("identity");
+  });
+});
+
+/**
+ * #4886: every dist file is self-contained (tsup `noExternal`), so a runtime `dependencies` entry
+ * only gives hosts something to resolve — and DSH's install check fails on the MCP SDK, whose root
+ * export points at files its tarball does not ship.
+ */
+describe("package.json", () => {
+  it("declares no runtime dependencies", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "../../package.json"), "utf8")
+    ) as { dependencies?: Record<string, string> };
+    expect(pkg.dependencies ?? {}).toEqual({});
+  });
+});
