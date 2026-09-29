@@ -21,7 +21,7 @@ def test_the_probe_requires_only_the_client_and_the_daemon_manager(monkeypatch):
     asked = []
     monkeypatch.setattr(embedded.importlib, "import_module", lambda name: asked.append(name))
 
-    assert embedded._check_local_runtime() == (True, None)
+    assert embedded._check_local_runtime() == embedded.LocalRuntimeStatus(available=True)
     assert asked == ["hindsight_client", "hindsight_embed.daemon_embed_manager"]
 
 
@@ -30,9 +30,9 @@ def test_a_missing_plugin_package_reports_it_with_the_reinstall_hint(monkeypatch
         raise ModuleNotFoundError("No module named 'hindsight_embed'")
 
     monkeypatch.setattr(embedded.importlib, "import_module", _boom)
-    available, reason = embedded._check_local_runtime()
-    assert available is False and "hindsight_embed" in reason
-    hint = embedded._local_runtime_hint(reason)
+    status = embedded._check_local_runtime()
+    assert status.available is False and "hindsight_embed" in status.reason
+    hint = embedded._local_runtime_hint(status.reason)
     assert "hermes plugins install hindsight" in hint
     assert "hindsight-all" not in hint
 
@@ -44,8 +44,8 @@ def test_an_unrelated_import_failure_gets_no_install_hint(monkeypatch):
         "import_module",
         lambda name: (_ for _ in ()).throw(RuntimeError("numpy: this CPU lacks AVX support")),
     )
-    _, reason = embedded._check_local_runtime()
-    assert embedded._local_runtime_hint(reason) == ""
+    status = embedded._check_local_runtime()
+    assert embedded._local_runtime_hint(status.reason) == ""
 
 
 def _fake_embed_module(monkeypatch, *, running=True, url="http://127.0.0.1:54321"):
@@ -75,7 +75,7 @@ def test_starting_the_daemon_passes_the_config_through_and_returns_its_url(monke
     calls = _fake_embed_module(monkeypatch)
     config = {"HINDSIGHT_API_LLM_PROVIDER": "ollama", "HINDSIGHT_API_LLM_MODEL": "gemma3:12b"}
 
-    url = embedded._start_embedded_daemon(config, "hermes")
+    url = embedded._start_daemon(config, "hermes")
 
     assert url == "http://127.0.0.1:54321"
     assert calls["ensure_running"] == (config, "hermes")
@@ -85,7 +85,7 @@ def test_starting_the_daemon_passes_the_config_through_and_returns_its_url(monke
 def test_a_daemon_that_will_not_start_raises_naming_the_profile(monkeypatch):
     _fake_embed_module(monkeypatch, running=False)
     with pytest.raises(RuntimeError, match="hermes"):
-        embedded._start_embedded_daemon({}, "hermes")
+        embedded._start_daemon({}, "hermes")
 
 
 def test_daemon_status_and_stop_never_raise(monkeypatch):

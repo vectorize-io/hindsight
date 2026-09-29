@@ -39,13 +39,12 @@ from .embedded import (
     _embedded_daemon_is_running,
     _embedded_llm_api_key,
     _embedded_profile_env_path,
-    _ensure_local_runtime,
     _export_port_health_grace_timeout,
     _load_simple_env,
     _local_runtime_hint,
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
-    _start_embedded_daemon,
+    _start_daemon,
     _stop_embedded_daemon,
 )
 from .settings import (
@@ -449,7 +448,7 @@ class HindsightMemoryProvider(MemoryProvider):
                 # The availability gate is the only place worth self-healing from: agent_init drops
                 # the provider outright when this returns False, and every other runtime probe below
                 # runs after it has already passed.
-                return _ensure_local_runtime()[0]
+                return _check_local_runtime().available
             return mode == "local_external" or bool(
                 _cloud_api_key(cfg) or cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
             )
@@ -469,8 +468,8 @@ class HindsightMemoryProvider(MemoryProvider):
                 return ""
         except Exception:
             return ""
-        available, reason = _check_local_runtime()
-        return "" if available else _local_runtime_hint(reason).strip()
+        status = _check_local_runtime()
+        return "" if status.available else _local_runtime_hint(status.reason).strip()
 
     def save_config(self, values, hermes_home):
         """Merge *values* into $HERMES_HOME/hindsight/config.json."""
@@ -708,9 +707,11 @@ class HindsightMemoryProvider(MemoryProvider):
         compose the same two packages ourselves. Same daemon, same profile, same profile ``.env``,
         same pg0 database: nothing of an existing user's data or config moves.
         """
-        available, reason = _check_local_runtime()
-        if not available:
-            raise RuntimeError("Hindsight local runtime is unavailable" + (f": {reason}" if reason else ""))
+        status = _check_local_runtime()
+        if not status.available:
+            raise RuntimeError(
+                "Hindsight local runtime is unavailable" + (f": {status.reason}" if status.reason else "")
+            )
         from hindsight_client import Hindsight
 
         cfg = self._config
@@ -731,7 +732,7 @@ class HindsightMemoryProvider(MemoryProvider):
             profile,
             daemon_config.get("HINDSIGHT_API_LLM_PROVIDER", ""),
         )
-        self._embedded_url = _start_embedded_daemon(daemon_config, profile)
+        self._embedded_url = _start_daemon(daemon_config, profile)
         logger.info("Connected to embedded Hindsight daemon at %s", self._embedded_url)
         return Hindsight(base_url=self._embedded_url)
 
@@ -958,12 +959,12 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._mode == "local_embedded":
             # Must precede the daemon_embed_manager import, which reads it at import time.
             _export_port_health_grace_timeout(cfg)
-            available, reason = _check_local_runtime()
-            if not available:
+            status = _check_local_runtime()
+            if not status.available:
                 logger.warning(
                     "Hindsight local mode disabled because its runtime could not be imported: %s.%s",
-                    reason,
-                    _local_runtime_hint(reason),
+                    status.reason,
+                    _local_runtime_hint(status.reason),
                 )
                 self._mode = "disabled"
                 return

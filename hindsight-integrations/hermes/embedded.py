@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import importlib.util
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +62,15 @@ def _export_port_health_grace_timeout(config: dict[str, Any]) -> None:
     os.environ.setdefault(_PORT_HEALTH_GRACE_ENV, repr(seconds))
 
 
-def _check_local_runtime() -> tuple[bool, str | None]:
+@dataclass(frozen=True)
+class LocalRuntimeStatus:
+    """Whether local_embedded can run in this process, and why not when it cannot."""
+
+    available: bool
+    reason: str | None = None
+
+
+def _check_local_runtime() -> LocalRuntimeStatus:
     """Whether what local_embedded needs IN THIS PROCESS imports cleanly: an HTTP client and
     the daemon manager. Nothing else belongs here.
 
@@ -78,9 +86,9 @@ def _check_local_runtime() -> tuple[bool, str | None]:
     try:
         for module in ("hindsight_client", "hindsight_embed.daemon_embed_manager"):
             importlib.import_module(module)
-        return True, None
+        return LocalRuntimeStatus(available=True)
     except Exception as exc:
-        return False, str(exc)
+        return LocalRuntimeStatus(available=False, reason=str(exc))
 
 
 def _local_runtime_hint(reason: str | None) -> str:
@@ -102,22 +110,7 @@ def _local_runtime_hint(reason: str | None) -> str:
     return ""
 
 
-def _ensure_local_runtime() -> tuple[bool, str | None]:
-    """What ``is_available()`` gates on for local modes.
-
-    Nothing to install any more: the two packages local_embedded needs in-process are declared in
-    this plugin's ``pyproject.toml``, and the server runs out-of-process. This used to
-    self-install ``hindsight-all`` through ``tools.lazy_deps.install_specs``, which on
-    package-manager Hermes is a retired shim that ran the update takeover child and exited the
-    process — so every ``hermes`` invocation became a ~40s "update" that drained hermes-gateway
-    and still left the import missing (NousResearch/hermes-agent#126494, fixed upstream in
-    af26acab73 to raise ImportError instead). Kept as a named seam because ``is_available()``
-    calls it and the distinction between "probe" and "probe + repair" may come back.
-    """
-    return _check_local_runtime()
-
-
-def _start_embedded_daemon(config: dict[str, Any], profile: str) -> str:
+def _start_daemon(config: dict[str, str], profile: str) -> str:
     """Start (or reuse) the out-of-process daemon for *profile* and return its base URL.
 
     This is what ``hindsight.HindsightEmbedded`` does internally — it is a composition of
@@ -126,7 +119,9 @@ def _start_embedded_daemon(config: dict[str, Any], profile: str) -> str:
     daemon, profile, profile ``.env`` and pg0 database while dropping the ``hindsight-all``
     dependency that cannot be installed alongside Hermes.
 
-    *config* carries only explicitly-set ``HINDSIGHT_*`` keys: an omitted key is resolved by the
+    *config* is an environment mapping, not a structured record — it is handed straight to the
+    daemon manager as the subprocess's env, so a dict of ``HINDSIGHT_*`` names is the interface.
+    It carries only explicitly-set keys: an omitted key is resolved by the
     daemon from the profile's ``.env``, then the parent environment, then its own default, and
     sending a placeholder instead would overwrite the profile's real value (#3253).
     """

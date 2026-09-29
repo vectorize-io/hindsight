@@ -99,13 +99,13 @@ def _check_mode_dependencies(mode: str) -> None:
     if mode != "local_embedded":
         print("  ✓ Dependencies up to date")
         return
-    available, reason = _check_local_runtime()
-    if available:
+    status = _check_local_runtime()
+    if status.available:
         print("  ✓ Dependencies up to date")
         print("  The Hindsight server runs as a separate process; first use downloads it if needed.")
         return
-    print(f"  ⚠ Missing from this environment: {reason}")
-    print(f" {_local_runtime_hint(reason).strip()}")
+    print(f"  ⚠ Missing from this environment: {status.reason}")
+    print(f" {_local_runtime_hint(status.reason).strip()}")
 
 
 def run_setup(provider, hermes_home: str, config: dict) -> None:
