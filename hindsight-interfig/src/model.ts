@@ -14,6 +14,8 @@ export type FigNode = {
 export type FigGroup = {
   id?: string;
   label?: ReactNode;
+  /** An image URL shown as the frame's title instead of the label (a product logo). The SVG export keeps the label. */
+  logo?: string;
   direction?: 'row' | 'column';
   gap?: number;
   /** Where children line up across the group's direction. Default: center (columns stretch). */

@@ -20,7 +20,7 @@ import { Flow } from '@vectorize-io/interfig';
 />;
 ```
 
-- `layout` — a tree. A group has `children` (and optional `label`, `direction: 'row' | 'column'`, `gap`, `align`). Only groups with a `label` get a frame. Anything else is a box: `{ id, label, sub?, shape?: 'decision' | 'store', lines?, width? }` (a content card grows to fit the most any step shows in it; `lines` is a minimum, `width` fixes its width) (decision = diamond, store = database cylinder: use it for data at rest, plain boxes for what processes it).
+- `layout` — a tree. A group has `children` (and optional `label`, `logo`, `direction: 'row' | 'column'`, `gap`, `align`). `logo` is an image URL shown as the frame's title in place of the label (the Hindsight frames use `/img/logo.png`; the gallery serves the docs site's `static/` folder, so the same path works in both). Only groups with a `label` get a frame. Anything else is a box: `{ id, label, sub?, shape?: 'decision' | 'store', lines?, width? }` (a content card grows to fit the most any step shows in it; `lines` is a minimum, `width` fixes its width) (decision = diamond, store = database cylinder: use it for data at rest, plain boxes for what processes it).
 - `edges` — `{ from, to, label?, id?, around? }`. `from`/`to` can be a box or a group id. Default id is `from->to`. `around: 'above' | 'below'` arcs the edge over/under the boxes in between (loops, skip-ahead edges). `quiet: true` draws it only while a step uses it.
 - `steps` — buttons under the figure. `flow` is a list of beats played in order. A beat is an edge id, an array of edge ids (run at the same time), or `{ edges?, say?, show?, ms? }`:
   - `edges` can be `{ edge, back?: true, data? }` — `back` runs it backwards, `data` rides along the packet as a small card.
@@ -69,6 +69,7 @@ npm run export -- what-hindsight-does tempr     # only these figures
 npm run export -- --2x                          # play at 2x: half as long, same frames
 npm run export -- --square                      # pad to 1:1, for feeds that crop to a square
 npm run export -- --dark --gif                  # dark theme, and GIFs beside the MP4s
+npm run export -- --zoom --bold                 # a camera that follows the packets in close; darker text, bigger captions
 ```
 
 MP4 is the one to post: same quality at a fraction of a GIF's size (a 23s clip is ~2.7 MB against ~12 MB).

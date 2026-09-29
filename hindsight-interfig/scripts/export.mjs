@@ -7,6 +7,7 @@
  *   npm run export -- --gif --dark       # also write GIFs, and record the dark theme
  *   npm run export -- --2x               # play at 2x: half as long, same frames
  *   npm run export -- --square           # pad to a square, for feeds that crop to 1:1
+ *   npm run export -- --zoom --bold      # a camera that follows the packets; thicker lines, darker text
  *
  * Clips land in ~/Downloads/interfig-clips as <figure>-<step>.mp4 (e.g. what-hindsight-does-retain.mp4),
  * each beside a <figure>-<step>.md holding the narration the clip speaks, as bullets to paste into a post;
@@ -88,7 +89,7 @@ await rm(RAW, { recursive: true, force: true });
 try {
   const figures = (await readdir(join(root, 'figures'))).filter((f) => f.endsWith('.ts')).map((f) => f.replace(/\.ts$/, ''));
   for (const figure of only.length ? only : figures) {
-    const url = `${base}/?export${dark ? '&dark' : ''}#${figure}`;
+    const url = `${base}/?export${dark ? '&dark' : ''}${flags.has('--zoom') ? '&zoom' : ''}${flags.has('--bold') ? '&bold' : ''}#${figure}`;
 
     // First pass: the step names, and how big the figure is, so each clip is exactly the figure.
     const probe = await browser.newPage({ viewport: { width: 1800, height: 1200 } });

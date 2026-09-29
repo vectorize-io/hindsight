@@ -25,6 +25,7 @@ const props: Figure['props'] = {
       { id: 'app', label: 'Your App', lines: 6, width: 200 },
       {
         label: 'Hindsight',
+        logo: '/img/logo.png',
         direction: 'column',
         gap: 32,
         children: [

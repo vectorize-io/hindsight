@@ -1,9 +1,24 @@
 
+
 # Knowledge Pages
 
 **Knowledge pages** are living documents a bank writes about itself. Each page answers one question — "What are the components here?", "What's our error-handling convention?" — and rewrites itself as the bank learns more. They're organized in folders, browsable, searchable, and can be projected onto disk as ordinary markdown files.
 
 The shape is a wiki. The engine underneath is memory.
+
+**Figure: Knowledge Pages.** An animated diagram on the docs site; its narration, step by step:
+
+- **knowledge pages**
+  1. Hindsight keeps a wiki for your team. This page on deploys is written from what the bank knows.
+  2. Then something happens. Your tools send it to Hindsight: an incident, a Slack thread, a code change.
+  3. Hindsight stores it as new memories.
+  4. It learns from them…
+  5. …adds what is new, and corrects what is no longer true.
+  6. The page on deploys is now out of date, so Hindsight updates it.
+  7. Only what changed: the old advice is crossed out, the new facts land where they belong.
+  8. Later, another client asks: an AI agent, or a teammate.
+  9. Hindsight finds the page, already written and up to date.
+  10. The answer already includes what just happened. Nobody had to update the wiki.
 
 ---
 

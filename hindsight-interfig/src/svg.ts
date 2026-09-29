@@ -361,8 +361,8 @@ export function toSvg(fig: FlowProps, opts: SvgOptions = {}): string {
     const on = segs.map((_, i) => litEdges[i].has(r.id));
     const hidden = e.quiet && !on.every(Boolean);
     const shown = hidden ? cls(anim(on, 'opacity: 1', 'opacity: 0', 'q')) : '';
-    const lit = cls(anim(on, 'stroke: var(--accent); stroke-width: 2', 'stroke: var(--muted); stroke-width: 1.25', 'e'));
-    const path = `<path id="p-${esc(r.id)}" d="${r.d}" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"${lit}/>`;
+    const lit = cls(anim(on, 'stroke: var(--accent); stroke-width: 3', 'stroke: var(--muted); stroke-width: 1.75', 'e'));
+    const path = `<path id="p-${esc(r.id)}" d="${r.d}" fill="none" stroke="var(--muted)" stroke-width="1.75" marker-end="url(#arrow)"${lit}/>`;
     // A quiet edge is only drawn while a step uses it, so wrap the whole thing rather than the stroke.
     const label =
       e.label == null
@@ -429,7 +429,7 @@ export function toSvg(fig: FlowProps, opts: SvgOptions = {}): string {
     );
   });
 
-  const t0 = { accent: '#0074d9', fg: '#1c1e21', muted: '#606770', bg: '#ffffff', surface: '#f5f7fa', border: '#d0d7de', ...opts.theme };
+  const t0 = { accent: '#0074d9', fg: '#111418', muted: '#4b5563', bg: '#ffffff', surface: '#f5f7fa', border: '#b6c0cc', ...opts.theme };
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${n2(W)}" height="${n2(H)}" viewBox="0 0 ${n2(W)} ${n2(H)}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
 <style>
 svg { --accent:${t0.accent}; --fg:${t0.fg}; --muted:${t0.muted}; --bg:${t0.bg}; --surface:${t0.surface}; --border:${t0.border}; --card-on:#eef5fd; }
@@ -448,7 +448,7 @@ svg { --accent:${t0.accent}; --fg:${t0.fg}; --muted:${t0.muted}; --bg:${t0.bg}; 
 .caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
 ${css.join('\n')}
 </style>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
 <rect width="100%" height="100%" fill="var(--bg)"/>
 <g transform="translate(${n2(shift)} ${arcs ? 44 : 0})">
 ${boxes.filter(Boolean).join('\n')}

@@ -4,6 +4,65 @@ import { Flow, type Figure } from '../src';
 /** The page `scripts/export.mjs` records: one figure, alone on the page, one step at a time.
  *  It stays blank until the recorder calls `startExport`, so no frames are wasted before the step begins. */
 const DARK = { accent: '#3396e8', fg: '#e3e3e3', muted: '#9aa0a6', bg: '#1b1b1d', surface: '#242526', border: '#3a3b3c' };
+/** `--bold`: darker text and borders, for a clip watched small in a feed. */
+const BOLD = { fg: '#0b1220', muted: '#374151', border: '#94a3b8' };
+/** `--bold` also keeps every box and edge at full strength, and enlarges the caption and card text. */
+const BOLD_CSS = `
+.interfig [data-fig]{border-width:1.5px !important;opacity:1 !important}
+.interfig svg path[stroke-opacity="0.35"]{stroke-opacity:.85}
+.interfig figcaption > div:last-child{font-size:19px !important;line-height:1.4 !important;color:var(--fig-fg) !important;max-width:820px !important}
+.interfig [data-fig] > div[style*="dashed"]{font-size:12.5px !important;line-height:17px !important}
+`;
+const ZOOM = 1.3;
+
+/** `--zoom`: a camera that follows the moving packets in close, and pulls back out between hops.
+ *  It moves the figure's canvas only, so the step label and narration under it stay in view. */
+function useCamera(on: boolean) {
+  useEffect(() => {
+    if (!on) return;
+    const cam = { x: 0, y: 0, s: 1 };
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const canvas = document.querySelector<HTMLElement>('.interfig > div');
+      const inner = canvas?.firstElementChild as HTMLElement | null;
+      if (!canvas || !inner) return;
+      canvas.style.overflow = 'hidden';
+      inner.style.transformOrigin = '0 0';
+      const W = inner.offsetWidth,
+        H = inner.offsetHeight;
+      if (!cam.x) Object.assign(cam, { x: W / 2, y: H / 2 });
+      // The packets are the dots the player moves: whichever are visible now are where the action is.
+      // Read back into unzoomed coordinates, so the camera never chases its own zoom.
+      const box = inner.getBoundingClientRect();
+      const pts = [...inner.querySelectorAll<SVGGElement>('svg g')]
+        .filter((g) => g.style.opacity === '1')
+        .map((g) => {
+          const r = g.getBoundingClientRect();
+          return { x: (r.left + r.width / 2 - box.left) / cam.s, y: (r.top + r.height / 2 - box.top) / cam.s };
+        });
+      let target = { x: W / 2, y: H / 2, s: 1 };
+      if (pts.length) {
+        const xs = pts.map((p) => p.x),
+          ys = pts.map((p) => p.y);
+        const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+        // Fit every packet with room around it, never closer than ZOOM.
+        const s = Math.max(1, Math.min(ZOOM, W / (x1 - x0 + 1000), H / (y1 - y0 + 700)));
+        target = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, s };
+      }
+      const k = 0.045; // ease: the camera drifts after the packet instead of snapping to it
+      cam.x += (target.x - cam.x) * k;
+      cam.y += (target.y - cam.y) * k;
+      cam.s += (target.s - cam.s) * k;
+      // Keep the view inside the figure: no empty margin at the edges.
+      const tx = Math.min(0, Math.max(W - W * cam.s, W / 2 - cam.x * cam.s));
+      const ty = Math.min(0, Math.max(H - H * cam.s, H / 2 - cam.y * cam.s));
+      inner.style.transform = `translate(${tx}px, ${ty}px) scale(${cam.s})`;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [on]);
+}
 
 declare global {
   interface Window {
@@ -18,6 +77,9 @@ declare global {
 
 export function ExportPage({ figure, dark }: { figure: Figure; dark: boolean }) {
   const [step, setStep] = useState<number | null>(null);
+  const params = new URLSearchParams(location.search);
+  const bold = params.has('bold');
+  useCamera(params.has('zoom'));
 
   useEffect(() => {
     window.exportSteps = (figure.props.steps ?? []).map((s, i) => (typeof s.label === 'string' ? s.label : `step-${i + 1}`));
@@ -41,9 +103,15 @@ export function ExportPage({ figure, dark }: { figure: Figure; dark: boolean }) 
           '.interfig button[aria-label="Full screen"], .interfig button[title="Playback speed"], .interfig button[aria-label="Pause"], .interfig button[aria-label="Play"] { display: none !important }'
         }
       </style>
+      {bold && <style>{BOLD_CSS}</style>}
       {/* `key` restarts the figure on the wanted step: Flow plays the active step from its first beat. */}
       {step != null && (
-        <Flow key={step} {...figure.props} steps={(figure.props.steps ?? []).slice(step, step + 1)} theme={dark ? DARK : undefined} />
+        <Flow
+          key={step}
+          {...figure.props}
+          steps={(figure.props.steps ?? []).slice(step, step + 1)}
+          theme={dark ? DARK : bold ? { ...figure.props.theme, ...BOLD } : figure.props.theme}
+        />
       )}
     </div>
   );

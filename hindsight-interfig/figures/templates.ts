@@ -65,6 +65,7 @@ const props: Figure['props'] = {
       },
       {
         label: 'Hindsight',
+        logo: '/img/logo.png',
         direction: 'column',
         gap: 40,
         children: [
