@@ -184,6 +184,20 @@ describe("buildKnowledgeTools", () => {
     expect(payload.crediting).toContain("paraphrased");
   });
 
+  it("hindsight_search_knowledge_pages adds toolGuideExtra after the crediting note (#4791)", async () => {
+    const extra = "Memory is a past record: verify it against the code first.";
+    const client = stubClient({ searchKnowledgePages: vi.fn(async () => []) });
+    const tool = findTool(
+      buildKnowledgeTools(client, "repo-a", { toolGuideExtra: extra }),
+      "hindsight_search_knowledge_pages"
+    );
+    const { crediting } = JSON.parse((await tool.handler({ query: "q" })).content[0].text);
+    // Added, not replacing: the crediting rule is still there, and the team's text follows it.
+    expect(crediting).toContain("From Hindsight memory");
+    expect(crediting.endsWith(extra)).toBe(true);
+    expect(tool.description.endsWith(extra)).toBe(true);
+  });
+
   it("hindsight_search_knowledge_pages returns isError:true when the server search throws", async () => {
     const client = stubClient({
       searchKnowledgePages: vi.fn(async () => {
