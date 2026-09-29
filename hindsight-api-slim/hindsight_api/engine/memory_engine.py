@@ -11474,6 +11474,12 @@ class MemoryEngine(MemoryEngineInterface):
         result: dict[str, int] = {}
         bank_internal_id: str | None = None
         legacy_files: list[str] = []
+        # Deleting a bank that was never created is a no-op that reports zero, not an error. A store
+        # that owns its storage has no namespace for such a bank, and counting in it faults rather
+        # than answering zero, so it must not be asked: every store_owned_for() below is gated on the
+        # bank row actually being there. Declared here, not only where it is read, because the
+        # post-commit gate sits outside the transaction that fetches the row.
+        bank_present = False
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
@@ -11486,10 +11492,6 @@ class MemoryEngine(MemoryEngineInterface):
                         f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
                     )
-                    # Deleting a bank that was never created is a no-op that reports zero, not an
-                    # error. A store that owns its storage has no namespace for such a bank, and
-                    # counting in it faults rather than answering zero, so it must not be asked:
-                    # every store_owned_for() below is gated on the bank row actually being there.
                     bank_present = bank_row is not None
                     if fact_type:
                         from .memories import get_memories as _get_memories_for_scope
