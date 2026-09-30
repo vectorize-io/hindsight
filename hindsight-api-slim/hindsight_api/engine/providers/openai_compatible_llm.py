@@ -1229,11 +1229,14 @@ class OpenAICompatibleLLM(LLMInterface):
 
         # Prepare response format ONCE before retry loop
         if response_format is not None:
+            from hindsight_api.config import get_config
+
+            json_mode = get_config().llm_json_mode
             schema = None
             if hasattr(response_format, "model_json_schema"):
                 schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
 
-            if strict_schema and schema is not None:
+            if strict_schema and schema is not None and json_mode != "prompt":
                 # Use OpenAI's strict JSON schema enforcement
                 call_params["response_format"] = {
                     "type": "json_schema",
@@ -1256,12 +1259,17 @@ class OpenAICompatibleLLM(LLMInterface):
                         first_msg = call_params["messages"][0]
                         if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
                             first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
-                # Providers that skip json_object grammar enforcement
-                skip_grammar = self.provider in ("lmstudio", "ollama", "volcano")
-                if self.provider == "llamacpp":
-                    from hindsight_api.config import get_config
-
-                    skip_grammar = get_config().llamacpp_no_grammar
+                if json_mode == "prompt":
+                    # The endpoint ignores response_format, so the request must not carry it.
+                    skip_grammar = True
+                elif json_mode == "native":
+                    # Trust the endpoint even for the names auto skips.
+                    skip_grammar = False
+                else:
+                    # Providers that skip json_object grammar enforcement
+                    skip_grammar = self.provider in ("lmstudio", "ollama", "volcano")
+                    if self.provider == "llamacpp":
+                        skip_grammar = get_config().llamacpp_no_grammar
                 if not skip_grammar:
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}

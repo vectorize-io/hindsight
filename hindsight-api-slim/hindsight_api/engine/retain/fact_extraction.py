@@ -1942,10 +1942,17 @@ def _build_request_body(batch_impl, config, prompt: str, user_message: str, resp
     if hasattr(response_schema, "model_json_schema"):
         retain_strict_schema = config.llm_strict_schema_retain
         schema = strict_json_schema(response_schema) if retain_strict_schema else provider_json_schema(response_schema)
-        request_body["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema, "strict": retain_strict_schema},
-        }
+        # prompt: the endpoint ignores response_format, so the request must not carry it.
+        if config.llm_json_mode == "prompt":
+            request_body["messages"][0]["content"] += (
+                "\n\nYou must respond with valid JSON matching this schema:\n"
+                + json.dumps(schema, indent=2, ensure_ascii=False)
+            )
+        else:
+            request_body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "facts", "schema": schema, "strict": retain_strict_schema},
+            }
 
     return request_body
 

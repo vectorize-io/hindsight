@@ -189,6 +189,8 @@ ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
+# OpenAI-compatible JSON transport: auto | native | prompt. See DEFAULT_LLM_JSON_MODE.
+ENV_LLM_JSON_MODE = "HINDSIGHT_API_LLM_JSON_MODE"
 ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
 ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
 # Route structured output through a forced function tool instead of the
@@ -1138,6 +1140,26 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
+# How an OpenAI-compatible endpoint is asked for JSON. "auto" keeps today's
+# per-provider behaviour. "native" always sends response_format, ignoring the
+# lmstudio/ollama/volcano skip list and llamacpp_no_grammar. "prompt" never
+# sends it and leaves the schema in the prompt: an endpoint that ignores
+# response_format otherwise degenerates into a repetition loop and burns the
+# whole LLM timeout (issue #4935).
+DEFAULT_LLM_JSON_MODE = "auto"
+LLM_JSON_MODES = ("auto", "native", "prompt")
+
+
+def _parse_llm_json_mode(raw: str | None) -> str:
+    """Parse HINDSIGHT_API_LLM_JSON_MODE: auto | native | prompt."""
+    if raw is None:
+        return DEFAULT_LLM_JSON_MODE
+    mode = raw.strip().lower()
+    if mode not in LLM_JSON_MODES:
+        raise ValueError(f"Invalid {ENV_LLM_JSON_MODE} value {raw!r}: expected one of {', '.join(LLM_JSON_MODES)}")
+    return mode
+
+
 DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 
 # True = the backend accepts the JSON Schema ``pattern`` keyword in a
@@ -2995,6 +3017,7 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
+    llm_json_mode: str  # "auto" | "native" | "prompt" — see DEFAULT_LLM_JSON_MODE
     llm_supports_max_items: bool = field(
         default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
         kw_only=True,
@@ -4185,6 +4208,7 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
+            llm_json_mode=_parse_llm_json_mode(os.getenv(ENV_LLM_JSON_MODE)),
             llm_supports_max_items=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_MAX_ITEMS,
                 DEFAULT_LLM_SUPPORTS_MAX_ITEMS,

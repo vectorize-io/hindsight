@@ -637,6 +637,7 @@ def _make_batch_temp_config(temperature):
     cfg.retain_max_completion_tokens = None
     cfg.llm_strict_schema = False
     cfg.llm_strict_schema_retain = False
+    cfg.llm_json_mode = "auto"
     return cfg
 
 
