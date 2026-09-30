@@ -366,3 +366,79 @@ def test_the_factory_gives_every_remote_provider_its_concurrency() -> None:
         if call.func.id not in _IN_PROCESS_BACKENDS:
             unwrapped.append(call.func.id)
     assert not unwrapped, f"providers returned without _with_request_concurrency: {unwrapped}"
+
+
+@pytest.mark.parametrize("concurrency", [1, 3])
+@pytest.mark.parametrize("texts_per_caller", [1, 4])
+async def test_single_batch_and_single_slot_callers_share_the_bound(concurrency: int, texts_per_caller: int) -> None:
+    """Inline batches must acquire the same slots as fan-out batches."""
+    probe = _ConcurrencyProbe(hold_until=1)
+    release = asyncio.Event()
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        inputs = await _inputs(request)
+        await probe.enter()
+        try:
+            await asyncio.wait_for(release.wait(), timeout=10)
+            return web.json_response([[float(text)] for text in inputs])
+        finally:
+            probe.leave()
+
+    async with _tei(batch_size=2, concurrency=concurrency, handler=handler) as embeddings:
+        callers = [asyncio.create_task(embeddings.encode([str(i)] * texts_per_caller)) for i in range(8)]
+        try:
+            async with asyncio.timeout(10):
+                while probe.open_now < concurrency:
+                    await asyncio.sleep(0.01)
+            # Requests are held open; allow excess callers to reach the upstream
+            # if either inline path bypasses the shared semaphore.
+            await asyncio.sleep(0.1)
+            peak_while_held = probe.peak
+        finally:
+            release.set()
+            results = await asyncio.gather(*callers)
+
+    assert peak_while_held == concurrency, (
+        f"configured {concurrency} slots, observed {peak_while_held} concurrent requests"
+    )
+    assert results == [[[float(i)]] * texts_per_caller for i in range(8)]
+    assert probe.open_now == 0
+
+
+@pytest.mark.parametrize("cancel", [False, True], ids=["failure", "cancellation"])
+async def test_inline_batch_releases_slot_after_failure_or_cancellation(cancel: bool) -> None:
+    """An exceptional inline request must not strand the next caller."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def unused_handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response([[0.5]])
+
+    async def blocked_batch(batch: list[str]) -> list[list[float]]:
+        started.set()
+        await release.wait()
+        raise RuntimeError("batch failed")
+
+    async def succeeding_batch(batch: list[str]) -> list[list[float]]:
+        return [[0.5] for _ in batch]
+
+    async with _tei(batch_size=2, concurrency=1, handler=unused_handler) as embeddings:
+        task = asyncio.create_task(embeddings._encode_batched(["first"], blocked_batch))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=10)
+            # The inline path must actually own the shared slot before it fails.
+            assert embeddings._get_request_slots().locked()
+            if cancel:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                release.set()
+                with pytest.raises(RuntimeError, match="batch failed"):
+                    await task
+            assert not embeddings._get_request_slots().locked()
+            assert await asyncio.wait_for(embeddings._encode_batched(["next"], succeeding_batch), timeout=10) == [[0.5]]
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
