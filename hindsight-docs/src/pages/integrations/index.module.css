@@ -278,35 +278,6 @@
   .featuredGrid { grid-template-columns: 1fr; }
 }
 
-/* ── Supported-harness logos on the Coding Agents card ────────────────────── */
-
-.harnessStrip {
-  display: flex;
-  /* Wraps, because the strip grows with the harness list: 19 logos at 17px plus gaps need ~410px,
-     wider than a featured card's third of the grid, and nowrap pushed them past the card's edge.
-     The card has no fixed height, so a second row just makes it taller. */
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.5rem;
-}
-
-.harnessLogo {
-  width: 17px;
-  height: 17px;
-  object-fit: contain;
-  border-radius: 3px;
-  /* Several of these are near-black marks that vanish on a dark background; a faint plate keeps
-     every logo legible in both themes without per-logo special-casing. */
-  background: var(--ifm-color-emphasis-100);
-  padding: 2px;
-  box-sizing: content-box;
-}
-
-[data-theme='dark'] .harnessLogo {
-  background: var(--ifm-color-emphasis-200);
-}
-
 /* Separates the pinned Featured cards from the full list, so the two aren't read as one run. */
 .sectionDivider {
   border: 0;
