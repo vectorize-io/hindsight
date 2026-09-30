@@ -38,6 +38,7 @@ from hindsight_api.admin import cli
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine import vector_index_health
 from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.memories.postgres import PostgresMemories
 from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.retain.bank_utils import _vector_index_clause
 from hindsight_api.engine.transfer import export_bank
@@ -215,31 +216,55 @@ async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-class _SqlBackedStub(InMemoryMemories):
-    """A non-Postgres store that says every bank is SQL-backed — a router's legacy banks."""
+class _SqlRouter:
+    """A router whose every bank is SQL-backed: each interface call is forwarded to Postgres.
 
+    Not a ``PostgresMemories``, and it carries none of the Postgres-only methods (the bank list,
+    the vector indexes), because those are not on the interface a router forwards. So a caller
+    that asks the configured store for one of them fails here, which is the regression these
+    tests guard: those must go through ``sql_memories()``. The bank's whole life runs under this
+    router, so the store that creates it is the one that deletes it, whatever store the suite
+    itself runs against.
+    """
+
+    name = "sql-router"
     store_owned = False
+    _POSTGRES_ONLY = frozenset(
+        {"create_bank_vector_indexes", "list_bank_rows", "bank_page_rows", "bank_fact_counts", "capped_memory_counts"}
+    )
+
+    def __init__(self) -> None:
+        self._postgres = PostgresMemories({})
 
     def store_owned_for(self, bank_id: str) -> bool:
         return False
 
+    def __getattr__(self, name: str):
+        if name in self._POSTGRES_ONLY:
+            raise AttributeError(f"{name} is Postgres-only; a router does not forward it")
+        return getattr(self._postgres, name)
 
-async def test_a_sql_bank_under_a_non_postgres_store_still_gets_all_three(memory, request_context):
+
+@pytest.fixture
+def sql_router():
+    real_store = memories_mod.get_memories()
+    memories_mod.set_memories(_SqlRouter())
+    try:
+        yield
+    finally:
+        memories_mod.set_memories(real_store)
+
+
+async def test_a_sql_bank_under_a_non_postgres_store_still_gets_all_three(memory, request_context, sql_router):
     """The indexes are Postgres's, over Postgres's rows, whatever store is configured.
 
-    Asking the configured store to build them hits a non-Postgres store's no-op default, and
-    the bank silently loses ANN. The ``_Unanswerable`` test above cannot catch that: it wraps
-    the real Postgres store, whose method does build them.
+    They are built through ``sql_memories()``: the configured store here is a router that does
+    not carry the Postgres-only index builder. The ``_Unanswerable`` test above cannot catch a
+    regression there: it wraps the real Postgres store, whose method does build them.
     """
-    real_store = memories_mod.get_memories()
     bank_id = f"test_so_router_sql_{uuid.uuid4().hex[:8]}"
     try:
-        memories_mod.set_memories(_SqlBackedStub())
-        try:
-            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
-        finally:
-            memories_mod.set_memories(real_store)
-
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         assert len(await _bank_indexes(memory._pool, bank_id)) == 3
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -578,25 +603,22 @@ async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(mon
     assert "2 further schema(s) were not attempted" in err, err
 
 
-async def test_the_bank_search_keeps_a_sql_banks_watermark_under_a_non_postgres_store(memory, request_context):
+async def test_the_bank_search_keeps_a_sql_banks_watermark_under_a_non_postgres_store(
+    memory, request_context, sql_router
+):
     """The searched bank list reads its write watermarks from Postgres for every bank.
 
-    Asking the configured store instead reaches a non-Postgres store's default, which returns
-    NULL watermarks; the store then fills them in only for the banks it owns, so a SQL-backed
-    bank came back with no ``last_document_at`` and sorted as never written.
+    The rows come through ``sql_memories()``: the configured store here is a router that does not
+    carry the Postgres-only bank-list query, and before this read went through the Postgres store a
+    SQL-backed bank came back with no ``last_document_at`` and sorted as never written.
     """
-    real_store = memories_mod.get_memories()
     bank_id = f"test_so_router_list_{uuid.uuid4().hex[:8]}"
     try:
         await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         await memory.retain_async(
             bank_id=bank_id, content="Alice moved to Rome.", document_id="d1", request_context=request_context
         )
-        memories_mod.set_memories(_SqlBackedStub())
-        try:
-            banks = await bank_utils.list_banks(memory._pool, search_query=bank_id)
-        finally:
-            memories_mod.set_memories(real_store)
+        banks = await bank_utils.list_banks(memory._pool, search_query=bank_id)
 
         entry = next(b for b in banks if b["bank_id"] == bank_id)
         assert entry["last_document_at"] is not None
