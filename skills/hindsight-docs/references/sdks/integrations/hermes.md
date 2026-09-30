@@ -173,7 +173,7 @@ which is what records the current pin.
 hermes memory setup    # select "hindsight"
 ```
 
-The setup wizard installs dependencies automatically via `uv`, walks you through configuration, and offers to seed the bank with a **starter memory template** (a curated set of dispositions/instructions for common agent roles) — you can skip it, and it warns before overwriting an already-configured bank.
+The setup wizard installs nothing (dependencies come with the plugin), walks you through configuration, and offers to seed the bank with a **starter memory template** (a curated set of dispositions/instructions for common agent roles) — you can skip it, and it warns before overwriting an already-configured bank.
 
 Or manually (cloud mode with defaults):
 ```bash
@@ -313,8 +313,8 @@ Available in `hybrid` and `tools` memory modes:
 
 ## Client Version
 
-Requires `hindsight-client >= 0.10.1` and, for `local_embedded`, `hindsight-embed >= 0.10.1`. The plugin
-auto-upgrades the client on session start if an older version is detected.
+Requires `hindsight-client >= 0.10.1` and, for `local_embedded`, `hindsight-embed >= 0.10.1`. A version below
+the floor only logs a warning; `hermes plugins update hindsight` moves the environment.
 
 The floor is 0.10.1 rather than the 0.6.1 this plugin needs at the API level because
 `hindsight-embed` 0.10.0 breaks `local_embedded` outright: its daemon probe cleared the calling
@@ -351,8 +351,7 @@ Check `hermes memory status` reports `hindsight` as the active provider and `Sta
 
 **`Status: not available` in `local_embedded`** — this plugin's own packages
 (`hindsight-client`, `hindsight-embed`) are missing from the environment, which happens when a venv
-rebuild dropped the plugin member. Run `hermes plugins install hindsight` (or `hermes memory setup`)
-to reinstall them. The Hindsight server is *not* needed in that venv — it runs as a separate
+rebuild dropped the plugin member. Run `hermes pm repair` and restart Hermes to rebuild them. The Hindsight server is *not* needed in that venv — it runs as a separate
 process, and first use downloads it if no `hindsight-api` binary is present yet.
 
 **`Timeout context manager should be used inside a task`** — `hindsight-embed` 0.10.0. Run
