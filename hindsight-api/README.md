@@ -30,34 +30,42 @@ The server starts at http://localhost:8888 with:
 ### Use the Python API
 
 ```python
-from hindsight_api import MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.models import RequestContext
 
 # Create and initialize the memory engine
 memory = MemoryEngine()
 await memory.initialize()
+ctx = RequestContext()
 
 # Create a memory bank for your agent
-bank = await memory.create_memory_bank(
-    name="my-assistant",
-    background="A helpful coding assistant"
+# (optional: banks are also auto-created on first retain)
+await memory.ensure_bank_profile("my-assistant", request_context=ctx)
+await memory.set_bank_mission(
+    "my-assistant",
+    "A helpful coding assistant",
+    request_context=ctx,
 )
 
 # Store a memory
-await memory.retain(
-    memory_bank_id=bank.id,
-    content="The user prefers Python for data science projects"
+await memory.retain_async(
+    bank_id="my-assistant",
+    content="The user prefers Python for data science projects",
+    request_context=ctx,
 )
 
 # Recall memories
-results = await memory.recall(
-    memory_bank_id=bank.id,
-    query="What programming language does the user prefer?"
+results = await memory.recall_async(
+    bank_id="my-assistant",
+    query="What programming language does the user prefer?",
+    request_context=ctx,
 )
 
 # Reflect with reasoning
-response = await memory.reflect(
-    memory_bank_id=bank.id,
-    query="Should I recommend Python or R for this ML project?"
+answer = await memory.reflect_async(
+    bank_id="my-assistant",
+    query="Should I recommend Python or R for this ML project?",
+    request_context=ctx,
 )
 ```
 
@@ -134,4 +142,4 @@ Full documentation: [https://hindsight.vectorize.io](https://hindsight.vectorize
 
 ## License
 
-Apache 2.0
+- Apache 2.0
