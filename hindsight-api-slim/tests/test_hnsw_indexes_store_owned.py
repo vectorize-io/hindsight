@@ -576,3 +576,29 @@ async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(mon
     # Said once, with the count — not one line per remaining tenant.
     err = capsys.readouterr().err
     assert "2 further schema(s) were not attempted" in err, err
+
+
+async def test_the_bank_search_keeps_a_sql_banks_watermark_under_a_non_postgres_store(memory, request_context):
+    """The searched bank list reads its write watermarks from Postgres for every bank.
+
+    Asking the configured store instead reaches a non-Postgres store's default, which returns
+    NULL watermarks; the store then fills them in only for the banks it owns, so a SQL-backed
+    bank came back with no ``last_document_at`` and sorted as never written.
+    """
+    real_store = memories_mod.get_memories()
+    bank_id = f"test_so_router_list_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory.retain_async(
+            bank_id=bank_id, content="Alice moved to Rome.", document_id="d1", request_context=request_context
+        )
+        memories_mod.set_memories(_SqlBackedStub())
+        try:
+            banks = await bank_utils.list_banks(memory._pool, search_query=bank_id)
+        finally:
+            memories_mod.set_memories(real_store)
+
+        entry = next(b for b in banks if b["bank_id"] == bank_id)
+        assert entry["last_document_at"] is not None
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

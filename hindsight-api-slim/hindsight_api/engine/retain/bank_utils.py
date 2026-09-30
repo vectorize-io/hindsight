@@ -721,13 +721,14 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
         )
         params = [f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"]
 
-    from ..memories import get_memories
+    from ..memories import sql_memories
 
     async with acquire_with_retry(pool) as conn:
-        # The bank rows with their document and fact write watermarks. A store that owns its
-        # memories has no SQL rows to take them from and returns them NULL;
-        # `_apply_store_last_write` below asks the store for them instead.
-        rows = await get_memories().list_bank_rows(
+        # The bank rows with their document and fact write watermarks, read from Postgres for
+        # every bank: the ids are not known before this query, so it cannot be split by owner.
+        # A bank whose memories live in another store has no rows there and gets NULL
+        # watermarks, which `_apply_store_last_write` below fills in from that store.
+        rows = await sql_memories().list_bank_rows(
             conn=conn, fq_table=fq_table, where_clause=where_clause, params=params
         )
 
