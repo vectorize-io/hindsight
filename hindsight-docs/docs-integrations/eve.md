@@ -99,14 +99,15 @@ hindsightMemory({
 - Each turn's recall is one message with a stable id, so it **supersedes** the previous turn's block instead of piling up in session history — including after compaction.
 - Captures are keyed by Eve's `operationId`; a replayed capture replaces the earlier document rather than storing it twice.
 
-## Known issue: capture on eve 0.51.0 – 0.66.x
+## Known issue: capture on eve 0.51.0 – 0.68.x
 
 eve 0.51.0 stopped passing the turn's history to `turn.completed` (a regression from
 [vercel/eve#2690](https://github.com/vercel/eve/pull/2690)), so **no provider's
 `capture["turn.completed"]` runs** on those versions — memory is recalled but nothing new is
-stored. Tracked in [vercel/eve#3223](https://github.com/vercel/eve/issues/3223) with a fix in
-[vercel/eve#3465](https://github.com/vercel/eve/pull/3465). Recall, the `reflect` tool, and
-compaction capture are unaffected. Until the fix ships, either pin `eve@0.50.0`, or keep the
+stored. Tracked in [vercel/eve#3223](https://github.com/vercel/eve/issues/3223) and fixed by
+[vercel/eve#3985](https://github.com/vercel/eve/pull/3985), which ships in eve 0.69.0 — upgrade
+to it. Recall, the `reflect` tool, and compaction capture are unaffected. On an older eve, either
+pin `eve@0.50.0`, or keep the
 deprecated `hindsightRetainHook()` in `agent/hooks/hindsight.ts` next to the provider — eve's hook
 events still fire — giving both the same string `bankId` so they share a bank.
 
