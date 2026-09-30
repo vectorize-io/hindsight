@@ -2990,9 +2990,28 @@ async def _apply_update_action(
         return None
     live_ids = live_source_memory_ids
 
+    # Recall predates the LLM/embedding work. Tags may have been edited meanwhile;
+    # merging the recall snapshot would lose additions and resurrect removed tags.
+    # Hold the SQL row lock until the caller commits so an edit cannot slip between
+    # this read and the UPDATE. NO KEY UPDATE still permits FK references; the
+    # Oracle adapter translates it to FOR UPDATE without PG-specific array SQL.
+    if not store.store_owned_for(bank_id):
+        current_row = await conn.fetchrow(
+            f"SELECT tags FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2 FOR NO KEY UPDATE",
+            uuid.UUID(observation_id),
+            bank_id,
+        )
+        if current_row is None:
+            return None
+        current_tags = list(current_row["tags"] or [])
+    else:
+        current = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
+        cur = current[0] if current else None
+        current_tags = list((cur.tags if cur else model.tags) or [])
+
     history_entry = _ObservationHistorySnapshot(
         previous_text=model.text,
-        previous_tags=list(model.tags or []),
+        previous_tags=current_tags,
         previous_occurred_start=model.occurred_start,
         previous_occurred_end=model.occurred_end,
         previous_mentioned_at=model.mentioned_at,
@@ -3004,7 +3023,7 @@ async def _apply_update_action(
     source_ids = [uuid.UUID(s) for s in merged]
 
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
-    existing_tags = set(model.tags or [])
+    existing_tags = set(current_tags)
     source_tags = set(source_fact_tags or [])
     merged_tags = list(existing_tags | source_tags)
 
@@ -3062,8 +3081,6 @@ async def _apply_update_action(
         # Upsert overwrites the whole observation, so start from its current state (fetched
         # from the store) and apply the same merge the SQL does — LEAST/GREATEST on the
         # times — while preserving fields the update never touches (created_at).
-        current = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
-        cur = current[0] if current else None
         # Widen the row the store still holds. If it has vanished, fall back to the
         # pre-update recall snapshot — ISO strings, and no event_date on that model.
         current_bounds = (
