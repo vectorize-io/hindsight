@@ -2397,9 +2397,10 @@ def _resolve_reflect_llm_timeout() -> float | None:
 def _env_int(env_var: str) -> int | None:
     """An optional integer setting, or None when the variable is unset or empty.
 
-    Reads the variable ONCE. The idiom this replaces -- ``_env_int(X)`` -- reads it twice, so the conversion is not guarded by the check it looks
-    guarded by: the two calls are independent, and nothing ties the value that was tested to
-    the value that is converted.
+    Reads the variable ONCE. The idiom this replaces -- ``int(os.getenv(X)) if os.getenv(X) else
+    None`` -- reads it twice, so the conversion is not guarded by the check it looks guarded by:
+    the two calls are independent, and nothing ties the value that was tested to the value that
+    is converted.
     """
     raw = os.getenv(env_var)
     return int(raw) if raw else None
@@ -4290,11 +4291,11 @@ class HindsightConfig:
             # Per-operation LLM config (None = use default)
             retain_llm_provider=os.getenv(ENV_RETAIN_LLM_PROVIDER) or None,
             retain_llm_api_key=os.getenv(ENV_RETAIN_LLM_API_KEY) or None,
-            retain_llm_model=os.getenv(ENV_RETAIN_LLM_MODEL) or (_env_default_model(ENV_RETAIN_LLM_PROVIDER)),
+            retain_llm_model=os.getenv(ENV_RETAIN_LLM_MODEL) or _env_default_model(ENV_RETAIN_LLM_PROVIDER),
             retain_llm_base_url=os.getenv(ENV_RETAIN_LLM_BASE_URL) or None,
             vlm_provider=os.getenv(ENV_VLM_PROVIDER) or None,
             vlm_api_key=os.getenv(ENV_VLM_API_KEY) or None,
-            vlm_model=os.getenv(ENV_VLM_MODEL) or (_env_default_model(ENV_VLM_PROVIDER)),
+            vlm_model=os.getenv(ENV_VLM_MODEL) or _env_default_model(ENV_VLM_PROVIDER),
             vlm_base_url=os.getenv(ENV_VLM_BASE_URL) or None,
             fireworks_account_id=os.getenv(ENV_FIREWORKS_ACCOUNT_ID) or None,
             fireworks_batch_base_url=os.getenv(ENV_FIREWORKS_BATCH_BASE_URL) or DEFAULT_FIREWORKS_BATCH_BASE_URL,
@@ -4312,7 +4313,7 @@ class HindsightConfig:
             retain_llm_cache_affinity=os.getenv(ENV_RETAIN_LLM_CACHE_AFFINITY) or None,
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
-            reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL) or (_env_default_model(ENV_REFLECT_LLM_PROVIDER)),
+            reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL) or _env_default_model(ENV_REFLECT_LLM_PROVIDER),
             reflect_llm_base_url=os.getenv(ENV_REFLECT_LLM_BASE_URL) or None,
             reflect_llm_max_concurrent=_env_int(ENV_REFLECT_LLM_MAX_CONCURRENT),
             reflect_llm_max_retries=_env_int(ENV_REFLECT_LLM_MAX_RETRIES),
@@ -4326,7 +4327,7 @@ class HindsightConfig:
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
-            or (_env_default_model(ENV_CONSOLIDATION_LLM_PROVIDER)),
+            or _env_default_model(ENV_CONSOLIDATION_LLM_PROVIDER),
             consolidation_llm_base_url=os.getenv(ENV_CONSOLIDATION_LLM_BASE_URL) or None,
             consolidation_llm_max_concurrent=_env_int(ENV_CONSOLIDATION_LLM_MAX_CONCURRENT),
             consolidation_llm_max_retries=_env_int(ENV_CONSOLIDATION_LLM_MAX_RETRIES),
@@ -4340,7 +4341,7 @@ class HindsightConfig:
             mental_model_refresh_llm_provider=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER) or None,
             mental_model_refresh_llm_api_key=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_API_KEY) or None,
             mental_model_refresh_llm_model=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MODEL)
-            or (_env_default_model(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER)),
+            or _env_default_model(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER),
             mental_model_refresh_llm_base_url=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_BASE_URL) or None,
             mental_model_refresh_llm_max_concurrent=_env_int(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT),
             mental_model_refresh_llm_max_retries=_env_int(ENV_MENTAL_MODEL_REFRESH_LLM_MAX_RETRIES),

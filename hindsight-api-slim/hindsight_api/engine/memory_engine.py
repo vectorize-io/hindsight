@@ -406,7 +406,7 @@ def _iso_or_none(value: "datetime | str | None") -> "str | None":
     The chunked path yields ``retain.types.ExtractedFact``, whose ``occurred_start`` /
     ``occurred_end`` are ``datetime``; the LLM path yields the response model, whose are already
     ISO strings. ``response_models.ExtractedFact`` declares ``str | None``, so handing it a
-    datetime fails validation -- on every dry-run extraction of a dated fact via chunks.
+    datetime would fail validation. Latent today: chunks mode sets no occurred dates.
     """
     if value is None or isinstance(value, str):
         return value
@@ -11308,16 +11308,12 @@ class MemoryEngine(MemoryEngineInterface):
         # document still citing it would go on stating it unnoticed.
         if deleted and bank_id:
             await self._submit_refreshes_for_retracted_grounding(bank_id, request_context=request_context)
-            # `bank_id_for_graph_maintenance` is set ONLY when observations were invalidated, so
-            # on a plain delete it is None here and this reconcile silently does nothing -- the
-            # helper swallows failures. That contradicts its own docstring, which says deletes
-            # matter as much as inserts; the bank being deleted from is `bank_id`, narrowed just
-            # above. Which bank to reconcile is a behaviour decision, not a typing one, so this
-            # keeps today's outcome and the discrepancy is flagged rather than quietly changed.
-            if bank_id_for_graph_maintenance:
-                await self._submit_vector_index_maintenance_quietly(
-                    bank_id_for_graph_maintenance, request_context, after="memory deletion", grew=False
-                )
+            # `bank_id`, like every other delete site. This passed `bank_id_for_graph_maintenance`,
+            # which is None when the deleted unit is not a world/experience fact (an observation),
+            # so that delete never reconciled the bank's vector indexes.
+            await self._submit_vector_index_maintenance_quietly(
+                bank_id, request_context, after="memory deletion", grew=False
+            )
 
         return result
 

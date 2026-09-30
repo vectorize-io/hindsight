@@ -310,13 +310,13 @@ exclude = [
 ]
 
 [tool.ty.rules]
-# `ty check` is GREEN on this config and the `ty` job in test.yml runs it, so anything not
+# `ty check` is GREEN on this config and the `typecheck-api` job in test.yml runs it, so anything not
 # "ignore" below is enforced. Exactly one rule is on today; everything else is off either because
 # it does not fit this codebase or because it is not clean yet and turning it on is its own piece
 # of work. Turning one on means fixing what it reports first -- an ignore here is a to-do, not a
 # verdict that the rule is wrong.
 
-# ON, and enforced by the `ty` job in test.yml. This is the rule that catches a call passing the
+# ON, and enforced by the `typecheck-api` job in test.yml. This is the rule that catches a call passing the
 # wrong type to a declared parameter -- the class of bug that reaches production unchallenged
 # because Python does not enforce annotations and a dataclass does not validate at construction.
 # It was off for "false positives with **kwargs patterns": real, but the fix is to annotate a

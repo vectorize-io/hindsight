@@ -230,7 +230,7 @@ class ProfilePaths:
     lock: Path
     log: Path
     port: int
-    ui_log: Path = None  # type: ignore[assignment]
+    ui_log: Path = None  # ty: ignore[invalid-assignment]  -- __post_init__ derives it from `log`
     ui_port: int = 0  # 0 → derive as port + UI_PORT_OFFSET
 
     def __post_init__(self):

@@ -335,7 +335,9 @@ If it's correct, set correct=true.
                         max_completion_tokens=4096,
                     )
 
-                    return judgement.correct, judgement.reasoning
+                    # `call` returns an LLMCallResult; the parsed JudgeResponse is its `content`.
+                    verdict: JudgeResponse = judgement.content
+                    return verdict.correct, verdict.reasoning
 
                 except Exception as e:
                     # Check if it's a validation error (LLM returned malformed JSON)
@@ -1485,7 +1487,7 @@ class BenchmarkRunner:
         # Create semaphore for question processing
         question_semaphore = asyncio.Semaphore(max_concurrent_questions)
 
-        all_results = []
+        all_results: List[Dict[str, Any]] = []
         for i, item in enumerate(items, 1):
             item_id = self.dataset.get_item_id(item)
             console.print(f"\n[bold blue]Item {i}/{len(items)}[/bold blue] (ID: {item_id})")
