@@ -2,6 +2,9 @@
    src/app/[locale]/layout.tsx. The CSS variables --font-sans and
    --font-mono are set on <html> and consumed below in :root. */
 @import "tailwindcss";
+/* Tailwind v4 does not auto-load tailwind.config.ts. Register typography here
+   so rendered Markdown gets the paragraph, heading and list styles of prose. */
+@plugin "@tailwindcss/typography";
 
 /* Bind the `dark:` variant to the `.dark` class this app actually toggles.
  *
@@ -393,75 +396,15 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   filter: invert(1);
 }
 
-/* Markdown table styles - explicitly override Tailwind reset */
-.prose table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 1em;
-  margin-bottom: 1em;
-  font-size: 0.875em;
-  line-height: 1.5;
-  border: 2px solid rgba(0, 0, 0, 0.2) !important;
+/* Keep long answers readable while tables and code can use the card width.
+   The typography plugin owns table spacing, borders and dark-mode colors. */
+.reflect-answer {
+  /* Wrap long prose without shrinking tables' intrinsic column widths. */
+  overflow-wrap: break-word;
 }
 
-.prose thead {
-  border-bottom: 3px solid rgba(0, 0, 0, 0.3) !important;
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-.prose thead th {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  font-weight: 600;
-  vertical-align: bottom;
-  border: 1px solid rgba(0, 0, 0, 0.2) !important;
-  border-bottom-width: 3px !important;
-}
-
-.prose tbody tr {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
-}
-
-.prose tbody tr:last-child {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
-}
-
-.prose tbody td {
-  padding: 0.5rem 0.75rem;
-  vertical-align: top;
-  border: 1px solid rgba(0, 0, 0, 0.15) !important;
-}
-
-.prose tbody tr:hover {
-  background-color: rgba(0, 0, 0, 0.04);
-}
-
-/* Dark mode table styles - use white borders with transparency */
-.dark .prose table {
-  color: hsl(var(--foreground));
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-}
-
-.dark .prose thead {
-  border-bottom: 3px solid rgba(255, 255, 255, 0.3) !important;
-  background-color: rgba(255, 255, 255, 0.05);
-}
-
-.dark .prose thead th {
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
-  border-bottom-width: 3px !important;
-}
-
-.dark .prose tbody tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
-}
-
-.dark .prose tbody td {
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-}
-
-.dark .prose tbody tr:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+.reflect-answer > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: 70ch;
 }
 
 /* Branded loading spinner — the Hindsight mark doing a looping "tumble": a

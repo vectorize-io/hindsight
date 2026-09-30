@@ -40,7 +40,8 @@ export function CompactMarkdown({ children, className }: { children: string; cla
   return (
     <div
       className={cn(
-        "text-[13px] leading-6 text-foreground/90 space-y-2 [&>:first-child]:mt-0",
+        // This renderer owns its compact styles, even inside a prose container.
+        "not-prose text-[13px] leading-6 text-foreground/90 space-y-2 [&>:first-child]:mt-0",
         className
       )}
     >
