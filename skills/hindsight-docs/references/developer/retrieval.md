@@ -30,7 +30,7 @@ Different queries need different search approaches:
 - **"What did Alice do last spring?"** → needs temporal reasoning
 - **"Why did Alice leave?"** → needs causal relationship tracing
 
-No single search method handles all these well. Hindsight solves this with **TEMPR** — four complementary strategies that run in parallel.
+No single search method handles all these well. Hindsight runs **four complementary strategies in parallel** and fuses their results.
 
 ---
 
