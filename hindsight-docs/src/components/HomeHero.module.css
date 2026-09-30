@@ -1,0 +1,176 @@
+/* ── The band ─────────────────────────────────────────────────────────────
+   Breaks out of the doc column to the edges of the content area. Without this
+   the hero sits inside the article's horizontal padding and reads as a box
+   embedded in the page — an iframe — rather than the top of the page.
+   --ifm-spacing-horizontal is exactly the padding the column applies. */
+.hero {
+  margin: -2rem calc(-1 * var(--ifm-spacing-horizontal)) 2.5rem;
+  padding: 3.25rem 1.5rem 2.75rem;
+  text-align: center;
+}
+
+.inner {
+  position: relative;
+  z-index: 2;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* ── Links: clear the site-wide gradient-text treatment ───────────────────
+   custom.css paints every link in the doc body as gradient TEXT
+   (`article a:not(.button)...` with `background-clip: text`), which clips a
+   button's fill to its glyphs and leaves the surface invisible. Cleared for the
+   whole hero here; each rule below then paints its own surface and outranks
+   this one on class count. Descendants are listed too because
+   -webkit-text-fill-color is inherited: on the link alone, `currentColor`
+   resolves to the LINK's colour and then overrides each child's own. */
+.hero a,
+.hero a * {
+  background: none !important;
+  background-clip: border-box !important;
+  -webkit-background-clip: border-box !important;
+  -webkit-text-fill-color: currentColor !important;
+  font-weight: inherit;
+}
+
+/* ── Headline ─────────────────────────────────────────────────────────────
+   White comes from the shared band; only the sizing is here. */
+.hero .title,
+.hero .title * {
+  font-size: 3.4rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin-bottom: 1rem;
+  display: block;
+}
+
+/* One restrained accent on the two words that carry the claim — a solid colour,
+   not a three-stop gradient. */
+.hero .titleAccent,
+.hero .titleAccent * {
+  color: var(--hs-band-accent) !important;
+  -webkit-text-fill-color: var(--hs-band-accent) !important;
+  display: inline;
+}
+
+/* `.hero` prefix, not a bare `.subtitle`: custom.css styles doc body copy via
+   `html.docs-wrapper article p`, which outranks a single class. */
+.hero .subtitle {
+  font-size: 1.05rem;
+  color: var(--hs-band-ink-soft);
+  max-width: 560px;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+/* ── The product ─────────────────────────────────────────────────────────
+   A bank's graph, running. Wider than the text column: it is the one thing in
+   the band that is worth looking at rather than reading. */
+.shot {
+  max-width: 880px;
+  margin: 2.25rem auto 0.5rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  /* Lifts the dark screenshot off the dark band — without it the two merge and
+     the UI stops reading as a separate surface. */
+  box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--hs-band-line);
+}
+
+/* ── The two paths ────────────────────────────────────────────────────────
+   Unequal on purpose: Cloud is the conversion and is the only filled button.
+   GitHub is social proof and reads as text. */
+.ctas {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.hero .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.85rem;
+  padding: 0 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 0.6rem;
+  /* White on the brand fill in both themes — this one is not the band's ink. */
+  color: #ffffff !important;
+  background: linear-gradient(100deg, #0074d9 0%, #009296 100%) !important;
+  transition: filter 0.15s ease;
+}
+
+.hero .primary:hover {
+  text-decoration: none;
+  filter: brightness(1.1);
+}
+
+.hero .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--hs-band-ink-soft) !important;
+  transition: color 0.15s ease;
+}
+
+.hero .ghost:hover {
+  text-decoration: none;
+  color: var(--hs-band-ink) !important;
+}
+
+.hero .starCount {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 600;
+  color: var(--hs-band-ink) !important;
+}
+
+/* The offer lives in the announcement bar; this is the quiet reminder at the
+   point of conversion, not a second banner. */
+.hero .credit {
+  font-size: 0.8rem;
+  color: var(--hs-band-ink-faint);
+  margin: 0 0 2.5rem;
+}
+
+.hero .paper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--hs-band-ink-faint) !important;
+  transition: color 0.15s ease;
+}
+
+.hero .paper:hover {
+  text-decoration: none;
+  color: var(--hs-band-ink) !important;
+}
+
+/* ── Narrow screens ───────────────────────────────────────────────────────*/
+@media (max-width: 768px) {
+  .hero {
+    padding: 2.5rem 1rem 2.25rem;
+  }
+
+  .hero .title,
+  .hero .title * {
+    font-size: 2.15rem;
+  }
+
+  .hero .subtitle {
+    font-size: 0.95rem;
+  }
+
+  .hero .primary {
+    width: 100%;
+    justify-content: center;
+  }
+
+}

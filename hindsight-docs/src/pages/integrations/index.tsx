@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import React, {useMemo, useState} from 'react';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
@@ -167,16 +168,16 @@ export default function IntegrationsHub(): React.ReactElement {
     <Layout title="Integrations Hub" description="Browse official and community integrations for Hindsight agent memory">
 
       {/* Full-width hero with its own background */}
-      <div className={styles.heroSection}>
+      <div className={clsx('hs-hero-band', styles.heroSection)}>
         <h1 className={styles.heroTitle}>Integrations Hub</h1>
         <p className={styles.heroSubtitle}>
           Connect Hindsight to your stack. Browse official integrations and community-built connectors.
         </p>
 
-        <div className={styles.searchWrapper}>
+        <div className={styles.hubSearchWrapper}>
           <input
             type="text"
-            className={styles.searchInput}
+            className={styles.hubSearchInput}
             placeholder="Search integrations…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -184,7 +185,7 @@ export default function IntegrationsHub(): React.ReactElement {
             autoComplete="off"
           />
           {search && (
-            <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">
+            <button className={styles.hubSearchClear} onClick={() => setSearch('')} aria-label="Clear search">
               ×
             </button>
           )}

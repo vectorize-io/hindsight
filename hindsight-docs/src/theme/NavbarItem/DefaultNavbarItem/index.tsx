@@ -9,6 +9,7 @@ import {
   LuChartBar, LuCpu, LuFileText, LuStar,
 } from 'react-icons/lu';
 import {SiGithub, SiSlack} from 'react-icons/si';
+import {useGitHubStars} from '@site/src/components/useGitHubStars';
 
 const ICON_MAP: Record<string, IconType> = {
   'lu-code':         LuCode,
@@ -31,6 +32,7 @@ const ICON_MAP: Record<string, IconType> = {
 type Props = WrapperProps<typeof DefaultNavbarItemType>;
 
 export default function DefaultNavbarItemWrapper(props: Props): JSX.Element {
+  const stars = useGitHubStars();
   const className = props.className as string | undefined;
   // The sign-up button is styled as a solid CTA — the "leaving the site" arrow
   // every other external item gets would only clutter it.
@@ -43,7 +45,19 @@ export default function DefaultNavbarItemWrapper(props: Props): JSX.Element {
   const IconComponent = iconKey ? ICON_MAP[iconKey] : undefined;
 
   if (isGithub) {
-    return <DefaultNavbarItem {...props} label={<SiGithub size={18} style={{display: 'block'}} />} />;
+    // The count turns an unlabeled icon into social proof and a reason to click.
+    // Fetched at build time by plugins/github-stars.
+    return (
+      <DefaultNavbarItem
+        {...props}
+        label={
+          <span className="header-github-link__label">
+            <SiGithub size={18} style={{display: 'block'}} />
+            {stars && <span className="header-github-link__stars">{stars}</span>}
+          </span>
+        }
+      />
+    );
   }
 
   if (!IconComponent && !isExternal) {

@@ -95,6 +95,66 @@
   --ifm-toc-border-color: #27272a;
 }
 
+/* ── Hero band ────────────────────────────────────────────────────────────
+   One recipe for the band at the top of the homepage, the standalone pages
+   (FAQ, Cookbook, Changelog, blog) and the two hub pages.
+
+   It follows the active theme rather than being dark in both. A permanently
+   dark band worked while it was short, but once it carried real content it
+   stopped reading as "a hero on a light page" and started reading as "this site
+   is dark". It is one flat surface and a rule — no gradient, no grid: both were
+   texture the page did not need, and what sits on the band (a headline, a
+   button, a screenshot) is already enough to look at.
+
+   Everything inside the band takes its ink from these tokens, so a component
+   rendered here does not need to know which theme is on. */
+.hs-hero-band {
+  --hs-band-ink: #18181b;
+  --hs-band-ink-soft: #52525b;
+  --hs-band-ink-faint: #71717a;
+  --hs-band-line: rgba(0, 0, 0, 0.07);
+  --hs-band-accent: #0b8f93;
+  --hs-band-surface: rgba(0, 0, 0, 0.03);
+  --hs-band-surface-hover: rgba(0, 0, 0, 0.06);
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #f7f8fa;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+}
+
+[data-theme='dark'] .hs-hero-band {
+  --hs-band-ink: #ffffff;
+  --hs-band-ink-soft: rgba(255, 255, 255, 0.72);
+  --hs-band-ink-faint: rgba(255, 255, 255, 0.45);
+  --hs-band-line: rgba(255, 255, 255, 0.1);
+  --hs-band-accent: #22d3c5;
+  --hs-band-surface: rgba(255, 255, 255, 0.07);
+  --hs-band-surface-hover: rgba(255, 255, 255, 0.12);
+
+  background: #0b0e14;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.hs-hero-band > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Titles inside the band follow the band's ink. Two rules below force a
+   gradient fill with !important — `article h1` on doc pages and
+   `h1[class*="title"]` everywhere else — and both come later in this file, so
+   matching their !important is not enough: the `[class]` lifts this above
+   `h1[class*="title"]` on specificity too. Every hero gives its h1 a module
+   class, so the attribute always matches. */
+.hs-hero-band h1[class],
+.hs-hero-band h1[class] * {
+  background: none !important;
+  color: var(--hs-band-ink) !important;
+  -webkit-text-fill-color: var(--hs-band-ink) !important;
+}
+
 /* Gradient text utility */
 .gradient-text {
   background: var(--hindsight-gradient);
@@ -148,6 +208,30 @@
   opacity: 0.7;
 }
 
+/* The star count sits beside the mark rather than replacing it: the icon is what
+   people scan for, the number is why they stop. Build-time value — see
+   plugins/github-stars. */
+.header-github-link__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.header-github-link__stars {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ifm-navbar-link-color);
+}
+
+/* Below the desktop breakpoint the navbar is already tight — the icon alone
+   still reads, the number does not earn its width. */
+@media (max-width: 996px) {
+  .header-github-link__stars {
+    display: none;
+  }
+}
+
 /* Hide Docusaurus's built-in external link SVG — we use LuExternalLink via iconAfter */
 svg[aria-label="(opens in new tab)"] {
   display: none;
@@ -174,21 +258,15 @@ svg[aria-label="(opens in new tab)"] {
 }
 
 /* ── Brand block ──────────────────────────────────────────────────────────
-   The logo occupies the sidebar's column, so the rule closing the block
-   continues the sidebar's own edge instead of cutting the navbar at an
-   arbitrary point. Only on pages that actually have a sidebar. */
+   The logo sits next to the nav items and nothing else. It used to stretch to
+   the sidebar's width with a rule closing it, so that it lined up with the
+   sidebar edge below — but that made the navbar a different shape on a docs
+   page than on the hubs or the blog, and the top bar should not move when you
+   change section. Aligning with the sidebar was not worth that. */
 .navbar__brand-block {
   display: flex;
   align-items: center;
   align-self: stretch;
-}
-
-@media (min-width: 997px) {
-  html:has(.theme-doc-sidebar-container) .navbar__brand-block {
-    width: calc(var(--doc-sidebar-width) - 1rem);
-    margin-right: 1.5rem;
-    border-right: 1px solid var(--ifm-toc-border-color);
-  }
 }
 
 /* ── Docs + version ───────────────────────────────────────────────────────
@@ -328,13 +406,16 @@ svg[aria-label="(opens in new tab)"] {
 }
 
 /* ── Search ───────────────────────────────────────────────────────────────
-   Search moved into the docs sidebar (src/theme/DocSidebar/Desktop/Content).
-   The navbar keeps its own copy for pages with no sidebar — blog, galleries,
-   the API reference — and stands down wherever the sidebar renders one. */
-@media (min-width: 997px) {
-  html:has(.theme-doc-sidebar-container) .navbar__items--right .navbar__search {
-    display: none;
-  }
+   Search lives in the docs sidebar (src/theme/DocSidebar/Desktop/Content) and
+   nowhere else. The navbar used to keep a copy for pages with no sidebar, but
+   on the desktop navbar it sat next to the call to action and competed with it
+   for the one bit of attention that strip has to spend. On mobile the navbar
+   has no room for it either; the sidebar opens with the menu. */
+/* Scoped to the navbar. The sidebar renders the same <SearchBar />, so it emits
+   a `.navbar__search` of its own — an unscoped rule here took that one out too
+   and left the site with no search at all. */
+.navbar .navbar__search {
+  display: none;
 }
 
 /* Docusaurus clips the sidebar column to its own width (for the hideable

@@ -1,0 +1,172 @@
+/* Two series only, and one of them is deliberately neutral: colour carries
+   "us or not us" and nothing else. Every bar is direct-labelled, so identity
+   never rests on colour and the chart needs no axis, legend lookup or hover to
+   be read. */
+.section {
+  --hb-ours: linear-gradient(90deg, #0074d9 0%, #0b9f96 100%);
+  --hb-best: var(--ifm-color-emphasis-300);
+  margin: 0 0 2.5rem;
+}
+
+[data-theme='dark'] .section {
+  --hb-ours: linear-gradient(90deg, #0074d9 0%, #22d3c5 100%);
+  --hb-best: var(--ifm-color-emphasis-400);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 0.9rem;
+}
+
+/* An h3 under the page's own "## Benchmarks": it has to sit BELOW that heading
+   in the hierarchy, and at 1.35rem it was larger than the h2 it belongs to. */
+.section .title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0;
+  border-bottom: none;
+}
+
+.section .more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.75rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.legendOurs,
+.legendBest {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legendOurs::before,
+.legendBest::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.legendOurs::before {
+  background: var(--hb-ours);
+}
+
+.legendBest::before {
+  background: var(--hb-best);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 10.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.rowName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ifm-font-color-base);
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  /* A 2px gap between the two fills, so adjacent bars never touch. */
+  gap: 2px;
+}
+
+.track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.barOurs,
+.barBest {
+  /* Thin marks, rounded only at the data end, anchored to the baseline. */
+  height: 10px;
+  border-radius: 0 3px 3px 0;
+  min-width: 2px;
+  flex-shrink: 0;
+}
+
+.barOurs {
+  background: var(--hb-ours);
+}
+
+.barBest {
+  height: 7px;
+  background: var(--hb-best);
+}
+
+/* Values sit in text ink beside the mark, never in the series colour. */
+.valueOurs,
+.valueBest {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.valueOurs {
+  font-weight: 700;
+  color: var(--ifm-font-color-base);
+}
+
+.valueBest {
+  color: var(--ifm-color-emphasis-600);
+}
+
+/* Stands in for the runner-up bar on a benchmark nobody else has published on.
+   Sized to the bar it replaces so the row keeps its rhythm. */
+.noCompare {
+  display: flex;
+  align-items: center;
+  height: 7px;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--ifm-color-emphasis-500);
+}
+
+@media (max-width: 700px) {
+  .head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+
+  /* The name column cannot hold "BEAM · 10M tokens" at this width, so it moves
+     above its own bars. */
+  .row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  .legend {
+    justify-content: flex-start;
+  }
+}

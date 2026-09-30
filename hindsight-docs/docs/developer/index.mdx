@@ -1,15 +1,30 @@
 ---
 sidebar_position: 1
 slug: /
+title: Overview
+hide_title: true
 hide_table_of_contents: true
 ---
 
-import {ClientsGrid} from '@site/src/components/SupportedGrids';
+import HomeHero from '@site/src/components/HomeHero';
+import HomeFlow from '@site/src/components/HomeFlow';
+import HomeBenchmarks from '@site/src/components/HomeBenchmarks';
+import HomeCodingAgents from '@site/src/components/HomeCodingAgents';
+import SkillBanner from '@site/src/components/SkillBanner';
 import {Flow} from '@vectorize-io/interfig';
 import whatHindsightDoes from '@vectorize-io/interfig/figures/what-hindsight-does';
-import tempr from '@vectorize-io/interfig/figures/tempr';
 
-# Overview
+{/* The page's own `# Overview` H1 is suppressed via hide_title: this is the site
+    root, and the hero's headline is the H1 a visitor and a crawler should see.
+    The sidebar and page metadata still read "Overview" from the frontmatter. */}
+
+<HomeHero />
+
+## Benchmarks
+
+<HomeBenchmarks />
+
+<HomeCodingAgents />
 
 ## Why Hindsight?
 
@@ -24,66 +39,107 @@ AI agents forget everything between sessions. Every conversation starts from zer
 
 Hindsight solves these problems with a memory system designed specifically for AI agents.
 
-## What Hindsight Does
+{/* Rendered here rather than by the DocBreadcrumbs wrapper (which serves every
+    other page): at the top it sat between the navbar and the hero band as a
+    bordered strip and broke the full-bleed, and it lands better as the answer
+    to the problem the section above just described. */}
+<SkillBanner />
 
-<Flow {...whatHindsightDoes.props} />
+## How It Works
 
-**Your AI agent** stores information via `retain()`, searches with `recall()`, and reasons with `reflect()` — all interactions with its dedicated **memory bank**
+{/* The one-glance version. The interactive figure further down explains the
+    pipeline; this answers the question that comes before it — how does my
+    agent, or my app, actually talk to this. */}
+<HomeFlow />
 
-## Key Components
+{/* Both charts in one place: retrieval accuracy and what memory does to a
+    coding agent are the same question asked twice, and splitting them across
+    the page made neither land. */}
 
 ### Memory Types
 
-Hindsight organizes knowledge into a hierarchy of facts and consolidated knowledge:
+Hindsight does not store conversations. It extracts what was said into typed
+facts and then builds on them:
 
-| Type | What it stores | Example |
-|------|----------------|---------|
-| **Mental Model** | User-curated summaries for common queries | "Team communication best practices" |
-| **Observation** | Automatically consolidated knowledge from facts | "User was a React enthusiast but has now switched to Vue" (captures history) |
-| **World Fact** | Objective facts received | "Alice works at Google" |
-| **Experience Fact** | Bank's own actions and interactions | "I recommended Python to Bob" |
+- **World fact** — an objective claim it was told. *"Alice works at Google."*
+- **Experience fact** — something the bank itself did. *"I recommended Python to Bob."*
+- **Observation** — a belief consolidated from many facts, with its evidence and
+  its history. *"User was a React enthusiast, has now switched to Vue."*
+- **Mental model** — a curated summary you write for a question you ask often.
+- **Knowledge page** — a living document the bank writes about itself.
 
-During reflect, the agent checks sources in priority order: **Mental Models → Observations → Raw Facts**.
+Facts are not a list. Each is linked to the entities it mentions and to the other
+facts that share them, which is what makes "where does Alice work?" answerable
+from two facts that were never stored together — the graph at the top of this
+page is one bank's.
 
-### Multi-Strategy Retrieval (TEMPR)
+### Multi-Strategy Retrieval
 
-Four search strategies run in parallel:
+`recall()` runs four searches **in parallel**, because no single one handles
+every question:
 
-<Flow {...tempr.props} />
+- **Semantic** — meaning rather than wording, so "Alice's job" finds "Alice works as a software engineer"
+- **Keyword (BM25)** — the names and technical terms an embedding blurs together; five pluggable Postgres backends, including one that works on a Citus cluster
+- **Graph** — entity links, so a fact reachable in two hops comes back even when it shares no words with the query
+- **Temporal** — time expressions parsed into a window, then filled by relevance *and spread across the range*, so "what happened in 2023?" is not all from December
 
-| Strategy | Best for |
-|----------|----------|
-| **Semantic** | Conceptual similarity, paraphrasing |
-| **Keyword (BM25)** | Names, technical terms, exact matches |
-| **Graph** | Related entities, indirect connections |
-| **Temporal** | "last spring", "in June", time ranges |
+Then the part that matters more than any single arm:
+
+- **Fused by rank, not score** — a memory several strategies agree on wins, and no arm's scoring scale can dominate the others
+- **Re-ranked by a cross-encoder** that reads the query and the memory together
+- **Cut to a token budget, not a top-k** — you say how much context you can afford and Hindsight fills it, because agents budget in tokens and not in result counts
+
+See [Recall](/developer/retrieval) for the strategies in full.
 
 ### Observation Consolidation
 
-After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs that the bank has built up across many memories:
+A background worker keeps turning raw facts into durable beliefs:
 
-- **Deduplication**: Overlapping facts are merged into a single durable observation instead of piling up as repeats
-- **Evidence tracking**: Each observation references the source memories (with exact quotes) that support it, plus a proof count
-- **Continuous refinement**: Observations are updated — not overwritten — when new evidence supports, contradicts, or extends them; history is preserved
-- **Freshness awareness**: when newer memories have been retained but not yet consolidated, `reflect` treats the affected observations as stale and verifies them against raw facts before relying on them
+- **Deduplicated** — overlapping facts merge into one observation instead of piling up as repeats
+- **Evidence-grounded** — each observation points at the memories that support it, with exact quotes and a proof count
+- **Refined, not overwritten** — new evidence updates an observation and its history is kept, so you can see a belief change
+- **Freshness-aware** — when memories have landed but not yet been consolidated, `reflect` treats the affected observations as stale and checks them against raw facts before trusting them
 
-### Mission, Directives & Disposition
+### Knowledge Pages
 
-Memory banks can be configured to shape how the agent reasons during `reflect`:
+Observations answer one question at a time. A **knowledge page** is a living
+document the bank writes about itself — "What are the components here?", "What's
+our error-handling convention?" — rewritten incrementally as consolidation
+produces new knowledge in its scope:
 
-| Configuration | Purpose | Example |
-|---------------|---------|---------|
-| **Mission** | Natural language identity for the bank | "I am a research assistant specializing in ML. I prefer simplicity over cutting-edge." |
-| **Directives** | Hard rules the agent must follow | "Never recommend specific stocks", "Always cite sources" |
-| **Disposition** | Soft traits that influence reasoning style | Skepticism, literalism, empathy (1-5 scale) |
+- **A wiki, not a blob** — pages live in a tree of folders, browsable and searchable, each answering one question
+- **Built from observations** — synthesized from consolidated beliefs rather than raw conversation, so a page is not a transcript summary
+- **Never self-citing** — a page never reads another page, so they cannot cite each other into a feedback loop
+- **Real files when you want them** — `hindsight fs mount` projects the tree onto disk as ordinary markdown, so `grep`, an editor or an agent's file tools all work with no SDK
 
-The **mission** tells Hindsight what knowledge to prioritize and provides context for reasoning. **Directives** are guardrails and compliance rules that must never be violated. **Disposition traits** subtly influence interpretation style.
+See [Knowledge Pages](/developer/knowledge-pages) for the full model.
 
-These settings only affect the `reflect` operation, not `recall`.
+### Reflect
 
-## Clients & Languages
+`recall()` returns memories. `reflect()` returns an **answer**, by running an
+agentic loop over the bank rather than a single query:
 
-<ClientsGrid />
+- **It gathers its own evidence** — the agent decides what it needs and calls its own tools, up to ten rounds, and cannot answer before it has retrieved something
+- **It checks sources in priority order** — mental models and knowledge pages first, then observations, and only then raw facts, so it reads the distilled answer before the transcript
+- **It cites what it used** — and only IDs it actually retrieved can be cited
+
+What makes two banks answer the same question differently is their configuration:
+
+- **Mission** — the bank's identity in plain language, which tells it what to prioritise. *"I am a research assistant specializing in ML. I prefer simplicity over cutting-edge."*
+- **Directives** — hard rules it must never break. *"Never recommend specific stocks."*
+- **Disposition** — skepticism, literalism and empathy on a 1–5 scale, shaping how it interprets what it finds
+
+These shape `reflect` only. `recall` returns the same memories whoever is asking.
+
+See [Reflect](/developer/reflect) for the loop in detail.
+
+## Architecture Deep Dive
+
+Everything above, end to end and in motion: what a document turns into on the
+way in, what each of the three operations touches, and what the worker changes
+behind them. Play it, or step through it at your own pace.
+
+<Flow {...whatHindsightDoes.props} />
 
 ## Integrations
 
@@ -97,7 +153,7 @@ Browse all supported integrations in the [Integrations Hub](/integrations).
 
 ### Core Concepts
 - [**Retain**](/developer/retain) — How memories are stored with multi-dimensional facts
-- [**Recall**](/developer/retrieval) — How TEMPR's 4-way search retrieves memories
+- [**Recall**](/developer/retrieval) — How the 4-way parallel search retrieves memories
 - [**Reflect**](/developer/reflect) — How mission, directives, and disposition shape reasoning
 
 ### API Methods

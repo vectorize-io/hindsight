@@ -1,0 +1,165 @@
+/* Agent identity is carried by each agent's own logo, so there is no categorical
+   palette here at all — the only colour is the one accent shared by every arrow.
+   Both axes say which direction is better, since on this chart neither is
+   obvious. */
+.section {
+  --hca-accent: #0b8f93;
+  margin: 0 0 3rem;
+}
+
+[data-theme='dark'] .section {
+  --hca-accent: #22d3c5;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* An h3 under the page's own "## Benchmarks": it has to sit BELOW that heading
+   in the hierarchy, and at 1.35rem it was larger than the h2 it belongs to. */
+.section .title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0;
+  border-bottom: none;
+}
+
+.section .more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.figure {
+  margin: 0;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.grid {
+  stroke: var(--ifm-color-emphasis-200);
+  stroke-width: 1;
+}
+
+.axis {
+  font-size: 12px;
+  fill: var(--ifm-color-emphasis-600);
+}
+
+.axisTitle {
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: var(--ifm-color-emphasis-600);
+}
+
+/* The "no memory" end: hollow and neutral. It is a state every agent starts
+   from, not a series of its own. */
+.before {
+  fill: var(--ifm-background-color);
+  stroke: var(--ifm-color-emphasis-400);
+  stroke-width: 2;
+}
+
+.valueBefore {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11.5px;
+  fill: var(--ifm-color-emphasis-600);
+}
+
+.arrow {
+  stroke: var(--hca-accent);
+  stroke-width: 2;
+}
+
+.arrowHead {
+  fill: var(--hca-accent);
+}
+
+/* Where Hindsight is. The chip is not decoration: several of these logos are
+   near-black line art drawn for light backgrounds, and it keeps all three
+   reading the same way against either theme. */
+.chip {
+  fill: #ffffff;
+  stroke: var(--hca-accent);
+  stroke-width: 2;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--ifm-font-color-base);
+}
+
+.valueAfter {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11.5px;
+  font-weight: 700;
+  fill: var(--hca-accent);
+}
+
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.keyBefore,
+.keyAfter {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.keyBefore {
+  background: var(--ifm-background-color);
+  border: 2px solid var(--ifm-color-emphasis-400);
+}
+
+.keyAfter {
+  margin-left: 0.6rem;
+  background: #ffffff;
+  border: 2px solid var(--hca-accent);
+}
+
+@media (max-width: 900px) {
+  .head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+
+  /* The plot keeps its aspect ratio as it shrinks, so the type has to grow to
+     stay readable. */
+  .axis,
+  .axisTitle,
+  .valueBefore,
+  .valueAfter {
+    font-size: 16px;
+  }
+
+  .label {
+    font-size: 18px;
+  }
+}

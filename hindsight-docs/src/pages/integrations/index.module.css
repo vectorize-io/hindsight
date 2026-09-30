@@ -1,26 +1,15 @@
 /* ── Full-width hero ─────────────────────────────────────────────────────── */
 .heroSection {
   width: 100%;
-  padding: 5rem 1.5rem 4rem;
+  padding: 4rem 1.5rem 3.5rem;
   text-align: center;
-  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 116, 217, 0.12) 0%, transparent 70%),
-              var(--ifm-background-color);
-  border-bottom: 1px solid var(--ifm-color-emphasis-200);
 }
 
-[data-theme='dark'] .heroSection {
-  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 116, 217, 0.18) 0%, transparent 70%),
-              var(--ifm-background-color);
-  border-bottom-color: rgba(255, 255, 255, 0.07);
-}
-
+/* Background, grid and the white heading come from the shared `hs-hero-band`
+   class in custom.css — the same band the homepage and PageHero use. */
 .heroTitle {
   font-size: 3.2rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #0074d9, #009296);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin-bottom: 0.75rem;
@@ -28,62 +17,58 @@
 
 .heroSubtitle {
   font-size: 1.05rem;
-  color: var(--ifm-color-emphasis-600);
+  color: var(--hs-band-ink-soft);
   max-width: 500px;
   margin: 0 auto 2.25rem;
   line-height: 1.7;
 }
 
-/* ── Search ──────────────────────────────────────────────────────────────── */
-.searchWrapper {
+/* ── Search ───────────────────────────────────────────────────────────────
+   `hubSearch*`, not `search*`: custom.css strips every border, background and
+   padding from `[class*="searchInput"]` with !important to style the navbar
+   search, and a CSS-module class called `searchInput` is caught by that
+   substring match. This input sits on the dark hero band, so it is styled for
+   dark in both themes. */
+.hubSearchWrapper {
   position: relative;
   max-width: 640px;
   margin: 0 auto;
 }
 
-.searchInput {
+.hubSearchInput {
   width: 100%;
   box-sizing: border-box;
   padding: 1.05rem 3.5rem 1.05rem 1.5rem;
   border-radius: 14px;
-  border: 2px solid var(--ifm-color-emphasis-300);
-  background: var(--ifm-background-surface-color);
-  color: var(--ifm-font-color-base);
+  border: 2px solid var(--hs-band-line);
+  background: var(--hs-band-surface);
+  color: var(--hs-band-ink);
   font-size: 1.1rem;
   font-family: inherit;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
 }
 
-.searchInput::placeholder {
-  color: var(--ifm-color-emphasis-400);
+.hubSearchInput::placeholder {
+  color: var(--hs-band-ink-faint);
 }
 
-.searchInput:focus {
-  border-color: #0074d9;
-  box-shadow: 0 0 0 4px rgba(0, 116, 217, 0.15), 0 4px 24px rgba(0, 0, 0, 0.08);
-}
-
-[data-theme='dark'] .searchInput {
-  background: #242428;
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-}
-
-[data-theme='dark'] .searchInput:focus {
+.hubSearchInput:focus {
   border-color: #4da6ff;
-  box-shadow: 0 0 0 4px rgba(77, 166, 255, 0.18), 0 4px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 0 4px rgba(77, 166, 255, 0.18);
 }
 
-.searchClear {
+/* No per-theme override: the input lives on the band, which is dark in both. */
+
+.hubSearchClear {
   position: absolute;
   right: 1rem;
   top: 50%;
   transform: translateY(-50%);
-  background: var(--ifm-color-emphasis-200);
+  background: var(--hs-band-surface-hover);
   border: none;
-  color: var(--ifm-color-emphasis-600);
+  color: var(--hs-band-ink-soft);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
@@ -96,8 +81,8 @@
   transition: background 0.1s;
 }
 
-.searchClear:hover {
-  background: var(--ifm-color-emphasis-300);
+.hubSearchClear:hover {
+  background: var(--hs-band-surface-hover);
 }
 
 /* ── Hero stats ──────────────────────────────────────────────────────────── */
@@ -106,7 +91,7 @@
   align-items: center;
   gap: 0.6rem;
   font-size: 0.82rem;
-  color: var(--ifm-color-emphasis-500);
+  color: var(--hs-band-ink-faint);
   margin-top: 1.25rem;
 }
 

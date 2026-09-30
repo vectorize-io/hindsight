@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import React, {useMemo, useState, useCallback} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Link from '@docusaurus/Link';
@@ -161,17 +162,17 @@ export default function TemplateGallery(): React.ReactElement {
 
   return (
     <Layout title="Bank Templates Hub" description="Pre-built bank templates for common use cases">
-      <div className={styles.heroSection}>
+      <div className={clsx('hs-hero-band', styles.heroSection)}>
         <h1 className={styles.heroTitle}>Bank Templates Hub</h1>
         <p className={styles.heroSubtitle}>
           Pre-built bank templates to get started fast. Browse, preview, and import into your Hindsight banks.
           {' '}<a href="/developer/api/bank-templates" className={styles.heroLink}>Learn how templates work &rarr;</a>
         </p>
 
-        <div className={styles.searchWrapper}>
+        <div className={styles.hubSearchWrapper}>
           <input
             type="text"
-            className={styles.searchInput}
+            className={styles.hubSearchInput}
             placeholder="Search templates..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -180,7 +181,7 @@ export default function TemplateGallery(): React.ReactElement {
             autoFocus
           />
           {search && (
-            <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">
+            <button className={styles.hubSearchClear} onClick={() => setSearch('')} aria-label="Clear search">
               &times;
             </button>
           )}

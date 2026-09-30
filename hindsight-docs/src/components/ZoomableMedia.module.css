@@ -4,9 +4,15 @@
   margin-bottom: var(--ifm-leading);
 }
 
+/* Fluid, not intrinsic: a wide asset in a narrower column used to overflow it
+   (max-width on the wrapper does not shrink a replaced child) and push the whole
+   page into horizontal scroll. */
 .frame > img,
 .frame > video {
   display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
 }
 
 .zoom {
