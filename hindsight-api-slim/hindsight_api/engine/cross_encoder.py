@@ -437,6 +437,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         max_concurrent: int = DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
         max_retries: int = 3,
         retry_delay: float = 0.5,
+        max_tokens_per_doc: int | None = None,
     ):
         """
         Initialize remote TEI cross-encoder client.
@@ -456,6 +457,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         self.max_concurrent = max_concurrent
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.max_tokens_per_doc = max_tokens_per_doc
         # Idle pooled sockets are dropped before TEI (or a proxy in front of it) can
         # close them under us, which would otherwise surface as a failed request.
         self._session = LoopLocalSession(
@@ -620,6 +622,8 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         for query, indexed_texts in query_groups.items():
             indices = [idx for idx, _ in indexed_texts]
             texts = [text for _, text in indexed_texts]
+            if self.max_tokens_per_doc is not None:
+                texts = _truncate_docs_to_tokens(texts, self.max_tokens_per_doc)
 
             # Split into batches
             for i in range(0, len(texts), self.batch_size):
@@ -2231,6 +2235,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             timeout=member.tei_http_timeout,
             batch_size=member.tei_batch_size,
             max_concurrent=member.tei_max_concurrent,
+            max_tokens_per_doc=member.tei_max_tokens_per_doc,
         )
     elif provider == "local":
         return LocalSTCrossEncoder(

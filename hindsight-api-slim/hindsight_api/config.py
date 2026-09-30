@@ -603,6 +603,7 @@ ENV_RERANKER_TEI_URL = "HINDSIGHT_API_RERANKER_TEI_URL"
 ENV_RERANKER_TEI_BATCH_SIZE = "HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE"
 ENV_RERANKER_TEI_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT"
 ENV_RERANKER_TEI_HTTP_TIMEOUT = "HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT"
+ENV_RERANKER_TEI_MAX_TOKENS_PER_DOC = "HINDSIGHT_API_RERANKER_TEI_MAX_TOKENS_PER_DOC"
 ENV_RERANKER_COHERE_TIMEOUT = "HINDSIGHT_API_RERANKER_COHERE_TIMEOUT"
 ENV_RERANKER_OPENROUTER_TIMEOUT = "HINDSIGHT_API_RERANKER_OPENROUTER_TIMEOUT"
 ENV_RERANKER_ZEROENTROPY_TIMEOUT = "HINDSIGHT_API_RERANKER_ZEROENTROPY_TIMEOUT"
@@ -1290,6 +1291,9 @@ DEFAULT_RERANKER_LOCAL_TIMEOUT = 300.0
 DEFAULT_RERANKER_TEI_BATCH_SIZE = 128
 DEFAULT_RERANKER_TEI_MAX_CONCURRENT = 8
 DEFAULT_RERANKER_TEI_HTTP_TIMEOUT = 30.0  # HTTP timeout for TEI reranker requests (seconds)
+DEFAULT_RERANKER_TEI_MAX_TOKENS_PER_DOC: int | None = (
+    None  # truncate each doc to N tokens before rerank (None = no truncation)
+)
 # HTTP timeout (seconds) for remote rerank providers. Defaults match the previous
 # hardcoded constructor defaults so unset envs keep current behavior.
 DEFAULT_RERANKER_COHERE_TIMEOUT = 60.0
@@ -2652,6 +2656,7 @@ class RerankerMemberConfig:
     tei_batch_size: int
     tei_max_concurrent: int
     tei_http_timeout: float
+    tei_max_tokens_per_doc: int | None
     # cohere
     cohere_api_key: str | None
     cohere_model: str
@@ -2807,6 +2812,9 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 tei_batch_size=_member_int(base, "TEI_BATCH_SIZE", DEFAULT_RERANKER_TEI_BATCH_SIZE),
                 tei_max_concurrent=_member_int(base, "TEI_MAX_CONCURRENT", DEFAULT_RERANKER_TEI_MAX_CONCURRENT),
                 tei_http_timeout=_member_float(base, "TEI_HTTP_TIMEOUT", DEFAULT_RERANKER_TEI_HTTP_TIMEOUT),
+                tei_max_tokens_per_doc=_member_opt_int(
+                    base, "TEI_MAX_TOKENS_PER_DOC", DEFAULT_RERANKER_TEI_MAX_TOKENS_PER_DOC
+                ),
                 cohere_api_key=_member_opt_str(base, "COHERE_API_KEY"),
                 cohere_model=_member_str(base, "COHERE_MODEL", DEFAULT_RERANKER_COHERE_MODEL),
                 cohere_base_url=_member_opt_str(base, "COHERE_BASE_URL"),
@@ -3207,6 +3215,7 @@ class HindsightConfig:
     reranker_tei_batch_size: int
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
+    reranker_tei_max_tokens_per_doc: int | None
     reranker_max_candidates: int
     # Per-budget override of reranker_max_candidates (0 = fall back to reranker_max_candidates).
     reranker_max_candidates_low: int
@@ -3817,6 +3826,7 @@ class HindsightConfig:
             tei_batch_size=self.reranker_tei_batch_size,
             tei_max_concurrent=self.reranker_tei_max_concurrent,
             tei_http_timeout=self.reranker_tei_http_timeout,
+            tei_max_tokens_per_doc=self.reranker_tei_max_tokens_per_doc,
             cohere_api_key=self.reranker_cohere_api_key,
             cohere_model=self.reranker_cohere_model,
             cohere_base_url=self.reranker_cohere_base_url,
@@ -4638,6 +4648,11 @@ class HindsightConfig:
             ),
             reranker_tei_http_timeout=float(
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
+            ),
+            reranker_tei_max_tokens_per_doc=(
+                int(v)
+                if (v := os.getenv(ENV_RERANKER_TEI_MAX_TOKENS_PER_DOC))
+                else DEFAULT_RERANKER_TEI_MAX_TOKENS_PER_DOC
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
             reranker_max_candidates_low=int(
