@@ -227,3 +227,11 @@ def test_an_unreadable_embed_defaults_to_the_safe_path(monkeypatch):
     is correct either way, while skipping it on a release that needs it breaks the daemon."""
     monkeypatch.setitem(sys.modules, "hindsight_embed", SimpleNamespace())  # no daemon_embed_manager
     assert embedded._embed_scrubs_parent_env() is False
+
+
+def test_the_binary_probe_looks_next_to_our_interpreter(monkeypatch, tmp_path):
+    """No hindsight-api beside us means the daemon comes down through uvx first."""
+    monkeypatch.setattr(embedded.shutil, "which", lambda name, path=None: None)
+    assert embedded._installed_api_binary_exists() is False
+    monkeypatch.setattr(embedded.shutil, "which", lambda name, path=None: "/venv/bin/hindsight-api")
+    assert embedded._installed_api_binary_exists() is True

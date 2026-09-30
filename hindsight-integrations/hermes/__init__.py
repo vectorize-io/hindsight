@@ -40,6 +40,7 @@ from .embedded import (
     _embedded_llm_api_key,
     _embedded_profile_env_path,
     _export_port_health_grace_timeout,
+    _installed_api_binary_exists,
     _load_simple_env,
     _local_runtime_hint,
     _materialize_embedded_profile_env,
@@ -391,6 +392,7 @@ class HindsightMemoryProvider(MemoryProvider):
     def __init__(self):
         self._config = self._api_key = self._client = None
         self._embedded_url = None
+        self._client_lock = threading.Lock()
         self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
@@ -732,6 +734,7 @@ class HindsightMemoryProvider(MemoryProvider):
             profile,
             daemon_config.get("HINDSIGHT_API_LLM_PROVIDER", ""),
         )
+        self._announce_slow_first_start(profile)
         self._embedded_url = _start_daemon(daemon_config, profile)
         logger.info("Connected to embedded Hindsight daemon at %s", self._embedded_url)
         return Hindsight(base_url=self._embedded_url)
@@ -750,11 +753,50 @@ class HindsightMemoryProvider(MemoryProvider):
         )
         return Hindsight(**kwargs)
 
+    def _announce_slow_first_start(self, profile: str) -> None:
+        """Tell the user once when the embedded daemon is about to be fetched, not just started.
+
+        With no ``hindsight-api`` binary in the environment the daemon runs through
+        ``uvx hindsight-api@<version>``, which downloads the server (and its ML stack) into uv's
+        cache before it can boot. Until now nothing reached the user during that: the manager's
+        Rich panel is written to ~/.hermes/logs/hindsight-embed.log and only after the attempt
+        ends, so a first run looked like Hermes hanging, and #4936 reported a reply that took
+        6m23s, retained nothing and printed no error. Same sink as the root-refusal notice.
+        """
+        if _daemon_is_running(profile) or _installed_api_binary_exists():
+            return
+        msg = (
+            "Hindsight is downloading its local memory server (a few hundred MB on first use). "
+            "Memory will start working once it finishes; progress is in "
+            f"{get_hermes_home() / 'logs' / 'hindsight-embed.log'}."
+        )
+        logger.info(msg)
+        with contextlib.suppress(Exception):
+            if self._warning_callback is not None:
+                self._warning_callback(msg)
+            else:
+                from gateway.warning_notifications import render_notification
+
+                render_notification(
+                    lambda: print(f"  ⏳ {msg}", file=sys.stderr, flush=True),
+                    platform=self._platform,
+                )
+
     def _get_client(self):
-        """Return the cached Hindsight client (created once, reused)."""
-        if self._client is None:
-            self._client = self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
-        return self._client
+        """Return the cached Hindsight client, creating it at most once.
+
+        Locked because in local_embedded the creation *starts the daemon*: the background start
+        worker and the first memory operation both land here, and an unguarded check-then-set let
+        them each start one and build one client, of which the loser was dropped without being
+        closed (an unclosed aiohttp session). threading.Lock, not asyncio: these are threads, and
+        the guarded section never awaits.
+        """
+        with self._client_lock:
+            if self._client is None:
+                self._client = (
+                    self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
+                )
+            return self._client
 
     def _run_sync(self, coro):
         """Schedule *coro* on the shared loop using the configured timeout."""

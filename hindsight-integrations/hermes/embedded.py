@@ -8,6 +8,7 @@ import importlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -176,6 +177,15 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
             (result.stderr or result.stdout or "").strip()[-500:],
         )
     return result.returncode == 0
+
+
+def _installed_api_binary_exists() -> bool:
+    """Whether a ``hindsight-api`` entry point sits next to us, i.e. the daemon starts locally.
+
+    False means the daemon manager falls back to ``uvx hindsight-api@<version>``, which downloads
+    the server before it can boot — the case worth warning the user about.
+    """
+    return shutil.which("hindsight-api", path=str(Path(sys.executable).parent)) is not None
 
 
 def _start_daemon(config: dict[str, str], profile: str) -> str:
