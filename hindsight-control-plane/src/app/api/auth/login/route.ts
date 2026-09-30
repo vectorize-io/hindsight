@@ -64,15 +64,20 @@ export async function POST(request: NextRequest) {
 
 /**
  * Constant-time string comparison to prevent timing attacks.
+ * SECURITY FIX (CWE-208): The previous implementation early-returned false
+ * on length mismatch, leaking the secret's length via response timing.
+ * This version always iterates over the longer string's length, preventing
+ * length oracle attacks while remaining constant-time for value comparison.
  */
 function constantTimeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  const maxLen = Math.max(a.length, b.length);
+  // Length mismatch is an error, but we must not return early — that leaks
+  // the secret's length. Instead, flag it and keep iterating.
+  let result = a.length ^ b.length;
+  for (let i = 0; i < maxLen; i++) {
+    // Index out-of-bounds returns NaN → XOR yields non-zero → comparison fails,
+    // and we iterate the full maxLen either way.
+    result |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   }
 
   return result === 0;

@@ -465,7 +465,12 @@ class MCPMiddleware:
             if not auth_token:
                 await self._send_error(send, 401, "Authorization header required")
                 return
-            if auth_token != MCP_AUTH_TOKEN:
+            # SECURITY: Use constant-time comparison to prevent timing
+            # side-channel attacks (CWE-208). Python's != short-circuits on the
+            # first differing byte, enabling byte-by-byte token recovery.
+            import hmac as _hmac
+
+            if not _hmac.compare_digest(auth_token.encode(), MCP_AUTH_TOKEN.encode()):
                 await self._send_error(send, 401, "Invalid authentication token")
                 return
             # Legacy mode: mark as pre-authenticated so tenant extension won't re-validate

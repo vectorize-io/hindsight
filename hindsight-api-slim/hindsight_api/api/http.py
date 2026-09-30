@@ -283,7 +283,12 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     handler instead of hidden behind a call.
     """
     logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
-    return HTTPException(status_code=500, detail=str(exc))
+    # SECURITY: Never send str(exc) to the client — it can contain database
+    # credentials, internal IPs, file paths, and schema names (CWE-209).
+    return HTTPException(
+        status_code=500,
+        detail="An internal error occurred. Please try again or contact support.",
+    )
 
 
 def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
@@ -6229,7 +6234,10 @@ def _register_routes(app: FastAPI):
             logger.error(
                 f"[RECALL ERROR] bank={bank_id} handler_duration={handler_duration:.3f}s error={str(e)}\n{error_detail}"
             )
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred. Please try again or contact support.",
+            )
 
     @app.post(
         "/v1/default/banks/{bank_id}/reflect",
@@ -9199,7 +9207,15 @@ def _register_routes(app: FastAPI):
             if file_info is None:
                 raise HTTPException(status_code=404, detail="File not found")
 
-            headers = {"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'}
+            # SECURITY: Sanitize the bank_id before interpolating into the
+            # Content-Disposition header (CWE-113). The bank_id is parsed from
+            # the storage key and may contain characters that break out of the
+            # quoted filename value — double-quotes, backslashes, newlines, or
+            # semicolons could inject arbitrary header directives.
+            import re as _re
+
+            safe_bank_id = _re.sub(r"[\"\\\\\\r\\n;]", "_", bank_id)
+            headers = {"Content-Disposition": f'attachment; filename="{safe_bank_id}-documents.zip"'}
             if file_info.size is not None:
                 headers["Content-Length"] = str(file_info.size)
 
@@ -10100,7 +10116,10 @@ def _register_routes(app: FastAPI):
                 f"Traceback:\n{traceback.format_exc()}"
             )
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories (retain): {error_detail}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred. Please try again or contact support.",
+            )
 
     @app.post(
         "/v1/default/banks/{bank_id}/files/retain",

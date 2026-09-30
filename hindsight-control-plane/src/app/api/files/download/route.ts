@@ -12,7 +12,17 @@ export async function GET(request: NextRequest) {
   try {
     const path = request.nextUrl.searchParams.get("path");
     // Only proxy the file-download endpoint — never an arbitrary dataplane path (SSRF guard).
-    if (!path || !path.startsWith("/v1/default/files/download/")) {
+    // SECURITY FIX (CWE-918 / CWE-22): Reject path-traversal sequences before
+    // the prefix check. Without this, a path like
+    //   /v1/default/files/download/../../banks/target/memories
+    // passes the startsWith guard but resolves to an arbitrary dataplane route
+    // when fetched, authenticated with the server's embedded API key.
+    if (
+      !path ||
+      path.includes("..") ||
+      path.includes("\\") ||
+      !path.startsWith("/v1/default/files/download/")
+    ) {
       return NextResponse.json(
         localizeApiErrorPayload(request, {
           error: "A valid file download path is required",
@@ -29,7 +39,12 @@ export async function GET(request: NextRequest) {
     }
 
     const body = await response.arrayBuffer();
-    const fallbackName = path.split("/").pop() || "download.zip";
+    // SECURITY FIX (CWE-113): Sanitize the fallback filename to prevent
+    // Content-Disposition header injection. Strip characters that could
+    // break out of the quoted filename value (double quotes, newlines,
+    // semicolons, backslashes).
+    const rawName = path.split("/").pop() || "download.zip";
+    const fallbackName = rawName.replace(/["\\\r\n;]/g, "_");
     return new NextResponse(body, {
       status: 200,
       headers: {

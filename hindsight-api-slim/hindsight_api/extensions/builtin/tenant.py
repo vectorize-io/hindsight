@@ -1,5 +1,7 @@
 """Built-in tenant extension implementations."""
 
+import hmac
+
 from hindsight_api.config import get_config
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
@@ -70,7 +72,11 @@ class ApiKeyTenantExtension(TenantExtension):
 
     async def authenticate(self, context: RequestContext) -> TenantContext:
         """Validate API key and return configured schema context."""
-        if context.api_key != self.expected_api_key:
+        # SECURITY: Use constant-time comparison to prevent timing side-channel
+        # attacks (CWE-208). Python's != short-circuits on the first differing
+        # byte, leaking which prefix of a guess is correct via response-time
+        # measurement. hmac.compare_digest compares all bytes regardless.
+        if not context.api_key or not hmac.compare_digest(context.api_key.encode(), self.expected_api_key.encode()):
             raise AuthenticationError("Invalid API key")
         return TenantContext(schema_name=get_config().database_schema)
 
