@@ -9,7 +9,7 @@ import {integrationsSorted, CATEGORY_LABELS, groupByCategory} from '@site/src/li
 // Agents covered by the Coding Agents plugin, drawn on its card: the whole pitch of that package
 // is "one install, every agent", which a single icon cannot convey — the row of logos is the pitch.
 // Shared with the sidebar preview so the two cannot drift.
-import {CODING_AGENT_HARNESSES} from '@site/src/lib/coding-agent-harnesses';
+import {CODING_AGENT_HARNESSES, harnessDocLink} from '@site/src/lib/coding-agent-harnesses';
 import styles from './index.module.css';
 
 /**
@@ -118,6 +118,7 @@ function IntegrationCard({
 export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
+  const harnessBase = useBaseUrl('/img/harness/');
 
   // Which integrations have a changelog page, from the same build-time index the /changelog
   // listing uses — so a card grows a Changelog button the release after its first release,
@@ -160,6 +161,16 @@ export default function IntegrationsHub(): React.ReactElement {
     () => (showFeatured ? filtered.filter((i) => !FEATURED_IDS.includes(i.id)) : filtered),
     [filtered, showFeatured],
   );
+
+  // The individual coding agents are not catalogue entries — one plugin installs all of them — but
+  // people search this page for the agent they use, not for the plugin's name, and found nothing.
+  // A card each, pointing at that agent's install section on the plugin page. All official, so the
+  // community filter hides the section rather than showing an empty one.
+  const harnesses = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (selectedType === 'community') return [];
+    return CODING_AGENT_HARNESSES.filter((h) => !q || h.label.toLowerCase().includes(q));
+  }, [search, selectedType]);
 
   const officialCount = integrations.filter((i) => i.type === 'official').length;
   const communityCount = integrations.filter((i) => i.type === 'community').length;
@@ -233,6 +244,33 @@ export default function IntegrationsHub(): React.ReactElement {
           </section>
         )}
 
+        {harnesses.length > 0 && (
+          <section className={styles.group}>
+            <h3 className={styles.groupTitle}>
+              Coding agents
+              <span className={styles.groupCount}>{harnesses.length}</span>
+            </h3>
+            <p className={styles.harnessNote}>
+              Each installed by the one{' '}
+              <Link to="/sdks/integrations/coding-agents">Coding Agents</Link> plugin.
+            </p>
+            <div className={styles.harnessGrid}>
+              {harnesses.map((h) => (
+                <Link key={h.id} to={harnessDocLink(h)} className={styles.harnessCard}>
+                  <img
+                    src={`${harnessBase}${h.file}`}
+                    alt=""
+                    className={styles.compactIcon}
+                    aria-hidden
+                    loading="lazy"
+                  />
+                  <span className={styles.compactName}>{h.label}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         {showFeatured && (
           <>
             <hr className={styles.sectionDivider} />
@@ -240,7 +278,7 @@ export default function IntegrationsHub(): React.ReactElement {
           </>
         )}
 
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && harnesses.length === 0 ? (
           <div className={styles.empty}>
             <p>No integrations match your search.</p>
             <button className={styles.resetButton} onClick={() => { setSearch(''); setSelectedType('all'); }}>

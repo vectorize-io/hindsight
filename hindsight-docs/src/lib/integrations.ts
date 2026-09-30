@@ -31,14 +31,17 @@ export const internalIntegrationsSorted: IntegrationEntry[] = integrationsSorted
 // category missing here falls to the end under its raw value rather than
 // disappearing from the page.
 export const CATEGORY_LABELS: Record<string, string> = {
-  'coding-agent': 'Coding agents',
+  // "Other" because the gallery leads with a card per agent the Coding Agents plugin installs;
+  // what is left here is everything else that talks to a coding agent — IDE extensions, wrappers,
+  // and agents with an integration of their own.
+  'coding-agent': 'Other coding agents',
   framework: 'Frameworks & SDKs',
   mcp: 'MCP',
   tool: 'Tools & apps',
   legacy: 'Superseded',
 };
 
-const CATEGORY_ORDER = ['coding-agent', 'framework', 'mcp', 'tool', 'legacy'];
+const CATEGORY_ORDER = ['framework', 'mcp', 'tool', 'coding-agent', 'legacy'];
 
 function categoryRank(category: string): number {
   const i = CATEGORY_ORDER.indexOf(category);

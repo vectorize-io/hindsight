@@ -523,3 +523,53 @@
 [data-theme='dark'] .actionPill:first-child:hover {
   background: rgba(0, 116, 217, 0.32);
 }
+
+/* Coding agents: name + logo only, so 18 of them stay one scannable block rather than
+   18 cards repeating the same one-line description. */
+.harnessNote {
+  margin: -0.45rem 0 0.85rem;
+  font-size: 0.78rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.harnessGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+}
+
+@media (max-width: 996px) {
+  .harnessGrid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .harnessGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.harnessCard {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+  text-decoration: none !important;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme='dark'] .harnessCard {
+  background: #1c1c1e;
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+.harnessCard:hover {
+  border-color: rgba(0, 116, 217, 0.45);
+  box-shadow: 0 4px 16px rgba(0, 116, 217, 0.08);
+}
+
+.harnessCard:hover .compactName {
+  color: var(--ifm-color-primary) !important;
+}
