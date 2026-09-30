@@ -7,6 +7,10 @@ Agent Plugins is the vendor-neutral standard (AWS, Cursor, GitHub/Microsoft, Ope
 Vercel) for packaging **Agent Skills + MCP servers** into one distributable plugin. At
 launch it is supported by **ChatGPT/Codex, Cursor, GitHub Copilot, Kiro, and VS Code**.
 
+> **Codex users:** Codex's Agent Plugins loader drops this plugin's `Authorization`
+> header, so it cannot authenticate. Use the Coding Agents integration instead; see
+> [Codex](#codex) below.
+
 This is the *portable* front door to Hindsight: one artifact, every supported client. It
 carries the same `retain` / `recall` / `reflect` memory as our per-IDE integrations, but
 as a single standards-based bundle instead of N hand-rolled configs.
@@ -35,14 +39,21 @@ The plugin reads two environment variables (values are interpolated into `mcp.js
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `HINDSIGHT_API_KEY` | yes (Cloud) | Your `hsk_...` key from [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect). Sent as `Authorization: Bearer`. |
-| `HINDSIGHT_BANK_ID` | no | Memory bank to scope to (sent as `X-Bank-Id`). Defaults to `default`. Use one bank per user/project/team. |
+| `HINDSIGHT_BANK_ID` | no | Memory bank to scope to (sent as `X-Bank-Id`). Use one bank per user/project/team. |
 
 **Self-hosting:** replace the host in `mcp.json` (`https://api.hindsight.vectorize.io`)
 with your deployment's URL. A local server with the MCP endpoint open needs no API key.
 
 > Env-var interpolation syntax varies by client. Most use `${VAR}`; some (VS Code,
 > Cursor) prefer `${env:VAR}`. If your client doesn't substitute, paste the literal key
-> and bank id into `mcp.json` instead.
+> and bank id into `mcp.json` instead. This does not work in Codex, which removes the
+> `Authorization` header regardless of its value (see [Codex](#codex)).
+
+**Bank selection when `HINDSIGHT_BANK_ID` is unset.** A client that substitutes variables
+sends an empty `X-Bank-Id`, and the server uses the `default` bank. A client that does
+*not* substitute sends the literal text `${HINDSIGHT_BANK_ID}`, which Hindsight treats
+as a bank name: reads fail with bank-not-found, and the first `retain` creates a bank
+with that name. Set the variable, or paste the bank id literally, to avoid this.
 
 ## Install
 
@@ -52,19 +63,35 @@ paths:
 - **VS Code / GitHub Copilot / Cursor / Kiro** — add this plugin directory through the
   client's plugin/MCP UI, or drop it where the client discovers plugins, then set the
   two environment variables above.
-- **Codex / ChatGPT** — register the plugin per the client's Agent Plugins support.
+- **Codex** — not supported by this plugin; see [Codex](#codex).
+- **ChatGPT** — register the plugin per the client's Agent Plugins support.
 
 Once installed, ask the agent something that depends on past context (or tell it a
 durable preference) and it will call `recall` / `retain` automatically, guided by the
 skill.
+
+## Codex
+
+Codex's Agent Plugins loader treats `Authorization` as a header only the client may set, so it
+removes the one in this plugin's `mcp.json`. It also copies the other headers verbatim, without
+expanding `${VAR}` placeholders. The portable plugin therefore cannot authenticate to Hindsight
+Cloud from Codex, and pasting a literal key into `mcp.json` does not help because the header is
+removed whatever its value.
+
+For Codex, use the [Coding Agents](../coding-agents) integration instead. It writes Codex's native
+MCP configuration and adds the automatic recall/retain hooks:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install codex
+```
 
 ## Want automatic capture (hooks)?
 
 Agent Plugins `1.0.0` standardizes **Skills + MCP**, not session lifecycle hooks. This
 plugin therefore delivers **explicit, tool-driven** memory that works identically
 everywhere. For the fully automatic experience — recall injected before every prompt and
-transcripts retained on session end — use the native, hook-based integration for your
-tool (e.g. [`hindsight-integrations/claude-code`](../claude-code)). The two share the
+transcripts retained on session end — use the hook-based [Coding Agents](../coding-agents) integration, which covers Claude
+Code, Codex and many other coding agents. The two share the
 same banks, so memory captured by one is recalled by the other.
 
 ## Validate the manifests
