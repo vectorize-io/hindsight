@@ -9,7 +9,7 @@ image: /img/blog/per-scope-consolidation.png
 hide_table_of_contents: true
 ---
 
-![Per-scope consolidation: the same facts consolidated under different missions for different audiences](/img/blog/per-scope-consolidation.png)
+![One fact, consolidated under a different mission for each scope: full detail for the user, trends only for the company](/img/blog/per-scope-consolidation.png)
 
 In July we wrote a [field guide to structuring agent memory](https://hindsight.vectorize.io/blog/2026/07/16/bank-strategy-agent-memory), and framed the central decision as a trap with two jaws:
 
