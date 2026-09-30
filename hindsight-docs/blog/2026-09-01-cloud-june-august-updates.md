@@ -166,4 +166,4 @@ Smaller changes worth knowing about:
 
 Hindsight Cloud is the fastest way to run Hindsight without operating it yourself: managed Postgres, OAuth for MCP clients, billing, multi-org, and now a knowledge base your agents can manage themselves.
 
-[Sign up at ui.hindsight.vectorize.io/signup](https://ui.hindsight.vectorize.io/signup) — the free tier is enough to try retain and recall against a real bank without entering a card.
+[Sign up at ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io) — the free tier is enough to try retain and recall against a real bank without entering a card.

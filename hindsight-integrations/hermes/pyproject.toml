@@ -1,6 +1,6 @@
 [project]
 name = "hermes-plugin-hindsight"
-version = "1.0.1"
+version = "1.1.0"
 description = "Hermes Agent memory provider plugin: hindsight"
 requires-python = ">=3.11"
 license = { text = "MIT" }

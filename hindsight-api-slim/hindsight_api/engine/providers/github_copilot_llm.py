@@ -634,6 +634,7 @@ class GitHubCopilotLLM(LLMInterface):
                         input_tokens=invocation.usage.input_tokens,
                         output_tokens=invocation.usage.output_tokens,
                         cached_tokens=invocation.usage.cached_tokens,
+                        thoughts_tokens=invocation.usage.thoughts_tokens,
                     )
                 )
 
@@ -750,6 +751,7 @@ class GitHubCopilotLLM(LLMInterface):
                         input_tokens=invocation.usage.input_tokens,
                         output_tokens=invocation.usage.output_tokens,
                         cached_tokens=invocation.usage.cached_tokens,
+                        thoughts_tokens=invocation.usage.thoughts_tokens,
                     )
                 )
 
@@ -835,6 +837,7 @@ class GitHubCopilotLLM(LLMInterface):
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cached_tokens=usage.cached_tokens,
+                thoughts_tokens=usage.thoughts_tokens,
                 duration=duration,
                 finish_reason=invocation.finish_reason,
                 error=None,

@@ -10,6 +10,14 @@ For the source code, see [`hindsight-integrations/obsidian`](https://github.com/
 
 ← [Back to main changelog](../index.md)
 
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.3.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/obsidian/v0.3.0)
+
+**Features**
+
+- Adds support for observation scopes in the Obsidian integration, allowing observations to be associated with a configured scope.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/omgbabyweb" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@omgbabyweb</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/57f0b8d10" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>57f0b8d10</a>
+
 ## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.2.1)
 
 **Bug Fixes**

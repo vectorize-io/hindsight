@@ -37,7 +37,7 @@ Persistent memory for [Codex CLI](https://github.com/openai/codex) using [Hindsi
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 ```bash
 curl -fsSL https://hindsight.vectorize.io/get-codex | bash
 ```

@@ -59,16 +59,16 @@ Hindsight works with any provider that exposes an OpenAI-compatible API. Set `HI
 
 The `openai` provider talks to the **Chat Completions API** (`/v1/chat/completions`). For the newer **Responses API** (`/v1/responses`), use `HINDSIGHT_API_LLM_PROVIDER=openai-responses` — see the tip below. Both accept a custom `HINDSIGHT_API_LLM_BASE_URL`, so an OpenAI-compatible endpoint that exposes `/v1/responses` works the same way as a Chat Completions one.
 
-See [Configuration](./configuration#llm-provider) for setup examples.
+See [Configuration](./configuration.md#llm-provider) for setup examples.
 > **💡 OpenAI Responses API (reasoning + tools together)**
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
 
-Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
+Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. (Hindsight retries that 400 once with `reasoning_effort="none"` so the call still succeeds — but it succeeds without reasoning.) The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
 
 Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
 
-See [Configuration](./configuration#llm-provider) for setup examples.
+See [Configuration](./configuration.md#llm-provider) for setup examples.
 > **ℹ️ Reasoning/thinking models and `max_tokens`**
 >
 On a thinking model (Gemini 2.5+/3.x, GPT-5/o-series, Grok reasoning, Claude extended thinking) the provider's output budget covers **reasoning tokens plus visible output** — the reasoning is billed against the same `max_output_tokens`/`max_completion_tokens` cap. A small cap can therefore be fully consumed by reasoning, leaving the visible answer truncated mid-word.
@@ -78,26 +78,26 @@ Hindsight keeps the reflect/mental-model `max_tokens` meaning **visible page len
 When a Gemini call does hit its cap, Hindsight logs a `truncated at max_output_tokens` warning instead of returning the half-written text as a silent success.
 > **💡 AWS Bedrock**
 >
-Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles. For 50% cost savings on throughput, set `HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER=flex` (see [Configuration](./configuration#llm-provider)).
+Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles. For 50% cost savings on throughput, set `HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER=flex` (see [Configuration](./configuration.md#llm-provider)).
 
-See [Configuration](./configuration#llm-provider) for setup examples.
+See [Configuration](./configuration.md#llm-provider) for setup examples.
 > **💡 Built-in llama.cpp (fully local, no API key)**
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=llamacpp` to run a built-in llama.cpp server with no external dependencies. A Gemma 4 E2B GGUF model (~3.5 GB) is auto-downloaded on first run. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
 
 The published Docker image does not bundle `llama-cpp-python` (to keep the image small). For a runnable Docker setup that adds it on top, see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
 
-See [Configuration](./configuration#built-in-llamacpp) for all options.
+See [Configuration](./configuration.md#built-in-llamacpp) for all options.
 > **💡 LiteLLM Provider (Azure, Together AI, and more)**
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=litellm` to use any model supported by [LiteLLM](https://docs.litellm.ai/docs/providers), including **Azure OpenAI**, **Together AI**, **Fireworks AI**, and many more. Model names use LiteLLM's provider prefix format (e.g., `azure/gpt-4o`).
 
-See [Configuration](./configuration#llm-provider) for setup examples.
+See [Configuration](./configuration.md#llm-provider) for setup examples.
 > **💡 LiteLLM Router (fallback chains, load-balancing, per-deployment limits)**
 >
 Set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` to run the default LLM through [LiteLLM's Router](https://docs.litellm.ai/docs/routing) — ordered fallback across deployments, load-balanced same-tier routing, weighted picks, per-deployment `rpm`/`tpm` limits, and cooldowns are all available via the [`Router` config](https://docs.litellm.ai/docs/routing#fallbacks). Hindsight passes the JSON config through verbatim.
 
-See [Configuration](./configuration#llm-router-litellm-router) for setup.
+See [Configuration](./configuration.md#llm-router-litellm-router) for setup.
 ### Provider Capabilities
 
 Beyond basic generation, some providers support optional features that lower cost or latency. Hindsight uses each feature automatically when the configured provider supports it.
@@ -353,7 +353,7 @@ export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 # export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
 ```
 
-**Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.
+**Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance.md) for optimization strategies.
 
 ---
 
@@ -486,7 +486,7 @@ resolves the same `auth.json`. To run more than one independently authorized
 ChatGPT account — for example, to fail over when the preferred account hits its
 usage limit — give each one its own credentials directory with
 `HINDSIGHT_API_LLM_CODEX_HOME` (primary) and `HINDSIGHT_API_LLM_<n>_CODEX_HOME`
-(indexed [multi-LLM chain](./configuration#multi-llm-strategies-failover--round-robin)
+(indexed [multi-LLM chain](./configuration.md#multi-llm-strategies-failover--round-robin)
 members). Each falls back to `CODEX_HOME`, then `~/.codex`, when unset.
 
 ```bash
@@ -888,7 +888,7 @@ export HINDSIGHT_API_LLM_BASE_URL=https://<resource>.openai.azure.com/openai/dep
   routing on GPT-5.6 and later), but the same `*.openai.azure.com` endpoint also
   serves non-OpenAI Foundry models (DeepSeek, Llama, Mistral) that reject it with
   `unrecognized_request_argument`. The host alone can't tell the two apart, so
-  [`HINDSIGHT_API_LLM_CACHE_AFFINITY`](./configuration#llm-provider) resolves
+  [`HINDSIGHT_API_LLM_CACHE_AFFINITY`](./configuration.md#llm-provider) resolves
   `auto` to `none` for Azure hosts. If your deployment serves an OpenAI model,
   set it explicitly to `openai_prompt_cache_key`.
 
@@ -1087,7 +1087,7 @@ The two are separate because Bedrock's embedding request and response formats di
 
 Chat models don't need this: set `HINDSIGHT_API_LLM_MODEL=bedrock/converse/<arn>`, since the Converse API takes one format for every model.
 
-See [Configuration](./configuration#embeddings) for all options including Azure OpenAI and custom endpoints.
+See [Configuration](./configuration.md#embeddings) for all options including Azure OpenAI and custom endpoints.
 
 For a runnable Docker Compose setup that serves both embeddings and reranking from self-hosted TEI sidecars, see [`docker/docker-compose/tei/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/tei).
 
@@ -1152,9 +1152,11 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 ### TypeSafe Models
 
 TypeSafe is not a `/rerank` endpoint — it answers typed *questions* against a *state*.
-Hindsight makes the candidates the options of a single Choice question, so the returned
-probability distribution is the ranking: one call for the whole pool, however many
-candidates it holds.
+Hindsight makes the candidates the options of a Choice question, so the returned
+probability distribution is the ranking. When the candidate pool fits within the 250-option
+limit and context token budget, a single call ranks the entire pool. Larger pools or pools
+with long documents are partitioned into groups whose top candidates advance to a finals
+ranking round, with token truncation applied to fit context windows.
 
 | Model | Use Case |
 |-------|----------|
@@ -1246,4 +1248,4 @@ export HINDSIGHT_API_RERANKER_LITELLM_MODEL=cohere/rerank-english-v3.0
 export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 ```
 
-See [Configuration](./configuration#reranker) for all options including Azure-hosted endpoints and batch settings.
+See [Configuration](./configuration.md#reranker) for all options including Azure-hosted endpoints and batch settings.

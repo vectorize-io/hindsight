@@ -37,7 +37,7 @@ npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
 
 The wizard walks through three modes:
 
-- **Cloud (recommended)**: connects to managed Hindsight at `https://api.hindsight.vectorize.io`. Prompts for your [Cloud API token](https://ui.hindsight.vectorize.io/signup). No local setup required.
+- **Cloud (recommended)**: connects to managed Hindsight at `https://api.hindsight.vectorize.io`. Prompts for your [Cloud API token](https://ui.hindsight.vectorize.io). No local setup required.
 - **External API**: connects to a self-hosted Hindsight server. Prompts for URL and optional token.
 - **Embedded daemon**: spawns a local `hindsight-embed` daemon on the machine. Prompts for LLM provider and API key.
 
@@ -146,7 +146,7 @@ You can now point the plugin at a self-hosted Hindsight API server instead of ru
 
 The plugin performs a health check against the remote API on startup. If the check fails, the gateway will log a warning but still start. Retain operations that occur while the API is unreachable are queued locally (see [JSONL Retain Queue](#reliability-jsonl-retain-queue) below).
 
-[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) works as an external API endpoint. Use your Cloud URL and token, or run the wizard with `--mode cloud`.
+[Hindsight Cloud](https://ui.hindsight.vectorize.io) works as an external API endpoint. Use your Cloud URL and token, or run the wizard with `--mode cloud`.
 
 ---
 
@@ -274,6 +274,6 @@ The wizard will detect your existing setup and write the equivalent configuratio
 
 ## Get Started
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), the fastest path to working memory, no local infrastructure required.
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io), the fastest path to working memory, no local infrastructure required.
 - [OpenClaw integration docs](/sdks/integrations/openclaw), full configuration reference.
 - [OpenClaw plugin changelog](/changelog/integrations/openclaw), complete list of changes since 0.5.0.

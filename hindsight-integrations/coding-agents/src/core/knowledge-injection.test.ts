@@ -27,6 +27,11 @@ describe("buildKnowledgePreamble", () => {
     expect(out).toContain("<hindsight_knowledge>");
     expect(out).toContain("1 knowledge page covers this repository");
     expect(out).toContain("deliberately NOT listed here");
+    // Crediting is stated as an obligation triggered by the CALL. Measured on a real session: the
+    // agent searched, built its answer from ten on-topic pages and credited nothing, because
+    // "credit what you use" reads as a rule about quoting and a paraphrase feels like neither.
+    expect(out).toContain("CREDITING IS NOT OPTIONAL");
+    expect(out).toContain("does not make it yours");
     // Titles and ids stay OUT: handed the index, the agent reads by id and never
     // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
     expect(out).not.toContain("Component map");
@@ -97,5 +102,25 @@ describe("buildRosterRefresh", () => {
     expect(out).toContain("hindsight_ingest_document");
     // No roster block when there are no pages.
     expect(out).not.toContain("Current Hindsight knowledge pages");
+  });
+});
+
+describe("toolGuideExtra (#4791)", () => {
+  const pages = [{ id: "p1", title: "Component map" }];
+  const extra = "Memory is a past record: verify it against the code first.";
+
+  it("adds the team's text after the built-in guide at session start and on refresh", () => {
+    for (const out of [
+      buildKnowledgePreamble(pages, { extra }),
+      buildRosterRefresh(pages, { extra }),
+    ]) {
+      // Added, not replacing: the built-in triggers and crediting rule are still there.
+      expect(out).toContain("CREDITING IS NOT OPTIONAL");
+      expect(out.indexOf(extra)).toBeGreaterThan(out.indexOf("hindsight_ingest_document("));
+    }
+  });
+
+  it("adds nothing when unset or blank", () => {
+    expect(buildKnowledgePreamble(pages, { extra: "  " })).toBe(buildKnowledgePreamble(pages));
   });
 });

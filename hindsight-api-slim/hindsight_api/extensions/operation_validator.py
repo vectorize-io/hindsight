@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from hindsight_api.extensions.base import Extension
 
@@ -379,6 +379,7 @@ class BankReadOperation(StrEnum):
     GET_MENTAL_MODEL_HISTORY = "get_mental_model_history"
     GET_OBSERVATION_HISTORY = "get_observation_history"
     GET_OPERATION_STATUS = "get_operation_status"
+    LIST_BANK_ALIASES = "list_bank_aliases"
     LIST_DIRECTIVES = "list_directives"
     LIST_DOCUMENT_CHUNKS = "list_document_chunks"
     LIST_DOCUMENTS = "list_documents"
@@ -401,12 +402,14 @@ class BankWriteOperation(StrEnum):
     CLEAR_MENTAL_MODEL = "clear_mental_model"
     CLEAR_OBSERVATIONS = "clear_observations"
     CLEAR_OBSERVATIONS_FOR_MEMORY = "clear_observations_for_memory"
+    CREATE_BANK_ALIAS = "create_bank_alias"
     CREATE_DIRECTIVE = "create_directive"
     CREATE_KNOWLEDGE_FOLDER = "create_knowledge_folder"
     CREATE_KNOWLEDGE_PAGE = "create_knowledge_page"
     CREATE_MENTAL_MODEL = "create_mental_model"
     CREATE_WEBHOOK = "create_webhook"
     DELETE_BANK = "delete_bank"
+    DELETE_BANK_ALIAS = "delete_bank_alias"
     DELETE_DIRECTIVE = "delete_directive"
     DELETE_DOCUMENT = "delete_document"
     DELETE_KNOWLEDGE_NODE = "delete_knowledge_node"
@@ -526,6 +529,60 @@ class MentalModelRefreshResult:
     mental_models_used: int  # mental models referenced in based_on
     success: bool = True
     error: str | None = None
+
+
+# =============================================================================
+# Memory Curation Contexts
+# =============================================================================
+
+
+MemoryCurationAction = Literal["edit", "invalidate", "revert", "reason"]
+
+
+@dataclass
+class MemoryUpdateContext:
+    """Context for curating a single memory unit (pre-operation).
+
+    Curation edits a raw world/experience fact and/or moves it between the live
+    and invalidated states. Carries the requested change so a validator can gate
+    or quota it before any work runs; ``validate_bank_write`` still fires first
+    with ``BankWriteOperation.UPDATE_MEMORY_UNIT`` for plain access checks.
+    """
+
+    bank_id: str
+    memory_id: str
+    request_context: "RequestContext"
+    #: New text when the request edits it, else None.
+    text: str | None = None
+    #: Requested state ("valid" / "invalidated"), or None when unchanged.
+    state: str | None = None
+    #: True when the request edits any field (text, context, dates, fact type,
+    #: entities). An edit re-embeds the memory and re-consolidates.
+    edits_fields: bool = False
+
+
+@dataclass
+class MemoryUpdateResult:
+    """Result context for the post-curation hook.
+
+    Fired once the curation has committed. ``reembedded_tokens`` is the size of
+    the text the engine embedded again (an edit's new text, or a reverted
+    memory's restored text) and is 0 when nothing was re-embedded, e.g. a plain
+    invalidation or a reason-only update.
+    """
+
+    bank_id: str
+    memory_id: str
+    request_context: "RequestContext"
+    #: "edit", "invalidate", "revert", or "reason" (reason-only update of an
+    #: already invalidated memory). An edit that also changes state reports the
+    #: state change.
+    action: MemoryCurationAction
+    #: Text that was re-embedded, or None when nothing was.
+    reembedded_text: str | None = None
+    reembedded_tokens: int = 0
+    #: Whether the curation queued a consolidation pass for the bank.
+    consolidation_submitted: bool = False
 
 
 # =============================================================================
@@ -908,6 +965,49 @@ class OperationValidatorExtension(Extension, ABC):
                 - mental_models_used: Number of mental models referenced
                 - success: Whether the operation succeeded
                 - error: Error message (if failed)
+        """
+        pass
+
+    # =========================================================================
+    # Memory Curation - Pre/post-operation hooks (optional - override to implement)
+    # =========================================================================
+
+    async def validate_memory_update(self, ctx: MemoryUpdateContext) -> ValidationResult:
+        """
+        Validate a memory curation (edit / invalidate / revert) before execution.
+
+        Override to gate or quota curation, e.g. to reject edits when the tenant
+        cannot pay for the re-embedding and re-consolidation they trigger.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - memory_id: Memory unit identifier
+                - text: New text when editing it (else None)
+                - state: Requested state change (else None)
+                - edits_fields: Whether any field is being edited
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def on_memory_update_complete(self, result: MemoryUpdateResult) -> None:
+        """
+        Called after a memory curation has committed.
+
+        Override to implement post-operation logic such as usage tracking or audit
+        logging. Errors raised here are logged and do not fail the curation.
+
+        Args:
+            result: Result context containing:
+                - bank_id: Bank identifier
+                - memory_id: Memory unit identifier
+                - action: "edit", "invalidate", "revert" or "reason"
+                - reembedded_text: Text that was re-embedded (else None)
+                - reembedded_tokens: Token count of reembedded_text (0 if none)
+                - consolidation_submitted: Whether consolidation was queued
         """
         pass
 

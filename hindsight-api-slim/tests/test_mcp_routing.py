@@ -21,6 +21,9 @@ def mock_memory():
     memory.retain_batch_async = AsyncMock()
     memory.submit_async_retain = AsyncMock(return_value={"operation_id": "test-op-123"})
     memory.recall_async = AsyncMock(return_value=MagicMock(results=[]))
+    # Alias resolution runs on every tool call; the identity mock keeps these
+    # tests about routing rather than about aliases.
+    memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
     return memory
 
 

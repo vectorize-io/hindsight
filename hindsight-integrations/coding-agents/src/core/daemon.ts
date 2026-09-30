@@ -194,8 +194,11 @@ export function daemonEnv(
  *
  * A cold start pays for a uvx download plus model load and routinely outlives any hook's timeout,
  * so it cannot be awaited inline: the harness would kill the hook mid-start and the daemon would
- * never come up. The child outlives this process and keeps going. Idempotent — the starter itself
- * re-checks health, so several sessions racing to start one daemon is harmless.
+ * never come up. The child outlives this process and keeps going.
+ *
+ * One spawn per cold start is the goal, and `ensureDaemon` is what holds a burst of callers to it.
+ * The starter also re-checks health, so a spawn that slips through anyway leaves the daemon the
+ * winner started alone — but racing starters are not free: they queue on the profile's file lock.
  */
 export function startDaemonDetached(
   cfg: Config,
@@ -220,6 +223,43 @@ export function startDaemonDetached(
 }
 
 /**
+ * Cold starts currently in flight, keyed by API URL.
+ *
+ * Every ensure point re-checks health and starts its own daemon when the port is dead, and the
+ * persistent-plugin hosts fire several of them within the same tick — one SessionStart per session
+ * plus a Stop per finished turn. Each of them therefore observes the same dead port before the
+ * first daemon answers, and each spawns a starter of its own. The starters then serialise on the
+ * profile's file lock, where the losers sit for the full 300 s lock budget before failing
+ * (#1155, #3100). One entry per URL collapses that burst onto a single spawn.
+ *
+ * Keyed by URL rather than held as a module singleton because a caller may be pointed at any
+ * daemon port. The entry is dropped as soon as its attempt settles, so a later turn that still
+ * finds the port dead starts a fresh attempt instead of inheriting a spent one.
+ *
+ * Module-global, and deliberately without a lock: Node runs one thread, and the check-then-set
+ * below contains no `await`, so two callers cannot interleave between the `get` and the `set`.
+ */
+const coldStarts = new Map<string, Promise<void>>();
+
+/**
+ * Await `p` for at most `ms`. The timer is cleared on the way out: a follower that gives up early
+ * must not leave an abandoned `setTimeout` holding the hook process open behind it.
+ */
+async function waitBounded(p: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      p,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(ms, 0));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Make sure a daemon is serving `cfg.apiUrl`. A no-op in every other mode.
  *
  * Side effect only — callers proceed regardless of whether it came up, so that a request against a
@@ -228,6 +268,8 @@ export function startDaemonDetached(
  *
  * `waitMs` bounds how long the caller is willing to block for a cold start — always well under the
  * calling hook's own timeout, so a slow start costs memory for one turn rather than a killed hook.
+ *
+ * A start already underway is joined rather than duplicated; see `coldStarts`.
  */
 export async function ensureDaemon(
   cfg: Config,
@@ -237,8 +279,38 @@ export async function ensureDaemon(
   if (cfg.serverMode !== "daemon") return;
   if (await isServerHealthy(cfg.apiUrl)) return;
   if (!preflightDaemon(cfg, harness)) return;
-  startDaemonDetached(cfg, harness, opts.spawnFn);
-  await waitForHealth(cfg.apiUrl, opts.waitMs ?? 0);
+
+  const waitMs = opts.waitMs ?? 0;
+  const running = coldStarts.get(cfg.apiUrl);
+  if (running) {
+    // Join the start already underway instead of spawning a competitor, so a burst costs one
+    // starter rather than one per caller. Never for longer than this caller's own budget — a Stop
+    // hook waiting 40 s must not push a SessionStart hook past its 30 s timeout — and whatever is
+    // left of that budget once the shared attempt settles goes on waiting for the daemon the
+    // attempt set in motion, so joining never leaves a caller with less patience than it would
+    // have had on its own.
+    const startedAt = Date.now();
+    // Awaited for its side effect only: a follower does not inherit the attempt's failure.
+    await waitBounded(
+      running.catch(() => undefined),
+      waitMs
+    );
+    const remaining = waitMs - (Date.now() - startedAt);
+    if (remaining > 0) await waitForHealth(cfg.apiUrl, remaining);
+    return;
+  }
+
+  const attempt = (async () => {
+    startDaemonDetached(cfg, harness, opts.spawnFn);
+    await waitForHealth(cfg.apiUrl, waitMs);
+  })();
+  coldStarts.set(cfg.apiUrl, attempt);
+  try {
+    await attempt;
+  } finally {
+    // Only the owner clears the entry, so a follower can never drop a newer attempt's guard.
+    if (coldStarts.get(cfg.apiUrl) === attempt) coldStarts.delete(cfg.apiUrl);
+  }
 }
 
 /** Poll /health until it answers or the budget runs out. `budgetMs <= 0` means "don't wait". */

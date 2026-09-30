@@ -6,6 +6,7 @@
  * "your hook never fired" signal, so a silently mis-wired hook is otherwise indistinguishable from
  * an agent with no memory.
  */
+import { isAbsolute } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeCore } from "../core/runtime";
 import type { ToolSpec } from "../core/knowledge-tools";
@@ -137,6 +138,9 @@ describe("opencode2 adapter", () => {
     expect(fake.skills).toHaveLength(1);
     expect(fake.skills[0].id).toBe("hindsight-coding-agent");
     expect(fake.skills[0].name).toBe("hindsight-coding-agent");
+    expect(fake.skills[0].path).toMatch(/skill[\\/]SKILL\.md$/);
+    // opencode v2 requires an absolute `path`; a draft without one disables the plugin (#4732).
+    expect(isAbsolute(fake.skills[0].path)).toBe(true);
     expect(fake.skills[0].description).toContain("Hindsight");
     expect(fake.skills[0].content).toContain("Hindsight Coding-Agent Memory");
     // Frontmatter is split out, not handed to the host as part of the body.

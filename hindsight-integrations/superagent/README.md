@@ -202,7 +202,7 @@ If you don't set `guard_model` and the default hosted model is unavailable, guar
 - Python >= 3.10
 - safety-agent >= 0.1.5, < 0.2.0
 - hindsight-client >= 0.4.0, < 1.0
-- A running Hindsight API server or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account
+- A running Hindsight API server or [Hindsight Cloud](https://ui.hindsight.vectorize.io) account
 - A Superagent API key (`SUPERAGENT_API_KEY` env var)
 - An OpenAI API key (`OPENAI_API_KEY` env var) for guard and redact models — or another [supported LLM provider](https://docs.superagent.sh/sdk)
 

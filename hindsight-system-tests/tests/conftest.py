@@ -95,6 +95,12 @@ def llm(stubs: Stubs) -> LLMStub:
 def _reset_stubs(stubs: Stubs) -> Iterator[None]:
     stubs.reset()
     yield
+    # A net, not the mechanism: ``async with llm.hold(...)`` releases inside the story,
+    # which is what keeps a parked call from outliving the bank it belongs to. This
+    # catches the story that never entered the block, or died before it — the stub
+    # server and its rulebook are session-scoped, so one wedged request would
+    # otherwise reach the next test.
+    stubs.llm.release_all()
 
 
 @pytest.fixture(autouse=True)

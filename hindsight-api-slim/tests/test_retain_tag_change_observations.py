@@ -19,6 +19,7 @@ tags-only (identical body), tags plus a partial edit (unchanged chunks survive a
 relabelled), and a change to ``observation_scopes`` rather than to the tags themselves.
 """
 
+import json
 import uuid
 
 import pytest
@@ -26,7 +27,7 @@ import pytest
 from hindsight_api import RequestContext
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.memories import FactRecord, get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine, _renamed_scopes, fq_table
 
 # Two chunk-sized blocks (chunk size is 3000 chars). Keeping BLOCK_A byte-identical
 # across a re-ingest is what keeps the second retain on the delta path: chunking is
@@ -257,3 +258,89 @@ async def test_observation_scopes_change_re_retain_invalidates_observations(
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retag_renames_explicit_observation_scopes(memory: MemoryEngine, request_context: RequestContext):
+    """A tags PATCH renames the tags an explicit observation_scopes spec froze (#4609).
+
+    A fact retained with an explicit spec naming ``project:old`` carries
+    that spec verbatim on its memory units; the tags PATCH that renames
+    ``project:old`` -> ``project:new`` rewrites ``tags`` but used to leave the spec
+    pointing at the old tag, so the next consolidation rebuilt the observation under
+    ``project:old`` — stranded, because recall by the new tag can no longer reach it.
+    """
+    bank_id = f"test_retag_scopes_rename_{uuid.uuid4().hex[:8]}"
+    document_id = "mobile-room-key"
+    old_tag, new_tag, other_tag = "project:old", "project:new", "project:stays"
+
+    try:
+        await _retain(
+            memory,
+            bank_id,
+            document_id,
+            _DOCUMENT_V1,
+            [old_tag, other_tag],
+            request_context,
+            observation_scopes=[[old_tag], [other_tag], [old_tag, other_tag]],
+        )
+        await memory.run_consolidation(bank_id=bank_id, request_context=request_context)
+
+        facts_v1 = await _facts(memory, bank_id)
+        assert facts_v1, "Setup: retention should have produced facts"
+        scoped = [f for f in facts_v1 if isinstance(f.observation_scopes, list)]
+        assert scoped and any(old_tag in s for f in scoped for s in f.observation_scopes), (
+            "Setup: the facts should carry the explicit scope spec with the old tag"
+        )
+        observations_v1 = {o.unit_id for o in await _observations(memory, bank_id)}
+        assert observations_v1, "Setup: consolidation should have produced observations"
+
+        # The retag itself — the issue's exact scenario: the document carries
+        # [old, other], the PATCH sends [new, other] — one removed, one added, an
+        # unambiguous rename. No re-retain in between: a re-retain would move the
+        # document's tags itself and turn this PATCH into a no-op.
+        await memory.update_document(
+            document_id=document_id,
+            bank_id=bank_id,
+            tags=[new_tag, other_tag],
+            request_context=request_context,
+        )
+
+        facts_v2 = await _facts(memory, bank_id)
+        assert facts_v2, "Setup: the facts should have survived the retag"
+        assert all(old_tag not in (f.tags or []) for f in facts_v2), (
+            "Setup: the facts should have been relabelled to the new tag"
+        )
+        stale_specs = [
+            (f.unit_id, f.observation_scopes)
+            for f in facts_v2
+            if f.observation_scopes and old_tag in json.dumps(f.observation_scopes)
+        ]
+        assert stale_specs == [], (
+            f"Retag left {len(stale_specs)} fact(s) whose explicit observation_scopes still "
+            f"name {old_tag}; re-consolidation would rebuild their observations under the "
+            f"renamed-away tag: {stale_specs[:3]}"
+        )
+        remapped = [f for f in facts_v2 if f.observation_scopes and any(new_tag in s for s in f.observation_scopes)]
+        assert remapped, "The explicit spec should name the new tag after the rename"
+
+        # Whatever observations re-consolidation rebuilt must be reachable by the NEW tag
+        # and none may carry the old one.
+        observations_v2 = await _observations(memory, bank_id)
+        assert not any(old_tag in (o.tags or []) for o in observations_v2), (
+            "An observation is still scoped to the renamed-away tag"
+        )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_renamed_scopes_only_remaps_a_single_tag_rename():
+    spec = [["a"], ["a", "b"]]
+    assert _renamed_scopes(spec, ["a", "b"], ["c", "b"]) == [["c"], ["c", "b"]]
+    assert _renamed_scopes(json.dumps(spec), ["a", "b"], ["c", "b"]) == [["c"], ["c", "b"]]
+    # Two tags swapped at once cannot be paired without guessing: left as-is.
+    assert _renamed_scopes(spec, ["a", "b"], ["c", "d"]) == spec
+    assert _renamed_scopes(spec, ["a", "b"], ["b"]) == spec
+    assert _renamed_scopes("per_tag", ["a"], ["c"]) == "per_tag"
+    assert _renamed_scopes(spec, None, ["c"]) == spec

@@ -354,6 +354,11 @@ class TestImportApply:
         assert mm["name"] == "Imported Model"
         assert mm["source_query"] == "What patterns exist?"
         assert mm["tags"] == ["imported"]
+        assert not (mm["content"] or "").strip(), (
+            "a page that has not refreshed yet must carry an empty body, not a placeholder "
+            "sentence — the body is embedded and BM25-indexed, so a placeholder makes every "
+            "brand-new page searchable as its own placeholder text"
+        )
 
     @pytest.mark.asyncio
     async def test_import_updates_existing_mental_models(self, api_client, bank_id):

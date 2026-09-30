@@ -194,3 +194,19 @@ def test_warning_sink_defaults_exist_without_initialize():
     bare = plugin.HindsightMemoryProvider()
     assert bare._warning_callback is None
     assert bare._platform == "cli"
+
+
+def test_system_prompt_guides_tool_choice_only_when_tools_exist(provider):
+    blocks = {}
+    for mode in ("context", "tools", "hybrid"):
+        instance, _ = provider({"memory_mode": mode})
+        blocks[mode] = instance.system_prompt_block()
+        instance.shutdown()
+
+    assert "session_search" not in blocks["context"]
+    assert "automatically injected" in blocks["context"]
+    for mode in ("tools", "hybrid"):
+        assert "prefer hindsight_recall over session_search" in blocks[mode]
+        assert "hindsight_reflect" in blocks[mode] and "hindsight_retain" in blocks[mode]
+    assert "automatically injected" in blocks["hybrid"]
+    assert "automatically injected" not in blocks["tools"]

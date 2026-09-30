@@ -54,20 +54,27 @@ function indexLine(pages: PageRef[]): string {
  */
 const TOOL_GUIDE =
   "- hindsight_search_knowledge_pages(query) — FIRST STOP, and the way IN to everything below. The code " +
-  "shows what is true today, never what was decided or why, so work built from code alone quietly " +
-  "re-litigates settled questions. Search BEFORE you act whenever the turn is one of these — they are " +
-  "the ones that go wrong silently:\n" +
+  "shows what is true today but not what was decided or why; memory shows what was decided or said " +
+  "back then but not whether it still holds. Work built from either alone goes wrong: from code alone " +
+  "it quietly re-litigates settled questions, from memory alone it acts on stale claims. Search " +
+  "BEFORE you act whenever the turn is one of these — they are the ones that go wrong silently:\n" +
   "    • the user reports a bug or a wrong response (the intended behaviour, and the status code or " +
-  "value it should return, is usually already decided);\n" +
+  "value it should return, may already have been decided);\n" +
   "    • you are about to write or change a test (what this project expects a change to ship with, and " +
   "how it asserts, is a convention, not a preference);\n" +
   "    • you are implementing something new, or two parts have to fit together;\n" +
   "    • the user asks why something is the way it is, or what is left to do;\n" +
   "    • you are about to commit, and need to know what the change was supposed to honour.\n" +
   "  It ranks the pages by relevance and returns the matching passage, which a page title cannot tell " +
-  "you. Credit what you use visibly with a markdown blockquote so it renders as a callout, exactly: " +
-  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Credit the search that ' +
-  "changed what you did, not only the ones you quote.\n" +
+  "you. What it returns is a past record, not a live reading: a claim that something was fixed, " +
+  "passes, or works is what someone said then — check it against the code before you rely on it, " +
+  "and say so when the two disagree.\n" +
+  "  CREDITING IS NOT OPTIONAL AND NOT A JUDGEMENT CALL. If you called this tool and anything it " +
+  "returned reached your reply — quoted, paraphrased, or merely confirming what you were about to " +
+  "say — open that part with a markdown blockquote, exactly: " +
+  '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
+  "snippet in your own words does not make it yours. A search that turned up nothing useful needs " +
+  "no mention at all — just carry on.\n" +
   "- hindsight_list_knowledge_pages / hindsight_read_knowledge_page — BEFORE substantial work, list the pages and " +
   "read the relevant ones to ground yourself in this repo's architecture, conventions, and past decisions instead " +
   "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n" +
@@ -97,10 +104,15 @@ export interface ToolGuideOpts {
    *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
    *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
   reflectOnNewGoals?: boolean;
+  /** cfg.toolGuideExtra: the team's own guidance, added after ours rather than replacing it. */
+  extra?: string;
 }
 
 function toolGuide(opts?: ToolGuideOpts): string {
-  return (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE;
+  const extra = opts?.extra?.trim();
+  return (
+    (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE + (extra ? `\n${extra}` : "")
+  );
 }
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */

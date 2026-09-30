@@ -94,7 +94,7 @@ Pick either **Hindsight Cloud** (recommended, no self-hosting) or **Local** (run
 
 #### Option 2a: Hindsight Cloud (Recommended)
 
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for Hindsight Cloud — managed infrastructure, no daemon to run, memory syncs across your devices.
+[Sign up free](https://ui.hindsight.vectorize.io) for Hindsight Cloud — managed infrastructure, no daemon to run, memory syncs across your devices.
 
 #### Option 2b: Local Hindsight
 
@@ -419,7 +419,7 @@ For Python developers building Pipecat voice agents that need persistent memory,
 ## Next Steps
 
 - **Try it locally**: `pip install hindsight-all hindsight-pipecat` and test with the interactive chat example
-- **Use Hindsight Cloud**: Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io/signup)
+- **Use Hindsight Cloud**: Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io)
 - **Run the basic example**: `python examples/basic_pipeline.py` to see the full voice pipeline with memory
 - **Test interactive recall**: `python examples/interactive_chat.py --bank demo-user` to see recall in action
 - **Configure recall budget**: Tune "low", "mid", or "high" based on your latency requirements

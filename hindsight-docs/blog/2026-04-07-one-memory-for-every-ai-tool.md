@@ -32,7 +32,7 @@ The effect is cumulative. After a week, you stop noticing the things you don't h
 
 ## How the shared memory stack is wired together
 
-If you're using [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), none of the OAuth complexity below applies — it already speaks OAuth 2.1, so all cloud clients connect directly. The proxy setup is only needed if you're self-hosting.
+If you're using [Hindsight Cloud](https://ui.hindsight.vectorize.io), none of the OAuth complexity below applies — it already speaks OAuth 2.1, so all cloud clients connect directly. The proxy setup is only needed if you're self-hosting.
 
 My [Hindsight](/developer/api/quickstart) bank runs in Docker on an M4 Mac Mini (same as my OpenClaw). All clients connect to the same bank, but each one connects differently.
 
@@ -63,9 +63,9 @@ I'm working with the Hindsight team to contribute the Worker as a reference OAut
 
 The multi-client, single-bank pattern is where Hindsight has a real edge. Hindsight's architecture already supports sharing across all of them, with just a small gap to close on the OAuth front. One thing would further improve this pattern: MCP lifecycle hooks in the Claude apps. Claude Code's CLI already has them, and Hindsight's plugin uses them for automatic memory. Bringing the same capability to the desktop and mobile apps would close the last gap.
 
-The easiest way to try this pattern is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no infrastructure, no OAuth proxy, connects directly to all cloud clients. Self-hosters can use the Worker reference once it's published.
+The easiest way to try this pattern is [Hindsight Cloud](https://ui.hindsight.vectorize.io) — no infrastructure, no OAuth proxy, connects directly to all cloud clients. Self-hosters can use the Worker reference once it's published.
 
-- **Get started with Hindsight Cloud**: [ui.hindsight.vectorize.io/signup](https://ui.hindsight.vectorize.io/signup)
+- **Get started with Hindsight Cloud**: [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Claude Code integration**: [/sdks/integrations/claude-code](/sdks/integrations/claude-code)
 - **OpenClaw integration**: [/sdks/integrations/openclaw](/sdks/integrations/openclaw)
 - **Self-hosting quickstart**: [/developer/api/quickstart](/developer/api/quickstart)

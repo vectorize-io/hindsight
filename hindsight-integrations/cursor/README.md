@@ -6,7 +6,7 @@ Biomimetic long-term memory for [Cursor](https://cursor.com) using [Hindsight](h
 
 ### Option A — Hindsight Cloud (fastest)
 
-No local server needed. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and create an API key under **Settings > API Keys**.
+No local server needed. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) and create an API key under **Settings > API Keys**.
 
 ```bash
 cd /path/to/your-project

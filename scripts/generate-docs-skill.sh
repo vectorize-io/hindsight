@@ -54,9 +54,10 @@ process_file() {
     render_figures "$src_file" "$dest_file"
 }
 
-# Interactive figures (<Flow {...x.props} />) become their step-by-step narration.
+# Figures become their step-by-step narration: an interactive one (<Flow {...x.props} />) from its
+# source file, an animated SVG from the spec the image itself carries.
 render_figures() {
-    if grep -q '<Flow ' "$2"; then
+    if grep -qE '<Flow |\.svg\)' "$2"; then
         python3 "$ROOT_DIR/scripts/docs_skill_figures.py" "$1" "$2"
     fi
 }
@@ -491,6 +492,7 @@ from pathlib import Path
 
 refs_dir = Path(sys.argv[1]).resolve()
 link_pattern = re.compile(r'\[([^\]]*)\]\((/[^)]*)\)')
+relative_link_pattern = re.compile(r'\[([^\]]*)\]\((\.{1,2}/[^)\s]*|[\w-]+(?:/[\w-]+)*(?:\.mdx)?(?:#[^)\s]*)?)\)')
 
 SPECIAL_MAPPINGS = {
     '/api-reference': 'openapi.json',
@@ -537,7 +539,20 @@ for md_file in refs_dir.rglob("*.md"):
         rel = os.path.relpath(resolved, md_file.parent)
         return f'[{text}]({rel}{anchor})'
 
+    def rewrite_relative(match):
+        """Point extensionless (./configuration) and .mdx relative links at the .md files the skill ships."""
+        text, url = match.group(1), match.group(2)
+        path, sep, frag = url.partition('#')
+        if (md_file.parent / path).exists():
+            return match.group(0)
+        base = path[:-4] if path.endswith('.mdx') else path
+        for candidate in (base + '.md', base + '/index.md'):
+            if (md_file.parent / candidate).exists():
+                return f'[{text}]({candidate}{sep}{frag})'
+        return match.group(0)
+
     new_content = link_pattern.sub(rewrite, content)
+    new_content = relative_link_pattern.sub(rewrite_relative, new_content)
     if new_content != original_content:
         md_file.write_text(new_content)
         changed += 1
@@ -570,11 +585,13 @@ for md_file in skill_dir.rglob("*.md"):
         # Resolve relative to the file's directory
         resolved = (md_file.parent / url).resolve()
         if not str(resolved).startswith(str(skill_dir)):
-            errors.append(f"  {md_file.relative_to(skill_dir)}: '{url}' -> {resolved}")
+            errors.append(f"  {md_file.relative_to(skill_dir)}: '{url}' -> outside the skill directory")
+        elif not resolved.exists():
+            errors.append(f"  {md_file.relative_to(skill_dir)}: '{url}' -> no such file")
 
 if errors:
-    print("ERROR: The following links point outside the skill directory.")
-    print("All links must be absolute URLs or relative paths within the skill.")
+    print("ERROR: The following links are broken.")
+    print("All links must be absolute URLs, or relative paths to a file inside the skill.")
     for e in errors:
         print(e)
     sys.exit(1)

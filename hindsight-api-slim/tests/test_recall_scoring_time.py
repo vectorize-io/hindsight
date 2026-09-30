@@ -7,6 +7,7 @@ import pytest
 
 from hindsight_api.engine import memory_engine
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.search.reranking import RerankResult
 from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
 from hindsight_api.engine.search.types import RetrievalResult, ScoredResult
 from hindsight_api.models import RequestContext
@@ -24,15 +25,18 @@ class _Reranker:
     async def ensure_initialized(self) -> None:
         return None
 
-    async def rerank(self, _query: str, candidates: list[Any]) -> list[ScoredResult]:
-        return [
-            ScoredResult(
-                candidate=candidates[0],
-                cross_encoder_score=0.8,
-                cross_encoder_score_normalized=0.8,
-                weight=0.8,
-            )
-        ]
+    async def rerank(self, _query: str, candidates: list[Any]) -> RerankResult:
+        return RerankResult(
+            results=[
+                ScoredResult(
+                    candidate=candidates[0],
+                    cross_encoder_score=0.8,
+                    cross_encoder_score_normalized=0.8,
+                    weight=0.8,
+                )
+            ],
+            provider_name=None,
+        )
 
 
 def test_recall_scoring_now_uses_question_date():

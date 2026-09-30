@@ -113,6 +113,47 @@ class TestSplitContextHistory:
         assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
         assert total_entries < 30, "history was shredded into per-entry chunks"
 
+    def test_big_sibling_is_packed_once_not_copied_into_every_piece(self):
+        """#4495: recall's raw ``chunks`` rides beside ``memories``. Copied into
+        every piece, it left no piece room for a second memory, so 30 memories
+        became 30 cut blocks, each re-carrying the chunks. It must instead be
+        packed on its own, every source chunk exactly once, with the memories
+        packing as if it were not there."""
+        entry = _entry("recall", "memories", 30, 300)
+        entry["output"]["chunks"] = {
+            f"c{i}": {"chunk_text": " ".join(f"source {i} word {j}" for j in range(250)), "chunk_index": i}
+            for i in range(10)
+        }
+        without_sibling = split_context_history([_entry("recall", "memories", 30, 300)], _MAX_CONTEXT)
+
+        chunks = split_context_history([entry], _MAX_CONTEXT)
+
+        blocks = [e["output"] for c in chunks for e in c]
+        assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
+        source_ids = [cid for b in blocks for cid in b.get("chunks", {})]
+        assert source_ids == [f"c{i}" for i in range(10)], "each source chunk exactly once, in order"
+        assert not any("memories" in b and "chunks" in b for b in blocks)
+        assert all(b["query"] == "q" for b in blocks), "small siblings still ride along"
+        assert not any(b.get("truncated") for b in blocks)
+        memory_blocks = [b for b in blocks if "memories" in b]
+        assert len(memory_blocks) == sum(len(c) for c in without_sibling)
+        for chunk in chunks:
+            rendered = "".join(_render_history_block(e) for e in chunk)
+            assert count_prompt_tokens(rendered) <= _BUDGET_TOKENS
+
+    def test_big_indivisible_sibling_is_cut_once(self):
+        """A big sibling with no entries to split on (plain text) is token-cut
+        into one block of its own, not copied into every piece of the list."""
+        entry = _entry("recall", "memories", 30, 300)
+        entry["output"]["summary"] = " ".join(f"summary word {j}" for j in range(3000))
+
+        chunks = split_context_history([entry], _MAX_CONTEXT)
+
+        blocks = [e["output"] for c in chunks for e in c]
+        assert _ids_in(chunks) == [f"mem-{i}" for i in range(30)]
+        assert not any("summary" in b for b in blocks if "memories" in b)
+        assert sum(1 for b in blocks if b.get("truncated")) == 1
+
 
 class TestSplitSynthesisPrompts:
     def test_chunk_claims_prompt_carries_evidence_and_question(self):
@@ -164,6 +205,7 @@ class TestSplitSynthesisAgentFlow:
     def _functions(recall_payload: dict):
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value=recall_payload),
             "expand_fn": AsyncMock(return_value={"memories": []}),
@@ -355,8 +397,11 @@ class TestSplitSynthesisAgentFlow:
             for c in llm.call.await_args_list
             if "extract evidence" in c.kwargs["messages"][0]["content"]
         ]
+        # The prompt carries per-reflect aliases (presentation.py) — mem-i is the
+        # (i+1)th fact shown — and a later search lists a memory it already showed
+        # by alias only, so "reaches a map prompt" means written out as an item.
         for i in range(n):
-            holders = [p for p in map_prompts if f'"mem-{i}"' in p]
+            holders = [p for p in map_prompts if f'"id":"f{i + 1}"' in p.replace(" ", "")]
             assert len(holders) == 1, f"mem-{i} appears in {len(holders)} map prompts"
 
 
@@ -396,6 +441,7 @@ class TestSplitSynthesisRealLLM:
 
         functions = {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": memories}),
             "expand_fn": AsyncMock(return_value={"memories": []}),

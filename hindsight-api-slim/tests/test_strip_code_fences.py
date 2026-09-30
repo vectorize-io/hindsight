@@ -1,7 +1,10 @@
 """Tests for _strip_code_fences helper in OpenAI-compatible LLM provider."""
 
 import json
+import re
+from pathlib import Path
 
+from hindsight_api.engine.providers import openai_compatible_llm
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 
 
@@ -119,3 +122,23 @@ class TestStripCodeFences:
         parsed = json.loads(result)
         assert len(parsed["facts"]) == 1
         assert parsed["facts"][0]["who"] == "Sebastian"
+
+
+# Every provider that parses a model's JSON reply must go through _strip_code_fences.
+# Hand-rolled copies (substring split on "```json", a non-greedy ```(.*?)``` regex)
+# cut the payload at a ``` inside a JSON string value, and five providers each
+# carried their own copy (#4817, #4819). This guard walks the whole provider family
+# so the next provider can't quietly add a sixth.
+_HAND_ROLLED_FENCE = re.compile(r"""split\(\s*["']```|re\.\w+\(\s*r?["']```""")
+# anthropic_llm.py is fixed by #4821; drop it from here when that lands.
+_KNOWN_HAND_ROLLED = {"anthropic_llm.py"}
+
+
+def test_no_provider_hand_rolls_fence_stripping():
+    providers_dir = Path(openai_compatible_llm.__file__).parent
+    offenders = {p.name for p in providers_dir.glob("*.py") if _HAND_ROLLED_FENCE.search(p.read_text())}
+    assert offenders == _KNOWN_HAND_ROLLED, (
+        "Parse fenced JSON with openai_compatible_llm._strip_code_fences, not a hand-rolled split/regex. "
+        f"Offenders: {sorted(offenders - _KNOWN_HAND_ROLLED)}; "
+        f"now fixed, remove from _KNOWN_HAND_ROLLED: {sorted(_KNOWN_HAND_ROLLED - offenders)}"
+    )

@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import pytest
 
 from hindsight_api.engine.memory_engine import (
-    MENTAL_MODEL_PENDING_CONTENT,
     MemoryEngine,
     _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
@@ -1206,6 +1205,82 @@ class TestMentalModelHistory:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+# Every scope shape a model can have, against every kind of write. The rule
+# (#4857): a tag-scoped model goes stale only on a write *in* its tags — never
+# on an untagged one, whatever the match mode — while a model with no tag
+# filter goes stale on anything. Expressions that select untagged rows on
+# their own (an empty `exact` leaf, a `not`) keep doing so.
+_STALE_AB = ["proj:a", "proj:b"]
+_STALENESS_MATRIX = [
+    # (model tags, trigger, write tags, expected is_stale)
+    # -- untagged model: whole bank is its scope
+    *[(None, t, w, True) for t in ({}, {"tags_match": "any"}, {"tags_match": "any_strict"}) for w in (None, ["x"])],
+    (None, {"tags_match": "exact"}, None, True),
+    (None, {"tags_match": "exact"}, ["x"], False),
+    # -- tagged model: an untagged write is never in scope
+    *[
+        (_STALE_AB, t, None, False)
+        for t in (
+            {},
+            {"tags_match": "any"},
+            {"tags_match": "all"},
+            {"tags_match": "any_strict"},
+            {"tags_match": "all_strict"},
+            {"tags_match": "exact"},
+        )
+    ],
+    # -- tagged model: an out-of-scope tagged write never counts either
+    *[(_STALE_AB, {"tags_match": m}, ["other"], False) for m in ("any", "all", "any_strict", "all_strict", "exact")],
+    # -- tagged model: partial overlap counts only for the any-modes
+    (_STALE_AB, {}, ["proj:a"], False),
+    (_STALE_AB, {"tags_match": "any"}, ["proj:a"], True),
+    (_STALE_AB, {"tags_match": "any_strict"}, ["proj:a"], True),
+    (_STALE_AB, {"tags_match": "all"}, ["proj:a"], False),
+    (_STALE_AB, {"tags_match": "all_strict"}, ["proj:a"], False),
+    (_STALE_AB, {"tags_match": "exact"}, ["proj:a"], False),
+    # -- tagged model: full cover counts in every mode, superset in all but exact
+    *[(_STALE_AB, {"tags_match": m}, _STALE_AB, True) for m in ("any", "all", "any_strict", "all_strict", "exact")],
+    (_STALE_AB, {"tags_match": "exact"}, [*_STALE_AB, "extra"], False),
+    (_STALE_AB, {"tags_match": "all"}, [*_STALE_AB, "extra"], True),
+    # -- tag_groups: non-strict leaves no longer let untagged writes in
+    *[
+        (None, {"tag_groups": [{"tags": ["proj:a"], "match": m}]}, w, want)
+        for m in ("any", "all", "any_strict", "all_strict")
+        for w, want in ((None, False), (["proj:a"], True), (["other"], False))
+    ],
+    (
+        None,
+        {"tag_groups": [{"or": [{"tags": ["proj:a"], "match": "any"}, {"tags": ["proj:b"], "match": "all"}]}]},
+        None,
+        False,
+    ),
+    (
+        None,
+        {"tag_groups": [{"or": [{"tags": ["proj:a"], "match": "any"}, {"tags": ["proj:b"], "match": "all"}]}]},
+        ["proj:b"],
+        True,
+    ),
+    (
+        None,
+        {"tag_groups": [{"and": [{"tags": ["proj:a"], "match": "any"}, {"tags": ["proj:b"], "match": "any"}]}]},
+        None,
+        False,
+    ),
+    (
+        None,
+        {"tag_groups": [{"and": [{"tags": ["proj:a"], "match": "any"}, {"tags": ["proj:b"], "match": "any"}]}]},
+        _STALE_AB,
+        True,
+    ),
+    # -- tag_groups that select untagged rows explicitly still do
+    (None, {"tag_groups": [{"tags": [], "match": "exact"}]}, None, True),
+    (None, {"tag_groups": [{"tags": [], "match": "exact"}]}, ["proj:a"], False),
+    (None, {"tag_groups": [{"not": {"tags": ["proj:a"], "match": "any"}}]}, None, True),
+    (None, {"tag_groups": [{"not": {"tags": ["proj:a"], "match": "any"}}]}, ["proj:a"], False),
+    (None, {"tag_groups": [{"not": {"tags": ["proj:a"], "match": "any"}}]}, ["other"], True),
+]
+
+
 class TestMentalModelStaleness:
     """Tests for compute_mental_model_is_stale scope semantics.
 
@@ -1605,6 +1680,44 @@ class TestMentalModelStaleness:
         got = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
         assert got["is_stale"] is True
 
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    @pytest.mark.parametrize("model_tags,trigger,write_tags,expected", _STALENESS_MATRIX)
+    async def test_staleness_scope_matrix(
+        self, memory: MemoryEngine, request_context, model_tags, trigger, write_tags, expected
+    ):
+        """One write, one model: is it stale? Asked through the single-model read and the batch."""
+        bank_id = f"test-mm-stale-matrix-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="MM",
+            source_query="q",
+            content="c",
+            tags=model_tags,
+            trigger={"refresh_after_consolidation": False, **trigger},
+            request_context=request_context,
+        )
+        got = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert got["is_stale"] is False
+
+        await self._insert_memory(memory, bank_id, tags=write_tags)
+        got = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert got["is_stale"] is expected
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+            batched = await memory.compute_mental_models_are_stale(
+                conn, bank_id, {"mm": _mental_model_stale_scope_from_row(row, key="mm")}
+            )
+        assert batched == {"mm": expected}
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.memory_backend_incompatible
@@ -3271,11 +3384,17 @@ class TestRefreshSkipsEmptyScope:
         """The reported shape: a page created with its bank, before anything is retained."""
         bank_id = f"test-mm-empty-full-{uuid.uuid4().hex[:8]}"
         await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        # Seeded with real content, not the empty body a fresh page carries: the
+        # assertion below is about PRESERVING what the document already said, and an
+        # empty body would pass it whether the skip preserved the content or wiped
+        # it. The bank still has nothing to reflect over — the sibling check excludes
+        # the model being refreshed — so the skip under test is unchanged.
+        existing = "# Coding Style\n\nTabs, and no clever one-liners."
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content=existing,
             request_context=request_context,
         )
         calls = self._stub_reflect(memory)
@@ -3291,7 +3410,7 @@ class TestRefreshSkipsEmptyScope:
             "slots it needs to ingest anything (#3875)"
         )
         assert refreshed is not None
-        assert refreshed["content"].strip() == MENTAL_MODEL_PENDING_CONTENT, (
+        assert refreshed["content"].strip() == existing, (
             "the document must be preserved, not overwritten from an empty synthesis"
         )
         reflect_response = refreshed["reflect_response"]
@@ -3311,7 +3430,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Coding Style",
             source_query="How does this project write code?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             request_context=request_context,
         )
         await memory.retain_batch_async(
@@ -3470,7 +3589,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": False},
             request_context=request_context,
         )
@@ -3478,7 +3597,7 @@ class TestRefreshSkipsEmptyScope:
             bank_id=bank_id,
             name="Onboarding (isolated)",
             source_query="What should a new engineer read first?",
-            content=MENTAL_MODEL_PENDING_CONTENT,
+            content="",
             trigger={"exclude_mental_models": True},
             request_context=request_context,
         )
@@ -3511,7 +3630,7 @@ class TestRefreshSkipsEmptyScope:
                 bank_id=bank_id,
                 name=f"Page {i}",
                 source_query=f"topic {i}",
-                content=MENTAL_MODEL_PENDING_CONTENT,
+                content="",
                 trigger={"exclude_mental_models": False},
                 request_context=request_context,
             )
@@ -3527,6 +3646,42 @@ class TestRefreshSkipsEmptyScope:
         assert calls == [], (
             "five pages created with the bank each ran a full reflect over an empty "
             "graph, holding the LLM slots the bank needed to seed itself (#3875)"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_legacy_placeholder_siblings_are_not_sources_either(self, memory: MemoryEngine, request_context):
+        """The same bank-init shape, on a deployment upgraded mid-life.
+
+        Pages are created empty now, but a bank that pre-dates that still holds
+        "Generating content..." in every page that has not refreshed. Those are
+        unrefreshed pages by every other measure, and counting them as readable
+        siblings — merely because the column is not empty — re-opens #3875 for
+        exactly the banks the emptiness check protects.
+        """
+        bank_id = f"test-mm-siblings-legacy-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        pages = [
+            await memory.create_mental_model(
+                bank_id=bank_id,
+                name=f"Page {i}",
+                source_query=f"topic {i}",
+                content="Generating content...",
+                trigger={"exclude_mental_models": False},
+                request_context=request_context,
+            )
+            for i in range(3)
+        ]
+        calls = self._stub_reflect(memory)
+
+        for page in pages:
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=page["id"], request_context=request_context
+            )
+
+        assert calls == [], (
+            "a sibling still holding the legacy placeholder was counted as something "
+            "to reflect over, so every page ran a full reflect over an empty graph"
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)

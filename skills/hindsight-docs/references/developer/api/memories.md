@@ -1,7 +1,7 @@
 
 # Memories
 
-A **memory unit** is the atomic fact Hindsight extracts and stores. This page covers the endpoints for working with individual memory units — reading and listing them, inspecting how a derived observation evolved, and **curating** them (correcting, retiring, or restoring). Ingesting and querying memories is covered separately in [Retain](./retain.mdx) and [Recall](./recall.mdx).
+A **memory unit** is the atomic fact Hindsight extracts and stores. This page covers the endpoints for working with individual memory units — reading and listing them, inspecting how a derived observation evolved, and **curating** them (correcting, retiring, or restoring). Ingesting and querying memories is covered separately in [Retain](./retain.md) and [Recall](./recall.md).
 
 {/* Import raw source files */}
 
@@ -174,7 +174,7 @@ Not every "bad memory" needs the same tool. Pick by *why* it's bad:
 
 | The memory is… | Use | Why |
 |---|---|---|
-| **Wrong because the whole bank extracts badly** (e.g. consistently wrong subject) | Fix the bank's `retain_mission` / `observations_mission`, then **reprocess** the document | Systematic problems are best fixed at the source, then replayed — see [Retain](./retain.mdx) and [Observations](../observations.mdx). |
+| **Wrong because the whole bank extracts badly** (e.g. consistently wrong subject) | Fix the bank's `retain_mission` / `observations_mission`, then **reprocess** the document | Systematic problems are best fixed at the source, then replayed — see [Retain](./retain.md) and [Observations](../observations.md). |
 | **Wrong as a one-off** (a single misextracted fact) | **Edit** the memory | Corrects the fact and regenerates everything derived from it. |
 | **No longer true, with nothing to replace it** (decommissioned server, a tool that was fixed, a role that changed) | **Invalidate** the memory | Nothing in the pipeline knows the world changed, so you tell it explicitly. |
 | **A duplicate or superseded fact** | **Invalidate** the memory | Removes the noise from recall while keeping the audit trail. |
@@ -250,7 +250,7 @@ You can correct the dates, fact type, and entities the same way. For `context`, 
 
 **Pass `false` when you are correcting a fact by hand.** With resolution on, a name that is close to one already in the bank can be matched onto that neighbour rather than the entity you named — `Dr. Waller` onto a `Dr Wall` typo, `Alice Smith` onto `Alice` — and because the edit succeeds normally the substitution is not obvious from the response. Resolution is right for names that came out of extraction, where spelling varies and the bank's existing entity is usually the one meant; it is wrong when you already know which entity you want. The default stays `true` so existing callers are unaffected.
 
-The same flag exists on [retain](./retain#resolve_entities) for the entities you supply there.
+The same flag exists on [retain](./retain.md#resolve_entities) for the entities you supply there.
 
 ### Python
 

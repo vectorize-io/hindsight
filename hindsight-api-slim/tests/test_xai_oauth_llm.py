@@ -1468,6 +1468,29 @@ async def test_the_configured_timeout_lands_on_the_http_client(tmp_path, monkeyp
         await llm.cleanup()
 
 
+async def test_a_trickling_upstream_times_out_on_the_wall_clock(tmp_path, monkeypatch):
+    """sock_read restarts on every byte, so keep-alive whitespace used to hang the call forever (#4763)."""
+
+    async def trickle(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(headers={"Content-Type": "application/json"})
+        await response.prepare(request)
+        while True:
+            await response.write(b" ")
+            await asyncio.sleep(0.05)
+
+    async with stub_server(trickle) as base_url:
+        llm = _make_llm(tmp_path, monkeypatch, base_url=base_url, timeout=0.5)
+        llm._client = llm._new_client()
+        start = time.monotonic()
+        try:
+            # The outer wait_for is only the test's safety net for the old hang.
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0), 10)
+            assert time.monotonic() - start < 5, "the safety net fired, not the provider's own deadline"
+        finally:
+            await llm.cleanup()
+
+
 def test_the_admission_bar_is_the_larger_of_the_skew_and_the_timeout(tmp_path, monkeypatch):
     store = _write_store(tmp_path / "xai_oauth.json")
     monkeypatch.setenv(ENV_TOKEN_PATH, str(store))
@@ -1562,6 +1585,18 @@ async def test_structured_output_falls_back_to_schema_in_prompt(tmp_path, monkey
     body = llm._client.calls[0]["json"]
     assert body["response_format"] == {"type": "json_object"}
     assert "valid JSON matching this schema" in body["messages"][0]["content"]
+
+
+async def test_structured_output_keeps_a_fence_marker_inside_a_json_value(tmp_path, monkeypatch):
+    """A ``` inside a string value must not cut the payload short (#4819)."""
+    fenced = '```json\n{"answer": "wrap it in ```json fences"}\n```'
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply(fenced)])
+
+    result = (
+        await llm.call(messages=[{"role": "user", "content": "hi"}], response_format=_Answer, max_retries=0)
+    ).content
+
+    assert result.answer == "wrap it in ```json fences"
 
 
 async def test_call_with_tools_returns_proposed_tool_calls(tmp_path, monkeypatch):

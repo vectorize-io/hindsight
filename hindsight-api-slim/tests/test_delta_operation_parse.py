@@ -330,3 +330,63 @@ async def test_request_delta_operations_leaves_unreachable_ops_alone_without_a_d
     llm = _ScriptedLLM(_UNKNOWN_SECTION)
     await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
     assert len(llm.calls) == 1
+
+
+_DOC_TWO_BLOCKS = StructuredDocument(
+    sections=[
+        Section(
+            id="prefs",
+            heading="Preferences",
+            blocks=[Block(id="b1a2b3c4d", text="Uses tabs."), Block(id="b9f8e7d6c", text="Likes Go.")],
+        )
+    ]
+)
+_ONE_TYPO = (
+    '{"operations": ['
+    '{"op": "append_block", "section_id": "prefs", "text": "new"},'
+    '{"op": "replace_block", "section_id": "prefs", "block_id": "b1a2b3c4", "text": "Uses spaces."}]}'
+)
+_TYPO_FIXED = (
+    '{"operations": ['
+    '{"op": "append_block", "section_id": "prefs", "text": "new"},'
+    '{"op": "replace_block", "section_id": "prefs", "block_id": "b1a2b3c4d", "text": "Uses spaces."}]}'
+)
+
+
+async def test_request_delta_operations_asks_again_when_one_block_id_is_mistyped():
+    """#4829: one mistyped block id among good ops used to be dropped silently, keeping
+    the stale block under a clean refresh. It now gets the one retry, which quotes the
+    bad id and lists the section's real block ids."""
+    llm = _ScriptedLLM(_ONE_TYPO, _TYPO_FIXED)
+    op_list = await request_delta_operations(
+        llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC_TWO_BLOCKS
+    )
+    assert len(llm.calls) == 2
+    correction = llm.calls[1][3]["content"]
+    assert "unknown block_id: b1a2b3c4" in correction
+    assert "- b1a2b3c4d: 'Uses tabs.'" in correction
+    outcome = apply_operations(_DOC_TWO_BLOCKS, op_list.operations)
+    assert not outcome.skipped
+    assert outcome.document.section_by_id("prefs").blocks[0].text == "Uses spaces."
+
+
+async def test_request_delta_operations_keeps_a_partial_reply_when_the_retry_still_misses():
+    """Still one retry only: a second miss goes back to the caller, which applies what lands."""
+    llm = _ScriptedLLM(_ONE_TYPO, _ONE_TYPO)
+    op_list = await request_delta_operations(
+        llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC_TWO_BLOCKS
+    )
+    assert len(llm.calls) == 2
+    assert len(op_list.operations) == 2
+
+
+async def test_request_delta_operations_does_not_retry_an_op_skipped_for_its_content():
+    """Only a wrong id is worth a second call: an empty block would be skipped again."""
+    empty_text = (
+        '{"operations": ['
+        '{"op": "append_block", "section_id": "prefs", "text": "new"},'
+        '{"op": "replace_block", "section_id": "prefs", "block_id": "b1a2b3c4d", "text": "  "}]}'
+    )
+    llm = _ScriptedLLM(empty_text)
+    await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC_TWO_BLOCKS)
+    assert len(llm.calls) == 1

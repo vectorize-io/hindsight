@@ -9,14 +9,16 @@ import asyncio
 import json
 import random
 import warnings
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
-from collections.abc import Awaitable, Callable
 from typing import Any, Literal
+
+import aiohttp
+from yarl import URL
 
 import hindsight_client_api
 from hindsight_client_api.exceptions import ApiException
@@ -959,8 +961,6 @@ class Hindsight:
         enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
-        import aiohttp
-
         body: dict[str, Any] = {}
         if name is not None:
             body["name"] = name
@@ -2474,11 +2474,22 @@ class Hindsight:
         download_url = meta.get("download_url")
         if not download_url:
             raise RuntimeError(f"Export operation {operation_id} completed without a download_url")
+        if download_url.lower().startswith(("https://", "http://")):
+            # Object stores return signed URLs. Preserve their query string and
+            # keep Hindsight's configured auth headers off the storage request.
+            # trust_env matches the generated client, so HTTP(S)_PROXY also
+            # reaches the storage host.
+            async with aiohttp.ClientSession(trust_env=True) as session:
+                async with session.get(
+                    URL(download_url, encoded=True), timeout=aiohttp.ClientTimeout(total=self._timeout)
+                ) as response:
+                    response.raise_for_status()
+                    return await response.read()
         # Fetch the server-provided download_url directly (it carries the raw,
         # slash-bearing storage key). Going through the generated download_file
         # would percent-encode the slashes to %2F, which fronting proxies often
-        # reject. param_serialize applies the client's auth headers; call_api
-        # returns the raw response whose bytes we read (the typed return is
+        # reject. For the API-relative URL, param_serialize applies the client's
+        # auth headers; call_api returns raw bytes (the typed return is
         # `object`, which can't model an application/zip body).
         request = self._api_client.param_serialize(
             method="GET",
@@ -2721,8 +2732,6 @@ class Hindsight:
         return await self._aget_bank_config(bank_id)
 
     async def _aget_bank_config(self, bank_id: str) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:
@@ -3062,8 +3071,6 @@ class Hindsight:
         return await self._aupdate_bank_config(bank_id, updates)
 
     async def _aupdate_bank_config(self, bank_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:
@@ -3096,8 +3103,6 @@ class Hindsight:
         return await self._areset_bank_config(bank_id)
 
     async def _areset_bank_config(self, bank_id: str) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:

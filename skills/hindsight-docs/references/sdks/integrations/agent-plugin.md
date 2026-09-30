@@ -9,7 +9,7 @@ Portable long-term memory for any [Agent Plugins](https://agent-plugins.org) cli
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 1. Get your `hsk_...` API key from [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
 2. Set the environment variables the plugin reads:
 
@@ -82,4 +82,4 @@ For the fully automatic experience — recall injected before every prompt and t
 
 - [Agent Plugins standard](https://agent-plugins.org)
 - [Hindsight MCP Server reference](../../developer/mcp-server.md)
-- [Hindsight Cloud sign-up](https://ui.hindsight.vectorize.io/signup)
+- [Hindsight Cloud sign-up](https://ui.hindsight.vectorize.io)

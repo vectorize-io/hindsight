@@ -228,6 +228,11 @@ HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE=spanish
 HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga
 ```
 
+> **📝 External PostgreSQL required**
+>
+
+The `pgroonga` and `pg_search` backends depend on PostgreSQL extensions that are **not** bundled with the embedded `pg0` database Hindsight uses when `HINDSIGHT_API_DATABASE_URL` is unset. On that default single-container setup neither backend can be enabled — point `HINDSIGHT_API_DATABASE_URL` at an external PostgreSQL that has the extension installed, as the `docker/docker-compose/pgroonga/` and `docker/docker-compose/pg_search/` recipes do.
+
 The `native` and `pgroonga` knobs do not apply to each other — `pgroonga`'s tokenizer is set at index creation and ignores `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE`.
 
 #### Forcing the LLM Output Language

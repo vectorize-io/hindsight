@@ -58,6 +58,10 @@ class _FakeConnection:
         }
 
     async def fetchval(self, query: str, bank_id: str, *args):
+        # Bank creation probes bank_aliases first — a bank must not be born under a
+        # name that already routes elsewhere. Nothing is aliased in this fixture.
+        if "bank_aliases" in query:
+            return None
         self.insert_calls += 1
         if self._raise_on_insert is not None:
             error, self._raise_on_insert = self._raise_on_insert, None

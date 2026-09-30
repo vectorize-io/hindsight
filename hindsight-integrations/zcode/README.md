@@ -24,7 +24,7 @@ ZCode has no `SessionEnd` event, so retain rides `Stop`. Each turn is stored as 
 
 ## Installation
 
-Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — or run a local server.
+Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — or run a local server.
 
 ```bash
 pip install hindsight-zcode

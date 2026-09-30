@@ -60,7 +60,7 @@ In n8n, create a new **Hindsight API** credential:
 
 The credential applies the `Bearer` authorization header automatically, and it can be tested against the Hindsight `/health` endpoint, which works for both Cloud and self-hosted.
 
-If you do not have a key yet, [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) and grab one from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) instead.
+If you do not have a key yet, [sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) (free tier) and grab one from the dashboard, or [self-host](https://hindsight.vectorize.io/developer/installation) instead.
 
 ## Step 3: Add a Hindsight node and pick an operation
 

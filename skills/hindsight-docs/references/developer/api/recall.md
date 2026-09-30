@@ -12,7 +12,7 @@ When you **recall**, Hindsight runs four retrieval strategies in parallel — se
 Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](../retrieval.md) guide.
 > **💡 Prerequisites**
 >
-Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+Make sure you've completed the [Quick Start](./quickstart.md) to install the client and start the server.
 ## Basic Recall
 
 ### Python

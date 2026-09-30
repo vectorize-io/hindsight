@@ -117,7 +117,7 @@ The API URL defaults to Hindsight Cloud (`https://api.hindsight.vectorize.io`), 
 
 A running Hindsight instance:
 
-**Hindsight Cloud (recommended):** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
+**Hindsight Cloud (recommended):** [Sign up](https://ui.hindsight.vectorize.io) — no self-hosting required.
 
 **Self-hosted:**
 

@@ -4,6 +4,31 @@ import type { ToolSpec } from "../core/knowledge-tools";
 import { createPiHooks, toPiTool } from "./pi-extension";
 
 describe("pi extension adapter", () => {
+  it.each(["before", "after"])("preserves sections added %s memory injection", async (order) => {
+    const core = {
+      onPrompt: vi.fn(async () => {}),
+      getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
+      onTranscript: vi.fn(async () => {}),
+    };
+    const hooks = createPiHooks(core, "pi");
+    const sections: Record<string, string> = { base: "You are pi." };
+    if (order === "before") sections.other = "SECTION-MARKER";
+    const result = await hooks.beforeAgentStart(
+      {
+        prompt: "hi",
+        systemPrompt: Object.values(sections).join("\n\n"),
+        systemPromptOptions: { sections },
+      },
+      "session-1"
+    );
+    if (order === "after") sections.other = "SECTION-MARKER";
+    const prompt = result?.systemPrompt ?? Object.values(sections).join("\n\n");
+    expect(prompt).toContain("You are pi.");
+    expect(prompt).toContain("SECTION-MARKER");
+    expect(prompt).toContain("<hindsight_memories>remember this</hindsight_memories>");
+    expect(result).toBeUndefined();
+  });
+
   it("recalls on each prompt and appends the injection to the system prompt", async () => {
     const onPrompt = vi.fn(async () => {});
     const core = {

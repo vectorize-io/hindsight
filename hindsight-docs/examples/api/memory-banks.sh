@@ -190,6 +190,37 @@ for op in $(curl -s "$HINDSIGHT_URL/v1/default/banks/transfer-bank/operations?li
 done
 curl -sf "$HINDSIGHT_URL/v1/default/banks/transfer-bank-clone/documents" | jq -e '.total == 2' > /dev/null
 
+# [docs:transfer-import-external]
+mkdir -p external/documents
+echo '{"schema_version": 1, "source_bank_id": "external"}' > external/manifest.json
+cat > external/documents/session-2026-09-22.json <<'JSON'
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+  "facts": [{
+    "text": "The user prefers lightweight local speech recognition models.",
+    "fact_type": "experience",
+    "chunk_index": 0,
+    "mentioned_at": "2026-09-22T18:34:00Z",
+    "entities": ["Parakeet"]
+  }]
+}
+JSON
+(cd external && zip -qr ../import.zip manifest.json documents)
+
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -F "file=@import.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/transfer/import?mode=merge&document_conflict=replace"
+# [/docs:transfer-import-external]
+echo
+for op in $(curl -s "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/operations?limit=50" \
+    | jq -r '.operations[] | select(.status=="pending" or .status=="processing") | .id'); do
+  wait_op transfer-other-bank "$op"
+done
+curl -sf "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/documents/session-2026-09-22" \
+  | jq -e '.memory_unit_count == 1' > /dev/null
+rm -rf external import.zip
+
 rm -f transfer-bank.zip transfer-bank-documents.zip
 
 # =============================================================================

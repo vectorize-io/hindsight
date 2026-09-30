@@ -1,7 +1,7 @@
 """Coalescing several queued retains for one document into a single execution.
 
 Appends to one document are serialized by the claim predicate
-(``document_serialization_sql``), which is what makes them correct — but on its
+(``key_serialization_sql``), which is what makes them correct — but on its
 own it also makes them slow: a client that buffers 50 turns offline and flushes
 them would run 50 sequential retains, each re-reading and reprocessing the
 document. Folding collapses that burst into one execution over the concatenated

@@ -159,3 +159,151 @@ async def test_a_deleted_bank_stops_reading_as_existing(memory: MemoryEngine, re
     assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None, (
         "the cached profile survived the bank's deletion"
     )
+
+
+async def _delete_as_another_process(memory: MemoryEngine, bank_id: str, request_context, monkeypatch) -> None:
+    """Delete the bank with invalidation disabled, then restore it.
+
+    That leaves this process holding the entry it cached before the delete, with no notice that it
+    moved -- exactly the state of every process that did not serve the delete.
+    """
+    from hindsight_api.engine import bank_info_cache
+    from hindsight_api.engine.retain import bank_utils
+
+    backend = await memory._get_backend()
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is not None  # warm
+
+    async def _no_invalidation(*_a, **_kw):
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(bank_info_cache, "invalidate", _no_invalidation)
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is not None, (
+        "the setup no longer models another process: the entry did not survive the delete"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recall_of_a_bank_deleted_by_another_process_404s(memory: MemoryEngine, request_context, monkeypatch):
+    """The existence guard answers from the cache, so on a process that did not serve the delete a
+    recall of the deleted bank gets past it and fails in the store instead. A store that owns its
+    storage has already dropped the bank's, so that failure is an opaque store error (a 500) rather
+    than the 404 every other process answers. The store failure is simulated here: the SQL store
+    answers a deleted bank with an empty result rather than an error."""
+    from hindsight_api.engine.retain import bank_utils
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = _bank("cache_recall_deleted")
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+    await _delete_as_another_process(memory, bank_id, request_context, monkeypatch)
+
+    async def _storage_gone(*_a, **_kw):
+        raise RuntimeError("the bank's storage no longer exists")
+
+    monkeypatch.setattr(memory, "_search_with_retries", _storage_gone)
+
+    with pytest.raises(OperationValidationError) as exc_info:
+        await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
+    assert exc_info.value.status_code == 404
+
+    backend = await memory._get_backend()
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None, (
+        "the stale entry survived, so every later read on this process fails in the store again"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recall_failure_on_an_existing_bank_keeps_its_error(memory: MemoryEngine, request_context, monkeypatch):
+    """The failure-path re-check must not turn a real store fault into a 404."""
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = _bank("cache_recall_fault")
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+    async def _fault(*_a, **_kw):
+        raise RuntimeError("store unavailable")
+
+    monkeypatch.setattr(memory, "_search_with_retries", _fault)
+
+    with pytest.raises(Exception) as exc_info:
+        await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
+    assert not isinstance(exc_info.value, OperationValidationError)
+    assert "store unavailable" in str(exc_info.value)
+
+
+_QUERY = "Where does Alice work?"
+
+
+async def _retain_one(memory: MemoryEngine, bank_id: str, request_context) -> None:
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Acme as an engineer."}],
+        request_context=request_context,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recall_with_results_pays_no_uncached_existence_read(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """The deleted-bank re-check runs only on a failed or empty recall. A recall that returns
+    results must not take the pool acquire an uncached existence probe costs -- recall is a hot
+    path."""
+    from hindsight_api.engine.retain import bank_utils
+
+    bank_id = _bank("cache_recall_hot")
+    await _retain_one(memory, bank_id, request_context)
+    warm = await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+    assert warm.results, "the setup needs a recall that returns results"
+
+    probes = 0
+    original = bank_utils.bank_exists
+
+    async def _counting(*a, **kw):
+        nonlocal probes
+        probes += 1
+        return await original(*a, **kw)
+
+    monkeypatch.setattr(bank_utils, "bank_exists", _counting)
+    result = await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+
+    assert result.results
+    assert probes == 0, "a recall that returned results ran the uncached existence probe"
+
+
+@pytest.mark.asyncio
+async def test_a_sql_recall_of_a_bank_deleted_by_another_process_404s(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """The SQL store does not fail for a deleted bank: its rows are gone, so a recall that slips
+    past the stale guard answers 200 with no results -- byte-identical to a healthy empty bank,
+    which is what the guard exists to rule out (#4175). Unlike the store-failure case, nothing is
+    simulated here: this is the real SQL recall path."""
+    from hindsight_api.engine.retain import bank_utils
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = _bank("cache_sql_deleted")
+    await _retain_one(memory, bank_id, request_context)
+    before = await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+    assert before.results, "the setup needs a bank whose recall returns results before the delete"
+
+    await _delete_as_another_process(memory, bank_id, request_context, monkeypatch)
+
+    with pytest.raises(OperationValidationError) as exc_info:
+        await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+    assert exc_info.value.status_code == 404
+
+    backend = await memory._get_backend()
+    assert await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None, "the stale entry survived the 404"
+
+
+@pytest.mark.asyncio
+async def test_a_recall_of_an_existing_empty_bank_still_answers_empty(memory: MemoryEngine, request_context):
+    """The empty-result re-check must not turn a healthy empty bank into a 404."""
+    bank_id = _bank("cache_sql_empty")
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+    result = await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+    assert result.results == []

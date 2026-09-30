@@ -204,6 +204,41 @@ async def transfer_examples() -> None:
     await wait_for(client, "transfer-py-other", submission.operation_id)
     os.remove("transfer-py-documents.zip")
 
+    # [docs:transfer-import-external]
+    import io
+    import json
+    import zipfile
+
+    doc = {
+        "id": "session-2026-09-22",
+        "original_text": "Full original session text...",
+        "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+        "facts": [
+            {
+                "text": "The user prefers lightweight local speech recognition models.",
+                "fact_type": "experience",
+                "chunk_index": 0,
+                "mentioned_at": "2026-09-22T18:34:00Z",
+                "entities": ["Parakeet"],
+            }
+        ],
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("manifest.json", json.dumps({"schema_version": 1, "source_bank_id": "external"}))
+        z.writestr(f"documents/{doc['id']}.json", json.dumps(doc))
+
+    submission = await client.bank_transfer.import_bank_transfer(
+        "transfer-py-other",
+        ("import.zip", buf.getvalue()),
+        mode="merge",
+        document_conflict="replace",
+    )
+    # [/docs:transfer-import-external]
+    await wait_for(client, "transfer-py-other", submission.operation_id)
+    imported = await client.documents.get_document("transfer-py-other", "session-2026-09-22")
+    assert imported.memory_unit_count == 1, imported
+
     for bank_id in TRANSFER_BANKS:
         requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/{bank_id}")
     await client.aclose()

@@ -294,10 +294,19 @@ async def test_gemini_llm_uses_cache_when_enabled(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_falls_back_to_uncached_when_cache_400s():
-    """A stale/invalid CachedContent makes the generate call 400. The provider
-    must drop the cache, invalidate the entry, and retry the SAME call inline
-    (prefix re-sent) so caching never breaks a request."""
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        (400, "INVALID_ARGUMENT"),
+        # How Gemini reports a cache that was deleted or aged out: a 403, not a 400.
+        # It used to hit the auth fail-fast first and fail the whole refresh.
+        (403, "PERMISSION_DENIED"),
+    ],
+)
+async def test_call_falls_back_to_uncached_when_cache_is_rejected(code: int, status: str):
+    """A stale/invalid/deleted CachedContent makes the generate call fail. The
+    provider must drop the cache, invalidate the entry, and retry the SAME call
+    inline (prefix re-sent) so caching never breaks a request."""
     import time
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -323,7 +332,7 @@ async def test_call_falls_back_to_uncached_when_cache_400s():
         if len(captured) == 1:
             # First (cached) attempt — Gemini rejects the dead cache.
             raise genai_errors.ClientError(
-                400, {"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "CachedContent not found"}}
+                code, {"error": {"code": code, "status": status, "message": "CachedContent not found"}}
             )
         # Retry without the cache succeeds.
         return SimpleNamespace(

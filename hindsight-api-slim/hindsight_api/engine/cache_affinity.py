@@ -164,6 +164,12 @@ def cache_affinity_id(messages: Any) -> str | None:
     return _first_message_fingerprint(messages)
 
 
+def is_opencode_host(base_url: str | None) -> bool:
+    """True when ``base_url`` targets an OpenCode Go (``opencode.ai``) host."""
+    hostname = (urlparse(base_url).hostname or "") if base_url else ""
+    return any(_host_matches(hostname, domain) for domain in _OPENCODE_DOMAINS)
+
+
 def apply_opencode_session(request: dict[str, Any], *, base_url: str | None) -> None:
     """Add OpenCode Go's conversation-grouping header to ``request`` in place.
 
@@ -198,10 +204,13 @@ def apply_opencode_session(request: dict[str, Any], *, base_url: str | None) -> 
     placed in ``extra_headers`` is kept. Never raises; when no id can be derived
     the request goes out unchanged.
     """
-    hostname = (urlparse(base_url).hostname or "") if base_url else ""
-    if not any(_host_matches(hostname, domain) for domain in _OPENCODE_DOMAINS):
+    if not is_opencode_host(base_url):
         return
-    session_id = cache_affinity_id(request.get("messages"))
+    # The Responses API carries the conversation under ``input``, not
+    # ``messages``. Reading only ``messages`` left an untraced Responses call —
+    # the startup verification probe — with no id, so opencode-go rejected it
+    # with HTTP 400 MissingSessionID.
+    session_id = cache_affinity_id(request.get("messages") or request.get("input"))
     if session_id is None:
         return
     extra_headers = request.setdefault("extra_headers", {})

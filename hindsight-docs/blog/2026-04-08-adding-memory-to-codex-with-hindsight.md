@@ -19,7 +19,7 @@ hide_table_of_contents: true
 - Auto-recall queries your memory bank before every prompt and injects relevant facts as invisible context. Codex sees them; you don't have to repeat them.
 - Auto-retain fires at the end of every session, extracts facts from the transcript, and stores them for future recall.
 - For teams, point everyone's config at a shared Hindsight server with a fixed `bankId`. See [Shared Memory for AI Coding Agents](https://hindsight.vectorize.io/blog/2026/03/31/team-shared-memory-ai-coding-agents).
-- Hindsight Cloud stores your memory bank server-side — no local daemon, and memory follows you across machines. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud stores your memory bank server-side — no local daemon, and memory follows you across machines. [Sign up free.](https://ui.hindsight.vectorize.io)
 
 ## The Problem: Codex Has No Persistent Memory
 
@@ -83,7 +83,7 @@ For most users, Hindsight Cloud is the easier option: no daemon to manage, memor
 }
 ```
 
-Create an account and API key at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup). No daemon to manage — the cloud server handles extraction.
+Create an account and API key at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io). No daemon to manage — the cloud server handles extraction.
 
 ## What Gets Recalled
 
@@ -203,7 +203,7 @@ A few things worth knowing before you commit.
 
 ## Next Steps
 
-- **Hindsight Cloud**: [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud**: [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Install**: `curl -fsSL https://hindsight.vectorize.io/get-codex | bash`
 - **Config reference**: [Codex integration docs](/sdks/integrations/codex)
 - **Team memory**: [Shared Memory for AI Coding Agents](https://hindsight.vectorize.io/blog/2026/03/31/team-shared-memory-ai-coding-agents)

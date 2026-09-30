@@ -127,7 +127,9 @@ function toOpencode2Tool(spec: ToolSpec) {
  * v2 can register one in memory instead, so nothing is written to disk and no second copy can go
  * stale: the content is read from the PACKAGE at setup, which is what makes `npm update -g` upgrade
  * the skill here too. Fail-open like every other seam in this adapter — an older v2 without
- * `ctx.skill` (or a host that rejects the draft) loses the skill, never the memory.
+ * `ctx.skill` loses the skill, never the memory. A draft the host's schema REJECTS is worse: the
+ * host disables the whole plugin, not just the skill (#4732, a missing `path`), so the draft must
+ * carry every field the host requires.
  */
 async function registerCompanionSkill(ctx: Opencode2Context, harness: string): Promise<void> {
   const skill = readPackagedSkill();
@@ -242,10 +244,9 @@ export function createOpencode2PluginEntry(harness: string): Opencode2Plugin {
       const core = new RuntimeCore(client, bankId, cfg, harness, dir);
       const cleanup = await wireOpencode2Runtime(core, ctx);
 
-      // SessionStart-equivalent: cold-check the bank, kick off the background engine, compute the
-      // knowledge preamble. Fire-and-forget — this host BLOCKS ITS BOOT on plugin setup, so it must
-      // never gate startup on a network round-trip. onPrompt tolerates an empty preamble until it
-      // resolves.
+      // SessionStart-equivalent: cold-check the bank and kick off the background engine.
+      // Fire-and-forget — this host BLOCKS ITS BOOT on plugin setup, so it must never gate startup
+      // on a network round-trip, and onPrompt needs nothing from it (it builds its own preamble).
       void core.seedIfCold(projectDir);
 
       return cleanup;

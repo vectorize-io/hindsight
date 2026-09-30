@@ -59,7 +59,7 @@ For a self-hosted Hindsight server:
 hindsight-cursor init --api-url http://localhost:8888
 ```
 
-If you do not have a Cloud token yet, sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and create an API key, or start Hindsight locally with Docker:
+If you do not have a Cloud token yet, sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io) and create an API key, or start Hindsight locally with Docker:
 
 ```bash
 export OPENAI_API_KEY=your-key

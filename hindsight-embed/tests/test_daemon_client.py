@@ -407,7 +407,10 @@ class TestStartDaemonSerialization:
             patch.object(DaemonEmbedManager, "_find_api_command", return_value=["hindsight-api"]),
             patch.object(DaemonEmbedManager, "_component_version", return_value=None),
             patch.object(DaemonEmbedManager, "_register_profile"),
-            patch("subprocess.Popen", side_effect=lambda *_args, **_kwargs: calls.append("spawn")),
+            patch(
+                "subprocess.Popen",
+                side_effect=lambda *_args, **_kwargs: calls.append("spawn") or MagicMock(**{"poll.return_value": None}),
+            ),
             patch("hindsight_embed.daemon_embed_manager.Live"),
         ):
             assert manager._start_daemon_locked({}, "codex", paths) is True

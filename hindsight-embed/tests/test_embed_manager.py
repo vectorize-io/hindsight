@@ -1,14 +1,194 @@
 """Tests for EmbedManager interface."""
 
+import io
+import signal
+import subprocess
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from hindsight_embed import get_embed_manager
 from hindsight_embed._http_probe import ProbeResponse
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import (
+    DaemonEmbedManager,
+    _detach_popen_kwargs,
+    _runs_a_foreign_interpreter,
+    _strip_parent_interpreter_env,
+    _terminate_startup_process,
+)
 
 
 def _mock_sentence_transformers_present(monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: object())
+
+
+# Process groups and SIGKILL do not exist on Windows.
+_posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+
+
+def _startup_manager(is_running: MagicMock) -> DaemonEmbedManager:
+    manager = DaemonEmbedManager()
+    manager._profile_manager = MagicMock()
+    manager._profile_manager.load_profile_config.return_value = {}
+    manager._clear_port = MagicMock(return_value=True)
+    manager.is_running = is_running
+    manager._component_version = MagicMock(return_value="0.0.0")
+    manager._find_api_command = MagicMock(return_value=["hindsight-api"])
+    return manager
+
+
+def _running_process() -> MagicMock:
+    process = MagicMock(pid=4321)
+    process.poll.return_value = None
+    process.wait.return_value = 0
+    return process
+
+
+@_posix_only
+def test_start_timeout_terminates_spawned_daemon_group(tmp_path, monkeypatch):
+    manager = _startup_manager(MagicMock(return_value=False))
+    process = _running_process()
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.DAEMON_STARTUP_TIMEOUT", 0)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    killpg = MagicMock()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.os.killpg", killpg)
+
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process) as popen:
+        assert manager._start_daemon_locked({}, "test", paths) is False
+
+    assert popen.call_args.args[0] == ["hindsight-api", "--idle-timeout", "0", "--port", "9177"]
+    # The whole group, so a uvx launcher's hindsight-api grandchild goes too.
+    killpg.assert_called_once_with(4321, signal.SIGTERM)
+    process.wait.assert_called_once_with(timeout=10)
+
+
+def test_startup_keeps_polling_after_transient_stability_failure(tmp_path, monkeypatch):
+    manager = _startup_manager(MagicMock(side_effect=[False, True, False, True, True]))
+    process = _running_process()
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.time", lambda: 0)
+
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process):
+        assert manager._start_daemon_locked({}, "test", paths) is True
+
+    process.wait.assert_not_called()
+    assert manager.is_running.call_count == 5
+
+
+def test_startup_fails_fast_when_daemon_exits(tmp_path, monkeypatch):
+    manager = _startup_manager(MagicMock(return_value=False))
+    process = _running_process()
+    process.poll.return_value = 1
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", MagicMock(side_effect=AssertionError))
+
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process):
+        assert manager._start_daemon_locked({}, "test", paths) is False
+
+    manager.is_running.assert_called_once()  # the pre-spawn check only
+
+
+def _spawned_env(manager, tmp_path, monkeypatch) -> dict:
+    """Run _start_daemon_locked up to the spawn and return the env Popen received."""
+    process = _running_process()
+    process.poll.return_value = 1  # exit at once so the startup loop ends
+    paths = SimpleNamespace(log=tmp_path / "daemon.log", port=9177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _seconds: None)
+    with patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", return_value=process) as popen:
+        manager._start_daemon_locked({}, "test", paths)
+    return popen.call_args.kwargs["env"]
+
+
+def test_uvx_fallback_does_not_inherit_the_parent_interpreter_env(tmp_path, monkeypatch):
+    """A host that finds its own site-packages via PYTHONPATH (Hermes' package-manager install
+    exports its Python 3.14 generation) must not hand that directory to uvx's own interpreter:
+    hindsight-api would import the host's pydantic and fail on the missing compiled extension."""
+    monkeypatch.setenv("PYTHONPATH", "/host/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/host/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/host/venv")
+    monkeypatch.setenv("PATH", "/host/venv/bin:/usr/bin")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["uvx", "hindsight-api@0.0.0"])
+
+    env = _spawned_env(manager, tmp_path, monkeypatch)
+
+    assert "PYTHONPATH" not in env and "PYTHONHOME" not in env and "VIRTUAL_ENV" not in env
+    assert env["PATH"] == "/host/venv/bin:/usr/bin"  # uvx itself is found through PATH
+    assert env["HINDSIGHT_API_DAEMON_LOG"] == str(tmp_path / "daemon.log")
+
+
+def test_the_dev_uv_run_command_does_not_inherit_it_either(tmp_path, monkeypatch):
+    """`uv run --project <api-slim>` resolves that project's own environment, so it is as foreign
+    as uvx: a monorepo checkout under a host that exports PYTHONPATH would hit the same crash."""
+    monkeypatch.setenv("PYTHONPATH", "/host/venv/lib/python3.14/site-packages")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(
+        return_value=["uv", "run", "--project", "/repo/hindsight-api-slim", "--extra", "all", "hindsight-api"]
+    )
+
+    assert "PYTHONPATH" not in _spawned_env(manager, tmp_path, monkeypatch)
+
+
+def test_a_resolved_launcher_path_is_still_recognised(tmp_path, monkeypatch):
+    """The guard matches the basename: the sibling candidates in _find_api_command are returned
+    resolved, so resolving the launcher too must not silently stop the scrub."""
+    monkeypatch.setenv("PYTHONPATH", "/host/site-packages")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["/opt/tools/uvx", "hindsight-api@0.0.0"])
+
+    assert "PYTHONPATH" not in _spawned_env(manager, tmp_path, monkeypatch)
+
+
+def test_only_uv_launchers_count_as_foreign():
+    assert _runs_a_foreign_interpreter(["uvx", "hindsight-api@1.0.0"])
+    assert _runs_a_foreign_interpreter(["uv", "run", "--project", "/x", "hindsight-api"])
+    assert _runs_a_foreign_interpreter(["/opt/bin/uvx.exe", "hindsight-api@1.0.0"])
+    assert not _runs_a_foreign_interpreter(["/venv/bin/hindsight-api"])
+    assert not _runs_a_foreign_interpreter(["/target/bin/hindsight-api"])
+
+
+def test_installed_binary_keeps_the_parent_interpreter_env(tmp_path, monkeypatch):
+    """A `pip install --target` layout (issue #1240) needs PYTHONPATH to import hindsight_api;
+    the scrub applies only to the uvx fallback."""
+    monkeypatch.setenv("PYTHONPATH", "/target")
+    manager = _startup_manager(MagicMock(return_value=False))
+    manager._find_api_command = MagicMock(return_value=["/target/bin/hindsight-api"])
+
+    env = _spawned_env(manager, tmp_path, monkeypatch)
+
+    assert env["PYTHONPATH"] == "/target"
+
+
+def test_strip_parent_interpreter_env_leaves_everything_else():
+    env = {"PYTHONPATH": "x", "PYTHONSAFEPATH": "1", "HINDSIGHT_API_LLM_MODEL": "m", "HOME": "/h"}
+    assert _strip_parent_interpreter_env(env) == {"HINDSIGHT_API_LLM_MODEL": "m", "HOME": "/h"}
+
+
+@_posix_only
+def test_start_timeout_kills_daemon_group_that_ignores_terminate(monkeypatch):
+    process = _running_process()
+    process.wait.side_effect = [subprocess.TimeoutExpired("hindsight-api", 10), 0]
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    killpg = MagicMock()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.os.killpg", killpg)
+
+    _terminate_startup_process(process)
+
+    assert killpg.call_args_list == [((4321, signal.SIGTERM),), ((4321, signal.SIGKILL),)]
+    assert process.wait.call_count == 2
+
+
+def test_start_timeout_kills_daemon_on_windows(monkeypatch):
+    process = _running_process()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+
+    _terminate_startup_process(process)
+
+    process.kill.assert_called_once_with()
 
 
 def test_sanitize_profile_name_via_db_url():
@@ -684,3 +864,15 @@ def test_run_probe_still_reports_a_failed_command_as_none():
     import sys as _sys
 
     assert DaemonEmbedManager._run_probe([_sys.executable, "-c", "raise SystemExit(3)"]) is None
+
+
+def test_detach_popen_kwargs_pins_stdin():
+    """The daemon child must never inherit the caller's fd 0.
+
+    A caller can hold an fd 0 that is a socket opened with FD_CLOEXEC (e.g. a
+    TUI/gateway parent that wires its IPC channel onto fds 0-2). An inherited
+    fd 0 is closed by the kernel at exec, so the child would start with
+    ``sys.stdin = None`` and crash in ``_redirect_stdio_to_log()``.
+    """
+    kwargs = _detach_popen_kwargs(io.BytesIO())
+    assert kwargs["stdin"] == subprocess.DEVNULL

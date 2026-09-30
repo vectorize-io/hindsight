@@ -15,7 +15,7 @@ Build a web chatbot with persistent memory using Streamlit and Hindsight. ~80 li
 
 ## TL;DR
 
-- Build a web chatbot with persistent memory using [Streamlit](https://streamlit.io/) and [Hindsight](https://ui.hindsight.vectorize.io/signup)
+- Build a web chatbot with persistent memory using [Streamlit](https://streamlit.io/) and [Hindsight](https://ui.hindsight.vectorize.io)
 - ~80 lines of Python. No frontend framework, no JavaScript, no build step.
 - Memory survives browser refreshes and server restarts
 - Sidebar shows what the agent remembers — recalled facts and synthesized reflections
@@ -140,7 +140,7 @@ export HINDSIGHT_API_LLM_API_KEY=YOUR_OPENAI_KEY
 hindsight-api
 ```
 
-> **Note:** You can also use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) instead of self-hosting — just change the `base_url` to `https://api.hindsight.vectorize.io` and add your API key.
+> **Note:** You can also use [Hindsight Cloud](https://ui.hindsight.vectorize.io) instead of self-hosting — just change the `base_url` to `https://api.hindsight.vectorize.io` and add your API key.
 
 Now wire Hindsight into the chat. The key pattern: use [`@st.cache_resource`](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_resource) to initialize the client once, not on every re-run.
 
@@ -410,7 +410,7 @@ Streamlit handles the UI. Hindsight handles the memory. OpenAI handles the gener
 - **Add a "Clear Memory" button** that calls `hindsight.delete_bank()` and recreates it
 - **Show the knowledge graph** — use `include_entities=True` on recall and render entity connections
 - **Deploy with Streamlit Community Cloud** — add `OPENAI_API_KEY` and `HINDSIGHT_API_URL` as secrets
-- **Try [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** for deployment without self-hosting the memory server
+- **Try [Hindsight Cloud](https://ui.hindsight.vectorize.io)** for deployment without self-hosting the memory server
 - **Customize agent reasoning** — use [disposition traits](/blog/2026/03/13/disposition-aware-agents) to make your chatbot more empathetic, skeptical, or literal
 
 A chatbot with memory is useful. A chatbot with memory you can inspect is a development tool.

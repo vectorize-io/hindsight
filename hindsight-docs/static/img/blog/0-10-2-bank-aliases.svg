@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="279" viewBox="0 0 560 279" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":56,"children":[{"id":"clients","label":"Your clients","direction":"column","gap":20,"children":[{"id":"old","label":"Old callers","sub":"bank: support-v1"},{"id":"new","label":"Migrated callers","sub":"bank: support"}]},{"id":"bank","label":"Bank support-v1","shape":"store","sub":"alias: support"}]},"edges":[{"id":"o","from":"old","to":"bank","label":"support-v1"},{"id":"n","from":"new","to":"bank","label":"support"}],"steps":[{"label":"Change a bank id with no downtime","flow":[{"edges":"o","show":{"bank":[{"tag":"id","tone":"gray","text":"support-v1","mono":true}]},"say":"Every client calls the bank by its old id."},{"show":{"bank":[{"tag":"alias","tone":"blue","text":"support","mono":true,"mark":"new"}]},"say":"POST /aliases adds a second id. Nothing is copied."},{"edges":["o","n"],"ms":2600,"say":"Both ids reach the same bank, so callers move over one at a time."},{"edges":"n","show":{"bank":[{"tag":"shown as","tone":"green","text":"support","mono":true,"mark":"✓"}]},"say":"Make the alias primary: the bank is now shown under the new id."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,17.2% { stroke: var(--accent) } 17.2%,34.5% { stroke: var(--accent) } 34.5%,56.9% { stroke: var(--accent) } 56.9%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 9.3s infinite step-end; }
+@keyframes a1 { 0%,17.2% { stroke: var(--border) } 17.2%,34.5% { stroke: var(--border) } 34.5%,56.9% { stroke: var(--accent) } 56.9%,100% { stroke: var(--accent) } }
+.a1 { animation: a1 9.3s infinite step-end; }
+@keyframes a2 { 0%,17.2% { stroke: var(--accent); fill: var(--card-on) } 17.2%,34.5% { stroke: var(--accent); fill: var(--card-on) } 34.5%,56.9% { stroke: var(--accent); fill: var(--card-on) } 56.9%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a2 { animation: a2 9.3s infinite step-end; }
+@keyframes a3 { 0%,17.2% { opacity: 1 } 17.2%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 0 } 56.9%,100% { opacity: 0 } }
+.a3 { animation: a3 9.3s infinite step-end; }
+@keyframes a4 { 0%,17.2% { opacity: 0 } 17.2%,34.5% { opacity: 1 } 34.5%,56.9% { opacity: 1 } 56.9%,100% { opacity: 0 } }
+.a4 { animation: a4 9.3s infinite step-end; }
+@keyframes a5 { 0%,17.2% { opacity: 0 } 17.2%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 0 } 56.9%,100% { opacity: 1 } }
+.a5 { animation: a5 9.3s infinite step-end; }
+@keyframes a6 { 0%,17.2% { stroke: var(--accent); stroke-width: 2 } 17.2%,34.5% { stroke: var(--accent); stroke-width: 2 } 34.5%,56.9% { stroke: var(--accent); stroke-width: 2 } 56.9%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a6 { animation: a6 9.3s infinite step-end; }
+@keyframes a7 { 0%,17.2% { fill: var(--accent); stroke: var(--accent) } 17.2%,34.5% { fill: var(--accent); stroke: var(--accent) } 34.5%,56.9% { fill: var(--accent); stroke: var(--accent) } 56.9%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a7 { animation: a7 9.3s infinite step-end; }
+@keyframes a8 { 0%,17.2% { fill: #fff } 17.2%,34.5% { fill: #fff } 34.5%,56.9% { fill: #fff } 56.9%,100% { fill: #fff } }
+.a8 { animation: a8 9.3s infinite step-end; }
+@keyframes a9 { 0%,17.2% { stroke: var(--muted); stroke-width: 1.25 } 17.2%,34.5% { stroke: var(--muted); stroke-width: 1.25 } 34.5%,56.9% { stroke: var(--accent); stroke-width: 2 } 56.9%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a9 { animation: a9 9.3s infinite step-end; }
+@keyframes a10 { 0%,17.2% { fill: var(--bg); stroke: var(--border) } 17.2%,34.5% { fill: var(--bg); stroke: var(--border) } 34.5%,56.9% { fill: var(--accent); stroke: var(--accent) } 56.9%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a10 { animation: a10 9.3s infinite step-end; }
+@keyframes a11 { 0%,17.2% { fill: var(--muted) } 17.2%,34.5% { fill: var(--muted) } 34.5%,56.9% { fill: #fff } 56.9%,100% { fill: #fff } }
+.a11 { animation: a11 9.3s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,17.2% { opacity: 1 } 17.2%,100% { opacity: 0 } }
+.p0 { animation: p0 9.3s infinite step-end; }
+@keyframes p1 { 0%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 1 } 56.9%,100% { opacity: 0 } }
+.p1 { animation: p1 9.3s infinite step-end; }
+@keyframes p2 { 0%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 1 } 56.9%,100% { opacity: 0 } }
+.p2 { animation: p2 9.3s infinite step-end; }
+@keyframes p3 { 0%,56.9% { opacity: 0 } 56.9%,74.1% { opacity: 1 } 74.1%,100% { opacity: 0 } }
+.p3 { animation: p3 9.3s infinite step-end; }
+@keyframes a12 { 0%,17.2% { opacity: 1 } 17.2%,34.5% { opacity: 1 } 34.5%,56.9% { opacity: 1 } 56.9%,100% { opacity: 1 } }
+.a12 { animation: a12 9.3s infinite step-end; }
+@keyframes a13 { 0%,17.2% { opacity: 1 } 17.2%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 0 } 56.9%,100% { opacity: 0 } }
+.a13 { animation: a13 9.3s infinite step-end; }
+@keyframes a14 { 0%,17.2% { opacity: 0 } 17.2%,34.5% { opacity: 1 } 34.5%,56.9% { opacity: 0 } 56.9%,100% { opacity: 0 } }
+.a14 { animation: a14 9.3s infinite step-end; }
+@keyframes a15 { 0%,17.2% { opacity: 0 } 17.2%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 1 } 56.9%,100% { opacity: 0 } }
+.a15 { animation: a15 9.3s infinite step-end; }
+@keyframes a16 { 0%,17.2% { opacity: 0 } 17.2%,34.5% { opacity: 0 } 34.5%,56.9% { opacity: 0 } 56.9%,100% { opacity: 1 } }
+.a16 { animation: a16 9.3s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(51.6 0)">
+<rect x="24" y="24" width="186.7" height="181" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="42" y="44" class="frame">YOUR CLIENTS</text>
+<rect x="50.5" y="61" width="133.8" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="117.4" y="85.5" class="label">Old callers</text><text x="117.4" y="100.5" class="sub">bank: support-v1</text>
+<rect x="42" y="134" width="150.7" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="117.4" y="158.5" class="label">Migrated callers</text><text x="117.4" y="173.5" class="sub">bank: support</text>
+<path d="M266.7 68 a 83 12 0 0 1 166 0 v 93 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M266.7 68 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a0"/><text x="349.7" y="93" class="label">Bank support-v1</text><text x="349.7" y="108" class="sub">alias: support</text><rect x="276.7" y="121" width="146" height="42" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a2"/><g opacity="0" class="a3"><rect x="284.7" y="128" width="17.5" height="14" rx="4" fill="#8b949e" fill-opacity="0.15"/><text x="293.5" y="138.5" class="tag" fill="#8b949e">ID</text><text x="307.3" y="138" class="row mono">support-v1</text></g><g opacity="0" class="a4"><rect x="284.7" y="128" width="31.9" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="300.6" y="138.5" class="tag" fill="#3b82f6">ALIAS</text><text x="414.7" y="138" class="mark">new</text><text x="284.7" y="153" class="row mono">support</text></g><g opacity="0" class="a5"><rect x="284.7" y="128" width="46.2" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="307.8" y="138.5" class="tag" fill="#10b981">SHOWN AS</text><text x="414.7" y="138" class="mark">✓</text><text x="284.7" y="153" class="row mono">support</text></g>
+<path id="p-o" d="M 184.24 87.5 C 225.48000000000002 87.5, 225.48000000000002 95, 266.72 95" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a6"/><rect x="189.3" y="82.3" width="72.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a7"/><text x="225.5" y="95.3" class="edgelabel a8">support-v1</text>
+<path id="p-n" d="M 192.72 160.5 C 229.72000000000003 160.5, 229.72000000000003 134, 266.72 134" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a9"/><rect x="202.3" y="138.3" width="54.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a10"/><text x="229.7" y="151.3" class="edgelabel a11">support</text>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="9.3s" repeatCount="indefinite" keyTimes="0;0;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o" xlink:href="#p-o"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="9.3s" repeatCount="indefinite" keyTimes="0;0.3;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-o" xlink:href="#p-o"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="9.3s" repeatCount="indefinite" keyTimes="0;0.3;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-n" xlink:href="#p-n"/></animateMotion></g>
+<g class="p3" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="9.3s" repeatCount="indefinite" keyTimes="0;0.6;0.7;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-n" xlink:href="#p-n"/></animateMotion></g>
+</g>
+<text x="280" y="245" opacity="0" class="steplabel a12">Change a bank id with no downtime</text>
+<g opacity="0" class="a13"><text x="280" y="271" class="caption">Every client calls the bank by its old id.</text></g>
+<g opacity="0" class="a14"><text x="280" y="271" class="caption">POST /aliases adds a second id. Nothing is copied.</text></g>
+<g opacity="0" class="a15"><text x="280" y="271" class="caption">Both ids reach the same bank, so callers move over one at a time.</text></g>
+<g opacity="0" class="a16"><text x="280" y="271" class="caption">Make the alias primary: the bank is now shown under the new id.</text></g>
+</svg>

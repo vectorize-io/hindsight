@@ -150,7 +150,13 @@ describe("buildKnowledgeTools", () => {
   it("hindsight_search_knowledge_pages calls the server hybrid search and returns ranked hits", async () => {
     const client = stubClient({
       searchKnowledgePages: vi.fn(async () => [
-        { id: "p1", name: "Uploader guide", snippet: "Uploads retry with backoff…", score: 0.031 },
+        {
+          id: "p1",
+          name: "Uploader guide",
+          source_query: "How do uploads recover from failures?",
+          snippet: "Uploads retry with backoff…",
+          score: 0.031,
+        },
         { id: "p2", name: "Auth notes", snippet: "Tokens rotate daily.", score: 0.012 },
       ]),
     });
@@ -162,56 +168,34 @@ describe("buildKnowledgeTools", () => {
     expect(client.searchKnowledgePages).toHaveBeenCalledWith("upload retries");
     // No `score`: the server's RRF number tops out near 0.03, so a model reading it treats its best
     // hit as 3% relevant. Rank order carries the ranking.
-    expect(JSON.parse(result.content[0].text)).toEqual([
-      { page: "Uploader guide", page_id: "p1", snippet: "Uploads retry with backoff…" },
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.pages).toEqual([
+      {
+        page: "Uploader guide",
+        page_id: "p1",
+        description: "How do uploads recover from failures?",
+        snippet: "Uploads retry with backoff…",
+      },
       { page: "Auth notes", page_id: "p2", snippet: "Tokens rotate daily." },
     ]);
+    // The credit reminder rides with the hits: the session guide has scrolled away by the time a
+    // search lands mid-session, and a paraphrased snippet otherwise gets absorbed uncredited.
+    expect(payload.crediting).toContain("From Hindsight memory");
+    expect(payload.crediting).toContain("paraphrased");
   });
 
-  it("hindsight_read_knowledge_page returns the body once, with a dated field the model can judge", async () => {
-    const client = stubClient({
-      getPage: vi.fn(async () => ({
-        id: "p1",
-        name: "Pricing decisions",
-        description: "What has been decided about pricing?",
-        tags: ["type:knowledge-page"],
-        timestamp: "2026-09-17T10:00:00Z",
-        body: "The threshold is compared against the discounted subtotal.",
-        // The API also returns the SAME body with YAML frontmatter on top; passing the response
-        // through handed the model the page twice.
-        markdown:
-          "---\nname: Pricing decisions\n---\nThe threshold is compared against the discounted subtotal.",
-      })),
-    });
-    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_read_knowledge_page");
-    const result = await tool.handler({ page_id: "p1" });
-
-    expect(result.isError).toBeFalsy();
-    expect(JSON.parse(result.content[0].text)).toEqual({
-      id: "p1",
-      name: "Pricing decisions",
-      description: "What has been decided about pricing?",
-      tags: ["type:knowledge-page"],
-      last_updated_at: "2026-09-17T10:00:00Z",
-      body: "The threshold is compared against the discounted subtotal.",
-    });
-  });
-
-  it("hindsight_read_knowledge_page falls back to the full markdown when a page has no body", async () => {
-    const client = stubClient({
-      getPage: vi.fn(async () => ({
-        id: "p2",
-        name: "Empty",
-        markdown: "---\nname: Empty\n---\n",
-      })),
-    });
-    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_read_knowledge_page");
-
-    expect(JSON.parse((await tool.handler({ page_id: "p2" })).content[0].text)).toEqual({
-      id: "p2",
-      name: "Empty",
-      body: "---\nname: Empty\n---\n",
-    });
+  it("hindsight_search_knowledge_pages adds toolGuideExtra after the crediting note (#4791)", async () => {
+    const extra = "Memory is a past record: verify it against the code first.";
+    const client = stubClient({ searchKnowledgePages: vi.fn(async () => []) });
+    const tool = findTool(
+      buildKnowledgeTools(client, "repo-a", { toolGuideExtra: extra }),
+      "hindsight_search_knowledge_pages"
+    );
+    const { crediting } = JSON.parse((await tool.handler({ query: "q" })).content[0].text);
+    // Added, not replacing: the crediting rule is still there, and the team's text follows it.
+    expect(crediting).toContain("From Hindsight memory");
+    expect(crediting.endsWith(extra)).toBe(true);
+    expect(tool.description.endsWith(extra)).toBe(true);
   });
 
   it("hindsight_search_knowledge_pages returns isError:true when the server search throws", async () => {

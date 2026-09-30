@@ -32,7 +32,7 @@ Before you start, make sure you have:
 
 - Obsidian installed with an existing vault
 - [BRAT](https://github.com/TfTHacker/obsidian42-brat) available to install beta plugins
-- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
+- A reachable Hindsight backend, [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a self-hosted server
 
 ## Step 1: Install the plugin
 

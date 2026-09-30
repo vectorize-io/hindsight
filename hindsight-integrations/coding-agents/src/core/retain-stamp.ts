@@ -43,11 +43,14 @@ export interface RetainStampContext {
 export interface RetainStamp {
   tags: string[];
   metadata: Record<string, string>;
+  /** Resolved `retainContext`, or undefined when unconfigured so the caller keeps its default. */
+  context?: string;
 }
 
 export interface RetainStampConfig {
   retainTags?: string[];
   retainMetadata?: Record<string, string>;
+  retainContext?: string;
 }
 
 function resolversFor(ctx: RetainStampContext): Resolvers {
@@ -72,7 +75,8 @@ function resolversFor(ctx: RetainStampContext): Resolvers {
 export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext): RetainStamp {
   const hasTags = Boolean(cfg.retainTags?.length);
   const hasMetadata = Boolean(cfg.retainMetadata && Object.keys(cfg.retainMetadata).length);
-  if (!hasTags && !hasMetadata) return { tags: [], metadata: {} };
+  const hasContext = Boolean(cfg.retainContext?.trim());
+  if (!hasTags && !hasMetadata && !hasContext) return { tags: [], metadata: {} };
 
   // Built lazily and memoized: {gitProject} shells out to git, and a config using it in both a tag
   // and a metadata value should not pay for that twice per retain.
@@ -107,5 +111,10 @@ export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext
   for (const [key, value] of Object.entries(cfg.retainMetadata ?? {})) {
     metadata[key] = applyTemplate(value, resolvers, "retainMetadata");
   }
-  return { tags, metadata };
+  // Resolved to undefined rather than "" when a template collapses to nothing, so a bad template
+  // falls back to the caller's default instead of stripping the context off the retain entirely.
+  const context = hasContext
+    ? applyTemplate(cfg.retainContext as string, resolvers, "retainContext").trim() || undefined
+    : undefined;
+  return { tags, metadata, context };
 }

@@ -6,7 +6,7 @@ tags: [hindsight-cloud, release, memory]
 hide_table_of_contents: true
 ---
 
-[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) now lets you upload files directly to any memory bank. PDFs, Word documents, PowerPoint presentations, Excel spreadsheets, images, and plain text files are all supported.
+[Hindsight Cloud](https://ui.hindsight.vectorize.io) now lets you upload files directly to any memory bank. PDFs, Word documents, PowerPoint presentations, Excel spreadsheets, images, and plain text files are all supported.
 
 <!-- truncate -->
 
@@ -22,7 +22,7 @@ Both methods extract the content and store it as structured memories in your ban
 
 ## How It Works
 
-1. Open any memory bank in [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)
+1. Open any memory bank in [Hindsight Cloud](https://ui.hindsight.vectorize.io)
 2. Click the upload button and select your files
 3. Choose Standard or Enhanced (Iris) extraction
 4. The Document Operations panel tracks progress with status indicators
@@ -48,4 +48,4 @@ This update also follows two other recent additions:
 
 ## Get Started
 
-File upload is available now in [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). Upload your first document and try a recall query against it to see the results.
+File upload is available now in [Hindsight Cloud](https://ui.hindsight.vectorize.io). Upload your first document and try a recall query against it to see the results.

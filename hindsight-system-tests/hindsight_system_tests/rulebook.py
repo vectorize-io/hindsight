@@ -19,12 +19,16 @@ a new system test is mechanical: run it, paste the suggested rule, run again.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
+
+_HOLD_ARRIVAL_TIMEOUT = 20.0
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,12 @@ class StubbedReply:
 
     finish_reason: str
 
+    visible_tokens: int | None = None
+    """Opt-in provider-reported visible completion tokens for usage stories."""
+
+    reasoning_tokens: int = 0
+    """Opt-in OpenAI reasoning tokens, included in completion_tokens on the wire."""
+
 
 @dataclass(frozen=True)
 class ChatRule:
@@ -110,7 +120,9 @@ class RuleBuilder:
         self._contains = contains
         self._tool = tool
 
-    def returns(self, payload: BaseModel) -> LLMStub:
+    def returns(
+        self, payload: BaseModel, *, visible_tokens: int | None = None, reasoning_tokens: int = 0
+    ) -> LLMStub:
         """Answer with ``payload`` serialized as the assistant message content.
 
         This is the structured-output path: the server asked for JSON matching a
@@ -119,7 +131,11 @@ class RuleBuilder:
         several layers away as "the LLM returned unusable facts".
         """
         body = payload.model_dump_json()
-        return self._register(lambda _request: _assistant_message(body))
+        return self._register(
+            lambda _request: _assistant_message(
+                body, visible_tokens=visible_tokens, reasoning_tokens=reasoning_tokens
+            )
+        )
 
     def returns_text(self, text: str) -> LLMStub:
         return self._register(lambda _request: _assistant_message(text))
@@ -190,8 +206,15 @@ def _tool_call(tool_name: str, arguments: dict[str, Any]) -> StubbedReply:
     )
 
 
-def _assistant_message(content: str) -> StubbedReply:
-    return StubbedReply(message={"role": "assistant", "content": content}, finish_reason="stop")
+def _assistant_message(
+    content: str, *, visible_tokens: int | None = None, reasoning_tokens: int = 0
+) -> StubbedReply:
+    return StubbedReply(
+        message={"role": "assistant", "content": content},
+        finish_reason="stop",
+        visible_tokens=visible_tokens,
+        reasoning_tokens=reasoning_tokens,
+    )
 
 
 @dataclass(frozen=True)
@@ -226,11 +249,73 @@ class UnmatchedCall:
         )
 
 
+class Hold:
+    """A step parked mid-call, so a story can observe work while it is in flight.
+
+    Some properties are only visible while an operation is *running*: that a second
+    request queues behind it instead of joining it, that the queue does not grow past
+    one. Without a hold a story can only submit and hope the worker has not finished
+    yet — the assertion then rides on request latency against claim latency, which is
+    how story 33 came to fail once in a while at ``4 <= 2``.
+
+    Cross-loop by construction, hence ``threading`` and not ``asyncio``: the stub
+    server runs in its own thread with its own event loop (``server.py``), while the
+    waiting story runs on the pytest loop. An ``asyncio.Event`` binds to whichever
+    loop first waits on it and raises on the other.
+    """
+
+    def __init__(self, anchor: str) -> None:
+        self.anchor = anchor
+        self._released = threading.Event()
+        self._arrived = threading.Event()
+
+    def matches(self, request: ChatRequest) -> bool:
+        return self.anchor in request.all_text
+
+    @property
+    def released(self) -> bool:
+        return self._released.is_set()
+
+    def release(self) -> None:
+        """Let the parked call answer, and every later one through untouched."""
+        self._released.set()
+
+    async def __aenter__(self) -> Hold:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        # The story's own scope, so the release lands before any fixture teardown —
+        # a bank deleted with one of its operations still parked is a mess nobody
+        # asked to debug. ``_reset_stubs`` also releases, as a net.
+        self.release()
+
+    async def reached(self, timeout: float = _HOLD_ARRIVAL_TIMEOUT) -> None:
+        """Wait until a matching call is parked — i.e. its operation is running."""
+        if not await asyncio.to_thread(self._arrived.wait, timeout):
+            raise AssertionError(f"no call reached the hold on {self.anchor!r} within {timeout}s")
+
+    async def park(self) -> None:
+        """Hold the calling request until the story releases it.
+
+        Awaited from the stub server's loop; waiting in a thread rather than blocking
+        keeps that loop free to serve the embeddings and rerank calls the rest of the
+        pipeline is making.
+        """
+        self._arrived.set()
+        await asyncio.to_thread(self._released.wait)
+
+
 class LLMStub:
     """The rulebook for ``/v1/chat/completions``."""
 
     def __init__(self) -> None:
         self._rules: list[ChatRule] = []
+        self._holds: list[Hold] = []
+        self._holds_guard = threading.Lock()
+        """Guards ``_holds``, which is the one piece of this object two loops touch:
+        the story registers and clears holds from the pytest loop while the stub
+        server's own loop reads them to decide whether to park a call. Every critical
+        section below is await-free, so the lock is only ever held for a list op."""
         self.unmatched: list[UnmatchedCall] = []
         self.calls: list[ChatRequest] = []
         """Every call the stub answered, in order.
@@ -267,6 +352,33 @@ class LLMStub:
     def add_rule(self, rule: ChatRule) -> None:
         self._rules.append(rule)
 
+    def hold(self, step: str) -> Hold:
+        """Park this step's calls until the story releases them.
+
+        The rule that answers the step stays whatever the story declared — a hold
+        decides *when* the answer is sent, not what it is, so it neither adds a call
+        nor silences one. Use it to assert on work that is still running; see ``Hold``.
+        """
+        from .steps import anchor_for
+
+        held = Hold(anchor_for(step))
+        with self._holds_guard:
+            self._holds.append(held)
+        return held
+
+    def hold_for(self, request: ChatRequest) -> Hold | None:
+        """The hold this call must park at, if any. Called from the stub server's loop."""
+        with self._holds_guard:
+            return next((held for held in self._holds if not held.released and held.matches(request)), None)
+
+    def release_all(self) -> None:
+        """Let every parked call go — the teardown path, so a failed story cannot
+        leave the session-scoped stub server with a request wedged in it."""
+        with self._holds_guard:
+            parked = list(self._holds)
+        for held in parked:
+            held.release()
+
     def resolve(self, request: ChatRequest) -> StubbedReply | None:
         """The reply to answer with, or ``None`` when nothing matched."""
         self.calls.append(request)
@@ -286,6 +398,9 @@ class LLMStub:
 
     def reset(self) -> None:
         self._rules.clear()
+        self.release_all()
+        with self._holds_guard:
+            self._holds.clear()
         self.unmatched.clear()
         self.calls.clear()
         self._install_builtins()

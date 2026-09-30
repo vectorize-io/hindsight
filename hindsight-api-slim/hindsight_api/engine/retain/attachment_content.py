@@ -27,10 +27,137 @@ same body, or the ``content_hash`` gate would re-extract an unchanged document.
 """
 
 import base64
+import binascii
 import hashlib
 import re
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Annotated, Literal
+
+from pydantic import AfterValidator, BaseModel, Field, field_validator
+
+# typing.TypeAliasType is 3.12+; the backport ships with pydantic, which needs it.
+from typing_extensions import TypeAliasType
+
+# MIME syntax is the only local format restriction. Provider capabilities evolve
+# faster than an allowlist here could, so unsupported media is left for the
+# configured model to reject with its own actionable error.
+_MEDIA_TYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
+
+
+class Base64AttachmentSource(BaseModel):
+    """Inline attachment bytes, base64-encoded.
+
+    The only source type in this version. ``url`` (server-side fetch) and
+    ``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this
+    is modelled as a discriminated union on ``type`` rather than as bare fields.
+    """
+
+    type: Literal["base64"] = "base64"
+    media_type: str = Field(
+        description=(
+            "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed "
+            "type is accepted; whether the model can read it is the model's answer to give, and a "
+            "provider that rejects it fails the retain with its own error."
+        )
+    )
+    data: str = Field(description="Base64-encoded bytes (no data: URI prefix).")
+
+    @field_validator("media_type")
+    @classmethod
+    def validate_media_type(cls, v: str) -> str:
+        if not _MEDIA_TYPE_RE.match(v):
+            raise ValueError(f"media_type must look like 'type/subtype', got {v!r}")
+        return v
+
+    def decode(self) -> bytes:
+        """Decode on use, so model construction does not copy large payloads.
+
+        The API calls this once at its validation boundary, keeping malformed
+        base64 a request error without paying the decode cost twice.
+        """
+        try:
+            return base64.b64decode(self.data, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise ValueError(f"attachment source data is not valid base64: {e}") from e
+
+
+class TextContentBlock(BaseModel):
+    """A run of text within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["text"]
+    text: str
+
+
+class ImageContentBlock(BaseModel):
+    """An image within a multimodal item, in the position the caller wrote it."""
+
+    type: Literal["image"]
+    source: Base64AttachmentSource
+
+
+class FileContentBlock(BaseModel):
+    """A non-image attachment — a PDF, a spreadsheet — in its input position.
+
+    This stays distinct from ``image`` because providers use different request
+    parts for images and documents; retaining the caller's kind avoids guessing.
+    """
+
+    type: Literal["file"]
+    source: Base64AttachmentSource
+    filename: str | None = Field(
+        default=None,
+        description="Original filename, passed to providers that show one to the model (e.g. OpenAI).",
+    )
+
+
+#: One element of a multimodal ``content`` array. Discriminated on ``type`` so a
+#: malformed block reports which variant it failed against instead of dumping
+#: every variant's errors.
+ContentBlockItem = Annotated[TextContentBlock | ImageContentBlock | FileContentBlock, Field(discriminator="type")]
+
+
+def _require_content(v: str | list[ContentBlockItem]) -> str | list[ContentBlockItem]:
+    if isinstance(v, str):
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
+
+    if not v:
+        raise ValueError("content cannot be empty")
+    # Match the string form: a block list with only blank text still carries
+    # no content, while an attachment-only list is a valid multimodal input.
+    if not any(isinstance(block, (ImageContentBlock, FileContentBlock)) for block in v) and not any(
+        block.text.strip() for block in v if isinstance(block, TextContentBlock)
+    ):
+        raise ValueError("content cannot be empty")
+    return v
+
+
+#: The raw content to retain or extract from: a plain string or an ordered list of
+#: content blocks. A named alias rather than an inline union so retain and dry-run
+#: share one ``Content`` schema (inline, the client generators minted ``Content1``
+#: for the second use). It was first a ``RootModel``, which gave the same schema but
+#: turned ``MemoryItem.content`` into a wrapper object — breaking every caller that
+#: reads it as the string or list it has always been. The alias keeps the value raw.
+Content = TypeAliasType(
+    "Content",
+    Annotated[
+        str | list[ContentBlockItem],
+        AfterValidator(_require_content),
+        Field(
+            title="Content",
+            description=(
+                "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
+            ),
+        ),
+    ],
+)
+
+
+class ContentValidationError(ValueError):
+    """Raised when multimodal content fails structural or resource limits."""
+
 
 # Delimiters chosen from the Unicode mathematical-brackets block: they survive
 # `sanitize_text` (which only strips control characters and surrogates), they are
@@ -178,12 +305,21 @@ class RetainAttachment:
     block_index: int
     #: "image" or "file" — the caller's own distinction, carried through so the
     #: per-provider conversion never has to infer it from the media type.
-    kind: str = "image"
+    kind: Literal["image", "file"] = "image"
     filename: str | None = None
 
     @property
     def byte_size(self) -> int:
         return len(self.data)
+
+
+@dataclass(frozen=True)
+class AttachmentOccurrence:
+    """One attachment appearance, without duplicating its potentially large bytes."""
+
+    block_index: int
+    kind: Literal["image", "file"]
+    media_type: str
 
 
 @dataclass(frozen=True)
@@ -195,6 +331,11 @@ class CanonicalContent:
     #: twice in one document yields two placeholders but one entry here, so it is
     #: stored and recorded once.
     attachments: tuple[RetainAttachment, ...]
+    #: Every newly supplied attachment occurrence in placeholder order. Existing
+    #: placeholders preserved through ``allowed_ids`` have no occurrence entry.
+    #: Unlike ``attachments``, this preserves duplicate appearances of the same
+    #: attachment at different block positions for accurate attribution.
+    occurrences: tuple[AttachmentOccurrence, ...] = ()
 
     @property
     def has_attachments(self) -> bool:
@@ -208,8 +349,8 @@ class RetainText:
     text: str
 
 
-#: One element of a multimodal item's content, in the order the caller wrote it.
-ContentBlock = RetainText | RetainAttachment
+#: One element of a multimodal item's canonical content blocks.
+CanonicalBlock = RetainText | RetainAttachment
 
 
 def _pad_to_blank_line(body: str) -> str:
@@ -299,7 +440,7 @@ def build_prompt_parts(text: str, attachments: Mapping[str, LoadedAttachment]) -
     return parts
 
 
-def canonicalize(blocks: Sequence[ContentBlock], allowed_ids: "Collection[str] | None" = None) -> CanonicalContent:
+def canonicalize(blocks: Sequence[CanonicalBlock], allowed_ids: "Collection[str] | None" = None) -> CanonicalContent:
     """Flatten ordered text/attachment blocks into the canonical body plus its attachments.
 
     Image blocks must already be decoded and hashed; this decides only where each
@@ -310,6 +451,7 @@ def canonicalize(blocks: Sequence[ContentBlock], allowed_ids: "Collection[str] |
     body = ""
     attachments: list[RetainAttachment] = []
     seen: set[str] = set()
+    occurrences: list[AttachmentOccurrence] = []
     after_attachment = False
 
     for block in blocks:
@@ -321,8 +463,138 @@ def canonicalize(blocks: Sequence[ContentBlock], allowed_ids: "Collection[str] |
         else:
             body = _pad_to_blank_line(body) + attachment_placeholder(block.attachment_hash)
             after_attachment = True
+            occurrences.append(
+                AttachmentOccurrence(
+                    block_index=block.block_index,
+                    kind=block.kind,
+                    media_type=block.media_type,
+                )
+            )
             if block.attachment_hash not in seen:
                 seen.add(block.attachment_hash)
                 attachments.append(block)
 
-    return CanonicalContent(text=body, attachments=tuple(attachments))
+    return CanonicalContent(
+        text=body,
+        attachments=tuple(attachments),
+        occurrences=tuple(occurrences),
+    )
+
+
+def render_chunk_placeholders(
+    chunk_text: str,
+    occurrences: Sequence[AttachmentOccurrence],
+) -> str:
+    """Render each placeholder in chunk_text into human-readable '[Block #...: ...]' format.
+
+    Replaces each placeholder token in order using the corresponding occurrence in ``occurrences``.
+    """
+    if not occurrences or not contains_attachment(chunk_text):
+        return chunk_text
+
+    occ_iter = iter(occurrences)
+
+    def _replace(match: re.Match[str]) -> str:
+        try:
+            occ = next(occ_iter)
+            return f"[Block #{occ.block_index}: {occ.kind} ({occ.media_type})]"
+        except StopIteration:
+            return match.group(0)
+
+    return PLACEHOLDER_RE.sub(_replace, chunk_text)
+
+
+def occurrences_by_chunk(
+    chunk_texts: Sequence[str],
+    occurrences: Sequence[AttachmentOccurrence],
+) -> list[list[AttachmentOccurrence]]:
+    """Partition ordered attachment appearances using each chunk's placeholders."""
+    offset = 0
+    result: list[list[AttachmentOccurrence]] = []
+    for text in chunk_texts:
+        count = sum(1 for _ in iter_placeholder_ids(text))
+        result.append(list(occurrences[offset : offset + count]))
+        offset += count
+    return result
+
+
+def select_occurrences(
+    numbers: Sequence[int],
+    occurrences: Sequence[AttachmentOccurrence],
+) -> list[AttachmentOccurrence]:
+    """Resolve one-based prompt attachment numbers to distinct input blocks.
+
+    Unlike retained fact edges, which deduplicate by attachment id, dry-run output
+    preserves two positions containing identical bytes because its public contract
+    reports the original ``block_index`` values.
+    """
+    selected: list[AttachmentOccurrence] = []
+    seen_blocks: set[int] = set()
+    for number in numbers:
+        if 1 <= number <= len(occurrences):
+            occurrence = occurrences[number - 1]
+            if occurrence.block_index not in seen_blocks:
+                seen_blocks.add(occurrence.block_index)
+                selected.append(occurrence)
+    return selected
+
+
+def validate_and_canonicalize_content(
+    content: str | Sequence[ContentBlockItem],
+    max_attachment_count: int,
+    max_attachment_size_bytes: int,
+    max_attachment_size_mb: int,
+    allowed_attachment_ids: Collection[str] | None = None,
+    path_prefix: str = "content",
+    attachment_limit_path: str | None = None,
+) -> CanonicalContent:
+    """Validate multimodal content blocks and canonicalize them to text with placeholders.
+
+    Raises ContentValidationError if attachment limits or base64 decoding fail.
+    """
+    if isinstance(content, str):
+        return CanonicalContent(
+            text=neutralize_placeholders(content, allowed_attachment_ids),
+            attachments=(),
+            occurrences=(),
+        )
+
+    blocks: list[CanonicalBlock] = []
+    attachment_count = 0
+    attachment_limit_path = attachment_limit_path or path_prefix
+
+    for block_index, block in enumerate(content):
+        if isinstance(block, TextContentBlock):
+            blocks.append(RetainText(block.text))
+            continue
+
+        attachment_count += 1
+        if attachment_count > max_attachment_count:
+            raise ContentValidationError(
+                f"{attachment_limit_path} carries more than {max_attachment_count} attachments. "
+                "Split the content across several items."
+            )
+        try:
+            data = block.source.decode()
+        except ValueError as e:
+            raise ContentValidationError(f"{path_prefix}[{block_index}]: {e}") from e
+        if not data:
+            raise ContentValidationError(f"{path_prefix}[{block_index}]: attachment source data is empty")
+        if len(data) > max_attachment_size_bytes:
+            raise ContentValidationError(
+                f"{path_prefix}[{block_index}]: attachment is "
+                f"{len(data) / (1024 * 1024):.1f}MB, exceeding the "
+                f"{max_attachment_size_mb}MB limit for a single attachment."
+            )
+        blocks.append(
+            RetainAttachment(
+                attachment_hash=compute_attachment_hash(data),
+                media_type=block.source.media_type,
+                data=data,
+                block_index=block_index,
+                kind=block.type,
+                filename=getattr(block, "filename", None),
+            )
+        )
+
+    return canonicalize(blocks, allowed_attachment_ids)

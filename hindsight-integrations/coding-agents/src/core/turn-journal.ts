@@ -7,9 +7,10 @@
  * host that exposes just the latest reply breaks that contract — the turn list would shrink and
  * reorder between Stops, so every write-back would fingerprint-mismatch and replace.
  *
- * ZCode is that host: its `Stop` payload carries the assistant reply (`responseText`) plus an
- * EPHEMERAL, assistant-only transcript that the agent deletes as soon as the hook returns, and it
- * carries no user prompt at all. So the plugin keeps the conversation itself — the prompt hook
+ * ZCode and TraeCode are such hosts. ZCode's `Stop` payload carries the assistant reply
+ * (`responseText`) plus an EPHEMERAL, assistant-only transcript that the agent deletes as soon as
+ * the hook returns; TraeCode keeps sessions in an encrypted DB or the cloud and hands Stop only
+ * `last_assistant_message`. Neither carries the user prompt. So the plugin keeps the conversation itself — the prompt hook
  * appends the user turn, the Stop hook appends the reply — and the Stop hook then reads this file
  * exactly as the other harnesses read the host's own transcript. Nothing downstream changes.
  *

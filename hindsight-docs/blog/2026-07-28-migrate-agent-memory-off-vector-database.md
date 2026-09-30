@@ -26,7 +26,7 @@ The short version is that you do not migrate vectors. You migrate the text, and 
 
 ## Step 1: stand up Hindsight
 
-You need a running Hindsight before you move anything. The fastest path is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup): sign up, grab an API key, nothing to host.
+You need a running Hindsight before you move anything. The fastest path is [Hindsight Cloud](https://ui.hindsight.vectorize.io): sign up, grab an API key, nothing to host.
 
 ```python
 from hindsight_client import Hindsight

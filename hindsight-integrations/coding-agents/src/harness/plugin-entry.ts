@@ -97,10 +97,10 @@ export function createPluginEntry(harness: string): Plugin {
 
     const runtime = opencodeAdapter.createRuntime(core) as Awaited<ReturnType<Plugin>>;
 
-    // SessionStart-equivalent: cold-check the bank, kick off the background engine, compute the
-    // knowledge preamble. Fire-and-forget — these hosts BLOCK THEIR BOOT on plugin init, so this
-    // must never gate startup on a network round-trip (a stalled server froze the whole TUI).
-    // onPrompt already tolerates an empty preamble until this resolves.
+    // SessionStart-equivalent: cold-check the bank and kick off the background engine.
+    // Fire-and-forget — these hosts BLOCK THEIR BOOT on plugin init, so this must never gate
+    // startup on a network round-trip (a stalled server froze the whole TUI); onPrompt needs
+    // nothing from it, building its own preamble from the session's page list.
     void core.seedIfCold(projectDir);
 
     // Keeping the bank current needs no separate path: seedIfCold fired the deepen engine, and the

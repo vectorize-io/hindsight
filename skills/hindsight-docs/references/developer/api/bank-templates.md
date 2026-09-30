@@ -84,7 +84,7 @@ and everything else inherits from the server/tenant defaults.
 
 The complete, always-current list is the template JSON
 Schema; each field means the same thing it does in
-[Configuration](../configuration.mdx). The most commonly used ones:
+[Configuration](../configuration.md). The most commonly used ones:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -99,7 +99,7 @@ Schema; each field means the same thing it does in
 | `disposition_empathy` | integer (1-5) | How empathetic the disposition is |
 | `enable_observations` | boolean | Toggle observation consolidation |
 | `observations_mission` | string | Controls what gets synthesised into observations |
-| `entity_labels` | object[] | Controlled vocabulary as label groups — see [Memory Banks → entity_labels](./memory-banks#entity-labels) |
+| `entity_labels` | object[] | Controlled vocabulary as label groups — see [Memory Banks → entity_labels](./memory-banks.md#entity-labels) |
 | `entities_allow_free_form` | boolean | Allow entities outside the label vocabulary |
 
 ### Mental Model Fields

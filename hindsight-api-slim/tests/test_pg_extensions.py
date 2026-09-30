@@ -30,9 +30,12 @@ def test_create_extension_pins_install_schema_to_public():
     create_extension(conn, "pg_trgm")
 
     assert conn.extensions["pg_trgm"][0] == "public"
-    assert conn.statements[0].startswith("SELECT current_setting('search_path')")
-    assert conn.params[1] == {"schema": "public"}
-    assert conn.statements[2] == "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+    # The catalog lookup that skips an already-installed extension comes first,
+    # then the search_path is pinned to public around the CREATE.
+    assert "FROM pg_extension" in conn.statements[0]
+    assert conn.statements[1].startswith("SELECT current_setting('search_path')")
+    assert conn.params[2] == {"schema": "public"}
+    assert conn.statements[3] == "CREATE EXTENSION IF NOT EXISTS pg_trgm"
 
 
 def test_create_extension_restores_the_callers_search_path():

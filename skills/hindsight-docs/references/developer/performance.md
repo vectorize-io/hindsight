@@ -155,7 +155,7 @@ export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"  # match physical cores
 # export HINDSIGHT_API_LLAMACPP_NO_GRAMMAR=true  # faster, but less reliable JSON output
 ```
 
-See [Built-in llama.cpp](./configuration#built-in-llamacpp) for the full option list.
+See [Built-in llama.cpp](./configuration.md#built-in-llamacpp) for the full option list.
 
 ### Reranker on CPU
 

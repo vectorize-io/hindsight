@@ -22,7 +22,7 @@ hide_table_of_contents: true
 - Two steps: `pip install hindsight-copilot-cli` then `hindsight-copilot-cli install`.
 - It uses Copilot CLI's **hooks**: recall runs on `sessionStart`, retain runs on `agentStop` and `sessionEnd`. It is automatic.
 - **Subagents get memory too**: every spawned subagent is seeded with baseline project context on `subagentStart`.
-- Memory lives in a Hindsight bank you control, [Cloud](https://ui.hindsight.vectorize.io/signup) or self-hosted, and it is portable across your other tools.
+- Memory lives in a Hindsight bank you control, [Cloud](https://ui.hindsight.vectorize.io) or self-hosted, and it is portable across your other tools.
 - Honest limitation: recall fires once per session start, not before every prompt (a Copilot CLI hook constraint, explained below).
 
 ## Why a terminal agent needs memory most
@@ -33,7 +33,7 @@ Persistent memory is what turns a series of isolated sessions into an agent that
 
 ## Setup
 
-First, get a Hindsight instance. The fast path is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup): sign up free, grab an API key, nothing to run.
+First, get a Hindsight instance. The fast path is [Hindsight Cloud](https://ui.hindsight.vectorize.io): sign up free, grab an API key, nothing to run.
 
 Then install the integration and run the one-time installer:
 
@@ -103,7 +103,7 @@ Yes. Run a local Hindsight server and install without the API flags, and nothing
 
 ## Try it
 
-If you already use Copilot CLI, the fastest way to feel the difference is to install the integration, work through a task, then start a fresh session tomorrow and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io/signup) and run `hindsight-copilot-cli install`.
+If you already use Copilot CLI, the fastest way to feel the difference is to install the integration, work through a task, then start a fresh session tomorrow and watch it pick up where you left off. [Grab a free Hindsight Cloud key](https://ui.hindsight.vectorize.io) and run `hindsight-copilot-cli install`.
 
 ## Further reading
 

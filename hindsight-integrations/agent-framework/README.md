@@ -10,7 +10,7 @@ Microsoft Agent Framework is the successor to Semantic Kernel. This integration 
 pip install hindsight-agent-framework
 ```
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — sign up free, get an API key, and skip self-hosting.
 
 ## Usage
 

@@ -4,8 +4,9 @@
  * mocked `fetch`.
  *
  * Endpoints (tenant is the literal `default`, bank is in the path):
- *   recall: POST /v1/default/banks/{bank}/memories/recall
- *   retain: POST /v1/default/banks/{bank}/memories
+ *   recall:  POST /v1/default/banks/{bank}/memories/recall
+ *   retain:  POST /v1/default/banks/{bank}/memories
+ *   reflect: POST /v1/default/banks/{bank}/reflect
  */
 
 export type RecallBudget = "low" | "mid" | "high";
@@ -30,12 +31,35 @@ export interface RetainItem {
   metadata?: Record<string, string>;
   /** ISO-8601, `"unset"`, or null (= now). */
   timestamp?: string | null;
+  /**
+   * Stable document id. Retaining the same id again replaces the earlier
+   * version, so callers can use an idempotency key (eve's `operationId`).
+   */
+  document_id?: string;
 }
 
-export interface RecallOptions {
+/** A caller-supplied cancellation signal, combined with the client timeout. */
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
+export interface RecallOptions extends RequestOptions {
   budget?: RecallBudget;
   maxTokens?: number;
   types?: Array<"world" | "experience" | "observation">;
+}
+
+export interface RetainOptions extends RequestOptions {
+  async?: boolean;
+}
+
+export interface ReflectOptions extends RequestOptions {
+  budget?: RecallBudget;
+}
+
+/** Reflect answer. `text` is the reasoned answer grounded in the bank's memories. */
+export interface ReflectResponse {
+  text: string;
 }
 
 /**
@@ -70,6 +94,17 @@ export function buildRecallMarkdown(results: readonly RecallResult[]): string {
   ].join("\n");
 }
 
+/** A non-2xx response, with the status so callers can special-case it. */
+export class HindsightHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, path: string, detail: string) {
+    super(`Hindsight HTTP ${status} from ${path}: ${detail}`);
+    this.name = "HindsightHttpError";
+    this.status = status;
+  }
+}
+
 /** Thin HTTP client for Hindsight's memory REST API. */
 export class HindsightRestClient {
   private readonly baseUrl: string;
@@ -90,45 +125,88 @@ export class HindsightRestClient {
     return h;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal
+  ): Promise<T> {
+    const timeout = AbortSignal.timeout(this.timeoutMs);
     try {
       const resp = await fetch(`${this.baseUrl}${path}`, {
         method,
         headers: this.headers(),
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
-        throw new Error(`Hindsight HTTP ${resp.status} from ${path}: ${text}`);
+        throw new HindsightHttpError(resp.status, path, text);
       }
       return (await resp.json()) as T;
-    } finally {
-      clearTimeout(timer);
+    } catch (error) {
+      // Surface the timeout as an ordinary error, not a bare DOMException.
+      if (timeout.aborted && !signal?.aborted) {
+        throw new Error(`Hindsight request to ${path} timed out after ${this.timeoutMs}ms`);
+      }
+      throw error;
     }
   }
 
-  /** Recall memories for a bank. `query` is required by the API. */
+  private bankPath(bankId: string): string {
+    return `/v1/default/banks/${encodeURIComponent(bankId)}`;
+  }
+
+  /**
+   * Recall memories for a bank. `query` is required by the API. A bank that
+   * does not exist yet (nothing has been retained into it) has no memories,
+   * so its 404 is returned as an empty result rather than an error.
+   */
   async recall(bankId: string, query: string, opts: RecallOptions = {}): Promise<RecallResponse> {
-    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/memories/recall`;
     const body: Record<string, unknown> = {
       query,
       budget: opts.budget ?? "mid",
       max_tokens: opts.maxTokens ?? 1024,
     };
     if (opts.types) body["types"] = opts.types;
-    return this.request<RecallResponse>("POST", path, body);
+    try {
+      return await this.request<RecallResponse>(
+        "POST",
+        `${this.bankPath(bankId)}/memories/recall`,
+        body,
+        opts.signal
+      );
+    } catch (error) {
+      if (error instanceof HindsightHttpError && error.status === 404) return { results: [] };
+      throw error;
+    }
   }
 
   /** Retain items into a bank. The bank is auto-created on first retain. */
   async retain(
     bankId: string,
     items: readonly RetainItem[],
-    opts: { async?: boolean } = {}
+    opts: RetainOptions = {}
   ): Promise<void> {
-    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/memories`;
-    await this.request("POST", path, { items, async: opts.async ?? true });
+    await this.request(
+      "POST",
+      `${this.bankPath(bankId)}/memories`,
+      { items, async: opts.async ?? true },
+      opts.signal
+    );
+  }
+
+  /** Ask the bank a question and get a reasoned answer grounded in its memories. */
+  async reflect(
+    bankId: string,
+    query: string,
+    opts: ReflectOptions = {}
+  ): Promise<ReflectResponse> {
+    return this.request<ReflectResponse>(
+      "POST",
+      `${this.bankPath(bankId)}/reflect`,
+      { query, budget: opts.budget ?? "low" },
+      opts.signal
+    );
   }
 }

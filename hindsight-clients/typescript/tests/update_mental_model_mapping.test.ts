@@ -84,6 +84,9 @@ describe("updateMentalModel trigger mapping", () => {
         includeChunks: true,
         recallMaxTokens: 4096,
         recallChunksMaxTokens: 2048,
+        reflectSearchObservationsMaxTokens: 3000,
+        reflectSearchObservationsIncludeEntities: false,
+        budget: "high",
         responseSchema: { type: "object" },
         excludeMentalModelIds: ["mm-other"],
         tagGroups: [{ tags: ["user:alice"], match: "all_strict" }],
@@ -99,6 +102,9 @@ describe("updateMentalModel trigger mapping", () => {
     expect(trigger.include_chunks).toBe(true);
     expect(trigger.recall_max_tokens).toBe(4096);
     expect(trigger.recall_chunks_max_tokens).toBe(2048);
+    expect(trigger.reflect_search_observations_max_tokens).toBe(3000);
+    expect(trigger.reflect_search_observations_include_entities).toBe(false);
+    expect(trigger.budget).toBe("high");
     expect(trigger.response_schema).toEqual({ type: "object" });
     expect(trigger.exclude_mental_model_ids).toEqual(["mm-other"]);
     expect(trigger.tag_groups).toEqual([{ tags: ["user:alice"], match: "all_strict" }]);

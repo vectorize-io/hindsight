@@ -5,6 +5,7 @@ returns candidate facts (a subset of the memory-unit shape) plus LLM token usage
 deterministic mock-LLM `memory` fixture, so extraction yields canned facts without a real provider.
 """
 
+import base64
 import os
 import uuid
 from unittest.mock import patch
@@ -34,6 +35,7 @@ FACT_KEYS = {
     # Not a storage field: which of the returned `chunks` this fact came from, so a
     # caller can group facts under the chunk that produced them.
     "chunk_index",
+    "attachments",
 }
 
 
@@ -389,3 +391,248 @@ async def test_each_fact_names_the_chunk_it_came_from(api_client, memory):
     for index, chunk in enumerate(chunks):
         attributed = [f for f in facts if f["chunk_index"] == index]
         assert len(attributed) == chunk["fact_count"], f"chunk {index} count disagrees"
+
+
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+PDF_BYTES = b"%PDF-1.4 mock pdf content"
+
+
+def _image_block(data: bytes = PNG_BYTES) -> dict:
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(data).decode()},
+    }
+
+
+def _file_block(data: bytes = PDF_BYTES, filename: str = "receipt.pdf") -> dict:
+    return {
+        "type": "file",
+        "filename": filename,
+        "source": {"type": "base64", "media_type": "application/pdf", "data": base64.b64encode(data).decode()},
+    }
+
+
+def _text_block(text: str) -> dict:
+    return {"type": "text", "text": text}
+
+
+@pytest.mark.parametrize(
+    "supports_vision_val,expected_detail",
+    [
+        (False, "cannot read images"),
+        (None, "HINDSIGHT_API_LLM_VISION=true"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_dry_run_multimodal_vision_check_raises_422(
+    api_client, memory, monkeypatch, supports_vision_val, expected_detail
+):
+    bank_id = f"dryrun-vlm-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(type(memory._retain_llm_config), "supports_vision", lambda self: supports_vision_val)
+
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": [_text_block("Here is an invoice:"), _image_block()]},
+    )
+    assert resp.status_code == 422
+    assert expected_detail in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_multimodal_invalid_blocks(api_client):
+    bank_id = "test-bank"
+    # Empty content list
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": []},
+    )
+    assert resp.status_code == 422
+
+    # Malformed block (missing discriminator type)
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": [{"text": "hello"}]},
+    )
+    assert resp.status_code == 422
+
+    # Invalid base64
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": "not-valid-base64!!!"},
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_dry_run_multimodal_chunk_rendering_and_fact_attribution(api_client, memory):
+    bank_id = f"dryrun-mm-{uuid.uuid4().hex[:8]}"
+    content = [
+        _text_block("Overview of company report:"),
+        _image_block(),
+        _text_block("Supporting document attached below:"),
+        _file_block(filename="audit.pdf"),
+    ]
+
+    mock_facts = {
+        "facts": [
+            {
+                "what": "Alice was depicted in the company picture",
+                "fact_type": "world",
+                "entities": [{"text": "Alice"}],
+                "from_attachments": [1],
+            },
+            {
+                "what": "Audit was attached in the financial PDF",
+                "fact_type": "world",
+                "entities": [{"text": "Audit"}],
+                "from_attachments": [2],
+            },
+            {
+                "what": "Both image and document were reviewed together",
+                "fact_type": "world",
+                "entities": [{"text": "Review"}],
+                "from_attachments": [1, 2],
+            },
+        ]
+    }
+    memory._retain_llm_config.set_mock_response(mock_facts)
+
+    try:
+        resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+            json={"content": content},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        chunks = body["chunks"]
+        assert chunks
+        # Chunks must have rendered placeholders:
+        # block index 1 is image (image/png)
+        # block index 3 is file (application/pdf)
+        chunk_texts = " ".join(c["text"] for c in chunks)
+        assert "[Block #1: image (image/png)]" in chunk_texts
+        assert "[Block #3: file (application/pdf)]" in chunk_texts
+
+        facts = body["facts"]
+        assert len(facts) == 3
+
+        # Fact 0 attributes to attachment 1 (block index 1, image)
+        assert facts[0]["text"] == "Alice was depicted in the company picture"
+        assert facts[0]["attachments"] == [{"block_index": 1, "type": "image", "media_type": "image/png"}]
+
+        # Fact 1 attributes to attachment 2 (block index 3, file)
+        assert facts[1]["text"] == "Audit was attached in the financial PDF"
+        assert facts[1]["attachments"] == [{"block_index": 3, "type": "file", "media_type": "application/pdf"}]
+
+        # Fact 2 attributes to both attachments 1 and 2
+        assert facts[2]["text"] == "Both image and document were reviewed together"
+        assert facts[2]["attachments"] == [
+            {"block_index": 1, "type": "image", "media_type": "image/png"},
+            {"block_index": 3, "type": "file", "media_type": "application/pdf"},
+        ]
+    finally:
+        memory._retain_llm_config.set_mock_response(None)
+
+
+@pytest.mark.asyncio
+async def test_dry_run_multimodal_duplicate_identical_attachment_attribution(api_client, memory):
+    """When the same attachment data is used across multiple block positions, each occurrence
+    is assigned its own block_index in rendered chunks and fact attribution."""
+    bank_id = f"dryrun-mm-dup-{uuid.uuid4().hex[:8]}"
+    content = [
+        _text_block("Before first diagram:"),
+        _image_block(PNG_BYTES),
+        _text_block("Before second diagram with identical image bytes:"),
+        _image_block(PNG_BYTES),
+    ]
+
+    mock_facts = {
+        "facts": [
+            {
+                "what": "Fact only from first occurrence",
+                "fact_type": "world",
+                "entities": [{"text": "First"}],
+                "from_attachments": [1],
+            },
+            {
+                "what": "Fact only from second occurrence",
+                "fact_type": "world",
+                "entities": [{"text": "Second"}],
+                "from_attachments": [2],
+            },
+            {
+                "what": "Fact citing both occurrences",
+                "fact_type": "world",
+                "entities": [{"text": "Both"}],
+                "from_attachments": [1, 2],
+            },
+        ]
+    }
+    memory._retain_llm_config.set_mock_response(mock_facts)
+
+    try:
+        resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+            json={"content": content},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+
+        # Rendered chunk placeholders must preserve occurrences #1 and #3
+        chunk_texts = " ".join(c["text"] for c in body["chunks"])
+        assert "[Block #1: image (image/png)]" in chunk_texts
+        assert "[Block #3: image (image/png)]" in chunk_texts
+
+        facts = body["facts"]
+        assert len(facts) == 3
+
+        # Fact 0 must point specifically to block 1
+        assert facts[0]["attachments"] == [{"block_index": 1, "type": "image", "media_type": "image/png"}]
+        # Fact 1 must point specifically to block 3 (NOT 1!)
+        assert facts[1]["attachments"] == [{"block_index": 3, "type": "image", "media_type": "image/png"}]
+        # Fact 2 must point to both block 1 and block 3
+        assert facts[2]["attachments"] == [
+            {"block_index": 1, "type": "image", "media_type": "image/png"},
+            {"block_index": 3, "type": "image", "media_type": "image/png"},
+        ]
+    finally:
+        memory._retain_llm_config.set_mock_response(None)
+
+
+@pytest.mark.asyncio
+async def test_dry_run_multimodal_chunks_mode(api_client, memory):
+    bank_id = f"dryrun-mm-chunks-{uuid.uuid4().hex[:8]}"
+    content = [
+        _text_block("Section 1 header"),
+        _image_block(),
+        _text_block("Section 2 details"),
+        _file_block(filename="spec.pdf"),
+    ]
+
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": content, "retain_extraction_mode": "chunks"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    chunks = body["chunks"]
+    assert chunks
+    chunk_texts = " ".join(c["text"] for c in chunks)
+    assert "[Block #1: image (image/png)]" in chunk_texts
+    assert "[Block #3: file (application/pdf)]" in chunk_texts
+
+    facts = body["facts"]
+    assert facts
+    # In chunks mode, facts correspond to chunks and carry the chunk's attachments
+    all_att_indices = {att["block_index"] for f in facts for att in f["attachments"]}
+    assert 1 in all_att_indices
+    assert 3 in all_att_indices

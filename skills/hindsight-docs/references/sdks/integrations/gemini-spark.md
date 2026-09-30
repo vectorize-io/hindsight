@@ -5,7 +5,7 @@ Long-term memory for [Gemini Spark](https://blog.google/products/gemini/gemini-s
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run. The setup below works with both Cloud and self-hosted Hindsight.
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run. The setup below works with both Cloud and self-hosted Hindsight.
 ## How It Works
 
 Spark runs on Google's cloud infrastructure. Unlike OpenClaw or Claude Code, there is **no plugin host** where Hindsight code runs alongside Spark's agent loop. The only third-party extension surface is MCP:

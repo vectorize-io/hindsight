@@ -242,9 +242,11 @@ smaller context. Defaults to `true`.
 
 Both options can be defaulted for a whole bank with the
 `reflect_default_options` config key (see
-[Configuration](../configuration.mdx)), and set per mental model through the
-refresh trigger's fields of the same name. An explicit value on the request
-always wins.
+[Configuration](../configuration.mdx)); an explicit value on the request always
+wins. A mental-model refresh is configured separately and does **not** read
+`reflect_default_options` — set the trigger's fields of the same name, or the
+bank's `knowledge_page_default_trigger`, instead (see
+[Mental Models](./mental-models.mdx)).
 
 ---
 

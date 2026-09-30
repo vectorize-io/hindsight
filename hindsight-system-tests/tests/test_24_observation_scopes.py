@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import pytest
 
+from hindsight_client_api.models.update_document_request import UpdateDocumentRequest
+
 from hindsight_system_tests.payloads import Consolidation, Observation, extracted, fact, fact_ids_in
 
 pytestmark = pytest.mark.asyncio
@@ -97,6 +99,27 @@ async def test_an_explicit_scope_list_takes_exactly_those_combinations(client, b
     )
 
     assert await _observation_tags(client, bank_id) == [[STUDENT], sorted([STUDENT, TEACHER])]
+
+
+async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id, settled):
+    """An explicit scope list freezes tag strings at retain time. Renaming a tag
+    on the document must carry the rename into that list, or re-consolidation
+    rebuilds the observations under the old tag, where recall by the new one
+    can no longer reach them (#4609)."""
+    renamed = "student:alicia"
+    await _retain(
+        client,
+        bank_id,
+        settled,
+        document_id="lesson",
+        tags=[STUDENT, TEACHER],
+        observation_scopes=[[STUDENT], [STUDENT, TEACHER]],
+    )
+
+    await client.documents.update_document(bank_id, "lesson", UpdateDocumentRequest(tags=[renamed, TEACHER]))
+    await settled(bank_id)
+
+    assert await _observation_tags(client, bank_id) == [[renamed], sorted([renamed, TEACHER])]
 
 
 async def test_the_bank_lists_the_scopes_it_holds(client, bank_id, settled):

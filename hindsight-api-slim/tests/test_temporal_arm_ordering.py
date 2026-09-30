@@ -22,6 +22,7 @@ import pytest
 from hindsight_api.engine import memory_engine
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.search import fusion as fusion_module
+from hindsight_api.engine.search.reranking import RerankResult
 from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
 from hindsight_api.engine.search.types import RetrievalResult, ScoredResult
 from hindsight_api.models import RequestContext
@@ -39,13 +40,16 @@ class _Reranker:
     async def ensure_initialized(self) -> None:
         return None
 
-    async def rerank(self, _query: str, candidates: list[Any]) -> list[ScoredResult]:
+    async def rerank(self, _query: str, candidates: list[Any]) -> RerankResult:
         # The reranker output is irrelevant here — the assertion happens on the
         # fusion input — so pass the candidates through untouched.
-        return [
-            ScoredResult(candidate=c, cross_encoder_score=0.5, cross_encoder_score_normalized=0.5, weight=0.5)
-            for c in candidates
-        ]
+        return RerankResult(
+            results=[
+                ScoredResult(candidate=c, cross_encoder_score=0.5, cross_encoder_score_normalized=0.5, weight=0.5)
+                for c in candidates
+            ],
+            provider_name=None,
+        )
 
 
 def _temporal_result(unit_id: str, text: str, temporal_score: float | None) -> RetrievalResult:

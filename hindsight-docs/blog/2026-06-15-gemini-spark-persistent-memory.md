@@ -84,7 +84,7 @@ For most people, Cloud removes all of this. The proxy exists for teams that need
 
 ### Option 1: Hindsight Cloud
 
-1. [Sign up free](https://ui.hindsight.vectorize.io/signup) and create a memory bank.
+1. [Sign up free](https://ui.hindsight.vectorize.io) and create a memory bank.
 2. Copy your API key from the dashboard.
 3. Register Hindsight in Spark's MCP config (below).
 
@@ -172,7 +172,7 @@ Then start a fresh conversation and ask Spark what it knows about your TypeScrip
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Gemini Spark + Hindsight](/sdks/integrations/gemini-spark)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/gemini-spark](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/gemini-spark)
 - **OAuth proxy:** [cloudflare-oauth-proxy](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cloudflare-oauth-proxy)

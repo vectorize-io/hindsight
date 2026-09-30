@@ -21,6 +21,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLM_TOOL_CHOICE_NONE,
+    LLM_TOOL_CHOICE_REQUIRED,
+    LLMToolChoice,
+)
+
 pytestmark = pytest.mark.asyncio
 
 EPHEMERAL = {"type": "ephemeral"}
@@ -148,6 +155,57 @@ async def test_call_with_tools_marks_system_and_last_message():
     assert messages[0] == {"role": "user", "content": "Question?"}
     assert messages[1] == {"role": "assistant", "content": "Working on it."}
     assert messages[2]["content"] == [{"type": "text", "text": "Latest turn.", "cache_control": EPHEMERAL}]
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        (LLMToolChoice.named("recall"), {"type": "tool", "name": "recall"}),
+        (LLM_TOOL_CHOICE_REQUIRED, {"type": "any"}),
+        (LLM_TOOL_CHOICE_NONE, {"type": "none"}),
+        # auto is Anthropic's default: the field stays off the wire.
+        (LLM_TOOL_CHOICE_AUTO, None),
+    ],
+)
+async def test_call_with_tools_maps_tool_choice_without_narrowing(choice, expected):
+    provider = _make_provider()
+    provider._client.messages.create = AsyncMock(return_value=_tool_response())
+    tools = [
+        {"function": {"name": "recall", "description": "d", "parameters": {"type": "object"}}},
+        {"function": {"name": "done", "description": "d", "parameters": {"type": "object"}}},
+    ]
+
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        await provider.call_with_tools(
+            messages=[{"role": "user", "content": "Question?"}],
+            tools=tools,
+            tool_choice=choice,
+            max_retries=0,
+        )
+
+    params = provider._client.messages.create.await_args.kwargs
+    assert params.get("tool_choice") == expected
+    assert [tool["name"] for tool in params["tools"]] == ["recall", "done"]
+
+
+async def test_call_with_tools_rejects_unknown_named_tool():
+    provider = _make_provider()
+
+    with pytest.raises(ValueError, match="exactly one declared tool"):
+        await provider.call_with_tools(
+            messages=[{"role": "user", "content": "Question?"}],
+            tools=[
+                {
+                    "function": {
+                        "name": "recall",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    }
+                }
+            ],
+            tool_choice=LLMToolChoice.named("missing"),
+            max_retries=0,
+        )
 
 
 async def test_call_with_tools_marks_last_block_of_tool_result_message():

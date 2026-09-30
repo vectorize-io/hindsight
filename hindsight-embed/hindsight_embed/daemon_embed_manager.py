@@ -10,6 +10,7 @@ import math
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -69,6 +70,7 @@ def _parse_non_negative_int(value: str | None, default: int, name: str) -> int:
 # unpacks and runs initdb on first boot, which takes noticeably longer on cold
 # runners than POSIX.
 DAEMON_STARTUP_TIMEOUT = int(os.getenv("HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT", "180"))
+DAEMON_STARTUP_TERMINATE_TIMEOUT = 10
 DEFAULT_DAEMON_IDLE_TIMEOUT = 0  # 0 = disabled (no auto-exit)
 ENV_DAEMON_LOG_MAX_BYTES = "HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES"
 ENV_DAEMON_LOG_BACKUP_COUNT = "HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT"
@@ -143,11 +145,54 @@ def _probe(url: str, read: float) -> ProbeResponse | None:
     return probe_get(url, read_timeout=read, connect_timeout=min(read, PROBE_CONNECT_TIMEOUT))
 
 
+# Interpreter-selection variables of the *parent* process. They are meaningful
+# only for the interpreter that set them; forwarding them to a child that runs a
+# different interpreter makes that child import the parent's packages.
+_PARENT_INTERPRETER_ENV = ("PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "VIRTUAL_ENV")
+
+
+def _runs_a_foreign_interpreter(cmd: list[str]) -> bool:
+    """Whether *cmd* launches hindsight-api on an interpreter that is not ours.
+
+    True for every uv-launched form — the ``uvx hindsight-api@<version>`` fallback and the
+    monorepo ``uv run --project <api-slim> ... hindsight-api`` dev command — because uv resolves
+    an environment of its own, usually on a different Python than the caller. False for the
+    installed-binary paths, which are a single executable from an environment we already share.
+
+    Matched on the basename, not the literal string: the sibling candidate paths in
+    ``_find_api_command`` are returned resolved (``[str(candidate)]``), so a future change that
+    resolves the launcher the same way must not silently stop scrubbing the env.
+    """
+    return Path(cmd[0]).stem in {"uv", "uvx"}
+
+
+def _strip_parent_interpreter_env(env: dict[str, str]) -> dict[str, str]:
+    """Drop the parent interpreter's PYTHONPATH/PYTHONHOME/VIRTUAL_ENV from *env*.
+
+    Only for the uv-launched commands, which run in an environment uv
+    builds for them, usually on a different Python than the caller. Hosts that
+    locate their own site-packages through PYTHONPATH (Hermes' package-manager
+    install exports its Python 3.14 generation that way) otherwise hand that
+    directory to uvx's 3.12 interpreter, which then imports the host's pydantic
+    and dies on the missing compiled extension::
+
+        ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
+
+    The installed-binary paths keep the env untouched: a ``pip install --target``
+    layout (issue #1240) relies on PYTHONPATH to find hindsight_api at all, and a
+    binary from the caller's own venv runs the same interpreter, so nothing there
+    is foreign.
+    """
+    return {key: value for key, value in env.items() if key not in _PARENT_INTERPRETER_ENV}
+
+
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
     """Cross-platform kwargs to spawn a subprocess detached from the caller.
 
     On POSIX, `start_new_session=True` calls setsid(2) so the child
-    survives the parent's terminal. On Windows there is no setsid: we use
+    survives the parent's terminal; `stdin` is pinned to /dev/null so the
+    child never inherits a caller fd 0 that may be CLOEXEC (closed at exec,
+    leaving ``sys.stdin = None``). On Windows there is no setsid: we use
     `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, which also means the
     child has no console, so stdin/stdout/stderr MUST be redirected or any
     write from the child crashes with "handle is invalid".
@@ -171,9 +216,40 @@ def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
         }
     return {
         "start_new_session": True,
+        "stdin": subprocess.DEVNULL,
         "stdout": log_handle,
         "stderr": log_handle,
     }
+
+
+def _signal_startup_process(process: subprocess.Popen, *, force: bool) -> None:
+    """Signal the daemon child's whole process group on POSIX.
+
+    The child may be the ``uvx`` launcher rather than hindsight-api itself;
+    signalling only its pid can leave the real API running as an orphan.
+    ``_detach_popen_kwargs`` starts it with ``start_new_session``, so its pid is
+    also its process group id. On Windows there is no group to signal, and
+    ``terminate()`` is already an alias for ``kill()``.
+    """
+    if platform.system() == "Windows":
+        process.kill()
+    else:
+        os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+
+
+def _terminate_startup_process(process: subprocess.Popen) -> None:
+    """Stop the daemon child owned by a failed startup attempt, escalating to kill."""
+    if process.poll() is not None:
+        return
+    try:
+        _signal_startup_process(process, force=False)
+        try:
+            process.wait(timeout=DAEMON_STARTUP_TERMINATE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _signal_startup_process(process, force=True)
+            process.wait(timeout=DAEMON_STARTUP_TERMINATE_TIMEOUT)
+    except ProcessLookupError:
+        return
 
 
 @dataclass(frozen=True)
@@ -850,8 +926,12 @@ class DaemonEmbedManager(EmbedManager):
         env["HINDSIGHT_API_DAEMON_LOG"] = str(daemon_log)
 
         # Build command
+        # No --daemon: _HINDSIGHT_DAEMON_CHILD above already puts hindsight-api
+        # in daemon mode, and this Popen already detaches it. Passing --daemon
+        # too was redundant, and API versions older than the Popen-based
+        # daemonize() (#1519) fork on it, which can deadlock native libraries
+        # on macOS.
         cmd = self._find_api_command(self._component_version(profile, "HINDSIGHT_EMBED_API_VERSION"), env=env) + [
-            "--daemon",
             "--idle-timeout",
             str(idle_timeout),
             "--port",
@@ -859,6 +939,8 @@ class DaemonEmbedManager(EmbedManager):
         ]
         if extra_args:
             cmd.extend(extra_args)
+        if _runs_a_foreign_interpreter(cmd):
+            env = _strip_parent_interpreter_env(env)
 
         try:
             # Start daemon. Redirect stdout/stderr to the daemon log so that
@@ -869,7 +951,7 @@ class DaemonEmbedManager(EmbedManager):
             # Popen dups the fd into the child during spawn, so the parent
             # can close its handle as soon as Popen returns.
             with open(daemon_log, "ab") as daemon_log_handle:
-                subprocess.Popen(cmd, env=env, **_detach_popen_kwargs(daemon_log_handle))
+                daemon_process = subprocess.Popen(cmd, env=env, **_detach_popen_kwargs(daemon_log_handle))
 
             # Wait for daemon to be ready with rich UI
             start_time = time.time()
@@ -886,6 +968,22 @@ class DaemonEmbedManager(EmbedManager):
                 live.refresh()
 
                 while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
+                    # Polling keeps going through a missed health probe (below),
+                    # so a child that actually died is detected here instead of
+                    # waiting out the whole startup deadline.
+                    exit_code = daemon_process.poll()
+                    if exit_code is not None:
+                        log_lines.append("")
+                        log_lines.append(f"✗ Daemon exited during initialization (exit code {exit_code})")
+                        log_lines.append(f"See full log: {daemon_log}")
+                        content = Text("\n".join(log_lines), style="dim")
+                        fail_title = f"[bold red]✗ Daemon Failed[/bold red] [dim]({profile} @ :{port})[/dim]"
+                        panel = Panel(content, title=fail_title, border_style="red", padding=(1, 2))
+                        live.update(panel)
+                        live.refresh()
+                        console.print()
+                        return False
+
                     # Tail daemon logs
                     if daemon_log.exists():
                         try:
@@ -934,14 +1032,16 @@ class DaemonEmbedManager(EmbedManager):
                             return True
                         else:
                             log_lines.append("")
-                            log_lines.append("✗ Daemon crashed during initialization")
+                            log_lines.append("Health probe failed after readiness; continuing to wait...")
                             content = Text("\n".join(log_lines), style="dim")
-                            fail_title = f"[bold red]✗ Daemon Failed[/bold red] [dim]({profile} @ :{port})[/dim]"
-                            panel = Panel(content, title=fail_title, border_style="red", padding=(1, 2))
+                            panel = Panel(content, title=title, border_style="cyan", padding=(1, 2))
                             live.update(panel)
                             live.refresh()
-                            console.print()
-                            break
+                            # /health shares the daemon event loop with startup
+                            # backlog processing. A single missed stability probe
+                            # is not evidence that the process exited; keep polling
+                            # within the existing startup deadline.
+                            continue
 
                     # Periodic progress
                     if time.time() - last_check_time > 3:
@@ -969,6 +1069,11 @@ class DaemonEmbedManager(EmbedManager):
             panel = Panel(content, title=timeout_title, border_style="red", padding=(1, 2))
             console.print(panel)
             console.print()
+            # Before this cleanup, the manager returned at the deadline but left
+            # the detached child initializing. A supervisor retry could then
+            # accumulate overlapping daemons that had not bound the port yet, so
+            # port-based cleanup could not see them.
+            _terminate_startup_process(daemon_process)
             return False
 
         except FileNotFoundError:

@@ -17,10 +17,9 @@
  *   5. drain this run's extractions, then create the knowledge pages if the bank has none —
  *      pages-last makes `syncStatus().synced` a real completion marker
  *
- * A per-bank lock file makes concurrent session starts a no-op (stale locks expire).
+ * A per-bank heartbeat lease makes concurrent session starts a no-op.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bankProjectName, deriveBankIdOrSkip } from "./core/bank";
@@ -28,6 +27,12 @@ import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, repoNameOf, retainCommit, syncGitLog } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
+import {
+  acquireLease,
+  heartbeatLease,
+  LEASE_HEARTBEAT_MS,
+  releaseLease,
+} from "./core/survey-lease";
 import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
@@ -39,7 +44,6 @@ import { buildRetainStamp } from "./core/retain-stamp";
 import { describeError, log as plog, setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
-const LOCK_STALE_MS = 30 * 60 * 1000;
 
 function arg(name: string, def?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -92,44 +96,24 @@ const log = (m: string) => {
   plog.info("deepen", m);
 };
 
-// ── per-bank lock: concurrent session starts must not double-ingest ─────────────
-// Scratch, not state: the lock only guards against concurrent double-ingest cost. In the OS
-// temp dir so ~/.hindsight holds ONLY the config file (a reboot clearing it is harmless).
-const LOCK_DIR = join(tmpdir(), "hindsight-coding-agent");
-const LOCK = join(LOCK_DIR, `deepen-${encodeURIComponent(FINAL_BANK ?? "")}.lock`);
-
-function acquireLock(): boolean {
-  try {
-    const held = JSON.parse(readFileSync(LOCK, "utf8")) as { pid?: number; ts?: number };
-    if (held.ts && Date.now() - held.ts < LOCK_STALE_MS) {
-      // TTL alone is not enough: a killed run would block its bank for LOCK_STALE_MS. The lock
-      // already records the holder's pid — if that process is gone, the lock is stale NOW.
-      let holderAlive = false;
-      if (held.pid) {
-        try {
-          process.kill(held.pid, 0);
-          holderAlive = true;
-        } catch {
-          /* ESRCH: holder is dead — treat as stale */
-        }
-      }
-      if (holderAlive) return false; // live run in progress
-    }
-  } catch {
-    /* no/invalid lock — free */
-  }
-  try {
-    mkdirSync(LOCK_DIR, { recursive: true });
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-    return true;
-  } catch {
-    return false;
-  }
+// ── per-bank lease: concurrent session starts must not double-ingest ─────────────
+// Scratch, not state: in the OS temp dir so ~/.hindsight holds ONLY the config file. A heartbeat
+// keeps the lease live for however long the run takes; a dead run's lease goes stale in seconds.
+// Previously a pid + 30-minute TTL file: a run longer than 30 minutes lost it to the next session
+// start and two runs ingested the same bank at once (#4569). Same lease as the survey's.
+const LEASE_ROOT = join(tmpdir(), "hindsight-coding-agent", "deepen");
+const lease = acquireLease(LEASE_ROOT, encodeURIComponent(FINAL_BANK ?? ""));
+if (lease) {
+  setInterval(() => {
+    // Lost the lease (the machine slept past the stale window and another run took it): stop
+    // here — deepen is resumable, the new holder finishes the work.
+    if (!heartbeatLease(lease)) process.exit(0);
+  }, LEASE_HEARTBEAT_MS).unref();
 }
 
 async function main() {
-  if (!acquireLock()) {
-    log(`deepen: another run holds the lock for ${FINAL_BANK} — nothing to do`);
+  if (!lease) {
+    log(`deepen: another run holds the lease for ${FINAL_BANK} — nothing to do`);
     return;
   }
   const t0 = Date.now();
@@ -151,6 +135,9 @@ async function main() {
       project: PAGE_PROJECT,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
+      // Nobody waits on a background seed, and a 429 it gives up on is history missing from the
+      // bank until some later session happens to re-run it.
+      rateLimitPatienceMs: 10 * 60 * 1000,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
@@ -168,6 +155,7 @@ async function main() {
       customPages: cfg.customPages,
       manage: cfg.manageBankConfig,
       extractionMode: cfg.retainExtractionMode,
+      defaults: cfg.defaultBankConfig,
     });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
@@ -208,8 +196,9 @@ async function main() {
     // ── git: seeding and syncing are the SAME code — this idempotent pass runs every session,
     // so "keep the bank current" is just "run it again". cfg.gitIngest picks the depth:
     //   none    → git contributes nothing
-    //   message → ONE aggregated commit-message doc, re-upserted when HEAD moves (same doc id, so
-    //             it replaces — the gitlog-head:<sha> tag makes freshness a single tag query)
+    //   message → ONE aggregated commit-message doc, re-upserted when HEAD moves past the commit
+    //             it was written at (same doc id, so it replaces — the gitlog-head:<sha> tag
+    //             names that commit; see gitLogIsCurrent)
     //   full    → message doc + progressive per-commit full diffs, newest first (new commits land
     //             at the top of rev-list, so the next run ingests them: that IS the sync)
     let gitFails = 0;
@@ -224,7 +213,8 @@ async function main() {
           const shas = execFileSync(
             "git",
             ["-C", REPO!, "rev-list", `-n`, String(DEEPEN_DIFF_TARGET), "HEAD"],
-            { encoding: "utf8", windowsHide: true }
+            // `install` runs this with inherited stdio: an empty repo's HEAD error must not print.
+            { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
           )
             .trim()
             .split("\n")
@@ -325,11 +315,7 @@ async function main() {
       `\n✅ deepen complete in ${((Date.now() - t0) / 1000).toFixed(1)}s${failures ? ` (${failures} items failed to enqueue)` : ""}.`
     );
   } finally {
-    try {
-      unlinkSync(LOCK);
-    } catch {
-      /* best-effort */
-    }
+    releaseLease(lease);
   }
 }
 
@@ -339,10 +325,6 @@ main().catch((e) => {
     error: describeError(e),
   });
   console.error("deepen failed:", (e as Error).message || e);
-  try {
-    unlinkSync(LOCK);
-  } catch {
-    /* best-effort */
-  }
+  if (lease) releaseLease(lease);
   process.exit(1);
 });

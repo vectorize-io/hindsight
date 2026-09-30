@@ -128,6 +128,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         ),
     )
     parser.addoption(
+        "--cost-output",
+        default=None,
+        help="directory for the refresh-cost report and the synthesis prompt of every refresh it measured",
+    )
+    parser.addoption(
         "--keep-banks",
         action="store_true",
         default=False,

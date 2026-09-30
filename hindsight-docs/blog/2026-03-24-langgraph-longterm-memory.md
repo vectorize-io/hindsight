@@ -237,7 +237,7 @@ One graph definition serves all users. Memory banks are created automatically an
 pip install hindsight-langgraph
 ```
 
-Works with both self-hosted Hindsight and [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). For cloud, pass your API key when creating the client:
+Works with both self-hosted Hindsight and [Hindsight Cloud](https://ui.hindsight.vectorize.io). For cloud, pass your API key when creating the client:
 
 ```python
 client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="your-key")

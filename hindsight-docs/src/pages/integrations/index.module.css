@@ -297,7 +297,10 @@
 
 .harnessStrip {
   display: flex;
-  flex-wrap: nowrap;
+  /* Wraps, because the strip grows with the harness list: 19 logos at 17px plus gaps need ~410px,
+     wider than a featured card's third of the grid, and nowrap pushed them past the card's edge.
+     The card has no fixed height, so a second row just makes it taller. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.3rem;
   margin-top: 0.5rem;

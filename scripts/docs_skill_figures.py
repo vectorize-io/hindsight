@@ -4,6 +4,10 @@ A docs page shows a figure as `<Flow {...name.props} />`, imported from
 `@vectorize-io/interfig/figures/<file>`. The skill is plain markdown read by agents, so each
 figure becomes its step-by-step narration (the `say` lines the figure plays), grouped by step.
 
+An animated SVG figure (`![alt](/img/....svg)`) gets the same treatment: every SVG the figure
+tooling writes carries its own spec in `<metadata>`, so the narration can be read straight out of
+the image. Without this an agent would see a link to a picture and learn nothing from it.
+
 Usage: python3 docs_skill_figures.py <source page> <generated page>
 The source page supplies the imports; the generated page is rewritten in place.
 
@@ -11,6 +15,7 @@ The source page supplies the imports; the generated page is rewritten in place.
 renders every figure and fails if one no longer reads cleanly (CI runs this).
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -24,6 +29,9 @@ STEP = re.compile(r"^\s*label: (?:" + STRING + r"),\s*\n(?:\s*caption:.*\n)?\s*f
 FLOW_KEY = re.compile(r"^\s*flow:", re.MULTILINE)
 SAY = re.compile(r"\bsay: (?:" + STRING + r")")
 TITLE = re.compile(r"^\s*title: (?:" + STRING + r"),", re.MULTILINE)
+STATIC = Path(__file__).resolve().parent.parent / "hindsight-docs" / "static"
+IMAGE = re.compile(r"^!\[([^\]]*)\]\(([^)]+\.svg)\)$", re.MULTILINE)
+SVG_SPEC = re.compile(r'<metadata id="figure-spec"><!\[CDATA\[(.*?)\]\]></metadata>', re.S)
 
 
 def _text(match: re.Match[str]) -> str:
@@ -57,9 +65,33 @@ def figure_to_markdown(figure_file: Path) -> str:
     return "\n".join(lines)
 
 
+def svg_to_markdown(spec: dict, alt: str) -> str:
+    """The same narration, read from the spec an animated SVG carries."""
+    steps = spec.get("props", {}).get("steps", [])
+    lines = [f"**Figure: {alt}.** An animated diagram; its narration, step by step:", ""]
+    for step in steps:
+        says = [beat["say"] for beat in step.get("flow", []) if isinstance(beat, dict) and beat.get("say")]
+        lines.append(f"- **{step.get('label', '')}**")
+        lines += [f"  {n}. {say}" for n, say in enumerate(says, 1)]
+    return "\n".join(lines)
+
+
+def svg_figure(match: re.Match[str]) -> str:
+    """An `![alt](/img/x.svg)` whose file carries a spec becomes its narration; anything else is left alone."""
+    alt, src = match.group(1), match.group(2)
+    if src.startswith(("http://", "https://")):
+        return match.group(0)
+    file = STATIC / src.lstrip("/")
+    if not file.exists():
+        return match.group(0)
+    spec = SVG_SPEC.search(file.read_text())
+    return svg_to_markdown(json.loads(spec.group(1)), alt or file.stem) if spec else match.group(0)
+
+
 def render(source_page: str, generated: str) -> str:
     figures = {var: FIGURES / f"{name}.ts" for var, name in IMPORT.findall(source_page)}
     generated = ANY_INTERFIG_IMPORT.sub("", generated)
+    generated = IMAGE.sub(svg_figure, generated)
     return FLOW.sub(lambda m: figure_to_markdown(figures[m.group(1)]), generated)
 
 

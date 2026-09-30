@@ -91,7 +91,7 @@ The knowledge graph is not a competitor to the vector index here. It is one voic
 
 If you are building agent memory, the practical takeaway is short: you do not choose. Use vector search for conceptual recall, keyword for precision, a graph for entities and multi-hop reasoning, and a temporal index for time, and let a fusion step decide who was right for each query. Reach for a graph the moment your agent needs to answer "who," "why," or "how are these connected," and lean on vectors the moment it needs to match meaning instead of words.
 
-The reason the "graph vs. vector" argument never resolves is that it is asking the wrong question. The right one is *which retrieval strategy wins for this query* — and the only good answer is to run all of them and fuse. Start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), where every recall is already hybrid.
+The reason the "graph vs. vector" argument never resolves is that it is asking the wrong question. The right one is *which retrieval strategy wins for this query* — and the only good answer is to run all of them and fuse. Start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io), where every recall is already hybrid.
 
 ## Frequently asked questions
 

@@ -7,6 +7,8 @@ These tests use mocked models — they do not load real SentenceTransformers or
 FlashRank weights, so they run fast in CI without network access.
 """
 
+import inspect
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,18 +17,21 @@ from hindsight_api.config import DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
 from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
+    JinaMLXCrossEncoder,
     LocalSTCrossEncoder,
+    RerankTimeoutError,
 )
 
 
 class TestLocalSTCrossEncoder:
     """Unit tests for the SentenceTransformers-backed local reranker."""
 
-    def _make_encoder(self, *, bucket_batching: bool = False, batch_size: int = 32):
+    def _make_encoder(self, *, bucket_batching: bool = False, batch_size: int = 32, timeout: float = 300.0):
         encoder = LocalSTCrossEncoder(
             model_name="test-model",
             bucket_batching=bucket_batching,
             batch_size=batch_size,
+            timeout=timeout,
         )
         # Bypass initialize() — we don't want to download or load real weights.
         encoder._model = MagicMock()
@@ -96,6 +101,48 @@ class TestLocalSTCrossEncoder:
         # so fake_predict assigned: short=1.0, medium=2.0, long=3.0
         # In original order: [long=3.0, short=1.0, medium=2.0]
         assert scores == [3.0, 1.0, 2.0]
+
+    async def test_predict_scores_in_batches_of_batch_size(self):
+        """The wall-clock budget is only checkable between batches, so a large
+        candidate set must arrive as several predict() calls, not one."""
+        encoder = self._make_encoder(batch_size=2)
+        encoder._model.predict.side_effect = lambda batch, **kw: [0.5] * len(batch)
+
+        scores = await encoder.predict([("q", f"doc-{i}") for i in range(5)])
+
+        assert scores == [0.5] * 5
+        assert encoder._model.predict.call_count == 3  # 2 + 2 + 1
+
+    async def test_predict_raises_budget_exceeded_with_partial_scores(self):
+        """On expiry the scored pairs survive and the rest come back as None."""
+        encoder = self._make_encoder(batch_size=2, timeout=0.05)
+
+        def slow_predict(batch, **kwargs):
+            time.sleep(0.06)  # every batch overruns the whole budget
+            return [0.9] * len(batch)
+
+        encoder._model.predict.side_effect = slow_predict
+
+        with pytest.raises(RerankTimeoutError) as excinfo:
+            await encoder.predict([("q", f"doc-{i}") for i in range(6)])
+
+        exc = excinfo.value
+        # First batch always runs (the deadline is checked before each batch), the
+        # second finds the budget gone.
+        assert exc.scores == [0.9, 0.9, None, None, None, None]
+        assert exc.timeout == 0.05
+        assert "test-model" in str(exc)
+
+    async def test_predict_timeout_zero_disables_the_budget(self):
+        encoder = self._make_encoder(batch_size=1, timeout=0.0)
+
+        def slow_predict(batch, **kwargs):
+            time.sleep(0.02)
+            return [0.4] * len(batch)
+
+        encoder._model.predict.side_effect = slow_predict
+
+        assert await encoder.predict([("q", "a"), ("q", "b"), ("q", "c")]) == [0.4, 0.4, 0.4]
 
     async def test_predict_not_initialized_raises(self):
         encoder = LocalSTCrossEncoder()
@@ -309,3 +356,55 @@ class TestFlashRankCrossEncoder:
 
     def test_default_batch_size_matches_config(self):
         assert FlashRankCrossEncoder().batch_size == DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
+
+
+class TestInProcessRerankerTimeoutCoverage:
+    """Family guard: which in-process rerankers carry a wall-clock budget.
+
+    Only these backends score in this process, so only these can wedge a worker on
+    compute (#4696) — a remote one is already bounded by its HTTP timeout. A new
+    in-process backend must therefore either take a `timeout`, or be given a reason
+    here; this test fails until someone decides, because the sibling that forgot is
+    by definition the one nobody wrote a test for.
+    """
+
+    # provider id (as create_cross_encoder dispatches on) -> backend class
+    BACKENDS = {
+        "local": LocalSTCrossEncoder,
+        "flashrank": FlashRankCrossEncoder,
+        "jina-mlx": JinaMLXCrossEncoder,
+    }
+
+    # Deliberately unbounded, and why. Not a permanent exemption — if a report lands
+    # on one of these, it gets the same treatment `local` got.
+    NO_TIMEOUT = {
+        "flashrank": (
+            "Already splits into bounded batches for the OOM fix (#3355), and its "
+            "ONNX MiniLM-class models score in milliseconds per pair."
+        ),
+        "jina-mlx": (
+            "rerank() scores a whole query group in one opaque MLX call, so there is "
+            "no point between batches at which a deadline could be observed."
+        ),
+    }
+
+    def test_family_matches_the_in_process_providers(self):
+        """The enumeration above must stay in step with the providers the module
+        itself calls in-process, or this guard silently stops covering one."""
+        declared = {
+            provider
+            for provider, reason in ce_module._RERANKER_PROVIDERS_WITHOUT_RETRY.items()
+            if reason == "in-process model"
+        }
+        assert declared == set(self.BACKENDS)
+
+    @pytest.mark.parametrize("provider", sorted(BACKENDS))
+    def test_backend_takes_a_timeout_or_says_why_not(self, provider: str):
+        params = inspect.signature(self.BACKENDS[provider].__init__).parameters
+        if provider in self.NO_TIMEOUT:
+            assert "timeout" not in params, (
+                f"{provider} now takes a timeout — drop its NO_TIMEOUT entry and test the budget"
+            )
+            assert self.NO_TIMEOUT[provider].strip()
+        else:
+            assert "timeout" in params, f"in-process backend {provider} has no wall-clock budget"

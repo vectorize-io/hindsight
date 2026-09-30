@@ -9,15 +9,21 @@ resolution entry paths funnel through (retain via
    collapse to a single space, and the ends are stripped;
 2. a name that is empty afterwards is dropped rather than stored as an entity
    with a blank ``canonical_name``;
-3. candidates that normalization made identical are deduplicated per fact.
+3. a name longer than ``_MAX_ENTITY_NAME_CHARS`` is dropped rather than failing
+   the whole retain on the btree index over ``canonical_name``;
+4. candidates that normalization made identical are deduplicated per fact.
 
 All of it runs before the flat list / ``entity_to_unit`` mapping is derived, so
 the resolver's positional invariant is untouched.
 """
 
+import random
+
+import asyncpg
 import pytest
 
 from hindsight_api.engine.retain.link_utils import (
+    _MAX_ENTITY_NAME_CHARS,
     _normalize_entity_name,
     _prepare_entities_for_resolution,
 )
@@ -120,6 +126,82 @@ def test_intake_keeps_real_entities_alongside_dropped_empties():
     assert _texts(all_entities_flat) == ["Alice"]
     # entity_to_unit stays index-aligned with the flat list the resolver receives.
     assert entity_to_unit == [("u1", 0, None)]
+
+
+# --- intake: oversized names are dropped (btree index row limit) ---
+
+
+def test_intake_keeps_a_name_exactly_at_the_cap():
+    name = "a" * _MAX_ENTITY_NAME_CHARS
+    all_entities_flat, _all, _map = _prepare([{"text": name, "type": "CONCEPT"}])
+    assert _texts(all_entities_flat) == [name]
+
+
+def test_intake_drops_a_name_one_past_the_cap():
+    all_entities_flat, all_entities, entity_to_unit = _prepare(
+        [{"text": "a" * (_MAX_ENTITY_NAME_CHARS + 1), "type": "CONCEPT"}]
+    )
+    assert all_entities_flat == []
+    assert all_entities == [[]]
+    assert entity_to_unit == []
+
+
+def test_intake_measures_the_cap_after_whitespace_normalization():
+    # Collapsing whitespace can bring an over-long raw string under the cap; it is
+    # the stored (normalized) form that has to fit the index, so that is what counts.
+    raw = "a" * (_MAX_ENTITY_NAME_CHARS - 2) + "\n\n\n\n" + "b"
+    all_entities_flat, _all, _map = _prepare([{"text": raw, "type": "CONCEPT"}])
+    assert _texts(all_entities_flat) == ["a" * (_MAX_ENTITY_NAME_CHARS - 2) + " b"]
+
+
+def test_intake_keeps_real_entities_alongside_a_dropped_artifact():
+    # Shape seen on prod: an SVG path handed back as an "entity" next to real ones.
+    svg = "M156.4,82.8" + "L163.2,82.8" * 200
+    all_entities_flat, all_entities, entity_to_unit = _prepare(
+        [{"text": "Alice", "type": "PERSON"}, {"text": svg, "type": "CONCEPT"}, {"text": "Acme", "type": "ORG"}]
+    )
+    assert _texts(all_entities_flat) == ["Alice", "Acme"]
+    # The dropped artifact must not leak into the co-occurrence signal either.
+    assert [e["text"] for e in all_entities_flat[0]["nearby_entities"]] == ["Alice", "Acme"]
+    assert entity_to_unit == [("u1", 0, None), ("u1", 1, None)]
+
+
+def _incompressible(n_chars: int) -> str:
+    """Random 4-byte UTF-8 characters: the worst case for an index tuple.
+
+    PostgreSQL compresses index tuples, so a repetitive string would slip under the
+    btree limit and prove nothing about the cap.
+    """
+    rng = random.Random(3032)
+    return "".join(chr(rng.randint(0x1F300, 0x1FAFF)) for _ in range(n_chars))
+
+
+@pytest.mark.asyncio
+async def test_cap_fits_the_real_btree_limit_and_the_old_behaviour_did_not(pg0_db_url):
+    """The cap is only meaningful if it clears the index at its worst case.
+
+    Same index shapes as idx_entities_bank_name and idx_entities_bank_lower_name,
+    on a temp table so nothing persists.
+    """
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        await conn.execute("CREATE TEMP TABLE ent_cap (bank_id TEXT NOT NULL, canonical_name TEXT NOT NULL)")
+        await conn.execute("CREATE INDEX ent_cap_bank_name ON ent_cap (bank_id, canonical_name)")
+        # Both btrees the real schema carries over the name: the plain one prod
+        # reported failing on, and the unique LOWER one the entity INSERT uses as
+        # its ON CONFLICT target. Same ~2704-byte tuple ceiling on either, so the
+        # cap has to clear both.
+        await conn.execute("CREATE UNIQUE INDEX ent_cap_bank_lower_name ON ent_cap (bank_id, LOWER(canonical_name))")
+        long_bank = "slack-" + "X" * 120
+
+        # At the cap, 4 bytes per character, incompressible, long bank id: fits.
+        await conn.execute("INSERT INTO ent_cap VALUES ($1, $2)", long_bank, _incompressible(_MAX_ENTITY_NAME_CHARS))
+
+        # Well past it — what extraction actually produced on prod — does not.
+        with pytest.raises(asyncpg.exceptions.ProgramLimitExceededError):
+            await conn.execute("INSERT INTO ent_cap VALUES ($1, $2)", long_bank, _incompressible(1000))
+    finally:
+        await conn.close()
 
 
 # --- intake: dedup of candidates that normalization made identical ---

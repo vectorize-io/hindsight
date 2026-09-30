@@ -6,6 +6,12 @@ partial indexes are built in the bank-create transaction and dropped when the
 bank is deleted — the behaviour that predates the threshold, and still the right
 one for a deployment whose bank count is not the problem.
 
+One bank is outside all of it at every threshold: one whose memories a custom
+store owns has no ``memory_units`` rows, so it is owed no index here and
+:func:`plan_bank_vector_indexes` returns it an empty plan (#4615). Empty in both
+directions — this module will not build such a bank an index, and will not take
+away one it already has.
+
 A deployment holding thousands of banks sets a positive threshold, because these
 indexes live on the shared ``memory_units`` table: PostgreSQL locks and plans
 against every index on a relation, and opens every one for each DML statement, so
@@ -43,7 +49,7 @@ from .._vector_index import (
     per_bank_indexes_are_eager,
 )
 from .db_utils import retry_with_backoff
-from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
+from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, bank_indexes_are_store_owned
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +115,10 @@ class BankIndexPlan:
     to_build: list[str] = field(default_factory=list)
     # Index names present in the catalog that this bank should no longer carry.
     to_drop: list[str] = field(default_factory=list)
-    # Indexes already present and healthy — reported, never touched.
+    # Indexes already present and healthy — reported, never touched. NOT filled for a
+    # bank whose memories a custom store owns: that plan is returned before the catalog
+    # is read at all, so such a bank reports 0 whether or not it still carries indexes
+    # (pg_indexes is where an operator reads that — see the admin-CLI docs).
     already_present: int = 0
 
     @property
@@ -238,20 +247,40 @@ async def plan_bank_vector_indexes(
     without counting.
 
     With the threshold off, entitlement does not depend on rows at all: every
-    partition is owed an index from the moment the bank exists, so this reports
-    whatever bank creation did not manage to leave healthy and never drops
-    anything. The write path does not reach here in that mode (it short-circuits
-    before querying), but ``repair-bank`` does, and it is the path that repairs a
-    bank whose creation lost its DDL to a deadlock, or that was restored around
-    it.
+    partition of a SQL-owned bank is owed an index from the moment the bank
+    exists, so this reports whatever bank creation did not manage to leave
+    healthy and never drops anything. The write path does not reach here in that
+    mode (it short-circuits before querying), but ``repair-bank`` does, and it is
+    the path that repairs a bank whose creation lost its DDL to a deadlock, or
+    that was restored around it.
+
+    A store-owned bank is excluded from that entitlement, and the check comes
+    before both branches because it does not depend on the threshold. Its plan is
+    empty in BOTH directions. Nothing built: creation no longer builds it anything
+    (#4615), so without this it would read here exactly like a bank whose DDL was
+    lost, and one ``repair-bank --all`` would rebuild every index the fix stopped
+    creating. Nothing dropped: adopting a memories store makes every existing bank
+    store-owned at once, and shedding tens of thousands of indexes stays an
+    operator's decision with its own timing.
 
     A bank whose row is gone yields an empty plan: its indexes are dropped by
     ``delete_bank`` while the internal_id they are named after is still known,
     and a bank-scoped reconcile has no way to name them afterwards.
     """
     plan = BankIndexPlan(bank_id=bank_id)
-    qschema = _quote_identifier(schema)
 
+    # Empty plan for a store-owned bank — see this function's docstring for both
+    # halves. First, before either round trip: with a threshold set this runs on every
+    # write, and neither the bank lookup nor the catalog read can change the answer.
+    # Not wrapped, deliberately: bank_indexes_are_store_owned raises rather than guess,
+    # and its docstring says why the two callers need opposite fallbacks.
+    # ponytail: the probe takes bank_id with no schema, so a router with per-schema
+    # backends would get one answer for the same id in two tenant schemas. Pass the
+    # schema through MemoriesExtension.store_owned_for if such a router appears.
+    if bank_indexes_are_store_owned(bank_id):
+        return plan
+
+    qschema = _quote_identifier(schema)
     internal_id = await conn.fetchval(
         f"SELECT internal_id FROM {qschema}.banks WHERE bank_id = $1",  # noqa: S608 — schema is a quoted identifier
         bank_id,

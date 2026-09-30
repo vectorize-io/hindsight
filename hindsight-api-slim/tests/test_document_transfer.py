@@ -10,6 +10,7 @@ import json
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -1989,6 +1990,39 @@ async def test_purge_expired_export_archives(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_purge_expired_export_archives_includes_export_bank(memory, request_context):
+    """Retention's archive purge also deletes archives produced by whole-bank exports."""
+    from datetime import timedelta
+
+    bank = _unique_bank("bank_export_purge")
+    try:
+        await _retain(memory, bank, "Whole bank export retention test.", request_context, "doc-1")
+        submission = await memory.submit_bank_export_async(bank, request_context)
+        op_id = submission["operation_id"]
+        status = await memory.get_operation_status(bank, op_id, request_context=request_context)
+        storage_key = status["result_metadata"]["storage_key"]
+        assert await memory._file_storage.retrieve(storage_key)
+
+        backend = await memory._get_backend()
+        old = datetime.now(timezone.utc) - timedelta(days=100)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET updated_at = $1 WHERE operation_id = $2",
+                old,
+                uuid.UUID(op_id),
+            )
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=100
+            )
+        assert purged >= 1
+        with pytest.raises(FileNotFoundError):
+            await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_purge_expired_export_archives_honours_the_batch_bound(memory, request_context):
     """The purge deletes at most ``batch_size`` archives per call.
 
@@ -2556,6 +2590,123 @@ async def test_attachment_bytes_travel_with_the_bank(memory, request_context):
         await memory.delete_bank(target, request_context=request_context)
 
 
+async def _seed_attachment(memory, bank_id: str, payload: bytes, attachment_hash: str) -> str:
+    from hindsight_api.engine.retain.attachment_content import RetainAttachment
+    from hindsight_api.engine.retain.attachment_store import store_images
+
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        stored = await store_images(
+            memory._file_storage,
+            conn,
+            bank_id,
+            "doc-1",
+            [
+                RetainAttachment(
+                    attachment_hash=attachment_hash,
+                    media_type="image/png",
+                    data=payload,
+                    block_index=0,
+                    filename="diagram.png",
+                )
+            ],
+        )
+    return stored[0].storage_key
+
+
+def _archive_entries(archive: bytes) -> dict[str, Any]:
+    """Every entry of an archive, parsed where it is JSON; ``exported_at`` is the one field allowed to differ."""
+    entries: dict[str, Any] = {}
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        for name in zf.namelist():
+            data = zf.read(name)
+            if not name.endswith(".json"):
+                entries[name] = data
+                continue
+            parsed = json.loads(data)
+            if name == "manifest.json":
+                parsed.pop("exported_at")
+            entries[name] = parsed
+    return entries
+
+
+@pytest.mark.asyncio
+# Seeds the attachment link with a raw INSERT that needs the document's SQL row.
+@pytest.mark.memory_backend_incompatible
+async def test_streamed_bank_archive_matches_the_built_one(memory, request_context):
+    """The streamed export and the clone's in-memory builder write the same archive.
+
+    They are two implementations of one format — the export streams, the clone
+    reads under one transaction and builds — so nothing else stops a section
+    added to one from being forgotten in the other.
+    """
+    from hindsight_api.engine.transfer import TransferScope, build_bank_archive, load_bank_export, stream_export_bank
+
+    bank = _unique_bank("parity")
+    try:
+        await _retain(memory, bank, "Grace shared a diagram of the Paris office.", request_context, "doc-1")
+        await _retain(memory, bank, "Alan moved to Berlin in 2021.", request_context, "doc-2")
+        await _seed_attachment(memory, bank, b"\x89PNG-parity", "b" * 64)
+        backend = await memory._get_backend()
+        scope = TransferScope(data=True, bank_config=True, history=True)
+        streamed = b"".join(
+            [
+                chunk
+                async for chunk in stream_export_bank(
+                    backend, bank, scope=scope, file_storage=memory._file_storage, batch_size=1
+                )
+            ]
+        )
+        async with acquire_with_retry(backend) as conn:
+            payload = await load_bank_export(conn, bank, scope=scope, file_storage=memory._file_storage)
+        built = await build_bank_archive(payload)
+
+        streamed_entries = _archive_entries(streamed)
+        assert streamed_entries == _archive_entries(built)
+        assert streamed_entries["manifest.json"]["document_count"] == 2
+        assert streamed_entries["manifest.json"]["attachment_count"] == 1
+        assert streamed_entries["blobs/000000.bin"] == b"\x89PNG-parity"
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+# Seeds the attachment link with a raw INSERT that needs the document's SQL row.
+@pytest.mark.memory_backend_incompatible
+async def test_an_attachment_whose_bytes_are_gone_is_left_out_of_both_archives(memory, request_context):
+    """A row that outlived its blob is dropped with a warning; the rest of the bank still exports.
+
+    Before, the missing blob raised out of storage and failed the whole export —
+    one lost file made a bank impossible to move.
+    """
+    from hindsight_api.engine.transfer import TransferScope, build_bank_archive, load_bank_export, stream_export_bank
+
+    bank = _unique_bank("att_gone")
+    try:
+        await _retain(memory, bank, "Grace shared a diagram.", request_context, "doc-1")
+        kept = await _seed_attachment(memory, bank, b"kept-bytes", "c" * 64)
+        gone = await _seed_attachment(memory, bank, b"gone-bytes", "d" * 64)
+        await memory._file_storage.delete(gone)
+        assert await memory._file_storage.exists(kept)
+
+        backend = await memory._get_backend()
+        streamed = b"".join(
+            [chunk async for chunk in stream_export_bank(backend, bank, file_storage=memory._file_storage)]
+        )
+        async with acquire_with_retry(backend) as conn:
+            built = await build_bank_archive(
+                await load_bank_export(conn, bank, scope=TransferScope(), file_storage=memory._file_storage)
+            )
+        for archive in (streamed, built):
+            entries = _archive_entries(archive)
+            assert entries["manifest.json"]["attachment_count"] == 1
+            assert [a["attachment_hash"] for a in entries["attachments.json"]] == ["c" * 64]
+            assert entries[entries["attachments.json"][0]["entry"]] == b"kept-bytes"
+            assert entries["manifest.json"]["document_count"] == 1
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_invalidated_facts_survive_a_bank_copy(memory, request_context):
     """The curation archive travels, so a copied bank can still revert what was retired."""
@@ -2836,13 +2987,12 @@ async def test_a_copy_keeps_a_name_someone_chose(api_client, memory, request_con
 
 
 def test_archive_assembly_is_confined_to_threadable_builders():
-    """Every ZIP is written by a plain function whose name starts with `_build_`.
+    """Every non-streamed ZIP is written by a plain function whose name starts with `_build_`.
 
-    Those are the ones the async wrappers hand to a worker thread. Assembling an
-    archive inline in an async function instead — which `export_bank` did until
-    the transfer and clone endpoints started calling it inside the API process —
-    serialises the whole bank and DEFLATEs it on the event loop, stalling every
-    other request for as long as the bank is big (the shape of issue #3321).
+    Those are the ones the async wrappers hand to a worker thread. Both document
+    and whole-bank external exports stream directly via ZipStreamer, while internal
+    whole-bank archive assembly for clone_bank runs off the event loop via
+    _build_bank_archive_bytes under a single-transaction read snapshot.
     """
     import ast
     from pathlib import Path
@@ -2867,7 +3017,7 @@ def test_archive_assembly_is_confined_to_threadable_builders():
             offenders.append(node.name)
 
     assert offenders == [], f"archive written outside a threadable builder: {offenders}"
-    assert {"_build_archive_bytes", "_build_bank_archive_bytes"} <= builders
+    assert {"_build_bank_archive_bytes"} <= builders
 
 
 def test_the_engine_never_compresses_inside_a_read_transaction():

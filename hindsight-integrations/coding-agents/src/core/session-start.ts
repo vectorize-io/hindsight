@@ -19,7 +19,7 @@
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
  */
 import { readFileSync } from "node:fs";
-import { gitHeadSha, hasGitHistory, commitsSince, repoNameOf } from "./git";
+import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
 import { maybeAutoUpdate } from "./auto-update";
@@ -42,6 +42,9 @@ import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-c
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+  // Optional: lets the git note see a git-log document written at a commit HEAD is behind
+  // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
+  documentTags?(documentId: string): Promise<string[] | undefined>;
   listPages(): Promise<unknown>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
@@ -74,8 +77,10 @@ export function buildSeedBanner(bankId: string, cold = true, gitNote?: string): 
 /**
  * One-phrase git-sync state for the banner (the syncStatus contract, condensed): whether the bank
  * is current with the repo's commits. Cheap — reuses the cold-check's doc-id set plus ONE tag query
- * (gitlog-head:<sha>, the freshness marker the deepen engine maintains). Returns undefined when
- * there's nothing meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
+ * (gitlog-head:<sha>, the freshness marker the deepen engine maintains), and one read of that tag
+ * when HEAD is not the commit it names. Same check as the deepen engine's (gitLogIsCurrent), so the
+ * banner never promises a catch-up the engine will skip. Returns undefined when there's nothing
+ * meaningful to say (gitIngest off, no git, cold bank — "learning" already covers it).
  */
 async function gitSyncNote(args: {
   client: SeedContextClient;
@@ -88,10 +93,7 @@ async function gitSyncNote(args: {
   if (mode === "none" || cold) return undefined;
   const head = gitHeadSha(cwd);
   if (!head) return undefined;
-  const gitlogCurrent = await client
-    .listDocumentIds(`gitlog-head:${head}`, "all_strict")
-    .then((s) => s.has(`gitlog:${repoNameOf(cwd)}`))
-    .catch(() => undefined);
+  const gitlogCurrent = await gitLogIsCurrent(client, cwd, head).catch(() => undefined);
   if (gitlogCurrent === undefined) return undefined; // server hiccup: say nothing rather than guess
   if (mode === "message") return gitlogCurrent ? "git in sync" : "catching up on new commits";
   // full: deepening progress = per-commit docs vs the recent-history target
@@ -129,7 +131,15 @@ export interface SessionStartOutput {
 export interface SessionStartHookSpec {
   harness: string;
   parse(event: Record<string, unknown>): { cwd?: string; sessionId?: string };
+  /** Optional event gate, evaluated before config loading: false makes the hook a silent no-op. */
+  accept?(event: Record<string, unknown>): boolean;
   emit(output: SessionStartOutput): unknown;
+  /** Optional per-repo host registration, run once memory is confirmed LIVE for the repo (after
+   *  bank derivation and the opt-in/`disabled` gates). Returns an optional user-facing banner
+   *  hint (registration maintenance is host business, its absence a host problem) and must never
+   *  throw. TraeCode uses this to keep `<repo>/.trae/mcp.json` registering its MCP server and to
+   *  nudge when the workspace-MCP gate hides it (core/traecode-mcp.ts). */
+  ensureMcpRegistration?: (cwd: string) => string | undefined;
 }
 
 /**
@@ -308,6 +318,7 @@ export async function buildSessionStartContext(args: {
   }
   const additionalContext = buildKnowledgePreamble(pages, {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
+    extra: cfg.toolGuideExtra,
   });
   const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
 
@@ -361,6 +372,7 @@ export async function runSessionStartHook(
     } catch {
       return; // no/invalid event: stay silent
     }
+    if (spec.accept && !spec.accept(ev)) return;
     const { harness } = spec;
     const { cwd: rawCwd, sessionId } = spec.parse(ev);
     const cwd = rawCwd || process.cwd();
@@ -385,6 +397,9 @@ export async function runSessionStartHook(
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+    // Memory is live HERE — the one point where registering the host's per-repo MCP access is
+    // correct: the caller of an opt-out repo must not gain a config file it never asked for.
+    const mcpHint = spec.ensureMcpRegistration?.(cwd);
     // Daemon mode: warm it up now, before the user has typed anything. The start itself is
     // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
     // cold one keeps coming up in the background and is picked up by a later turn.
@@ -398,6 +413,10 @@ export async function runSessionStartHook(
     });
 
     const out = await buildSessionStartContext({ cwd, sessionRoot, bankId, cfg, client, harness });
+    // The registration's banner hint (e.g. TraeCode's workspace-MCP gate) rides the same
+    // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
+    if (mcpHint)
+      out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${mcpHint}` : mcpHint;
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
     }

@@ -13,10 +13,11 @@ import styles from './index.module.css';
 
 /**
  * Pinned above the grid. These three are the ones we want a first-time visitor to see: the umbrella
- * coding-agent plugin, the SDK most TypeScript apps reach for, and the agent harness with the
- * deepest native integration.
+ * coding-agent plugin, and the two agent harnesses that ship Hindsight as a first-class memory
+ * provider — Hermes lists it in its own plugin catalog, so `hermes plugins install hindsight` is
+ * the whole setup.
  */
-const FEATURED_IDS = ['coding-agents', 'vercel-ai-sdk', 'openclaw'];
+const FEATURED_IDS = ['coding-agents', 'hermes', 'openclaw'];
 
 const INTEGRATIONS_JSON_URL =
   'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';

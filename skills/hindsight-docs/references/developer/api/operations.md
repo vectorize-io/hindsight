@@ -9,10 +9,10 @@ This page explains each operation type, when it fires, and how to inspect or man
 
 > **💡 Prerequisites**
 >
-Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
+Make sure you've completed the [Quick Start](./quickstart.md) and understand [how retain works](./retain.md).
 ## How operations work
 
-When an API call needs background work, the request handler writes a row to the `async_operations` table with `status=pending` and returns immediately. A worker (running either in-process inside the API by default, or as a dedicated service — see [Services - Worker Service](../services#worker-service)) polls the table, claims pending rows, executes the corresponding handler, and marks the row `completed` or `failed`.
+When an API call needs background work, the request handler writes a row to the `async_operations` table with `status=pending` and returns immediately. A worker (running either in-process inside the API by default, or as a dedicated service — see [Services - Worker Service](../services.md#worker-service)) polls the table, claims pending rows, executes the corresponding handler, and marks the row `completed` or `failed`.
 
 By default, every operation runs in-process: no external queue, no extra process to deploy. The same code paths support scaling out to dedicated worker processes when throughput demands it.
 
@@ -50,11 +50,11 @@ When you list operations, the parent and its children all appear by default. Pas
 
 Submitted by file upload endpoints. The handler runs MIME-specific conversion (PDF → text, DOCX → text, etc.) and then passes the extracted text into the retain pipeline. Failures here are **non-retryable** by default — a corrupted PDF or missing OCR won't improve on rerun, so the operation goes straight to `failed`.
 
-Which parser runs (`markitdown`, `iris`, or `llama_parse`) is selected per deployment via `HINDSIGHT_API_FILE_PARSER`, and clients can override it per request — see [Configuration → File Processing](../configuration#file-processing).
+Which parser runs (`markitdown`, `iris`, or `llama_parse`) is selected per deployment via `HINDSIGHT_API_FILE_PARSER`, and clients can override it per request — see [Configuration → File Processing](../configuration.md#file-processing).
 
 ### `consolidation`
 
-Produces **observations** from new world/experience memories. See [Observations](../observations) for what they are and how they're synthesized.
+Produces **observations** from new world/experience memories. See [Observations](../observations.md) for what they are and how they're synthesized.
 
 Triggered automatically:
 
@@ -458,7 +458,7 @@ for {
 
 ## Worker tuning
 
-Each worker has a single concurrency budget (`HINDSIGHT_API_WORKER_MAX_SLOTS`, default 10) shared across all operation types. Per-type slot reservations (`HINDSIGHT_API_WORKER_<TYPE>_MAX_SLOTS`) carve out guaranteed capacity within that budget; remaining slots form a shared pool any type can use. See [Configuration → Worker Configuration](../configuration#distributed-workers) for the full table.
+Each worker has a single concurrency budget (`HINDSIGHT_API_WORKER_MAX_SLOTS`, default 10) shared across all operation types. Per-type slot reservations (`HINDSIGHT_API_WORKER_<TYPE>_MAX_SLOTS`) carve out guaranteed capacity within that budget; remaining slots form a shared pool any type can use. See [Configuration → Worker Configuration](../configuration.md#distributed-workers) for the full table.
 
 For most deployments the defaults are fine. Reserve slots for an operation type if you've seen it starved by a flood of another type (e.g., a long file_convert_retain blocking graph_maintenance on a deletion-heavy workload).
 
@@ -466,5 +466,5 @@ Slots are also rotated across banks. Each claim serves the next bank in turn —
 
 ## Next Steps
 
-- [**Documents**](./documents) — Track document sources
-- [**Memory Banks**](./memory-banks) — Configure bank settings
+- [**Documents**](./documents.md) — Track document sources
+- [**Memory Banks**](./memory-banks.md) — Configure bank settings

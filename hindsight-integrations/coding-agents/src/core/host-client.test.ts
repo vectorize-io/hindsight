@@ -106,6 +106,27 @@ describe("resolveHostMemory", () => {
     const { resolveHostMemory } = await loadFactory();
     expect(resolveHostMemory("dsh", root).client.apiToken).toBe("per-bank");
   });
+
+  it("keeps a token re-read from reaching the old server after the config moved the directory", async () => {
+    writeConfig({ apiUrl: "http://server-a", apiToken: "key-a" });
+    const { resolveHostMemory } = await loadFactory();
+    const { client } = resolveHostMemory("dsh", root);
+
+    // The directory now points at another server: its key belongs there, not on server-a.
+    writeConfig({ apiUrl: "http://server-b", apiToken: "key-b" });
+    const calls: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push(new Headers(init.headers).get("Authorization"));
+        return new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } });
+      })
+    );
+
+    await client.req("GET", "http://server-a/thing").catch(() => {});
+    expect(calls).toEqual(["Bearer key-a"]);
+    vi.unstubAllGlobals();
+  });
 });
 
 /**

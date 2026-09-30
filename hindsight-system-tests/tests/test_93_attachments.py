@@ -21,6 +21,7 @@ import base64
 
 import pytest
 from hindsight_client_api.exceptions import NotFoundException
+from hindsight_client_api.models.dry_run_extract_request import DryRunExtractRequest
 
 from hindsight_system_tests.payloads import consolidation, extracted, fact
 
@@ -185,3 +186,56 @@ async def test_the_fact_drawn_from_the_image_is_recallable(client, bank_with_pho
     response = await client.arecall(bank_id=bank_with_photo, query="Where was Alice photographed?")
 
     assert [r.text for r in response.results] == [FACT]
+
+
+async def test_dry_run_multimodal_extraction_via_client(client, llm, bank_id):
+    """Multimodal content can be dry-run extracted through the client without persisting memories."""
+    llm.on_step("extract_facts").returns(
+        extracted(
+            fact(
+                "Alice stood in front of the Brandenburg Gate",
+                who="Alice",
+                entities=["Alice"],
+                from_attachments=[1],
+            )
+        )
+    )
+
+    await client.acreate_bank(bank_id=bank_id, name="Test Bank")
+
+    request = DryRunExtractRequest.from_dict({"content": CONTENT})
+    result = await client.memory.dry_run_extract_memories(
+        bank_id=bank_id,
+        dry_run_extract_request=request,
+    )
+
+    # Deterministic assertion on candidate facts and attachment attribution
+    assert len(result.facts) == 1
+    extracted_fact = result.facts[0]
+    assert extracted_fact.text == "Alice stood in front of the Brandenburg Gate | Involving: Alice"
+    assert extracted_fact.fact_type == "world"
+    assert extracted_fact.entities == ["Alice"]
+    assert extracted_fact.chunk_index == 0
+    assert len(extracted_fact.attachments) == 1
+    attachment = extracted_fact.attachments[0]
+    assert attachment.block_index == 1
+    assert attachment.type == "image"
+    assert attachment.media_type == "image/png"
+
+    # Deterministic assertion on chunks
+    assert len(result.chunks) == 1
+    chunk = result.chunks[0]
+    assert chunk.text == f"{CAPTION}\n\n[Block #1: image (image/png)]"
+    assert chunk.fact_count == 1
+
+    # Token usage is returned
+    assert result.usage is not None
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.usage.total_tokens == result.usage.input_tokens + result.usage.output_tokens
+
+    memories = await client.memory.list_memories(bank_id, limit=100)
+    assert memories.total == 0
+
+    documents = await client.documents.list_documents(bank_id)
+    assert len(documents.items) == 0

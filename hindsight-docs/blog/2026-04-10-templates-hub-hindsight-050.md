@@ -299,7 +299,7 @@ For teams building agents seriously, that is the difference between "we have one
 
 ## Next steps
 
-- **Use Hindsight Cloud:** Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io/signup)
+- **Use Hindsight Cloud:** Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io)
 - **Browse the starter gallery:** [hindsight.vectorize.io/templates](https://hindsight.vectorize.io/templates)
 - **Read the API docs:** [Bank templates reference](/developer/api/bank-templates)
 - **See what else is in 0.5.0:** [What's new in Hindsight 0.5.0](/blog/2026/04/07/version-0-5-0)

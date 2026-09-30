@@ -9,6 +9,7 @@ fallbacks. See https://docs.litellm.ai/docs/routing.
 """
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +57,22 @@ def two_step_config() -> dict[str, Any]:
     }
 
 
+def _usage(prompt_tokens: int, completion_tokens: int) -> SimpleNamespace:
+    """A real OpenAI-shaped usage block, not a MagicMock.
+
+    ``visible_token_usage`` derives visible output from ``total_tokens`` and
+    ``completion_tokens_details.reasoning_tokens``; on a MagicMock those come
+    back as auto-created mocks and the arithmetic raises.
+    """
+    return SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        prompt_tokens_details=None,
+        completion_tokens_details=None,
+    )
+
+
 @pytest.fixture
 def mock_router_response() -> MagicMock:
     response = MagicMock()
@@ -64,8 +81,7 @@ def mock_router_response() -> MagicMock:
     choice.message.tool_calls = None
     choice.finish_reason = "stop"
     response.choices = [choice]
-    response.usage.prompt_tokens = 12
-    response.usage.completion_tokens = 3
+    response.usage = _usage(12, 3)
     response._hidden_params = {"model": "openai/gpt-4o-mini"}
     return response
 
@@ -234,8 +250,7 @@ class TestRouterCall:
         choice.message.tool_calls = None
         choice.finish_reason = "stop"
         response.choices = [choice]
-        response.usage.prompt_tokens = 5
-        response.usage.completion_tokens = 5
+        response.usage = _usage(5, 5)
         response._hidden_params = {"model": "openai/gpt-4o-mini"}
 
         mock_router = MagicMock()
@@ -334,8 +349,7 @@ class TestRouterCall:
         choice.message.tool_calls = [tool_call]
         choice.finish_reason = "tool_calls"
         response.choices = [choice]
-        response.usage.prompt_tokens = 5
-        response.usage.completion_tokens = 2
+        response.usage = _usage(5, 2)
         response._hidden_params = {"model": "openai/gpt-4o-mini"}
 
         mock_router = MagicMock()

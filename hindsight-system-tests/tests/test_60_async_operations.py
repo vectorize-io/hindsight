@@ -113,3 +113,19 @@ async def test_operations_are_listed_for_the_bank(client, bank_id, settled):
 
     listing = await client.operations.list_operations(bank_id, status="completed", limit=100)
     assert response.operation_id in [op.id for op in listing.operations]
+
+
+async def test_the_list_and_the_single_read_name_fields_the_same(client, bank_id, settled):
+    """A monitor that reads both endpoints with one model must not see nulls on
+    one of them because the same value hides under another name (#4858)."""
+    response = await client.aretain(bank_id=bank_id, content=CONTENT, retain_async=True)
+    await settled(bank_id)
+
+    listing = await client.operations.list_operations(bank_id, status="completed", limit=100)
+    listed = next(op for op in listing.operations if op.id == response.operation_id)
+    single = await client.operations.get_operation_status(bank_id, response.operation_id)
+
+    assert (listed.id, listed.operation_id) == (response.operation_id, response.operation_id)
+    assert (single.id, single.operation_id) == (response.operation_id, response.operation_id)
+    assert listed.task_type == listed.operation_type == single.task_type == single.operation_type
+    assert listed.mental_model_id is None and single.mental_model_id is None

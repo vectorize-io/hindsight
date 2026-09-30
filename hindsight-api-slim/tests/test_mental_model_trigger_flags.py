@@ -151,6 +151,40 @@ class TestRetrievalFlagsReachReflect:
         )
         assert run["reflect_kwargs"]["reflect_search_observations_include_entities_override"] is False
 
+    async def test_budget(self, memory, request_context, patch_reflect, patch_llm_call):
+        """The per-model iteration budget (#4856) reaches reflect as the enum, not a string."""
+        from hindsight_api.engine.memory_engine import Budget
+
+        run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {"budget": "high"})
+        assert run["reflect_kwargs"]["budget"] == Budget.HIGH
+
+    async def test_budget_defaults_to_mid_not_the_ad_hoc_reflect_low(
+        self, memory, request_context, patch_reflect, patch_llm_call
+    ):
+        """A refresh writes a whole document; halving reflect_max_iterations starves it (#4856)."""
+        from hindsight_api.engine.memory_engine import DEFAULT_MENTAL_MODEL_REFRESH_BUDGET, Budget
+
+        run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {})
+        assert run["reflect_kwargs"]["budget"] == DEFAULT_MENTAL_MODEL_REFRESH_BUDGET
+        assert DEFAULT_MENTAL_MODEL_REFRESH_BUDGET is Budget.MID
+
+    async def test_a_refresh_does_not_inherit_bank_reflect_default_options(
+        self, memory, request_context, patch_reflect, patch_llm_call
+    ):
+        """Refresh settings come from the trigger only.
+
+        reflect falls back to the bank's ``reflect_default_options`` exactly when an
+        argument arrives as ``None``, so a refresh that leaves nothing None can never
+        pick them up: a bank tuned for answering questions must not quietly retune
+        document synthesis.
+        """
+        from hindsight_api.engine.reflect.agent import DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+
+        run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {})
+        kwargs = run["reflect_kwargs"]
+        assert kwargs["reflect_search_observations_max_tokens_override"] == DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS
+        assert kwargs["reflect_search_observations_include_entities_override"] is True
+
     async def test_tags_match_applies_to_the_model_tags(self, memory, request_context, patch_reflect, patch_llm_call):
         run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {"tags_match": "all"})
         assert run["reflect_kwargs"]["tags_match"] == "all"

@@ -44,7 +44,7 @@ pip install hindsight-smolagents
 
 ## Step 2: Connect SmolAgents to Hindsight
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — free tier, no self-hosting required.
 
 ```python
 from hindsight_smolagents import configure

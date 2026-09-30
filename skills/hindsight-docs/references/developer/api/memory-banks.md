@@ -27,7 +27,7 @@ empty bank.
 
 > **💡 Prerequisites**
 >
-Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+Make sure you've completed the [Quick Start](./quickstart.md) to install the client and start the server.
 ## Creating a Memory Bank
 
 ### Python
@@ -54,6 +54,39 @@ hindsight bank create my-bank
 client.BanksAPI.CreateOrUpdateBank(ctx, "my-bank").
 	CreateBankRequest(hindsight.CreateBankRequest{}).Execute()
 ```
+
+## Aliases {#aliases}
+
+An **alias** is an extra id a bank answers to. Every endpoint that accepts a bank id accepts its aliases too, so an alias is a second way in to the same bank — nothing is copied, moved or duplicated.
+
+This exists because a bank's id is the key on all of its data, so changing it means rewriting every row and cutting all clients over at once (that is [`rename-bank`](../admin-cli.md#rename-bank), and it needs downtime). An alias lets you do the same migration in phases: add the new id, move clients across a few at a time while both ids work, and stop when nothing calls the old one.
+
+```
+POST   /v1/default/banks/{bank_id}/aliases             {"alias": "new-id"}
+GET    /v1/default/banks/{bank_id}/aliases
+PATCH  /v1/default/banks/{bank_id}/aliases/{alias}     {"primary": true}
+DELETE /v1/default/banks/{bank_id}/aliases/{alias}
+```
+
+### Showing a bank under an alias
+
+Once callers have moved, the control plane can present the bank under the new id instead of the one it was created with. `PATCH` with `primary: true` promotes an alias; `primary: false` returns the bank to showing its own id without removing the alias.
+
+This is **display only**. `bank_id` remains the bank's identity: authorisation, metering, exports and audit logs all continue to use it, and it is what every response reports. The control plane shows the real id alongside the alias so the two are never confused.
+
+- **Optional, with no default.** A bank's own id is not an alias, so "not shown under an alias" is the normal state.
+- **At most one.** Promoting an alias demotes whichever one was shown before, in a single transaction.
+- **It cannot outlive the alias.** Deleting the promoted alias returns the bank to showing its own id.
+
+**What to know:**
+
+- **A bank can have several aliases**, so more than one old id can be retired at a time.
+- **A name is unique across banks and aliases.** Adding one that already names a bank or another alias returns `409`, so an alias can never reach two banks.
+- **An alias never replaces the bank's own id.** The real id keeps working and is what every response reports, including responses to requests made through an alias. Removing a bank's real id is not possible — that is what `rename-bank` is for.
+- **Deleting an alias only closes that door.** The bank and its memories are untouched, and callers still using the removed id get exactly what they got before it existed.
+- **Deleting a bank removes its aliases**, freeing those names for reuse.
+- **Aliases are not carried by export, import or clone.** They describe which ids reach a bank on *this* deployment, so a copy does not inherit them — add them to the target deliberately.
+- **A change takes a few seconds to reach every API replica.** See [`HINDSIGHT_API_BANK_ALIAS_CACHE_TTL_SECONDS`](../configuration.md#bank-alias-cache).
 
 ## Bank Configuration
 
@@ -351,7 +384,7 @@ Only applies when `HINDSIGHT_API_LLM_PROVIDER` is `gemini` or `vertexai`.
 
 ### recall_budget_function {#recall-budget-configuration}
 
-Selects how the [`recall` request's `budget` parameter](./recall) (`low` / `mid` / `high`) maps to the internal `thinking_budget` integer used by every retrieval method (semantic, BM25, graph, temporal). Two functions are supported:
+Selects how the [`recall` request's `budget` parameter](./recall.md) (`low` / `mid` / `high`) maps to the internal `thinking_budget` integer used by every retrieval method (semantic, BM25, graph, temporal). Two functions are supported:
 
 | Function | Behaviour |
 |----------|-----------|
@@ -670,7 +703,7 @@ You can also update configuration directly from the Control Plane UI — navigat
 
 ## Directives
 
-Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are enforced whenever they are in scope (see [Directive Scope and Tags](#directive-scope-and-tags)).
+Directives are hard rules that the agent must follow during [reflect](./reflect.md) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are enforced whenever they are in scope (see [Directive Scope and Tags](#directive-scope-and-tags)).
 
 > **ℹ️ Info**
 >
@@ -1051,6 +1084,202 @@ The include flags apply here too, and can only narrow: they restore a subset of 
 In `restore` mode the operation is recorded against `{bank_id}` — the bank in the URL — because the target bank does not exist yet. Poll that bank's operations endpoint for status and the per-component counts.
 
 A restore carries the operations log as history, not as work: anything still in flight when the bank was exported is left behind, so a copied bank never re-runs the original's queued retains or re-fires its webhooks. In-flight work belongs to the bank that was exported — and a clone runs *inside* one such operation, so carrying them would put the clone's own unfinished record in the copy.
+
+### Import facts extracted outside Hindsight
+
+An archive doesn't have to come from an export. If you run your own extraction pipeline, build the archive yourself and import it with `mode=merge`: your chunks and facts are stored as given — no LLM call, no re-chunking — while Hindsight still re-embeds the facts, resolves their entities against the bank, builds the semantic, temporal, entity and causal links, and — like a retain — fires `retain.completed` webhooks and auto-consolidation when the bank has them enabled.
+
+The archive is a ZIP with a `manifest.json` and one JSON file per document under `documents/`:
+
+```text
+import.zip
+├── manifest.json            {"schema_version": 1, "source_bank_id": "external"}
+└── documents/
+    └── session-2026-09-22.json
+```
+
+A document file:
+
+```json
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "tags": ["source:pi"],
+  "chunks": [{ "chunk_index": 0, "chunk_text": "Caller-defined source region..." }],
+  "facts": [
+    {
+      "text": "The user prefers lightweight local speech recognition models.",
+      "fact_type": "experience",
+      "chunk_index": 0,
+      "context": "Discussion of local speech recognition",
+      "mentioned_at": "2026-09-22T18:34:00Z",
+      "occurred_start": "2026-09-22T18:34:00Z",
+      "occurred_end": "2026-09-22T18:34:00Z",
+      "entities": ["Parakeet"],
+      "metadata": { "source_turn": "143" },
+      "tags": ["source:pi"],
+      "observation_scopes": "shared",
+      "causal_relations": []
+    }
+  ]
+}
+```
+
+| Fact field | Description |
+|------------|-------------|
+| `text` | Required. The memory, as it will be recalled. |
+| `fact_type` | Required. `world` or `experience`. |
+| `chunk_index` | Optional. The chunk in `chunks` this fact came from. |
+| `context`, `metadata`, `tags`, `observation_scopes` | Optional. Same meaning as on a retain item, set per fact. |
+| `mentioned_at`, `occurred_start`, `occurred_end` | Optional ISO 8601 dates. With none of them set, the fact is dated at import time. |
+| `entities` | Optional entity names, resolved against the bank's existing entities. |
+| `causal_relations` | Optional. `[{"relation_type": "caused_by", "target_fact_index": N}]`, where `N` is the position of another fact in the same document's `facts` list. |
+
+Metadata and dates live on each fact; a document carries no metadata or timestamp of its own. Re-sending a document id follows `document_conflict` (`replace` to overwrite it).
+
+### Python
+
+```python
+import io
+import json
+import zipfile
+
+doc = {
+    "id": "session-2026-09-22",
+    "original_text": "Full original session text...",
+    "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+    "facts": [
+        {
+            "text": "The user prefers lightweight local speech recognition models.",
+            "fact_type": "experience",
+            "chunk_index": 0,
+            "mentioned_at": "2026-09-22T18:34:00Z",
+            "entities": ["Parakeet"],
+        }
+    ],
+}
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("manifest.json", json.dumps({"schema_version": 1, "source_bank_id": "external"}))
+    z.writestr(f"documents/{doc['id']}.json", json.dumps(doc))
+
+submission = await client.bank_transfer.import_bank_transfer(
+    "transfer-py-other",
+    ("import.zip", buf.getvalue()),
+    mode="merge",
+    document_conflict="replace",
+)
+```
+
+### Node.js
+
+```javascript
+import { crc32 } from 'node:zlib';
+
+// Minimal uncompressed ZIP writer (Node has none built in); a library like jszip works too.
+function zip(files) {
+    const locals = [], centrals = [];
+    let offset = 0;
+    for (const [name, text] of Object.entries(files)) {
+        const n = Buffer.from(name), d = Buffer.from(text), crc = crc32(d);
+        const local = Buffer.alloc(30);
+        local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x21, 12);
+        local.writeUInt32LE(crc, 14); local.writeUInt32LE(d.length, 18); local.writeUInt32LE(d.length, 22);
+        local.writeUInt16LE(n.length, 26);
+        const central = Buffer.alloc(46);
+        central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(0x21, 14); central.writeUInt32LE(crc, 16); central.writeUInt32LE(d.length, 20);
+        central.writeUInt32LE(d.length, 24); central.writeUInt16LE(n.length, 28); central.writeUInt32LE(offset, 42);
+        locals.push(local, n, d);
+        centrals.push(central, n);
+        offset += 30 + n.length + d.length;
+    }
+    const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+    const count = Object.keys(files).length;
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10);
+    end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, dir, end]);
+}
+
+const doc = {
+    id: 'session-2026-09-22',
+    original_text: 'Full original session text...',
+    chunks: [{ chunk_index: 0, chunk_text: 'Caller-defined source region...' }],
+    facts: [{
+        text: 'The user prefers lightweight local speech recognition models.',
+        fact_type: 'experience',
+        chunk_index: 0,
+        mentioned_at: '2026-09-22T18:34:00Z',
+        entities: ['Parakeet'],
+    }],
+};
+const archiveZip = zip({
+    'manifest.json': JSON.stringify({ schema_version: 1, source_bank_id: 'external' }),
+    [`documents/${doc.id}.json`]: JSON.stringify(doc),
+});
+
+const { data: external } = await sdk.importBankTransfer({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other' },
+    query: { mode: 'merge', document_conflict: 'replace' },
+    body: { file: new Blob([archiveZip]) },
+});
+```
+
+### CLI
+
+```bash
+mkdir -p external/documents
+echo '{"schema_version": 1, "source_bank_id": "external"}' > external/manifest.json
+cat > external/documents/session-2026-09-22.json <<'JSON'
+{
+  "id": "session-2026-09-22",
+  "original_text": "Full original session text...",
+  "chunks": [{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}],
+  "facts": [{
+    "text": "The user prefers lightweight local speech recognition models.",
+    "fact_type": "experience",
+    "chunk_index": 0,
+    "mentioned_at": "2026-09-22T18:34:00Z",
+    "entities": ["Parakeet"]
+  }]
+}
+JSON
+(cd external && zip -qr ../import.zip manifest.json documents)
+
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -F "file=@import.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/transfer-other-bank/transfer/import?mode=merge&document_conflict=replace"
+```
+
+### Go
+
+```go
+doc := map[string]any{
+	"id":            "session-2026-09-22",
+	"original_text": "Full original session text...",
+	"chunks":        []map[string]any{{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}},
+	"facts": []map[string]any{{
+		"text":         "The user prefers lightweight local speech recognition models.",
+		"fact_type":    "experience",
+		"chunk_index":  0,
+		"mentioned_at": "2026-09-22T18:34:00Z",
+		"entities":     []string{"Parakeet"},
+	}},
+}
+zipPath := filepath.Join(os.TempDir(), "import.zip")
+out, _ := os.Create(zipPath)
+zw := zip.NewWriter(out)
+w, _ := zw.Create("manifest.json")
+json.NewEncoder(w).Encode(map[string]any{"schema_version": 1, "source_bank_id": "external"})
+w, _ = zw.Create("documents/session-2026-09-22.json")
+json.NewEncoder(w).Encode(doc)
+zw.Close()
+out.Close()
+
+file, _ = os.Open(zipPath)
+external, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go-other").
+	File(file).Mode("merge").DocumentConflict("replace").Execute()
+```
 
 ### Clone a bank
 

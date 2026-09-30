@@ -199,6 +199,35 @@ async def test_other_models_are_unaffected(memory: MemoryEngine, request_context
 
 
 @pytest.mark.asyncio
+async def test_the_queued_operation_carries_its_models_serialization_key(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """The submit writes the key the claim query serialises on.
+
+    Dedupe bounds the queue; the key bounds what runs. They are independent, and the
+    #3487 carve-out needs both — an explicit refresh landing on a *running* one gets a
+    row of its own, and only the key stops that row from being claimed beside it and
+    overwriting the model. Asserted here because the claim side (see
+    ``test_retain_document_serialization.py``) cannot tell a missing key from a
+    deliberately independent operation.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_auto_refresh_mm(conn, bank)
+    _stall_worker(memory, monkeypatch)
+
+    await memory.submit_async_refresh_mental_model(bank_id=bank, mental_model_id=mm_id, request_context=request_context)
+
+    async with memory._pool.acquire() as conn:
+        keys = await conn.fetch(
+            "SELECT serialization_key FROM async_operations "
+            "WHERE bank_id = $1 AND operation_type = 'refresh_mental_model'",
+            bank,
+        )
+    assert [row["serialization_key"] for row in keys] == [f"mental_model:{mm_id}"]
+
+
+@pytest.mark.asyncio
 async def test_dedupe_statements_survive_the_oracle_rewrite(memory: MemoryEngine, request_context, monkeypatch):
     """Every statement the deduping submit issues must be valid on Oracle too.
 

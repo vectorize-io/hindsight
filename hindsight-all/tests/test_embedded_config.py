@@ -74,6 +74,7 @@ def _daemon_env(client):
         spawned[0] = True
         process = MagicMock()
         process.pid = 12345
+        process.poll.return_value = None  # still running
         return process
 
     with (
@@ -165,9 +166,7 @@ def test_explicit_empty_key_overrides_the_parent_environment(temp_home, monkeypa
     monkeypatch.setenv(LLM_API_KEY, "sk-parent")
     _write_profile(temp_home, "no-auth", 9873)
 
-    env = _daemon_env(
-        HindsightEmbedded(profile="no-auth", llm_provider="lmstudio", llm_api_key="")
-    )
+    env = _daemon_env(HindsightEmbedded(profile="no-auth", llm_provider="lmstudio", llm_api_key=""))
 
     assert env[LLM_API_KEY] == ""
 

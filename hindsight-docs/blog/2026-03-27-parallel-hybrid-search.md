@@ -443,7 +443,7 @@ That's what pushed us toward connection sharing: semantic + BM25 + temporal on a
 
 Every `recall_memory` call in Hindsight runs this stack: parallel hybrid retrieval, RRF fusion, cross-encoder reranking, and multiplicative boost scoring. The architecture holds even as memory banks grow into the tens of thousands of facts.
 
-If you want to use this retrieval architecture without building it yourself, [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) runs it for you. The [recall docs](https://hindsight.vectorize.io/developer/retrieval) cover the full technical reference, including how budget controls which strategies run and how reranking is applied.
+If you want to use this retrieval architecture without building it yourself, [Hindsight Cloud](https://ui.hindsight.vectorize.io) runs it for you. The [recall docs](https://hindsight.vectorize.io/developer/retrieval) cover the full technical reference, including how budget controls which strategies run and how reranking is applied.
 
 ## Building Parallel Hybrid Search That Holds Up in Production
 

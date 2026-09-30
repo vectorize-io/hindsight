@@ -11,10 +11,11 @@
   "sideEffects": false,
   "scripts": {
     "dev": "vite --open",
-    "typecheck": "tsc --noEmit",
-    "test": "node --test src/*.test.ts",
+    "export": "node scripts/export.mjs",
     "format:check": "prettier --check .",
-    "export": "node scripts/export.mjs"
+    "svg": "node scripts/figure-svg.mjs",
+    "test": "node --test src/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "react": ">=18"

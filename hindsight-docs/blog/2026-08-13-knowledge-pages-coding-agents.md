@@ -88,7 +88,7 @@ One command wires memory, the survey, and the page tools into Claude Code:
 npx @vectorize-io/hindsight-coding-agents install claude-code
 ```
 
-The same package supports the rest of the fleet — `install codex`, `cursor-cli`, `copilot-cli`, `opencode`, and more — or `install all` for every detected agent. Memory can live in [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), a server you run, or a local daemon; you choose once.
+The same package supports the rest of the fleet — `install codex`, `cursor-cli`, `copilot-cli`, `opencode`, and more — or `install all` for every detected agent. Memory can live in [Hindsight Cloud](https://ui.hindsight.vectorize.io), a server you run, or a local daemon; you choose once.
 
 ## Why it is worth it
 

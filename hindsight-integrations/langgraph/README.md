@@ -9,7 +9,7 @@ Provides three integration patterns:
 
 ## Prerequisites
 
-- A [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account or a [self-hosted](https://github.com/vectorize-io/hindsight#quick-start) Hindsight instance
+- A [Hindsight Cloud](https://ui.hindsight.vectorize.io) account or a [self-hosted](https://github.com/vectorize-io/hindsight#quick-start) Hindsight instance
 - Python 3.10+
 
 ## Installation

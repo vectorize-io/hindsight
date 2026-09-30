@@ -19,6 +19,7 @@ import asyncio
 import copy
 import json
 import logging
+import math
 import time
 import uuid
 from collections import defaultdict
@@ -47,7 +48,7 @@ from ..llm_trace import (
     trace_context_of,
 )
 from ..llm_wrapper import sanitize_llm_output
-from ..memories import FactRecord, get_memories
+from ..memories import FactRecord, StoredMemory, get_memories
 from ..memory_engine import Budget, fq_table
 from ..retain import embedding_utils
 from .prompts import (
@@ -762,6 +763,35 @@ async def _filter_live_source_memories(
     return [mid for mid in source_memory_ids if str(mid) in live]
 
 
+async def _sources_changed_since_read(
+    conn: "Connection",
+    bank_id: str,
+    memories: list[dict[str, Any]],
+) -> list[str]:
+    """Ids of the batch's source facts edited since the batch read them (#4831).
+
+    The LLM decided on the facts as they were read; a fact edited meanwhile (a retag,
+    a curation) was already requeued by that edit, and its observations dropped. Writing
+    this response would rebuild them from the stale copy — under the old tags — and the
+    ``consolidated_at`` stamp would then undo the requeue. ``updated_at`` is the signal:
+    every edit stamps it and consolidation's own bookkeeping never does (META_UPDATED_AT).
+
+    Takes ``FOR SHARE`` on the rows, so an edit cannot land between this check and the
+    writes in the same transaction. A deleted fact is not "changed" — the per-action
+    liveness checks handle that. A store that keeps memories outside SQL reports no
+    ``updated_at`` on its reads, so it is not checked.
+    """
+    read_at = {str(m["id"]): m.get("updated_at") for m in memories if m.get("updated_at") is not None}
+    if not read_at or get_memories().store_owned_for(bank_id):
+        return []
+    rows = await conn.fetch(
+        f"SELECT id, updated_at FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 FOR SHARE",
+        [uuid.UUID(mid) for mid in read_at],
+        bank_id,
+    )
+    return [str(r["id"]) for r in rows if r["updated_at"] != read_at[str(r["id"])]]
+
+
 async def _any_live_source_memory(
     conn: "Connection",
     bank_id: str,
@@ -789,6 +819,14 @@ async def _any_live_source_memory(
     return bool(present)
 
 
+def _unique_source_ids(v: str | list[str]) -> list[str]:
+    """Drop repeated ids, keeping order. A looping model can repeat one id thousands of
+    times, and every copy would be stored and re-sent to the next prompt (#4799)."""
+    if isinstance(v, str):
+        return [v]
+    return list(dict.fromkeys(v))
+
+
 class _CreateAction(BaseModel):
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
@@ -804,9 +842,7 @@ class _CreateAction(BaseModel):
     @field_validator("source_fact_ids", mode="before")
     @classmethod
     def ensure_list(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [v]
-        return v
+        return _unique_source_ids(v)
 
 
 class _UpdateAction(BaseModel):
@@ -823,9 +859,7 @@ class _UpdateAction(BaseModel):
     @field_validator("source_fact_ids", mode="before")
     @classmethod
     def ensure_list(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [v]
-        return v
+        return _unique_source_ids(v)
 
 
 class _DeleteAction(BaseModel):
@@ -1424,12 +1458,41 @@ async def _reconcile_merge_via_store(
     )
 
 
+#: How many rounds' worth of candidates the fair fetch looks at before choosing one round.
+#: Whatever the window misses, the next round sees, so this trades a bigger read for fairness
+#: rather than for correctness.
+#: ponytail: fixed factor, make it configurable if a bank's groups are wider than 5 rounds.
+_FAIR_FETCH_OVERFETCH = 5
+
+
+def _fair_group_slice(memories: list[StoredMemory], limit: int, quota: int) -> list[StoredMemory]:
+    """Oldest-first, but at most ``quota`` facts per consolidation group.
+
+    ``memories`` must already be sorted oldest-first: groups are then visited in the order
+    of their oldest fact, and the round fills from the front. Keying is
+    ``_consolidation_batch_key``, the same key the dispatcher groups by, so a round that
+    holds N keys gives the dispatcher N groups to run in parallel.
+    """
+    taken: list[StoredMemory] = []
+    seen: defaultdict[tuple[str, ...], int] = defaultdict(int)
+    for m in memories:
+        key = _consolidation_batch_key({"tags": list(m.tags or []), "observation_scopes": m.observation_scopes})
+        if seen[key] >= quota:
+            continue
+        seen[key] += 1
+        taken.append(m)
+        if len(taken) >= limit:
+            break
+    return taken
+
+
 async def _fetch_unconsolidated_rows(
     conn,
     bank_id: str,
     fact_types: list[str],
     limit: int,
     observation_scopes: list[list[str]] | None,
+    llm_parallelism: int,
 ) -> list[dict[str, Any]]:
     """Unconsolidated candidate facts, read through the memories store.
 
@@ -1438,16 +1501,31 @@ async def _fetch_unconsolidated_rows(
     consolidation silently produces no observations. Returns the same row-dict shape the
     consolidation loop consumes. Mirrors the job's scope filter: with scopes, OR each
     "tags ⊇ scope" and merge oldest-first; without, one unscoped read.
+
+    With ``llm_parallelism > 1`` the round is picked *fairly* across consolidation groups
+    instead of strictly oldest-first. A strict oldest-first round holds only the group that
+    owns the oldest facts, and the dispatcher parallelises across groups — one group in the
+    round means one LLM call at a time, whatever the parallelism, and a big group's backlog
+    starves every other group until it drains (#4823). So read a window of
+    ``_FAIR_FETCH_OVERFETCH`` rounds and take at most ``ceil(limit / llm_parallelism)`` facts
+    per group, leaving enough distinct groups in the round to fill the parallel slots. Facts
+    are still consumed oldest-first *within* a group, which is the ordering consolidation
+    actually depends on.
     """
     store = get_memories()
     scopes: list[list[str] | None] = list(observation_scopes) if observation_scopes else [None]
+    fair = llm_parallelism > 1
+    read_limit = limit * _FAIR_FETCH_OVERFETCH if fair else limit
     by_id: dict[str, Any] = {}
     for scope in scopes:
         for m in await store.find_unconsolidated(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=fact_types, limit=limit, scope_tags=scope
+            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=fact_types, limit=read_limit, scope_tags=scope
         ):
             by_id.setdefault(m.unit_id, m)
-    ordered = sorted(by_id.values(), key=lambda m: (m.created_at is None, m.created_at))[:limit]
+    oldest_first = sorted(by_id.values(), key=lambda m: (m.created_at is None, m.created_at))
+    ordered = (
+        _fair_group_slice(oldest_first, limit, math.ceil(limit / llm_parallelism)) if fair else oldest_first[:limit]
+    )
     return [
         {
             "id": uuid.UUID(m.unit_id),
@@ -1459,6 +1537,8 @@ async def _fetch_unconsolidated_rows(
             "tags": list(m.tags or []),
             "mentioned_at": m.mentioned_at,
             "observation_scopes": m.observation_scopes,
+            # Read-time version: the write re-checks it (see _sources_changed_since_read).
+            "updated_at": m.updated_at,
         }
         for m in ordered
     ]
@@ -1724,7 +1804,12 @@ async def _run_consolidation_job(
         async with acquire_with_retry(pool) as conn:
             t0 = time.time()
             memories = await _fetch_unconsolidated_rows(
-                conn, bank_id, ["experience", "world"], fetch_limit, observation_scopes
+                conn,
+                bank_id,
+                ["experience", "world"],
+                fetch_limit,
+                observation_scopes,
+                max(1, config.consolidation_llm_parallelism),
             )
             perf.record_timing("fetch_memories", time.time() - t0)
 
@@ -2245,21 +2330,20 @@ async def _run_consolidation_job(
     return {"status": "completed", "bank_id": bank_id, **stats}
 
 
-# SQL predicate: "this mental model's refresh scope can contain untagged memories".
+# SQL predicate: "an untagged write can make this mental model stale".
 #
 # A model's scope is NOT its ``tags`` column — it is whatever
-# ``_resolve_refresh_tag_filtering`` resolves, and both the refresh and the staleness
-# check use that. Three cases reach untagged memories:
+# ``_mental_model_stale_scope`` resolves from it and the trigger. Two cases reach
+# untagged memories:
 #   - no tags at all             -> no tag constraint, every bank memory is in scope
-#   - tags_match "any" / "all"   -> non-strict, the clause ORs in untagged rows
-#   - trigger.tag_groups         -> overrides the tags column entirely, so the column
-#                                   says nothing about what the model can see
-# A tagged model left on the default (``all_strict``) is correctly excluded: strict
-# matching drops untagged rows, so an untagged-only consolidation cannot make it stale.
-# Gating on the tags column alone starved the first two cases (#3053).
-_MM_SCOPE_REACHES_UNTAGGED = (
-    "((tags IS NULL OR tags = '{}') OR (trigger->>'tags_match') IN ('any', 'all') OR trigger ? 'tag_groups')"
-)
+#   - trigger.tag_groups         -> overrides the tags column entirely, and a group can
+#                                   select untagged rows on purpose (``not``, an empty
+#                                   ``exact`` leaf)
+# Gating on the tags column alone starved both, plus tagged "any"/"all" models (#3053).
+# Those tagged models are excluded again since #4857: their refresh still *reads*
+# untagged memories, but staleness counts only writes carrying their tags, so an
+# untagged-only consolidation can never make them stale and asking would be wasted.
+_MM_SCOPE_REACHES_UNTAGGED = "((tags IS NULL OR tags = '{}') OR trigger ? 'tag_groups')"
 
 
 async def _trigger_mental_model_refreshes(
@@ -2681,6 +2765,16 @@ async def _process_memory_batch(
     if prepared_deletes or prepared_updates or prepared_creates or stamp_ids:
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
+                changed_ids = await _sources_changed_since_read(conn, bank_id, memories)
+                if changed_ids:
+                    # Drop the whole response, stamps included: the facts stay pending and the
+                    # job's next fetch re-reads them as they are now (#4831).
+                    logger.info(
+                        f"[CONSOLIDATION] bank={bank_id} discarding batch of {len(memories)}: "
+                        f"{len(changed_ids)} source fact(s) edited since read, e.g. {changed_ids[0]}"
+                    )
+                    prepared_deletes, prepared_updates, prepared_creates, stamp_ids = [], [], [], []
+
                 for observation_id in prepared_deletes:
                     await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id)
                     deleted_count += 1
@@ -2905,7 +2999,9 @@ async def _apply_update_action(
         new_source_memory_ids=[str(mid) for mid in live_ids],
     )
 
-    source_ids = list(model.source_fact_ids or []) + live_ids
+    # Stored ids are strings, fresh ones are UUIDs: normalise before dropping repeats.
+    merged = dict.fromkeys(str(s) for s in [*(model.source_fact_ids or []), *live_ids])
+    source_ids = [uuid.UUID(s) for s in merged]
 
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
     existing_tags = set(model.tags or [])
@@ -3202,10 +3298,12 @@ def _build_observations_for_llm(
     """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
     obs_list = []
     for obs in observations:
+        # Rows written before #4799 may repeat an id thousands of times; show each source once.
+        unique_ids = list(dict.fromkeys(obs.source_fact_ids or []))
         obs_data: dict[str, Any] = {
             "id": obs.id,
             "text": obs.text,
-            "proof_count": len(obs.source_fact_ids or []) or 1,
+            "proof_count": len(unique_ids) or 1,
         }
         if obs.occurred_start:
             obs_data["occurred_start"] = obs.occurred_start
@@ -3214,7 +3312,7 @@ def _build_observations_for_llm(
         if obs.mentioned_at:
             obs_data["mentioned_at"] = obs.mentioned_at
         source_memories = []
-        for sid in obs.source_fact_ids or []:
+        for sid in unique_ids:
             sf = source_facts.get(sid)
             if sf is None:
                 continue

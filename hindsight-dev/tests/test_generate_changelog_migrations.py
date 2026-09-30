@@ -227,3 +227,30 @@ def test_every_table_a_migration_creates_is_classified() -> None:
     assert created <= generate_changelog.TABLE_VOLUME.keys(), (
         f"unclassified tables in TABLE_VOLUME: {sorted(created - generate_changelog.TABLE_VOLUME.keys())}"
     )
+
+
+def test_integration_release_links_the_commits_page_for_pinning() -> None:
+    """Git-installed integrations are pinned by commit: the Hermes catalog pins a sha, and
+    `hermes plugins install --ref` rejects tag names. The release's own sha cannot appear here
+    (this file predates the commit containing it), so the entry links the commits page at the tag.
+    """
+    markdown = build_changelog_markdown(
+        "1.1.0",
+        "integrations/hermes/v1.1.0",
+        entries=[],
+        integration="hermes",
+    )
+
+    assert (
+        "[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/hermes/v1.1.0)"
+        in markdown
+    )
+
+
+def test_core_release_has_no_commits_link() -> None:
+    """Core ships as published packages — a pinnable commit is meaningless there, and the
+    heading already links the GitHub release."""
+    markdown = build_changelog_markdown("1.1.0", "v1.1.0", entries=[])
+
+    assert "/commits/" not in markdown
+    assert "https://github.com/vectorize-io/hindsight/releases/tag/v1.1.0" in markdown

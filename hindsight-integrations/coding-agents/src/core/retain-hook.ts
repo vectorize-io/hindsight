@@ -85,10 +85,11 @@ export interface RetainHookSpec {
 
 /** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
  *  capability probe is part of the contract: appending to a document is only safe against a server
- *  that can deduplicate a resubmitted write (see core/retain-cursor.ts). */
+ *  that can deduplicate a resubmitted write (see core/retain-cursor.ts), into a bank that keeps
+ *  document text to append to (#4613). */
 interface RetainClient {
   retain: HindsightClient["retain"];
-  supportsIdempotentRetain: HindsightClient["supportsIdempotentRetain"];
+  supportsAppendRetain: HindsightClient["supportsAppendRetain"];
 }
 
 /**
@@ -159,6 +160,7 @@ export async function buildRetain(args: {
       cursors: args.cursors ?? fileCursorStore(harness),
       stamp: args.stamp,
       retryUntil: args.retryUntil,
+      transcriptPath,
     });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {

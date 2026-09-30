@@ -24,7 +24,7 @@ Persistent memory for [Cline](https://github.com/cline/cline) using [Hindsight](
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting required.
 Install the CLI, then run the installer from your project directory with your Hindsight URL and key:
 
 ```bash

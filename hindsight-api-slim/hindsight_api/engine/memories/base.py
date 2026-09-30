@@ -1284,6 +1284,50 @@ class MemoriesExtension(Extension, ABC):
         """
         return BankWritePage(banks=[], next_page_token="")
 
+    async def run_store_migration(self, *, migration_id: str) -> "tuple[int, int]":
+        """Apply a named migration of the STORE's own derived state to this tenant.
+
+        Returns ``(started, total)`` — how many units of the store's work this call set going, out
+        of how many it found. Both are the store's own units and mean nothing to the caller beyond
+        progress; :meth:`store_migration_status` is what says when it is finished.
+
+        A store that owns the memory rows also owns state derived from them — orderings, counts,
+        auxiliary indexes — and a release that adds such state leaves every PRE-EXISTING bank
+        without it. Writing a bank is usually what builds it, so a bank nobody writes to would
+        never acquire it at all. This is the hook that reaches those banks, called once per tenant
+        from a migration, next to the schema changes the same release makes to Postgres.
+
+        **Not required to do the work before returning, and usually should not.** A store free to
+        make this a trigger keeps the call O(1) in the tenant's size, which is what allows it in a
+        pre-upgrade hook at all: a migration whose duration grows with the largest tenant turns
+        "slow" into "failed release". The caller polls instead.
+
+        **Migrations are NAMED, not numbered.** A store handed an id it does not have must raise,
+        not return quietly: that turns a deploy which rolled this side ahead of the store into a
+        loud failure rather than one that reports success and migrates nothing. Numbering would
+        make the same mistake a silent no-op, which is why it is not the interface.
+
+        Expected to be idempotent, and to detect per unit what is already done — a caller may
+        retry freely, and recovers a partial run by calling again rather than by recording how far
+        it got. **This side keeps the record of what has run**, in the migration that calls it; a
+        second watermark in the store would only disagree with it.
+
+        ``(0, 0)`` by default: a store with no derived state of its own has nothing to migrate.
+        """
+        return (0, 0)
+
+    async def store_migration_status(self, *, migration_id: str) -> "tuple[int, int]":
+        """How far a store migration has got in this tenant — ``(remaining, stuck)``.
+
+        Done when ``remaining`` is 0. ``stuck`` counts units the store has tried repeatedly without
+        finishing; it is not a failure the store gives up on, but without it one poison unit would
+        make a caller poll forever.
+
+        ``(0, 0)`` by default, which reads as "finished" — correct for a store that never started
+        anything.
+        """
+        return (0, 0)
+
     async def last_write_at_many(self, *, bank_ids: "list[str]") -> "dict[str, datetime]":
         """When each bank was last written — ``{bank_id: datetime}``, for many banks at once.
 

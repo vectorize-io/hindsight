@@ -365,6 +365,77 @@ async def test_a_store_owned_bank_resolves_the_carried_ids_without_memory_units(
     assert store.record_reads == []
 
 
+class _ProbedConn(_AttachmentsOnlyConn):
+    """Also answers the "does this bank hold any attachment" probe an observation lookup makes."""
+
+    def __init__(self, bank_has_attachments: bool = True):
+        super().__init__()
+        self.bank_has_attachments = bank_has_attachments
+
+    async def fetchval(self, sql, bank_id):
+        self.statements.append(sql)
+        assert "memory_units" not in sql
+        return 1 if self.bank_has_attachments else None
+
+
+def _observation_store(memories: "list[StoredMemory]"):
+    """A store-owned stub answering get-by-id from ``memories``; ``reads`` logs each call's ids."""
+    by_id = {m.unit_id: m for m in memories}
+    reads: list[list[str]] = []
+
+    async def get_memories(*, conn, fq_table, bank_id, unit_ids):
+        reads.append(list(unit_ids))
+        return [by_id[u] for u in unit_ids if u in by_id]
+
+    return SimpleNamespace(store_owned_for=lambda bank_id: True, get_memories=get_memories, reads=reads)
+
+
+OBSERVATION = "00000000-0000-0000-0000-0000000000ob"
+
+
+@pytest.mark.asyncio
+async def test_a_store_owned_observation_shows_its_sources_attachments_from_the_store(monkeypatch):
+    """Nothing is carried for an observation, so its sources are read through the store, never SQL."""
+    store = _observation_store(
+        [
+            StoredMemory(
+                unit_id=OBSERVATION, text="o", fact_type="observation", source_memory_ids=[UNIT_A, UNIT_B, UNIT_PLAIN]
+            ),
+            StoredMemory(unit_id=UNIT_A, text="a", fact_type="world", document_id="doc-1", attachment_ids=[SHOT]),
+            # Same screenshot again, from another fact: shown once.
+            StoredMemory(
+                unit_id=UNIT_B, text="b", fact_type="world", document_id="doc-2", attachment_ids=[DIAGRAM, SHOT]
+            ),
+            StoredMemory(unit_id=UNIT_PLAIN, text="p", fact_type="world", document_id="doc-1"),
+        ]
+    )
+    monkeypatch.setattr(memories_module, "get_memories", lambda: store)
+    conn = _ProbedConn()
+
+    result = await MemoryEngine.attachments_for_memories(
+        _EngineWithConn(conn), "bank-1", [OBSERVATION], request_context=None, observation_ids=[OBSERVATION]
+    )
+
+    assert [r.short_id for r in result[OBSERVATION]] == [SHOT, DIAGRAM]
+    assert store.reads == [[OBSERVATION], [UNIT_A, UNIT_B, UNIT_PLAIN]]
+
+
+@pytest.mark.asyncio
+async def test_an_observation_in_a_bank_without_attachments_reads_nothing_more(monkeypatch):
+    """The common case pays one primary-key probe, and no store read, for its observations."""
+    store = _observation_store([])
+    monkeypatch.setattr(memories_module, "get_memories", lambda: store)
+    conn = _ProbedConn(bank_has_attachments=False)
+
+    result = await MemoryEngine.attachments_for_memories(
+        _EngineWithConn(conn), "bank-1", [OBSERVATION], request_context=None, observation_ids=[OBSERVATION]
+    )
+
+    assert result == {}
+    assert store.reads == []
+    assert len(conn.statements) == 1
+
+
 @pytest.mark.asyncio
 async def test_a_bank_whose_rows_live_in_sql_still_reads_them(monkeypatch):
     """The guard must not swallow the Postgres-backed case: there the read is the feature."""

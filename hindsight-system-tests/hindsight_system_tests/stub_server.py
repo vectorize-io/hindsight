@@ -66,6 +66,13 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 code="no_stub_rule",
             )
 
+        # Parked after resolve, so the call is already recorded and its rule already
+        # matched: from the story's side the step has happened and its operation is
+        # running, only the answer is outstanding.
+        held = stubs.llm.hold_for(chat_request)
+        if held is not None:
+            await held.park()
+
         return JSONResponse(
             {
                 "id": "chatcmpl-stub",
@@ -75,7 +82,12 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 "choices": [
                     {"index": 0, "message": reply.message, "finish_reason": reply.finish_reason, "logprobs": None}
                 ],
-                "usage": _usage(chat_request.all_text, str(reply.message.get("content") or "")),
+                "usage": _usage(
+                    chat_request.all_text,
+                    str(reply.message.get("content") or ""),
+                    visible_tokens=reply.visible_tokens,
+                    reasoning_tokens=reply.reasoning_tokens,
+                ),
             }
         )
 
@@ -173,14 +185,19 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
     return app
 
 
-def _usage(prompt: str, completion: str) -> dict[str, int]:
+def _usage(
+    prompt: str, completion: str, *, visible_tokens: int | None = None, reasoning_tokens: int = 0
+) -> dict[str, int | dict[str, int]]:
     prompt_tokens = max(1, len(prompt.split()))
-    completion_tokens = max(1, len(completion.split()))
-    return {
+    completion_tokens = visible_tokens if visible_tokens is not None else max(1, len(completion.split()))
+    usage: dict[str, int | dict[str, int]] = {
         "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
+        "completion_tokens": completion_tokens + reasoning_tokens,
+        "total_tokens": prompt_tokens + completion_tokens + reasoning_tokens,
     }
+    if reasoning_tokens:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    return usage
 
 
 def _provider_error(message: str, *, code: str) -> JSONResponse:

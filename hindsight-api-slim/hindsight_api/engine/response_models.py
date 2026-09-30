@@ -7,7 +7,7 @@ API stability even if internal models change.
 """
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -178,6 +178,21 @@ class ExtractedFact(BaseModel):
         default=None,
         description="Index into `chunks` of the chunk this fact came from; null if it could not be attributed.",
     )
+    attachments: list["ExtractedFactAttachment"] = Field(
+        default_factory=list,
+        description="Attachments from user input that this fact is attributed to / associated with.",
+    )
+
+
+class ExtractedFactAttachment(BaseModel):
+    """An attachment from multimodal input associated with an extracted fact."""
+
+    block_index: int = Field(description="Index of the content block in user's input (0-based)")
+    type: Literal["image", "file"] = Field(
+        description="Content block type ('image' or 'file')",
+        title="AttachmentType",
+    )
+    media_type: str = Field(description="MIME media type of the attachment, e.g. 'image/png'")
 
 
 class ExtractionChunk(BaseModel):

@@ -20,7 +20,7 @@ This guide walks through running the setup command, understanding how the plugin
 
 > **Quick answer**
 >
-> 1. Sign up for [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and get an API key.
+> 1. Sign up for [Hindsight Cloud](https://ui.hindsight.vectorize.io) and get an API key.
 > 2. Run `npx @vectorize-io/hindsight-nemoclaw setup --sandbox <name> --api-token <key> --bank-prefix <prefix>`.
 > 3. The command installs the `hindsight-openclaw` plugin, applies the egress policy, and restarts the gateway.
 > 4. Memories go to a bank named `<prefix>-openclaw`.
@@ -31,7 +31,7 @@ This guide walks through running the setup command, understanding how the plugin
 Before you start, make sure you have:
 
 - A NemoClaw sandbox with `openshell` and `openclaw` installed and working
-- A Hindsight API token, from [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
+- A Hindsight API token, from [Hindsight Cloud](https://ui.hindsight.vectorize.io) or a self-hosted server
 - Ability to update the sandbox network policy (or use `--skip-policy` if you manage policies manually)
 
 ## Step 1: Run the setup command

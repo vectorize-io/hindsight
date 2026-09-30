@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="766" height="437" viewBox="0 0 766 437" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":80,"children":[{"id":"facts","label":"New facts","shape":"store"},{"id":"cons","label":"Consolidation","sub":"first matching strategy wins"},{"id":"obs","label":"Observations","direction":"column","gap":20,"children":[{"id":"user","label":"user:alice scope","shape":"store","sub":"bank defaults"},{"id":"co","label":"company:* scope","shape":"store","sub":"general trends only"}]}]},"edges":[{"id":"in","from":"facts","to":"cons","label":"consolidate"},{"id":"u","from":"cons","to":"user"},{"id":"c","from":"cons","to":"co"}],"steps":[{"label":"One bank, different rules per scope","flow":[{"edges":{"edge":"in","data":"1 fact"},"show":{"facts":[{"tag":"world","tone":"blue","text":"Alice closed a $2M deal with Acme"}]},"say":"One fact lands in a bank shared by users and the company."},{"edges":"u","show":{"user":[{"text":"Alice closed $2M with Acme","meta":"full detail","mark":"new"}]},"say":"Alice's scope has no strategy, so it keeps every detail."},{"edges":"c","ms":2800,"show":{"co":[{"text":"Mid-market deals are growing","meta":"no names","mark":"new"}]},"say":"The company:* strategy says: record trends, name no company."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,20.4% { stroke: var(--accent) } 20.4%,40.8% { stroke: var(--accent) } 40.8%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 7.8s infinite step-end; }
+@keyframes a1 { 0%,20.4% { stroke: var(--accent); fill: var(--card-on) } 20.4%,40.8% { stroke: var(--accent); fill: var(--card-on) } 40.8%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 7.8s infinite step-end; }
+@keyframes a2 { 0%,20.4% { opacity: 1 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 1 } }
+.a2 { animation: a2 7.8s infinite step-end; }
+@keyframes a3 { 0%,20.4% { stroke: var(--border) } 20.4%,40.8% { stroke: var(--accent) } 40.8%,100% { stroke: var(--accent) } }
+.a3 { animation: a3 7.8s infinite step-end; }
+@keyframes a4 { 0%,20.4% { stroke: var(--border); fill: var(--surface) } 20.4%,40.8% { stroke: var(--accent); fill: var(--card-on) } 40.8%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a4 { animation: a4 7.8s infinite step-end; }
+@keyframes a5 { 0%,20.4% { opacity: 0 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 1 } }
+.a5 { animation: a5 7.8s infinite step-end; }
+@keyframes a6 { 0%,20.4% { opacity: 1 } 20.4%,40.8% { opacity: 0 } 40.8%,100% { opacity: 0 } }
+.a6 { animation: a6 7.8s infinite step-end; }
+@keyframes a7 { 0%,20.4% { stroke: var(--border) } 20.4%,40.8% { stroke: var(--border) } 40.8%,100% { stroke: var(--accent) } }
+.a7 { animation: a7 7.8s infinite step-end; }
+@keyframes a8 { 0%,20.4% { stroke: var(--border); fill: var(--surface) } 20.4%,40.8% { stroke: var(--border); fill: var(--surface) } 40.8%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a8 { animation: a8 7.8s infinite step-end; }
+@keyframes a9 { 0%,20.4% { opacity: 0 } 20.4%,40.8% { opacity: 0 } 40.8%,100% { opacity: 1 } }
+.a9 { animation: a9 7.8s infinite step-end; }
+@keyframes a10 { 0%,20.4% { opacity: 1 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 0 } }
+.a10 { animation: a10 7.8s infinite step-end; }
+@keyframes a11 { 0%,20.4% { stroke: var(--accent); stroke-width: 2 } 20.4%,40.8% { stroke: var(--accent); stroke-width: 2 } 40.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a11 { animation: a11 7.8s infinite step-end; }
+@keyframes a12 { 0%,20.4% { fill: var(--accent); stroke: var(--accent) } 20.4%,40.8% { fill: var(--accent); stroke: var(--accent) } 40.8%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a12 { animation: a12 7.8s infinite step-end; }
+@keyframes a13 { 0%,20.4% { fill: #fff } 20.4%,40.8% { fill: #fff } 40.8%,100% { fill: #fff } }
+.a13 { animation: a13 7.8s infinite step-end; }
+@keyframes a14 { 0%,20.4% { stroke: var(--muted); stroke-width: 1.25 } 20.4%,40.8% { stroke: var(--accent); stroke-width: 2 } 40.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a14 { animation: a14 7.8s infinite step-end; }
+@keyframes a15 { 0%,20.4% { stroke: var(--muted); stroke-width: 1.25 } 20.4%,40.8% { stroke: var(--muted); stroke-width: 1.25 } 40.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a15 { animation: a15 7.8s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,20.4% { opacity: 1 } 20.4%,100% { opacity: 0 } }
+.p0 { animation: p0 7.8s infinite step-end; }
+@keyframes p1 { 0%,20.4% { opacity: 0 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 0 } }
+.p1 { animation: p1 7.8s infinite step-end; }
+@keyframes p2 { 0%,40.8% { opacity: 0 } 40.8%,69.4% { opacity: 1 } 69.4%,100% { opacity: 0 } }
+.p2 { animation: p2 7.8s infinite step-end; }
+@keyframes a16 { 0%,20.4% { opacity: 1 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 1 } }
+.a16 { animation: a16 7.8s infinite step-end; }
+@keyframes a17 { 0%,20.4% { opacity: 1 } 20.4%,40.8% { opacity: 0 } 40.8%,100% { opacity: 0 } }
+.a17 { animation: a17 7.8s infinite step-end; }
+@keyframes a18 { 0%,20.4% { opacity: 0 } 20.4%,40.8% { opacity: 1 } 40.8%,100% { opacity: 0 } }
+.a18 { animation: a18 7.8s infinite step-end; }
+@keyframes a19 { 0%,20.4% { opacity: 0 } 20.4%,40.8% { opacity: 0 } 40.8%,100% { opacity: 1 } }
+.a19 { animation: a19 7.8s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 147 a 83 12 0 0 1 166 0 v 93 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M24 147 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a0"/><text x="107" y="172" class="label">New facts</text><rect x="34" y="185" width="146" height="57" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="42" y="192" width="31.9" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="57.9" y="202.5" class="tag" fill="#3b82f6">WORLD</text><text x="42" y="217" class="row">Alice closed a $2M</text><text x="42" y="232" class="row">deal with Acme</text></g>
+<rect x="270" y="167" width="190" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="365" y="191.5" class="label">Consolidation</text><text x="365" y="206.5" class="sub">first matching strategy wins</text>
+<rect x="540" y="24" width="202" height="339" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="558" y="44" class="frame">OBSERVATIONS</text>
+<path d="M558 73 a 83 12 0 0 1 166 0 v 108 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a3"/><path d="M558 73 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a3"/><text x="641" y="98" class="label">user:alice scope</text><text x="641" y="113" class="sub">bank defaults</text><rect x="568" y="126" width="146" height="57" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a4"/><g opacity="0" class="a5"><text x="706" y="143" class="mark">new</text><text x="576" y="143" class="row">Alice closed $2M</text><text x="576" y="158" class="row">with Acme · full</text><text x="576" y="173" class="row">detail</text></g><text x="576" y="143" opacity="0" class="row muted a6">—</text>
+<path d="M558 225 a 83 12 0 0 1 166 0 v 108 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a7"/><path d="M558 225 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a7"/><text x="641" y="250" class="label">company:* scope</text><text x="641" y="265" class="sub">general trends only</text><rect x="568" y="278" width="146" height="57" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a8"/><g opacity="0" class="a9"><text x="706" y="295" class="mark">new</text><text x="576" y="295" class="row">Mid-market deals</text><text x="576" y="310" class="row">are growing · no</text><text x="576" y="325" class="row">names</text></g><text x="576" y="295" opacity="0" class="row muted a10">—</text>
+<path id="p-in" d="M 190 193.5 C 230 193.5, 230 193.5, 270 193.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a11"/><rect x="190.9" y="184.5" width="78.1" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a12"/><text x="230" y="197.5" class="edgelabel a13">consolidate</text>
+<path id="p-u" d="M 460 184.66666666666666 C 509 184.66666666666666, 509 127, 558 127" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a14"/>
+<path id="p-c" d="M 460 202.33333333333331 C 509 202.33333333333331, 509 279, 558 279" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a15"/>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-27.3" y="-35" width="54.6" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">1 fact</text><animateMotion dur="7.8s" repeatCount="indefinite" keyTimes="0;0;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-in" xlink:href="#p-in"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.8s" repeatCount="indefinite" keyTimes="0;0.2;0.4;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-u" xlink:href="#p-u"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.8s" repeatCount="indefinite" keyTimes="0;0.4;0.7;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-c" xlink:href="#p-c"/></animateMotion></g>
+</g>
+<text x="383" y="403" opacity="0" class="steplabel a16">One bank, different rules per scope</text>
+<g opacity="0" class="a17"><text x="383" y="429" class="caption">One fact lands in a bank shared by users and the company.</text></g>
+<g opacity="0" class="a18"><text x="383" y="429" class="caption">Alice's scope has no strategy, so it keeps every detail.</text></g>
+<g opacity="0" class="a19"><text x="383" y="429" class="caption">The company:* strategy says: record trends, name no company.</text></g>
+</svg>

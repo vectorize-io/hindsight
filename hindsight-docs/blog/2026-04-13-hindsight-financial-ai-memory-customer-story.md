@@ -20,7 +20,7 @@ I started integrating Hindsight last December, before we had real users. Here is
 
 In the financial market, data privacy is a compliance requirement, not a preference. My users' portfolio data, preferences, and conversation history cannot sit on infrastructure I do not control. So I self-host Hindsight using [the local deployment path](/developer/api/quickstart). Same API, same retrieval quality, everything stays in my environment.
 
-The self-hosting path is well-documented and the API is identical, so nothing I describe below is specific to it. If you are not in a regulated industry, [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) is the easier starting point, you get everything I describe here with zero infrastructure to manage.
+The self-hosting path is well-documented and the API is identical, so nothing I describe below is specific to it. If you are not in a regulated industry, [Hindsight Cloud](https://ui.hindsight.vectorize.io) is the easier starting point, you get everything I describe here with zero infrastructure to manage.
 
 ## One Bank, Two Tag Layers
 
@@ -65,7 +65,7 @@ Two things are on my roadmap.
 
 If you are building a multi-user AI product and thinking about memory, here is what worked for me:
 
-- Self-host when your industry requires it. Otherwise, [Cloud](https://ui.hindsight.vectorize.io/signup) is the easier starting point.
+- Self-host when your industry requires it. Otherwise, [Cloud](https://ui.hindsight.vectorize.io) is the easier starting point.
 - A single bank with tag-based isolation scales better than one bank per user when you have shared context that everyone needs.
 - A git hook retaining codebase knowledge as `shared` is a low-effort way to give your whole team's AI assistant shared context.
 - Start the memory integration early. The value compounds and you cannot recover the gap.

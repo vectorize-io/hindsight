@@ -234,7 +234,7 @@ Where:
 - **rank_i(d)** = position of document *d* in strategy *i* (1-indexed)
 - The sum runs over all strategies where *d* appears
 
-**Within RRF, all four strategies are weighted equally** — fusion uses rank position, not the source, so no strategy gets an implicit multiplier. You can, however, deliberately bias a source with [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration): that boost is applied at a separate stage — before the reranking pre-filter cap and again after reranking — not inside the RRF fusion above.
+**Within RRF, all four strategies are weighted equally** — fusion uses rank position, not the source, so no strategy gets an implicit multiplier. You can, however, deliberately bias a source with [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration): that boost is applied at a separate stage — before the reranking pre-filter cap, and again after a cross-encoder rerank — not inside the RRF fusion above. The pre-cap step runs only when the merged pool exceeds the cap, and it does not rewrite RRF scores. A passthrough reranker (mode `rrf`, an `rrf` provider, or a failover chain that has degraded to `rrf`) skips the post-rerank nudge: within the cap the setting then does nothing, and above the cap it only changes who is kept.
 
 **Why RRF over raw score merging?** Each retrieval strategy produces scores on a different scale (cosine similarity, BM25 tf-idf, graph activation). These scores aren't comparable — a BM25 score of 12.5 and a cosine similarity of 0.85 don't mean the same thing. RRF sidesteps this by using only rank positions, making it robust across any scoring system without requiring calibration.
 
@@ -269,7 +269,7 @@ CE_normalized = 1 / (1 + e^(-raw_logit))
 **Batch processing:** Candidates are scored in batches — **32 pairs** for the local reranker, **128 pairs** for TEI.
 
 :::tip No cross-encoder?
-When running without a cross-encoder (e.g., slim image with no external reranker), the system falls back to RRF-derived scores: candidates are assigned synthetic scores spread across [0.1, 1.0] based on their RRF rank, so the combined scoring boosts below still work meaningfully.
+When running without a cross-encoder (e.g., slim image with no external reranker), the system falls back to RRF-derived scores: candidates are assigned synthetic scores spread across [0.1, 1.0] based on their RRF rank, so the combined scoring boosts below still work meaningfully. `HINDSIGHT_API_RECALL_STRATEGY_BOOSTS` does not add its post-rerank nudge on this path. If the merged pool is within the reranker cap, the setting changes nothing; if the pool is larger, it only changes which candidates are kept, and their order still follows these RRF-derived scores plus recency, temporal and proof.
 :::
 
 ---

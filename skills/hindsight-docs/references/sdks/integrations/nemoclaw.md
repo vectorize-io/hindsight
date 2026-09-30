@@ -11,7 +11,7 @@ NemoClaw runs [OpenClaw](https://openclaw.ai) inside an OpenShell sandbox with c
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run.
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run.
 ```bash
 npx @vectorize-io/hindsight-nemoclaw setup \
   --sandbox my-assistant \

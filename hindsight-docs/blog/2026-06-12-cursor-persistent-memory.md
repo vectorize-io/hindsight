@@ -154,7 +154,7 @@ Both share: full `retainMode` semantics (`full-session` / `chunked`), `recallBud
 
 The fast path for both:
 
-1. Sign up at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) (free tier is enough).
+1. Sign up at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io) (free tier is enough).
 2. Grab an API key from the dashboard.
 3. Install whichever integration(s) you want:
    ```bash
@@ -184,7 +184,7 @@ If you want both surfaces to share a bank, set the same `bankId` in `~/.hindsigh
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Editor integration docs:** [Cursor + Hindsight](/sdks/integrations/cursor)
 - **CLI integration docs:** [Cursor CLI + Hindsight](/sdks/integrations/cursor-cli)
 - **Sources:**

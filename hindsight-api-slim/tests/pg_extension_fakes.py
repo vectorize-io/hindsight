@@ -8,7 +8,7 @@ told to fail a specific statement.
 import re
 
 
-class _Result:
+class Result:
     def __init__(self, value):
         self._value = value
 
@@ -57,10 +57,10 @@ class FakePgConnection:
         if self.fail_on and self.fail_on in sql:
             raise RuntimeError(f"simulated failure: {sql}")
         if "current_setting('search_path')" in sql:
-            return _Result(self.search_path)
+            return Result(self.search_path)
         if "set_config('search_path'" in sql:
             self.search_path = (params or {}).get("schema") or (params or {}).get("previous") or ""
-            return _Result(self.search_path)
+            return Result(self.search_path)
         if "= ANY(:names)" in sql:
             wanted = (params or {}).get("names") or []
             return _Rows(
@@ -72,19 +72,19 @@ class FakePgConnection:
             )
         if "FROM pg_extension" in sql:
             name = (params or {}).get("name")
-            return _Result(self.extensions.get(name))
+            return Result(self.extensions.get(name))
         match = re.match(r"CREATE EXTENSION IF NOT EXISTS (\w+)", sql)
         if match:
             name = match.group(1)
             # PostgreSQL installs into the first schema on the search_path.
             self.extensions.setdefault(name, (self.search_path.split(",")[0].strip().strip('"'), True))
-            return _Result(None)
+            return Result(None)
         match = re.match(r'ALTER EXTENSION (\w+) SET SCHEMA "([^"]+)"', sql)
         if match:
             name, schema = match.group(1), match.group(2)
             self.extensions[name] = (schema, self.extensions[name][1])
-            return _Result(None)
-        return _Result(None)
+            return Result(None)
+        return Result(None)
 
     def commit(self) -> None:
         self.commits += 1

@@ -101,4 +101,4 @@ It complements how Hindsight handles contradictions during [consolidation](https
 - **Reflect:** [The agentic retrieval loop](/developer/reflect)
 - **Recall:** [Retrieving raw facts](/developer/api/recall)
 - **Related reading:** [The Consolidation Problem in Agent Memory](https://hindsight.vectorize.io/blog/2026/05/21/agent-memory-consolidation)
-- **Try it:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or [self-host with one Docker command](https://hindsight.vectorize.io/developer/installation)
+- **Try it:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) or [self-host with one Docker command](https://hindsight.vectorize.io/developer/installation)

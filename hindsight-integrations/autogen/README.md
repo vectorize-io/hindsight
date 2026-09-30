@@ -6,7 +6,7 @@ Provides `FunctionTool` instances that give [AutoGen](https://microsoft.github.i
 
 ## Prerequisites
 
-- A running Hindsight instance ([self-hosted via Docker](https://github.com/vectorize-io/hindsight#quick-start) or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup))
+- A running Hindsight instance ([self-hosted via Docker](https://github.com/vectorize-io/hindsight#quick-start) or [Hindsight Cloud](https://ui.hindsight.vectorize.io))
 - Python 3.10+
 
 ## Installation

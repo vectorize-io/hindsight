@@ -33,6 +33,21 @@ _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
 # leaves inside a candidate entity name.
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
+# Longest candidate entity name intake will accept. `entities.canonical_name` is
+# unbounded TEXT, but `idx_entities_bank_name` is a btree on (bank_id,
+# canonical_name) and a btree tuple cannot exceed ~2704 bytes, so a longer name
+# fails the INSERT with ProgramLimitExceededError — and takes the whole retain
+# with it, not just the one entity. 512 characters stays under that limit even at
+# 4 bytes per character plus a long bank_id. Real names never get close: on a
+# production bank set of ~11M entities the median was 13 characters and p99.9 was
+# 96; everything past a few hundred was an extraction artifact — SVG path data,
+# base64, a fragment of serialized JSON.
+# This cap counts characters, which is what the PostgreSQL btree needs. Oracle
+# declares canonical_name as VARCHAR2(512) — byte-counted — so a multibyte name
+# under this cap can still be rejected there; that is a narrower, pre-existing
+# limit of the Oracle schema, not something this cap is sized for.
+_MAX_ENTITY_NAME_CHARS = 512
+
 
 def _normalize_entity_name(name: str) -> str:
     """Collapse internal whitespace runs to a single space and strip the ends.
@@ -277,6 +292,8 @@ def _prepare_entities_for_resolution(
     Candidate names are whitespace-normalized here (see ``_normalize_entity_name``)
     and names that are empty afterwards are dropped, so no downstream stage has to
     cope with an entity whose canonical name is blank or spans several lines.
+    Names longer than ``_MAX_ENTITY_NAME_CHARS`` are dropped too: they are always
+    extraction artifacts, and storing one fails the retain on the btree index.
     Both happen before the flat list and ``entity_to_unit`` are derived, keeping
     the resolver's positional invariant (output index-aligned with input) intact.
 
@@ -289,6 +306,7 @@ def _prepare_entities_for_resolution(
     substep_start = time.time()
     all_entities = []
     dropped_empty = 0
+    dropped_oversized = 0
     for entity_list in llm_entities:
         formatted_entities = []
         # Normalization can make two candidates that reached here as distinct
@@ -312,6 +330,12 @@ def _prepare_entities_for_resolution(
                 # guard of its own.
                 dropped_empty += 1
                 continue
+            if len(normalized_text) > _MAX_ENTITY_NAME_CHARS:
+                # Dropped rather than truncated: a truncated SVG path or base64 run
+                # would become a real registry entity that is trigram-indexed and can
+                # fuzzy-merge with other truncated junk. The fact itself still retains.
+                dropped_oversized += 1
+                continue
 
             resolve = _entity_resolve_flag(ent)
             kept = seen_in_fact.get(normalized_text.lower())
@@ -333,6 +357,13 @@ def _prepare_entities_for_resolution(
             log_buffer,
             f"  [6.1] Dropped {dropped_empty} empty candidate entity name(s)",
             level="debug",
+        )
+    if dropped_oversized:
+        _log(
+            log_buffer,
+            f"  [6.1] Dropped {dropped_oversized} candidate entity name(s) longer than "
+            f"{_MAX_ENTITY_NAME_CHARS} characters",
+            level="warning",
         )
 
     total_entities = sum(len(ents) for ents in all_entities)
@@ -625,7 +656,49 @@ async def compute_semantic_links_ann(
     # sequential-scan every HNSW probe result against the array, destroying
     # performance (67s for 8k seeds). Self-links are harmless (ON CONFLICT DO
     # NOTHING handles duplicates in memory_links).
-    #
+
+    candidates: list[tuple[str, str, float]] = []  # (from_id, to_id, similarity)
+    if getattr(conn, "backend_type", None) == "oracle":
+        # No temp tables, COPY or LATERAL-with-GUC tuning here: probe the vector
+        # index once per seed with an approximate top-k.
+        # ponytail: one round trip per seed; batch seeds through JSON_TABLE if retain batches get large.
+        for uid, emb, ft in zip(unit_ids, embeddings, fact_types):
+            ft_rows = await conn.fetch(
+                f"""
+                SELECT id, 1 - VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE) AS similarity
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1 AND fact_type = $2 AND embedding IS NOT NULL
+                ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE)
+                FETCH APPROX FIRST {int(top_k)} ROWS ONLY
+                """,
+                bank_id,
+                ft,
+                embedding_to_pgvector(emb),
+            )
+            candidates.extend((uid, str(r["id"]), r["similarity"]) for r in ft_rows)
+    else:
+        rows = await _ann_rows_pg(conn, bank_id, unit_ids, embeddings, fact_types, top_k)
+        candidates = [(r["from_id"], r["to_id"], r["similarity"]) for r in rows]
+
+    for from_id, to_id, similarity in candidates:
+        sim = float(min(1.0, max(0.0, similarity)))
+        if sim >= threshold:
+            links.append((from_id, to_id, "semantic", sim, None))
+
+    _log(
+        log_buffer,
+        f"      [8.1] ANN search (Phase 1): {len(unit_ids)} units → {len(links)} links in {time_mod.time() - ann_start:.3f}s",
+    )
+
+    return links
+
+
+async def _ann_rows_pg(
+    conn, bank_id: str, unit_ids: list[str], embeddings: Sequence[EmbeddingLike], fact_types: list[str], top_k: int
+) -> list:
+    """PostgreSQL ANN probe: one LATERAL HNSW query per fact_type over a temp seed table."""
+    import time as time_mod
+
     # The entire CREATE TEMP TABLE → COPY → SELECT sequence MUST run inside a
     # single transaction. Callers may connect through pgBouncer in `transaction`
     # pool mode, in which case the backend is only pinned to the client for the
@@ -705,18 +778,7 @@ async def compute_semantic_links_ann(
             rows.extend(ft_rows)
     # Transaction commits here. _ann_seeds is dropped (ON COMMIT DROP).
     # Transaction-local ANN tuning reverts (SET LOCAL).
-
-    for row in rows:
-        sim = float(min(1.0, max(0.0, row["similarity"])))
-        if sim >= threshold:
-            links.append((row["from_id"], row["to_id"], "semantic", sim, None))
-
-    _log(
-        log_buffer,
-        f"      [8.1] ANN search (Phase 1): {len(unit_ids)} units → {len(links)} links in {time_mod.time() - ann_start:.3f}s",
-    )
-
-    return links
+    return rows
 
 
 def compute_semantic_links_within_batch(

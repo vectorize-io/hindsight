@@ -1,11 +1,35 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSessionStartContext, runSessionStartHook } from "./session-start";
 import { resolveConfig } from "./config";
+import { repoNameOf } from "./git";
 import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
+import type { RawConfig } from "./config";
+
+/** The SessionStart event `runSessionStartHook` reads from fd 0; every other read stays real. */
+let stdin = "";
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: (target: unknown, ...rest: unknown[]) =>
+      target === 0 ? stdin : (actual.readFileSync as (...a: unknown[]) => unknown)(target, ...rest),
+  };
+});
+
+/** Unset = the real config loader; set = what `runSessionStartHook` resolves for this test. */
+let rawConfig: RawConfig | undefined;
+vi.mock("./config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config")>();
+  return {
+    ...actual,
+    loadConfig: (...a: Parameters<typeof actual.loadConfig>) =>
+      rawConfig ? actual.resolveConfig(rawConfig) : actual.loadConfig(...a),
+  };
+});
 
 /** Default roster the mock client returns; asserted on by name below. */
 const listPagesOk = async () => ({ items: [{ id: "p1", name: "Component map" }] });
@@ -229,6 +253,60 @@ describe("buildSessionStartContext", () => {
     }
   });
 
+  describe("git note against a git-log document written at another commit", () => {
+    /** A repo with two commits, the git-log document recorded at `writtenAt`, HEAD at `head`. */
+    async function banner(writtenAt: "first" | "second", head: "first" | "second") {
+      const repo = mkdtempSync(join(tmpdir(), "hs-session-start-written-at-"));
+      try {
+        execFileSync("git", ["-C", repo, "init", "-q"]);
+        execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+        execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+        const sha: Record<string, string> = {};
+        for (const name of ["first", "second"]) {
+          execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", name]);
+          sha[name] = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim();
+        }
+        execFileSync("git", ["-C", repo, "checkout", "-q", "--detach", sha[head]]);
+        const documentTags = vi.fn(async (_id: string) => [
+          "source:git-log",
+          `gitlog-head:${sha[writtenAt]}`,
+        ]);
+        const out = await buildSessionStartContext({
+          cwd: repo,
+          bankId: "bank-1",
+          cfg: resolveConfig({ codebaseSurvey: false }),
+          client: {
+            // Only the cold check finds anything: no document carries HEAD's own tag.
+            listDocumentIds: async (tag: string) =>
+              tag === "source:git" ? new Set(["git:existing"]) : new Set<string>(),
+            documentTags,
+            listPages: listPagesOk,
+          },
+          hasGit: () => true,
+          startSeed: vi.fn(),
+        });
+        return { out, documentTags, canonical: `gitlog:${repoNameOf(repo)}` };
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    }
+
+    it("reports git in sync from a worktree behind that commit, as the deepen engine skips it (#4661)", async () => {
+      const { out, documentTags, canonical } = await banner("second", "first");
+
+      expect(out.systemMessage).toContain("git in sync");
+      expect(documentTags).toHaveBeenCalledWith(canonical);
+    });
+
+    it("still reports catching up when HEAD has a commit the document lacks", async () => {
+      const { out } = await banner("first", "second");
+
+      expect(out.systemMessage).toContain("catching up on new commits");
+    });
+  });
+
   it("listDocumentIds throws (server unreachable) -> no seed, roster preamble only", async () => {
     const startSeed = vi.fn();
     const client = {
@@ -319,6 +397,47 @@ describe("runSessionStartHook anti-recursion guard", () => {
     // proves the guard fired first.
     await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, makeClient);
     expect(makeClient).not.toHaveBeenCalled();
+  });
+});
+
+/** A host's per-repo MCP registration (TraeCode's) runs only once memory is live for the repo, and
+ *  its hint reaches the user through the session banner. */
+describe("runSessionStartHook host MCP registration", () => {
+  let repo: string;
+  const run = async (cfg: RawConfig) => {
+    rawConfig = { autoSeed: false, autoUpdate: false, ...cfg };
+    stdin = JSON.stringify({ cwd: repo, session_id: `sess-${repo.split("/").pop()}` });
+    const ensureMcpRegistration = vi.fn(() => "enable workspace MCP");
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await runSessionStartHook(
+        { ...HOOK_HARNESSES.traecode.sessionStart, ensureMcpRegistration },
+        () => ({ listPages: listPagesOk }) as never
+      );
+      return { ensureMcpRegistration, out: write.mock.calls.map((c) => String(c[0])).join("") };
+    } finally {
+      write.mockRestore();
+    }
+  };
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "hs-ss-mcp-"));
+    execFileSync("git", ["init", "-q", repo]);
+  });
+  afterEach(() => {
+    rawConfig = undefined;
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("registers for a live repo and shows the hint in the banner", async () => {
+    const { ensureMcpRegistration, out } = await run({});
+    expect(ensureMcpRegistration).toHaveBeenCalledWith(repo);
+    expect(JSON.parse(out).systemMessage).toContain("enable workspace MCP");
+  });
+
+  it("does not register for a repo that is not opted in", async () => {
+    const { ensureMcpRegistration } = await run({ optInOnly: true });
+    expect(ensureMcpRegistration).not.toHaveBeenCalled();
   });
 });
 

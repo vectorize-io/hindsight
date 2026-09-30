@@ -80,7 +80,7 @@ You'll also need a running Hindsight instance. Two options:
 
 **Option 1 — Hindsight Cloud (no setup required)**
 
-Sign up at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) and grab your API URL and key from the dashboard. Pass them directly to `create_hindsight_tools()`.
+Sign up at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io) and grab your API URL and key from the dashboard. Pass them directly to `create_hindsight_tools()`.
 
 > **Note:** Use Hindsight Cloud if you want to skip self-hosting entirely — free to get started.
 

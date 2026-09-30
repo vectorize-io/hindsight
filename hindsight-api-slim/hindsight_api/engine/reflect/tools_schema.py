@@ -19,7 +19,9 @@ TOOL_SEARCH_MENTAL_MODELS = {
         "description": (
             "Search user-curated mental models (stored reflect responses). These are high-quality, manually created "
             "summaries about specific topics. Use FIRST when the question might be covered by an "
-            "existing mental model. Returns mental models with their content and last refresh time."
+            "existing mental model. Returns the best-matching page IN FULL, and a SNIPPET of each other hit "
+            "with its size and last refresh time — call read_mental_models to read in full any of those that "
+            "look like they answer the question."
         ),
         "parameters": {
             "type": "object",
@@ -104,6 +106,38 @@ TOOL_RECALL = {
                 },
             },
             "required": ["reason", "query"],
+        },
+    },
+}
+
+TOOL_READ_MENTAL_MODELS = {
+    "type": "function",
+    "function": {
+        "name": "read_mental_models",
+        "description": (
+            "Read mental models in full, by id, after search_mental_models showed you their snippets. "
+            "Ask only for the ones whose snippet looks relevant: a page is long, and every page you read "
+            "stays in the conversation for the rest of this reflect."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Brief explanation of why you're reading these (for debugging)",
+                },
+                "mental_model_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Ids of the mental models to read, exactly as search_mental_models gave them",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Token budget for the pages returned (default 6000). Reading stops at the "
+                    "first page that would cross it; the rest come back under not_read.",
+                },
+            },
+            "required": ["reason", "mental_model_ids"],
         },
     },
 }
@@ -375,6 +409,8 @@ def get_reflect_tools(
 
     if include_mental_models:
         tools.append(TOOL_SEARCH_MENTAL_MODELS)
+        # Search returns snippets; this is how the model gets a page in full.
+        tools.append(TOOL_READ_MENTAL_MODELS)
     if include_observations:
         tools.append(TOOL_SEARCH_OBSERVATIONS)
     if include_recall:

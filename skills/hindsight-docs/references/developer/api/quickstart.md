@@ -167,8 +167,8 @@ Browse all supported integrations in the Integrations Hub.
 
 ## Next Steps
 
-- [**Retain**](./retain) — Advanced options for storing memories
-- [**Recall**](./recall) — Search and retrieval strategies
-- [**Reflect**](./reflect) — Disposition-aware reasoning
-- [**Memory Banks**](./memory-banks) — Configure disposition and mission
+- [**Retain**](./retain.md) — Advanced options for storing memories
+- [**Recall**](./recall.md) — Search and retrieval strategies
+- [**Reflect**](./reflect.md) — Disposition-aware reasoning
+- [**Memory Banks**](./memory-banks.md) — Configure disposition and mission
 - [**Server Deployment**](../installation.md) — Docker Compose, Helm, and production setup

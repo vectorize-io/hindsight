@@ -3,7 +3,7 @@
 Hindsight can be deployed in several ways depending on your infrastructure and requirements.
 
 :::tip Don't want to manage infrastructure?
-**[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** is a fully managed service that handles all infrastructure, scaling, and maintenance — [sign up here](https://ui.hindsight.vectorize.io/signup).
+**[Hindsight Cloud](https://ui.hindsight.vectorize.io)** is a fully managed service that handles all infrastructure, scaling, and maintenance — [sign up here](https://ui.hindsight.vectorize.io).
 :::
 
 ## Supported Platforms

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
-import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
+import {
+  DEFAULT_RETAIN_CONTEXT,
+  ingestChats,
+  renderSessionJsonl,
+  retainLiveSession,
+  type TransportTurn,
+} from "./chat";
 import { PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
 describe("renderSessionJsonl", () => {
@@ -65,7 +71,7 @@ describe("retainLiveSession", () => {
       timestamp: "2026-01-01T00:00:00Z",
     });
     expect(parsed[1]).toEqual({ role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" });
-    expect(context).toBe("coding agent session");
+    expect(context).toBe(DEFAULT_RETAIN_CONTEXT);
     expect(documentId).toBe("conversation:s2");
     expect(tags).toEqual(["source:chat"]);
     expect(strategy).toBe("conversation");
@@ -75,6 +81,39 @@ describe("retainLiveSession", () => {
       session_id: "s2",
       ref_id: "conversation:s2",
     });
+  });
+
+  it("sends the stamp's resolved context instead of the default when one is configured", async () => {
+    // The default says nothing about authorship, so extraction can record an assistant's
+    // proposal as the user's decision. This is the path a deployment uses to state the boundary.
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+    const turns: TransportTurn[] = [
+      { role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" },
+    ];
+    const configured = "Assistant turns are agent-generated and not the user's decisions.";
+
+    await retainLiveSession(client, "s3", turns, "2026-01-01T00:00:00Z", undefined, {
+      stamp: { tags: [], metadata: {}, context: configured },
+    });
+
+    const [, context] = retain.mock.calls[0];
+    expect(context).toBe(configured);
+  });
+
+  it("keeps the default when a stamp carries tags but no context", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+    const turns: TransportTurn[] = [
+      { role: "user", content: "hi", timestamp: "2026-01-01T00:00:00Z" },
+    ];
+
+    await retainLiveSession(client, "s4", turns, "2026-01-01T00:00:00Z", undefined, {
+      stamp: { tags: ["project:x"], metadata: {} },
+    });
+
+    const [, context] = retain.mock.calls[0];
+    expect(context).toBe(DEFAULT_RETAIN_CONTEXT);
   });
 });
 
@@ -104,6 +143,74 @@ describe("ingestChats", () => {
       ref_id: "chat:s-import",
     });
   });
+
+  it("dates a backfilled document from the session's own source timestamps, not the import clock", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    const importedAt = Date.now();
+    await ingestChats(client, [
+      {
+        id: "s-hist",
+        turns: [
+          { role: "user", text: "pick the storage engine", timestamp: "2026-01-05T09:00:00Z" },
+          { role: "assistant", text: "RocksDB.", timestamp: "2026-01-05T09:00:05Z" },
+        ],
+      },
+    ]);
+
+    const [content, , , , , opts] = retain.mock.calls[0];
+    // The document/Event Date is the conversation's own first timestamp…
+    expect(opts.timestamp).toBe("2026-01-05T09:00:00Z");
+    // …and the REF-ID system turn that heads the transcript carries the same anchor.
+    expect(JSON.parse(content.split("\n")[0]) as TransportTurn).toEqual({
+      role: "system",
+      content: "REF-ID: chat:s-hist",
+      timestamp: "2026-01-05T09:00:00Z",
+    });
+    // The regression: an import in September must not date a January session to September.
+    expect(Date.parse(opts.timestamp)).toBeLessThan(importedAt - 60_000);
+  });
+
+  it("keeps the synthetic import-time anchor when no turn carries a usable timestamp", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    const importedAt = Date.now();
+    await ingestChats(client, [
+      {
+        id: "s-clockless",
+        turns: [{ role: "user", text: "no clocks here", timestamp: "not-a-date" }],
+      },
+    ]);
+
+    const [, , , , , opts] = retain.mock.calls[0];
+    // Unparseable source values are ignored rather than trusted, so the stagger still applies.
+    expect(Date.parse(opts.timestamp)).toBeGreaterThanOrEqual(importedAt - 1000);
+  });
+
+  it("anchors a timestamp-less turn to the session's own clock instead of the import clock", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    await ingestChats(client, [
+      {
+        id: "s-mixed",
+        turns: [
+          { role: "user", text: "dated", timestamp: "2026-01-05T09:00:00Z" },
+          { role: "action", text: "undated follow-up" },
+        ],
+      },
+    ]);
+
+    const [content] = retain.mock.calls[0];
+    const turns = content.split("\n").map((line: string) => JSON.parse(line) as TransportTurn);
+    // The dated turn keeps its source value verbatim…
+    expect(turns[1].timestamp).toBe("2026-01-05T09:00:00Z");
+    // …and the undated one sits on the SESSION's timeline, not the import's. Index 0 is the REF-ID
+    // system turn, so the action turn is index 2: fallback offset is `(j + 1)` minutes for j = 1.
+    expect(turns[2].timestamp).toBe("2026-01-05T09:02:00.000Z");
+  });
 });
 
 describe("retainLiveSession — incremental write-back", () => {
@@ -111,7 +218,7 @@ describe("retainLiveSession — incremental write-back", () => {
   const turn = (i: number): TransportTurn => ({ role: "user", content: `turn ${i}` });
   const turns = (n: number) => Array.from({ length: n }, (_, i) => turn(i));
 
-  /** Client double: `supported` is what GET /version would have told us about operation_id. */
+  /** Client double: `supported` is the combined append capability. */
   const stubClient = (supported = true) => {
     const retain = vi.fn().mockResolvedValue(undefined);
     return {
@@ -119,7 +226,7 @@ describe("retainLiveSession — incremental write-back", () => {
       client: {
         retain,
         bank: "coding-agent::repo",
-        supportsIdempotentRetain: async () => supported,
+        supportsAppendRetain: async () => supported,
       } as unknown as HindsightClient,
     };
   };
@@ -151,13 +258,13 @@ describe("retainLiveSession — incremental write-back", () => {
   it("remembers a confirmed append capability, so a failed probe on a later Stop still appends (#4560)", async () => {
     const cursors = memoryCursorStore();
     await write(stubClient().client, turns(2), cursors);
-    // The next Stop is a fresh hook process whose GET /version times out.
+    // The next Stop is a fresh hook process whose capability probe times out.
     const probe = vi.fn().mockRejectedValue(new Error("timeout"));
     const retain = vi.fn().mockResolvedValue(undefined);
     const next = {
       retain,
       bank: "coding-agent::repo",
-      supportsIdempotentRetain: probe,
+      supportsAppendRetain: probe,
     } as unknown as HindsightClient;
     await write(next, turns(4), cursors);
     expect(probe).not.toHaveBeenCalled();
@@ -300,7 +407,7 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(cursors.read("s1")?.pending).toBeUndefined();
   });
 
-  it("never appends against a server that ignores operation_id", async () => {
+  it("never appends when append support is unavailable", async () => {
     const { retain, client } = stubClient(false);
     const cursors = memoryCursorStore();
     await write(client, turns(2), cursors);
@@ -332,7 +439,7 @@ describe("retainLiveSession — incremental write-back", () => {
     const client = {
       retain,
       bank: "b",
-      supportsIdempotentRetain: async () => true,
+      supportsAppendRetain: async () => true,
     } as unknown as HindsightClient;
     const cursors = memoryCursorStore();
 
@@ -387,7 +494,7 @@ describe("retainLiveSession — incremental write-back", () => {
     const mk = (bank: string) =>
       ({
         bank,
-        supportsIdempotentRetain: async () => true,
+        supportsAppendRetain: async () => true,
         retain: vi.fn(async (_c: string, ...rest: unknown[]) => {
           sent.push({ bank, mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace" });
         }),
@@ -543,7 +650,7 @@ describe("retainLiveSession — incremental write-back", () => {
     const client = {
       retain,
       bank: "b",
-      supportsIdempotentRetain: async () => {
+      supportsAppendRetain: async () => {
         throw new Error("unreachable");
       },
     } as unknown as HindsightClient;

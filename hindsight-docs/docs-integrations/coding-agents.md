@@ -12,7 +12,7 @@ import codingAgents from '@vectorize-io/interfig/figures/coding-agents';
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Factory Droid**, **ZCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
+(**Claude Code**, **Codex CLI**, **DeepAgents Dcode**, **opencode**, **opencode 2**, **Kilo CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**, **Qwen Code**, **Kimi Code**, **Factory Droid**, **ZCode**, **TraeCode**, **Antigravity CLI**, **Devin CLI**, **Cline CLI**, **pi**, **Prime Agent**, **DeepSeek Harness**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -149,7 +149,9 @@ npx @vectorize-io/hindsight-coding-agents install copilot-cli
 npx @vectorize-io/hindsight-coding-agents install grok-build
 ```
 
-Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
+Native hooks in `~/.grok/hooks/hindsight.json`, MCP in `~/.grok/config.toml`, plus the companion
+skill. Grok also runs Claude Code's hooks from `~/.claude/settings.json`; those stay silent inside
+Grok, so a machine wired for both hosts records each Grok session once.
 
 #### <img src="/img/harness/qwen-code.svg" alt="" width="20" height="20" /> Qwen Code
 
@@ -164,6 +166,19 @@ Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
 > Recall fires on genuine submissions only — `UserPromptSubmit` also fires on tool-result
 > continuations, so interactive sessions recall once per prompt while headless (`qwen -p`),
 > `serve`, SDK and ACP sessions seed and retain but do not recall.
+
+#### <img src="/img/harness/kimi-code.svg" alt="" width="20" height="20" /> Kimi Code
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install kimi-code
+```
+
+Native hooks in `~/.kimi-code/config.toml`, plus MCP in `~/.kimi-code/mcp.json` and the companion skill.
+(Hooks and MCP go under `$KIMI_CODE_HOME` instead when it is set.)
+
+> Kimi's SessionStart hook cannot reach the model, so the session briefing is silent there;
+> recalled memory arrives on the first prompt instead, as a `<hook_result>` block. Sessions are
+> retained from every agent's `wire.jsonl` under the session directory, subagents included.
 
 #### <img src="/img/harness/factory-droid.svg" alt="" width="20" height="20" /> Factory Droid
 
@@ -203,6 +218,56 @@ refuses to touch an MCP server named `hindsight` that it did not write.
 > `Stop` hook records the reply - and the write-back then behaves like every other agent's,
 > appending each new turn to the same session document. `--import-conversations` is therefore not
 > available for ZCode: there is no past history on disk to backfill from.
+
+#### <img src="/img/harness/traecode.png" alt="" width="20" height="20" /> TraeCode
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install traecode
+```
+
+Three hook registrations in TraeCode's user-level `hooks.json`, the companion skill under the
+same dot-dir's `skills/`, and two `filesystem.readWrite` rules in `sandbox.json` — one for
+`~/.hindsight`, without which the hooks fail silently (exit 0, no effect) because the sandbox
+blocks those writes, and one for Trae's per-window storage DBs
+(`<userData>/User/workspaceStorage`), which the SessionStart hook seeds with the workspace's
+MCP enable switch. Network is allowed by default. TRAE ships two editions with different brand
+roots — the CN build uses `~/.trae-cn` and "Trae CN", the international build `~/.trae` and
+"Trae" — so every path resolves by probing for the edition dir that exists and defaulting to the
+CN names. Plain JSON files, no CLI round-trip. TraeCode speaks Claude Code's hook protocol, so
+recall and injection work exactly as they do there; the event map lives under the top-level
+`hooks` key and the `version` field the host writes is preserved.
+
+MCP is registered per repo, never at the user level: Trae launches user-level servers with the
+Electron process's cwd (your home directory), where a hindsight entry either self-disables under
+`optInOnly` (zero tools) or resolves the home bank instead of the repo's. So the installer
+pre-seeds the per-repo registration for every repo opted in via `mapPathToBank` — a
+`mcpServers.hindsight` stdio server in `<repo>/.trae/mcp.json`, pinned to that repo via
+`HINDSIGHT_MCP_PROJECT_CWD` — migrates any stale user-level entry back out of
+`<userData>/User/mcp.json`, and seeds the per-workspace enable switch directly. The SessionStart
+hook re-checks both on every session and writes them only when missing or stale (idempotent
+fallback) — Trae's hook sandbox cannot be relied on to perform those writes itself. The per-repo
+file is merged not clobbered, and gitignored when the repo has a `.gitignore` (the path is
+machine-specific). A foreign `hindsight` entry — in either file — is the user's own server and
+is never touched.
+
+Trae only reads that per-repo file once the global `trae.mcp.enableWorkspaceMcp` setting is on
+(default off), so the installer handles the gate: an interactive run asks, a non-interactive run
+takes `--enable-workspace-mcp`, and either way the setting is written and Trae windows must be
+restarted to pick it up (declining, or a settings file with comments, prints the manual step).
+Registrations and enable switches take effect on the NEXT window, so the MCP tools appear when
+you reload after the first session; repos opted into `mapPathToBank` after install need one more
+`install traecode` run, and if a repo's server still shows disabled in the MCP panel, flip it on
+once there.
+
+> One manual step remains after install (UI state the installer cannot write): enable the hooks
+> under TraeCode Settings > Hooks. If you declined the workspace-MCP prompt, enable it later in
+> Trae settings (search "enableWorkspaceMcp").
+
+> TraeCode keeps no readable session transcript - sessions live in an encrypted local DB or the
+> cloud. Like ZCode, its conversation is journaled by the plugin itself: the prompt hook records
+> what you asked, and the `Stop` hook closes the turn with the reply it carries in
+> `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
+> there is no past history on disk to backfill from.
 
 #### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 
@@ -433,14 +498,16 @@ Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. Layering, 
    (`HINDSIGHT_<FIELD_IN_CAPS>`), for containers and CI that inject config rather than write a file
 3. the file's top level
 4. its `harnesses.<name>` section — per-agent override
-5. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
+5. its `paths.<prefix>` section — per-directory override, applied after the bank is resolved
+   (see Per-directory overrides)
+6. its `banks.<resolvedBankId>` section — per-repo override, applied after the bank is resolved
    (see Per-repo opt-in/out)
 
 Environment variables are a **fallback**: the file wins wherever it sets a value, so adding env to
 an existing setup changes nothing. The two list-valued settings, `retainTags` and `optInPaths`, take
 a comma-separated value (`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are
 trimmed and blanks dropped.
-The map-valued settings (`mapPathToBank`, `harnesses`, `banks`, `retainMetadata`) are file-only —
+The map-valued settings (`mapPathToBank`, `harnesses`, `paths`, `banks`, `retainMetadata`) are file-only —
 per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
 as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
 
@@ -526,17 +593,21 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `resolveWorktrees`      | `true`                               | linked worktrees inherit the main checkout's bank identity, path approval, and mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `retainContext`         | see description                      | the `context` sent with every session write-back. Extraction reads it to decide whose claim a sentence is, so the default names both speakers, and asks for an agent's own "fixed" or "passes" to be stored as its claim rather than as fact. Accepts the same `{placeholder}` templates as `retainTags`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `manageBankConfig`      | `true`                               | let the plugin shape the bank's own configuration — the retain strategies it writes under, the `knowledge` entity-label group, and, on a bank that has none, the missions. Writing is **additive**: it adds what the bank does not define and never overwrites what is there, so your control-plane edits survive — the one exception is the extraction mode of its own strategies, which follows `retainExtractionMode`. Set `false` to keep it out of the bank config entirely — see **A bank you shape yourself** below                                                                                                                                                                                                                                                                                                                                                                                      |
 | `retainExtractionMode`  | `"concise"`                          | how the server extracts memories from sessions, commits and documents: `"concise"`, `"verbose"`, `"verbatim"` or `"chunks"` (store the text, no extraction). Every Stop writes the session back, so this is what each turn costs — `"verbose"` pulls more detail for several times the tokens. Kept in sync on the plugin's own retain strategies every session, so a change reaches existing banks too (not with `manageBankConfig: false`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `defaultBankConfig`     | —                                    | bank-config fields of your own for the banks the plugin shapes, e.g. `{"enable_observations": false, "enable_auto_consolidation": false, "mental_model_min_refresh_interval_seconds": 21600}`. Keys are the bank-config API's own field names. Written under the same additive rule as the rest: only where the bank does not define the field, so a bank the plugin creates is born with these instead of the server's defaults and a value you set in the control plane is never overwritten. Wins over the template on a key both name (`enable_observations`); `retain_strategies`, `entity_labels` and `retain_extraction_mode` are refused, since the plugin governs them itself. Ignored with `manageBankConfig: false` — see **A bank you shape yourself** below. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                     |
 | `observationScopes`     | `"shared"`                           | how consolidation groups observations: `"shared"` (default) = ONE global scope per bank, so every agent on a repo builds one set of beliefs; also `"combined"` (the server default), `"per_tag"`, `"all_combinations"`, `[["t"]]`; `"per_source"` adds a scope per `source:` kind alongside the global one, so commit knowledge and conversation knowledge consolidate apart                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `reflectTimeoutMs`      | `20000`                              | **automatic** session-reflect timeout; on hook harnesses the installer registers a 30s prompt-hook timeout, so going above ~20s also means raising that hook's `timeout` in the host's config, or the host kills the hook mid-reflect; on timeout or a 5xx the hook falls back to knowledge-page search, then to a raw recall of observations (recorded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `injectTimeoutMs`       | `7000`                               | retrieval timeout in milliseconds for `autoInject: "pages"` and `autoInject: "recall"`; also the **shared** budget for page search then recall after a reflect timeout/5xx (recall gets only the time left after page search). Set e.g. `2000` to limit turn latency or `15000` for a slower self-hosted bank. Environment fallback: `HINDSIGHT_INJECT_TIMEOUT_MS`. On hook harnesses, injection must fit the host's prompt-hook timeout (30s by default); for reflect with fallback, allow for **`reflectTimeoutMs` + `injectTimeoutMs`**, and raise the host hook's `timeout` when needed                                                                                                                                                                                                                                                                                                                     |
 | `reflectBudget`         | `"high"`                             | reflect budget for the `hindsight_reflect` tool: `"low"`, `"mid"` or `"high"`. Drop it on a large bank where high-budget synthesis exceeds the server's wall timeout. The automatic session-start reflect always uses `"low"` to fit its hook window and is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `autoInject`            | `"reflect"`                          | what to inject once, on the session's **first prompt**: `"reflect"` = a low-budget reflect synthesis (on timeout/5xx it falls back to page search, then recall); `"pages"` = the knowledge pages matching the prompt by search; `"recall"` = the bank's memories recalled for the prompt (what it asks for is `recallOptions`, observations by default); `"none"` = nothing — the agent searches knowledge pages first and reflects only when they are too shallow. `"pages"` and `"recall"` are retrieval only (no LLM), so they stay well inside the hook window                                                                                                                                                                                                                                                                                                                                              |
+| `autoInject`            | `"reflect"`                          | what to inject once, on the session's **first prompt**: `"reflect"` = a low-budget reflect synthesis (on timeout/5xx it falls back to page search, then recall); `"pages"` = the knowledge pages matching the prompt by search; `"recall"` = the bank's memories recalled for the prompt (what it asks for is `recallOptions`, observations by default); `"none"` = nothing — the agent searches knowledge pages first and reflects only when they are too shallow. `"pages"` and `"recall"` are retrieval only (no LLM), their time budget is `injectTimeoutMs`                                                                                                                                                                                                                                                                                                                                                |
 | `autoReflect`           | `true`                               | **deprecated** — use `autoInject`. Still honoured (`false` = `autoInject: "none"`), ignored when `autoInject` is set, and logs a deprecation warning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `pageSearchLimit`       | `3`                                  | knowledge pages ONE search returns. Applies to every search of the bank — the `autoInject: "pages"` injection, the reflect fallback, and the agent's own `hindsight_search_knowledge_pages` tool — because the limit lives on the client they all share                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `recallOptions`         | see description                      | overrides merged key-by-key into the body of every recall — the `autoInject: "recall"` source and the reflect fallback. Keys are the API's own recall parameters, passed straight through, so anything recall accepts is settable without a new option here; `query` is the one field it cannot replace. The default body is `{"types": ["observation"], "budget": "low", "max_tokens": 2000, "include": {"entities": null}}`, and what you set is merged over it one key at a time — `{"max_tokens": 4000}` changes the budget and leaves the rest alone. Observations are the consolidated layer, so they answer best per token, but a bank with **consolidation disabled never grows any** and the default recall comes back empty on it: set `{"types": ["world", "experience"]}` there, or `{"types": null}` for every type. File-only, like `retainMetadata` — an object does not flatten into an env var |
+| `toolGuideExtra`        | —                                    | your own guidance on how the agent should treat memory, added **after** the built-in tool guide (at session start and on every refresh) and after the crediting note returned with `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it. Set it per harness or per bank like any other key, e.g. `"Memory is a past record, not current state: verify any claim against the code before acting on it."`                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `pageRefreshEveryTurns` | `10`                                 | refetch the knowledge pages and re-inject the page roster + tool guide every N user turns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `pageTriggerType`       | `"cron"`                             | when NEW knowledge pages refresh, i.e. what keeping them current costs — `"cron"` (default) on `pageTriggerCron` only and only when actually stale, `"auto-refresh"` after every consolidation that produced new material, `"manual"` never on their own. Auto-refresh is the most current and by far the most expensive: one synthesis per page per consolidation. Maps to the page's `trigger.refresh_cron`, or `trigger.refresh_after_consolidation` in the Hindsight API (`true` for auto-refresh, `false` for manual)                                                                                                                                                                                                                                                                                                                                                                                      |
 | `pageTriggerCron`       | `"H * * * *"`                        | schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. `"0 3 * * *"`. The default is hourly, each page on its own hashed minute. Sets the page's `trigger.refresh_cron`, which the API treats as mutually exclusive with `refresh_after_consolidation`; a scheduled refresh is skipped when nothing changed. Write a field as `H` to give each page its own value there — see **Spreading refreshes with `H`** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -552,7 +623,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `autoUpdate`            | `true`                               | keep the installed runtime current by itself: once a day a session start asks npm for the published version and, when it is newer, re-stages `~/.hindsight/coding-agents` in the background. It rewires no host config, so a release adding a **new** hook entry point still needs a manual `install`. Set `false` to pin the installed version; `disabled` stops it too, since an inert plugin should stay inert. Only ever replaces a runtime installed the documented way, via `npx` — a copy installed with `npm i -g`, vendored as a project dependency, or built from a checkout is left to whoever manages it (update those the way you installed them), and it needs `npx` and `npm` on `PATH`                                                                                                                                                                                                          |
-| `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD moves); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD has a commit it lacks); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `harness`               | `opencode`                           | **deepen engine only**: which session format `--conversations` is read as                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
@@ -738,13 +809,40 @@ One field is the exception: the extraction mode of the plugin's own four strateg
 if it drifts — the same way a seeded page's query is. Change it in `coding-agent.json`, not in the
 control plane. The strategies' other fields, and your own strategies, are still left alone.
 
-Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether — the
-right setting for a bank you share with non-coding work, or one you configure yourself. That bank
-should then define the five strategies above itself. Note that the miss is **silent**: the server
-does not reject a retain naming a strategy the bank lacks, it logs a warning and extracts with the
-bank's own configuration — so a commit diff, a session transcript and a survey marker would all get
-the same generic treatment instead of the extraction each needs. Knowledge pages are seeded either
-way; `pageTriggerType` governs what they cost.
+**Your own defaults for new banks — `defaultBankConfig`.** Everything the template does not name, a
+bank the plugin creates gets from the server: auto-consolidation on, observations on, a 60s floor
+between mental-model refreshes. With one bank per repo those are the settings that cost money, and
+a new repo an agent touches spawns a new bank with all of them switched on — while every bank you had
+hand-tuned in the control plane sits at a cheaper baseline. `defaultBankConfig` names the baseline
+once, in the plugin's config, and it travels in the same import that creates the bank:
+
+```json
+{
+  "defaultBankConfig": {
+    "enable_observations": false,
+    "enable_auto_consolidation": false,
+    "mental_model_min_refresh_interval_seconds": 21600
+  }
+}
+```
+
+The keys are the bank-config API's own field names, passed straight through, so anything the
+bank-config accepts can go here. They follow the same additive rule as the template: written only
+where the bank is silent, so an existing bank picks them up on its next session **except** for the
+fields it already sets — a value you chose in the control plane stays, even one equal to the server
+default, and so does a value an earlier plugin release seeded (the template writes
+`enable_observations: true` alongside the missions; clear that override on the bank to let your
+default in). On a key the template also names, your default wins. The three fields the plugin
+governs itself — `retain_strategies`, `entity_labels` and `retain_extraction_mode` — are refused
+with a warning: the first two are merged entry by entry, the last is `retainExtractionMode`'s.
+
+Set `manageBankConfig: false` to keep the plugin out of the bank's configuration altogether,
+`defaultBankConfig` included — the right setting for a bank you share with non-coding work, or one
+you configure yourself. That bank should then define the five strategies above itself. Note that the
+miss is **silent**: the server does not reject a retain naming a strategy the bank lacks, it logs a
+warning and extracts with the bank's own configuration — so a commit diff, a session transcript and
+a survey marker would all get the same generic treatment instead of the extraction each needs.
+Knowledge pages are seeded either way; `pageTriggerType` governs what they cost.
 
 Like every field here it can be set per bank, which is usually where it belongs:
 
@@ -803,6 +901,32 @@ every repo (present and future) beneath it:
 
 Rule of thumb: converge by **id** for a hand-picked set of repos; map by **path** when a folder is
 the boundary ("everything I clone under `work/client-x` shares memory").
+
+### Per-directory overrides — `paths.<prefix>`
+
+When a folder is the boundary for something other than the bank — typically a different server
+or tenant for client work — key the override by directory instead of by bank id:
+
+```jsonc
+{
+  "apiToken": "personal-key",
+  "paths": {
+    "~/work/client-x": { "apiToken": "client-x-key" },
+    "~/work/acme": { "apiUrl": "https://hindsight.acme.internal", "apiToken": "acme-key" },
+    "~/oss": { "serverMode": "daemon" },
+  },
+}
+```
+
+Every repo under the prefix, present and future, keeps its own bank but uses the entry's
+settings. The longest matching prefix wins, and a linked worktree outside the tree uses its main
+checkout's entry, as with `mapPathToBank`. The section applies after bank resolution and before
+`banks.<bankId>`, so a bank section still wins for its one repo. Bank-resolution and approval
+fields (`bankId`, `mapPathToBank`, `bank`, `optInOnly`, `optInPaths`, ...) are ignored inside a
+path section. Any connection setting can be overridden — `serverMode`, `apiUrl`, `apiPort`,
+`apiToken` — so one directory can use a local daemon while another uses Cloud or a self-hosted
+server. The token is re-read on a rejected request, like the top-level `apiToken`, but only while
+the directory still points at the same server.
 
 ### Bank resolution
 

@@ -13,7 +13,7 @@ Persistent memory for [Microsoft Agent Framework](https://github.com/microsoft/a
 ## Quick Start
 
 :::tip Recommended: Hindsight Cloud
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting required.
 :::
 
 ```bash

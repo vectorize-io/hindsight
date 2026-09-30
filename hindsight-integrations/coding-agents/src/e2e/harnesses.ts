@@ -12,6 +12,8 @@
  * credential is absent is SKIPPED, never failed — no one has all nine subscriptions.
  *
  * Antigravity is intentionally absent: its harness E2E is covered separately.
+ * TraeCode is absent too: it is the agent inside the TRAE desktop IDE, with no documented headless mode a
+ * container could drive. Its hook wire is covered by src/journal-harnesses.test.ts instead.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -211,6 +213,30 @@ export const qwenDockerSetup: HarnessDockerSetup = {
 };
 
 /**
+ * Kimi Code (Moonshot) — `-p` runs one prompt non-interactively, already in auto-approve mode.
+ *
+ * Driven through the stub model: Kimi's login is an OAuth device flow, but it also takes a whole
+ * model definition from `KIMI_MODEL_*` env vars (its applyEnvModelConfig), which retargets it at any
+ * OpenAI-compatible endpoint without an account.
+ *
+ * Fully asserted, injection included — unlike qwen-code. Kimi's system prompt is ~8K characters,
+ * so the injected `<hook_result>` block sits well inside the stub's 20 000-character echo (verified
+ * against @moonshot-ai/kimi-code 2.1.1: the marker landed at offset ~8.3K).
+ */
+export const kimiDockerSetup: HarnessDockerSetup = {
+  name: "kimi-code",
+  hindsightHarness: "kimi-code",
+  installCommand: "hindsight-coding-agents install kimi-code",
+  stubModelEnv: (baseUrl) => ({
+    KIMI_MODEL_NAME: "hindsight-e2e-stub",
+    KIMI_MODEL_API_KEY: "hindsight-e2e",
+    KIMI_MODEL_PROVIDER_TYPE: "openai",
+    KIMI_MODEL_BASE_URL: `${baseUrl}/v1`,
+  }),
+  command: (prompt) => ["kimi", "-p", prompt],
+};
+
+/**
  * Devin CLI — `-p` takes the prompt inline and exits.
  *
  * Credentials live in `~/.local/share/devin/credentials.toml`, NOT the `~/.config/devin/config.json`
@@ -314,6 +340,7 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   copilotDockerSetup,
   grokDockerSetup,
   qwenDockerSetup,
+  kimiDockerSetup,
   devinDockerSetup,
   clineDockerSetup,
   piDockerSetup,

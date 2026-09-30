@@ -17,9 +17,14 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any, Callable
 
 from hindsight_api.engine.cache_affinity import apply_opencode_session
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_transport_error
+from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -208,7 +213,7 @@ class AnthropicLLM(LLMInterface):
 
         # Import and initialize Anthropic client
         try:
-            from anthropic import AsyncAnthropic
+            from anthropic import AsyncAnthropic, Timeout
 
             # SDK retries disabled — wrapper-level retry loop in ``call`` handles
             # backoff (mirrors ``OpenAICompatibleLLM`` so the two providers behave
@@ -216,8 +221,10 @@ class AnthropicLLM(LLMInterface):
             client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
-            # Per-phase so the connect leg is capped independently (issue #3881).
-            client_kwargs["timeout"] = build_sdk_timeout(self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT)
+            # Per-phase so the connect leg is capped independently (issue #3881). Built
+            # with the SDK's own Timeout: anthropic 1.x runs on httpx2 and rejects an
+            # httpx.Timeout, or on 1.0.x fails every request with it (issue #4683).
+            client_kwargs["timeout"] = build_sdk_timeout(self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT, Timeout)
             if default_headers:
                 client_kwargs["default_headers"] = default_headers
 
@@ -352,7 +359,12 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
+                    # on every byte, so an upstream trickling keep-alive whitespace never trips it
+                    # and the call pins its worker slot forever (#4763).
+                    response = await asyncio.wait_for(
+                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                    )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_anthropic_response(response))
@@ -467,7 +479,7 @@ class AnthropicLLM(LLMInterface):
                     logger.error(f"Anthropic returned invalid JSON after {max_retries + 1} attempts")
                     raise
 
-            except (APIConnectionError, RateLimitError, APIStatusError) as e:
+            except (APIConnectionError, RateLimitError, APIStatusError, TimeoutError) as e:
                 # Fast fail on 401/403
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     logger.error(f"Anthropic auth error (HTTP {e.status_code}), not retrying: {str(e)}")
@@ -479,7 +491,7 @@ class AnthropicLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     # Check if it's a rate limit or server error
-                    should_retry = isinstance(e, (APIConnectionError, RateLimitError)) or (
+                    should_retry = isinstance(e, (APIConnectionError, RateLimitError, TimeoutError)) or (
                         isinstance(e, APIStatusError) and e.status_code >= 500
                     )
 
@@ -489,8 +501,7 @@ class AnthropicLLM(LLMInterface):
                         await asyncio.sleep(backoff + jitter)
                         continue
 
-                detail = f" [{describe_transport_error(e)}]" if isinstance(e, APIConnectionError) else ""
-                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {str(e)}{detail}")
+                logger.error(f"Anthropic API error after {max_retries + 1} attempts: {describe_llm_error(e)}")
                 raise
 
             except Exception as e:
@@ -606,6 +617,22 @@ class AnthropicLLM(LLMInterface):
             "tools": anthropic_tools,
             "max_tokens": max_completion_tokens or _DEFAULT_MAX_TOKENS,
         }
+        # Map the canonical modes onto Anthropic's own tool_choice. A named choice
+        # rides the wire natively, so the complete tool list stays on the request
+        # instead of being narrowed to the forced tool.
+        if tool_choice.mode is LLMToolChoiceMode.NAMED:
+            forced_name = tool_choice.selected_function_name
+            matching = [tool for tool in anthropic_tools if tool.get("name") == forced_name]
+            if len(matching) != 1:
+                raise ValueError(
+                    f"Named tool_choice must reference exactly one declared tool; "
+                    f"found {len(matching)} definitions for {forced_name!r}"
+                )
+            call_params["tool_choice"] = {"type": "tool", "name": forced_name}
+        elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
+            call_params["tool_choice"] = {"type": "any"}
+        elif tool_choice.mode is LLMToolChoiceMode.NONE:
+            call_params["tool_choice"] = {"type": "none"}
         if system_prompt:
             call_params["system"] = _cached_system_blocks(system_prompt)
 
@@ -619,7 +646,12 @@ class AnthropicLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await self._client.messages.create(**call_params)
+                    # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
+                    # on every byte, so an upstream trickling keep-alive whitespace never trips it
+                    # and the call pins its worker slot forever (#4763).
+                    response = await asyncio.wait_for(
+                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                    )
                 stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls
@@ -684,16 +716,16 @@ class AnthropicLLM(LLMInterface):
                     output_tokens=output_tokens,
                 )
 
-            except (APIConnectionError, APIStatusError) as e:
+            except (APIConnectionError, APIStatusError, TimeoutError) as e:
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     raise
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
-                if isinstance(e, APIConnectionError):
+                if isinstance(e, (APIConnectionError, TimeoutError)):
                     logger.warning(
-                        f"APIConnectionError in tool call ({self.provider}/{self.model}, scope={scope}, "
-                        f"attempt {attempt + 1}/{max_retries + 1}): {str(e)[:200]} [{describe_transport_error(e)}]"
+                        f"Connection error in tool call ({self.provider}/{self.model}, scope={scope}, "
+                        f"attempt {attempt + 1}/{max_retries + 1}): {describe_llm_error(e)}"
                     )
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))

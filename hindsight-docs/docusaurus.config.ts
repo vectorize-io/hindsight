@@ -365,7 +365,7 @@ const config: Config = {
         // Rendered last on the right (after the color-mode toggle) by
         // src/theme/Navbar/Content — the only call to action up there.
         {
-          href: 'https://ui.hindsight.vectorize.io/signup',
+          href: 'https://ui.hindsight.vectorize.io',
           position: 'right',
           label: 'Sign up',
           className: 'navbar-item-signup',
@@ -421,7 +421,7 @@ const config: Config = {
             },
             {
               label: 'Hindsight Cloud',
-              href: 'https://ui.hindsight.vectorize.io/signup',
+              href: 'https://ui.hindsight.vectorize.io',
             },
           ],
         },

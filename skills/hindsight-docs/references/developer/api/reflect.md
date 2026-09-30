@@ -12,7 +12,7 @@ When you call **reflect**, Hindsight runs an agentic loop that autonomously sear
 Learn about disposition-driven reasoning in the [Reflect Architecture](../reflect.md) guide.
 > **💡 Prerequisites**
 >
-Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+Make sure you've completed the [Quick Start](./quickstart.md) to install the client and start the server.
 ## Basic Usage
 
 ### Python
@@ -211,7 +211,7 @@ into the reflect prompt.
 
 `tags` defaults to `null`, `tags_match` defaults to `any`, and `tag_groups`
 defaults to `null`. For non-empty tags, raw facts, observations, and mental
-models use the same matching modes as [recall tags](./recall#tags). Directives
+models use the same matching modes as [recall tags](./recall.md#tags). Directives
 have one additional rule: untagged directives are global and remain eligible
 whenever a tag scope is supplied, including with a strict or exact match.
 
@@ -226,7 +226,7 @@ whenever a tag scope is supplied, including with a strict or exact match.
 | Non-empty `tag_groups`, default top-level `tags_match` | Data matching the compound expression | Models matching the compound expression | Matching tagged directives plus untagged/global directives |
 
 A `tag_groups` leaf may set `resolve: "fuzzy"`, as in
-[recall](./recall#fuzzy-leaves); reflect resolves it once, before the agentic
+[recall](./recall.md#fuzzy-leaves); reflect resolves it once, before the agentic
 loop starts, so every tool it runs filters on the same tags.
 
 The first row is intentionally asymmetric: an unscoped reflect can search all
@@ -418,9 +418,11 @@ smaller context. Defaults to `true`.
 
 Both options can be defaulted for a whole bank with the
 `reflect_default_options` config key (see
-[Configuration](../configuration.mdx)), and set per mental model through the
-refresh trigger's fields of the same name. An explicit value on the request
-always wins.
+[Configuration](../configuration.md)); an explicit value on the request always
+wins. A mental-model refresh is configured separately and does **not** read
+`reflect_default_options` — set the trigger's fields of the same name, or the
+bank's `knowledge_page_default_trigger`, instead (see
+[Mental Models](./mental-models.md)).
 
 ---
 

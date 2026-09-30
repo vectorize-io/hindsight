@@ -4,7 +4,7 @@
 
 A **mental model** is a standing answer to a question about a bank. You define the question once; Hindsight writes the answer, keeps it stored, and rewrites it in the background as the bank learns more.
 
-Where [observations](./observations) are produced automatically and are atomic — one belief at a time — a mental model is deliberately curated: you decide which questions deserve a permanent, always-current answer.
+Where [observations](./observations.md) are produced automatically and are atomic — one belief at a time — a mental model is deliberately curated: you decide which questions deserve a permanent, always-current answer.
 
 **Figure: Mental Models.** An animated diagram on the docs site; its narration, step by step:
 
@@ -33,7 +33,7 @@ Fetching a mental model is a database read. No retrieval, no synthesis, no LLM c
 
 This also makes answers **consistent**. Two users asking the same question get the same document, because there is only one document — not two independently generated answers that happen to disagree on the details.
 
-Mental models are also the first thing [reflect](./reflect) reaches for. Its retrieval ladder goes:
+Mental models are also the first thing [reflect](./reflect.md) reaches for. Its retrieval ladder goes:
 
 | Layer | Produced by | Granularity |
 |---|---|---|
@@ -75,4 +75,4 @@ A mental model is not free-floating prose. It records the facts and observations
 
 ---
 
-**See also:** [Mental Models API](./api/mental-models) — creating, refreshing, and configuring them, including refresh triggers, scoping options, and history.
+**See also:** [Mental Models API](./api/mental-models.md) — creating, refreshing, and configuring them, including refresh triggers, scoping options, and history.

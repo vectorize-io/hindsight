@@ -62,6 +62,10 @@ export interface BankStats {
     temporal?: number;
     semantic?: number;
     entity?: number;
+    caused_by?: number;
+    causes?: number;
+    enables?: number;
+    prevents?: number;
   };
   pending_operations: number;
   failed_operations: number;
@@ -126,6 +130,7 @@ const CHART_COLORS = {
   temporal: "#009296", // brand teal
   semantic: "#0074d9", // brand blue
   entity: "#f59e0b", // brand amber
+  causal: "#8b5cf6", // violet-500, matching the graph view
   // Status
   success: "var(--chart-5)",
   warning: "var(--chart-4)",
@@ -134,6 +139,14 @@ const CHART_COLORS = {
   mutedFg: "var(--muted-foreground)",
   border: "var(--border)",
 };
+
+const CAUSAL_LINK_TYPES = ["caused_by", "causes", "enables", "prevents"] as const;
+
+export function getCausalLinkCount(linkCounts: BankStats["links_by_link_type"]): number {
+  // Retain writes caused_by, while transferred legacy banks may still contain the
+  // other three relationship names. The chart presents them as one causal family.
+  return CAUSAL_LINK_TYPES.reduce((total, linkType) => total + (linkCounts[linkType] ?? 0), 0);
+}
 
 const FACT_META: Record<FactKey, { label: string; color: string }> = {
   world: { label: "World", color: CHART_COLORS.world },
@@ -854,6 +867,11 @@ export function MemoryStoreCard({
                   name: t("entity"),
                   value: stats.links_by_link_type?.entity || 0,
                   color: CHART_COLORS.entity,
+                },
+                {
+                  name: t("causal"),
+                  value: getCausalLinkCount(stats.links_by_link_type ?? {}),
+                  color: CHART_COLORS.causal,
                 },
               ]}
               emptyLabel={t("noLinksYet")}

@@ -101,13 +101,13 @@ describe("hindsightAutoRecall", () => {
     expect(result.markdown).toContain("- prefers Python");
   });
 
-  it("returns undefined when there is nothing to recall", async () => {
+  it("returns null when there is nothing to recall", async () => {
     mockFetch([]);
     const ev = handlers(hindsightAutoRecall(OPTS));
-    expect(await ev["turn.started"]({ data: { turnId: "t1" } }, CTX)).toBeUndefined();
+    expect(await ev["turn.started"]({ data: { turnId: "t1" } }, CTX)).toBeNull();
   });
 
-  it("returns undefined and reports onError on a recall failure", async () => {
+  it("returns null and reports onError on a recall failure", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -119,7 +119,7 @@ describe("hindsightAutoRecall", () => {
     );
     const onError = vi.fn();
     const ev = handlers(hindsightAutoRecall({ ...OPTS, onError }));
-    expect(await ev["turn.started"]({ data: { turnId: "t1" } }, CTX)).toBeUndefined();
+    expect(await ev["turn.started"]({ data: { turnId: "t1" } }, CTX)).toBeNull();
     expect(onError).toHaveBeenCalledWith(expect.anything(), "recall");
   });
 });

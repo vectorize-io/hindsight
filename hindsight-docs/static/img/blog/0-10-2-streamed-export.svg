@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="699" height="235" viewBox="0 0 699 235" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":96,"children":[{"id":"bank","label":"Bank","shape":"store","sub":"256 MiB of attachments"},{"id":"export","label":"Export worker","sub":"writes piece by piece"},{"id":"files","label":"File storage","shape":"store","sub":"bank.zip"}]},"edges":[{"id":"r","from":"bank","to":"export","label":"read 100 docs"},{"id":"w","from":"export","to":"files","label":"stream"}],"steps":[{"label":"Exports no longer load the bank into memory","flow":[{"edges":{"edge":"r","data":"docs 1–100"},"say":"Documents are read in small batches."},{"edges":{"edge":"w","data":"4 MiB"},"say":"Attachments are copied in chunks straight into the archive."},{"ms":3000,"show":{"export":[{"tag":"before","tone":"gray","text":"~545 MiB peak memory"},{"tag":"now","tone":"green","text":"~25 MiB peak memory","mark":"✓"}]},"say":"Peak memory stays small, whatever the bank holds."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,20% { stroke: var(--accent) } 20%,40% { stroke: var(--accent) } 40%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 8s infinite step-end; }
+@keyframes a1 { 0%,20% { stroke: var(--border); fill: var(--surface) } 20%,40% { stroke: var(--border); fill: var(--surface) } 40%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 8s infinite step-end; }
+@keyframes a2 { 0%,20% { opacity: 0 } 20%,40% { opacity: 0 } 40%,100% { opacity: 1 } }
+.a2 { animation: a2 8s infinite step-end; }
+@keyframes a3 { 0%,20% { opacity: 1 } 20%,40% { opacity: 1 } 40%,100% { opacity: 0 } }
+.a3 { animation: a3 8s infinite step-end; }
+@keyframes a4 { 0%,20% { stroke: var(--border) } 20%,40% { stroke: var(--accent) } 40%,100% { stroke: var(--accent) } }
+.a4 { animation: a4 8s infinite step-end; }
+@keyframes a5 { 0%,20% { stroke: var(--accent); stroke-width: 2 } 20%,40% { stroke: var(--accent); stroke-width: 2 } 40%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a5 { animation: a5 8s infinite step-end; }
+@keyframes a6 { 0%,20% { fill: var(--accent); stroke: var(--accent) } 20%,40% { fill: var(--accent); stroke: var(--accent) } 40%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a6 { animation: a6 8s infinite step-end; }
+@keyframes a7 { 0%,20% { fill: #fff } 20%,40% { fill: #fff } 40%,100% { fill: #fff } }
+.a7 { animation: a7 8s infinite step-end; }
+@keyframes a8 { 0%,20% { stroke: var(--muted); stroke-width: 1.25 } 20%,40% { stroke: var(--accent); stroke-width: 2 } 40%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a8 { animation: a8 8s infinite step-end; }
+@keyframes a9 { 0%,20% { fill: var(--bg); stroke: var(--border) } 20%,40% { fill: var(--accent); stroke: var(--accent) } 40%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a9 { animation: a9 8s infinite step-end; }
+@keyframes a10 { 0%,20% { fill: var(--muted) } 20%,40% { fill: #fff } 40%,100% { fill: #fff } }
+.a10 { animation: a10 8s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,20% { opacity: 1 } 20%,100% { opacity: 0 } }
+.p0 { animation: p0 8s infinite step-end; }
+@keyframes p1 { 0%,20% { opacity: 0 } 20%,40% { opacity: 1 } 40%,100% { opacity: 0 } }
+.p1 { animation: p1 8s infinite step-end; }
+@keyframes a11 { 0%,20% { opacity: 1 } 20%,40% { opacity: 1 } 40%,100% { opacity: 1 } }
+.a11 { animation: a11 8s infinite step-end; }
+@keyframes a12 { 0%,20% { opacity: 1 } 20%,40% { opacity: 0 } 40%,100% { opacity: 0 } }
+.a12 { animation: a12 8s infinite step-end; }
+@keyframes a13 { 0%,20% { opacity: 0 } 20%,40% { opacity: 1 } 40%,100% { opacity: 0 } }
+.a13 { animation: a13 8s infinite step-end; }
+@keyframes a14 { 0%,20% { opacity: 0 } 20%,40% { opacity: 0 } 40%,100% { opacity: 1 } }
+.a14 { animation: a14 8s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 71 a 86 12 0 0 1 171.9 0 v 43 a 86 12 0 0 1 -171.9 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M24 71 a 86 12 0 0 0 171.9 0" fill="none" stroke="var(--border)" class="a0"/><text x="110" y="96" class="label">Bank</text><text x="110" y="111" class="sub">256 MiB of attachments</text>
+<rect x="291.9" y="24" width="166" height="137" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="374.9" y="47" class="label">Export worker</text><text x="374.9" y="62" class="sub">writes piece by piece</text><rect x="301.9" y="75" width="146" height="76" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="309.9" y="82" width="36.6" height="14" rx="4" fill="#8b949e" fill-opacity="0.15"/><text x="328.2" y="92.5" class="tag" fill="#8b949e">BEFORE</text><text x="309.9" y="107" class="row">~545 MiB peak memory</text><rect x="309.9" y="116" width="22.3" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="321.1" y="126.5" class="tag" fill="#10b981">NOW</text><text x="439.9" y="126" class="mark">✓</text><text x="309.9" y="141" class="row">~25 MiB peak memory</text></g><text x="309.9" y="92" opacity="0" class="row muted a3">—</text>
+<path d="M553.9 71 a 60.5 12 0 0 1 121 0 v 43 a 60.5 12 0 0 1 -121 0 z" fill="var(--bg)" stroke="var(--border)" class="a4"/><path d="M553.9 71 a 60.5 12 0 0 0 121 0" fill="none" stroke="var(--border)" class="a4"/><text x="614.4" y="96" class="label">File storage</text><text x="614.4" y="111" class="sub">bank.zip</text>
+<path id="p-r" d="M 195.92000000000002 92.5 C 243.92000000000002 92.5, 243.92000000000002 92.5, 291.92 92.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a5"/><rect x="199" y="83.5" width="89.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a6"/><text x="243.9" y="96.5" class="edgelabel a7">read 100 docs</text>
+<path id="p-w" d="M 457.92 92.5 C 505.9200000000001 92.5, 505.9200000000001 92.5, 553.9200000000001 92.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a8"/><rect x="481.4" y="83.5" width="49" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a9"/><text x="505.9" y="96.5" class="edgelabel a10">stream</text>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-39.5" y="-35" width="79" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">docs 1–100</text><animateMotion dur="8s" repeatCount="indefinite" keyTimes="0;0;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-r" xlink:href="#p-r"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-24.2" y="-35" width="48.5" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">4 MiB</text><animateMotion dur="8s" repeatCount="indefinite" keyTimes="0;0.2;0.4;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-w" xlink:href="#p-w"/></animateMotion></g>
+</g>
+<text x="349.5" y="201" opacity="0" class="steplabel a11">Exports no longer load the bank into memory</text>
+<g opacity="0" class="a12"><text x="349.5" y="227" class="caption">Documents are read in small batches.</text></g>
+<g opacity="0" class="a13"><text x="349.5" y="227" class="caption">Attachments are copied in chunks straight into the archive.</text></g>
+<g opacity="0" class="a14"><text x="349.5" y="227" class="caption">Peak memory stays small, whatever the bank holds.</text></g>
+</svg>

@@ -23,7 +23,7 @@ This post is a walkthrough of the new Hindsight + Cline integration. It uses **C
 - The Hindsight integration installs four lifecycle hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus a small Python lib. `pip install hindsight-cline`, one `install` command, and the hooks themselves run on stdlib Python 3 — no runtime dependencies.
 - **Recall is deterministic.** Because it runs on hooks, memory is injected automatically. There's no MCP tool the model can forget to use.
 - Recalled memories appear inside Cline as a `<hindsight_memories>` block, scoped to the current task description and your in-progress prompt.
-- Hindsight Cloud means no local daemon. Memory is stored server-side and follows you across machines. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud means no local daemon. Memory is stored server-side and follows you across machines. [Sign up free.](https://ui.hindsight.vectorize.io)
 - **Platform note:** Cline hooks run on **macOS and Linux** only, with no Windows support.
 
 ## The Problem: Cline Has No Memory Between Tasks
@@ -98,7 +98,7 @@ The fastest path is Hindsight Cloud: no daemon to keep alive, memory syncs acros
 }
 ```
 
-Create an account and grab an API key at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup).
+Create an account and grab an API key at [hindsight.vectorize.io](https://ui.hindsight.vectorize.io).
 
 Self-hosting works exactly the same way: start the API locally and point the installer at it:
 
@@ -228,7 +228,7 @@ echo '{"hookName":"UserPromptSubmit","prompt":"how do we authenticate?","taskId"
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [Cline + Hindsight](/sdks/integrations/cline)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/cline](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cline)
 - **Team memory:** [Shared Memory for AI Coding Agents](https://hindsight.vectorize.io/blog/2026/03/31/team-shared-memory-ai-coding-agents)

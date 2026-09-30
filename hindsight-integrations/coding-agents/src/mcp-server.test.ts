@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildMcpServer, resolveHarness, selectTools } from "./mcp-server";
+import { buildMcpServer, resolveHarness, resolveProjectCwd, selectTools } from "./mcp-server";
 import { resolveConfig } from "./core/config";
 import type { HindsightClient } from "./core/hindsight";
 
@@ -95,6 +95,40 @@ describe("resolveHarness", () => {
   );
 });
 
+describe("resolveProjectCwd", () => {
+  it("uses HINDSIGHT_MCP_PROJECT_CWD when the survey set it", () => {
+    expect(
+      resolveProjectCwd({ HINDSIGHT_MCP_PROJECT_CWD: "/repo" }, ["node", "mcp.js"], "/home")
+    ).toBe("/repo");
+  });
+
+  it("on cursor-cli, uses argv[2] — Cursor interpolates ${workspaceFolder} into args, not cwd", () => {
+    expect(
+      resolveProjectCwd(
+        { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
+        ["node", "mcp.js", "/repo"],
+        "/home"
+      )
+    ).toBe("/repo");
+  });
+
+  it("ignores argv[2] on every other harness — only Cursor's installer passes it", () => {
+    expect(
+      resolveProjectCwd({ HINDSIGHT_MCP_HARNESS: "codex" }, ["node", "mcp.js", "/repo"], "/home")
+    ).toBe("/home");
+  });
+
+  it("ignores an uninterpolated ${workspaceFolder} argument", () => {
+    expect(
+      resolveProjectCwd(
+        { HINDSIGHT_MCP_HARNESS: "cursor-cli" },
+        ["node", "mcp.js", "${workspaceFolder}"],
+        "/home"
+      )
+    ).toBe("/home");
+  });
+});
+
 /**
  * Registration parity across the places that launch this binary (#3603).
  *
@@ -115,6 +149,7 @@ describe("every mcp-server.js registration names a harness", () => {
   /** Modules that reference the binary WITHOUT registering it, and why. */
   const EXEMPT: Record<string, string> = {
     "mcp-server.ts": "the server itself — it READS the variable, it does not register anything",
+    "core/util.ts": "isOurMcpEntry only RECOGNISES an existing registration, it writes none",
   };
 
   /**

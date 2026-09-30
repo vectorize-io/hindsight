@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
-import { client } from "@/lib/api";
+import { client, type BankAliasEntry } from "@/lib/api";
 import { PreviewPromptButton } from "@/components/prompt-preview-dialog";
 import { TagFilterInput } from "@/components/tag-filter-input";
 import type {
@@ -79,6 +79,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, Plus, Trash2, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { IdChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { Card } from "@/components/ui/card";
 
@@ -1244,13 +1245,14 @@ export function BankConfigView() {
 
         {/* MCP Tools Section */}
         <ConfigSection
-          title={t("mcpToolsTitle")}
-          description={t("mcpToolsDescription")}
+          title={t("clientsTitle")}
+          description={t("clientsDescription")}
           error={mcpError}
           dirty={mcpDirty}
           saving={mcpSaving}
           onSave={saveMCP}
         >
+          <BankAliasRows bankId={bankId} />
           <FieldRow label={t("restrictToolsLabel")} description={t("restrictToolsDescription")}>
             <div className="flex items-center gap-2 justify-end">
               <Switch
@@ -1888,7 +1890,8 @@ function ConfigSection({
   error: string | null;
   dirty: boolean;
   saving: boolean;
-  onSave: () => void;
+  /** Omit for a section whose controls apply immediately — it then has no Save footer. */
+  onSave?: () => void;
   /** Rendered opposite the heading — used by Retain for the prompt tester. */
   action?: ReactNode;
 }) {
@@ -1912,20 +1915,209 @@ function ConfigSection({
             </Alert>
           </div>
         )}
-        <div className="px-6 py-4 flex justify-end border-t border-border/40">
-          <Button size="sm" disabled={!dirty || saving} onClick={onSave}>
-            {saving ? (
-              <>
-                <Spinner size="sm" className="mr-2" />
-                {t("saving")}
-              </>
-            ) : (
-              t("saveChanges")
-            )}
-          </Button>
-        </div>
+        {onSave && (
+          <div className="px-6 py-4 flex justify-end border-t border-border/40">
+            <Button size="sm" disabled={!dirty || saving} onClick={onSave}>
+              {saving ? (
+                <>
+                  <Spinner size="sm" className="mr-2" />
+                  {t("saving")}
+                </>
+              ) : (
+                t("saveChanges")
+              )}
+            </Button>
+          </div>
+        )}
       </Card>
     </section>
+  );
+}
+
+// ─── BankAliasRows (the ids that reach this bank) ────────────────────────────
+
+/**
+ * The bank's aliases — extra ids that reach it, beside its own.
+ *
+ * Rows rather than a section of its own: it lives inside Access, next to the MCP
+ * tool list, because both answer "how do clients get at this bank" — one is which
+ * ids reach it, the other is what they may call once they do.
+ *
+ * Unlike its neighbours these rows are NOT part of the section's form: each add
+ * and remove is its own request, applied immediately, so the section's Save
+ * button neither covers nor waits for them. Its own errors therefore render here
+ * instead of in the section's error slot.
+ */
+/** Sentinel for "no alias is shown" — Radix Select cannot hold an empty value,
+ *  and the bank's own id is deliberately not one of the alias options. */
+const OWN_ID = "__own_id__";
+
+function BankAliasRows({ bankId }: { bankId: string | null }) {
+  const t = useTranslations("bankAliases");
+  const [aliases, setAliases] = useState<BankAliasEntry[]>([]);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Removal is the one destructive action here: the id stops routing the moment
+  // it commits, so anything still calling it starts failing.
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!bankId) return;
+    client
+      .listBankAliases(bankId)
+      .then((d) => setAliases(d.aliases ?? []))
+      .catch((e) => {
+        console.error("Failed to load bank aliases:", e);
+        setError(t("loadFailed"));
+      });
+  }, [bankId, t]);
+
+  const add = async () => {
+    const alias = draft.trim();
+    if (!alias || !bankId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // The response carries the whole list, so the chips show the server's view
+      // rather than a locally appended guess.
+      setAliases((await client.createBankAlias(bankId, alias)).aliases ?? []);
+      setDraft("");
+    } catch (e) {
+      // Usually the name is already taken (409); that message names it.
+      setError(e instanceof Error ? e.message : t("addFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Show the bank as `choice`, or as its own id when `choice` is OWN_ID. */
+  const promote = async (choice: string) => {
+    if (!bankId) return;
+    setError(null);
+    const current = aliases.find((a) => a.primary)?.alias ?? null;
+    try {
+      // The whole list comes back either way, so the demoted and promoted rows
+      // update in the same render — the UI never shows two as shown.
+      const next =
+        choice === OWN_ID
+          ? current && (await client.setBankAliasPrimary(bankId, current, false))
+          : await client.setBankAliasPrimary(bankId, choice, true);
+      if (next) setAliases(next.aliases ?? []);
+    } catch (e) {
+      console.error("Failed to set primary bank alias:", e);
+      setError(t("primaryFailed"));
+    }
+  };
+
+  const remove = async (alias: string) => {
+    if (!bankId) return;
+    setError(null);
+    try {
+      setAliases((await client.deleteBankAlias(bankId, alias)).aliases ?? []);
+    } catch (e) {
+      console.error("Failed to remove bank alias:", e);
+      setError(t("removeFailed"));
+    } finally {
+      setPendingRemove(null);
+    }
+  };
+
+  if (!bankId) return null;
+
+  return (
+    <>
+      <FieldRow
+        label={t("title")}
+        description={t.rich("description", {
+          bankId,
+          // Italic, not the code style used for the aliases themselves: this one
+          // names the bank you are already looking at, rather than an id to type.
+          name: (chunks) => <em>{chunks}</em>,
+        })}
+      >
+        <div className="flex gap-2">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            placeholder={t("placeholder")}
+            className="h-8 text-sm"
+            disabled={busy}
+          />
+          <Button size="sm" variant="outline" onClick={add} disabled={busy || !draft.trim()}>
+            {t("add")}
+          </Button>
+        </div>
+      </FieldRow>
+      {aliases.length > 0 && (
+        <FieldRow label={t("shownAsLabel")} description={t("shownAsDescription", { bankId })}>
+          <Select
+            value={aliases.find((a) => a.primary)?.alias ?? OWN_ID}
+            onValueChange={(v) => promote(v)}
+          >
+            <SelectTrigger className="w-full h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {/* Always offered, and the default: a bank need not be shown as an
+                  alias, and this is how you put it back to its own id. */}
+              <SelectItem value={OWN_ID}>{bankId}</SelectItem>
+              {aliases.map((entry) => (
+                <SelectItem key={entry.alias} value={entry.alias}>
+                  {entry.alias}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldRow>
+      )}
+      {(aliases.length > 0 || error) && (
+        <div className="px-6 py-3 flex flex-wrap items-center gap-1.5">
+          {aliases.map((entry) => (
+            <IdChip
+              key={entry.alias}
+              id={entry.alias}
+              size="xs"
+              // Marks the one the bank is shown as. Promotion lives in the "Shown
+              // as" row rather than on the chip: the chip shell renders a button
+              // instead of the ✕ when given an onClick, so a clickable chip would
+              // quietly lose its remove control.
+              active={entry.primary}
+              title={entry.primary ? t("primaryTitle") : undefined}
+              onRemove={() => setPendingRemove(entry.alias)}
+              removeLabel={t("removeAria", { alias: entry.alias })}
+            />
+          ))}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+      )}
+
+      <AlertDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => !open && setPendingRemove(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("removeTitle", { alias: pendingRemove ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("removeConfirm", { alias: pendingRemove ?? "", bankId })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => pendingRemove && remove(pendingRemove)}>
+              {t("remove")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

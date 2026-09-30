@@ -32,11 +32,14 @@ Usage:
 
 import argparse
 import asyncio
+import itertools
 import json
 import random
 import statistics
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -79,6 +82,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 15,
         "stats_bank_size": 20,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 1,
     },
     "small": {
         "retain_items": 200,
@@ -94,6 +99,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 25,
         "stats_bank_size": 200,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 2,
     },
     "medium": {
         "retain_items": 1_000,
@@ -109,6 +116,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 1_000,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 5,
     },
     "large": {
         "retain_items": 5_000,
@@ -146,6 +155,8 @@ SCALES: dict[str, dict[str, int]] = {
         # Large, entity-dense bank so the unit_entities→memory_units rollup join
         # in _compute_bank_stats is exercised at a size where its cost shows.
         "stats_bank_size": 15_000,
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 20,
     },
     # Prod-simulation scale for the `stats` suite only. The numbers mirror a real
     # deployed bank: ~500k units and ~17.8M *physical* memory_links rows
@@ -169,6 +180,8 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 500_000,  # unused by the bulk path; kept for key parity
+        # Percent of the #4715 bank shape the observation-hubs suite loads.
+        "obs_hub_percent": 100,
         "stats_units": 500_000,
         "stats_semantic_links": 9_460_147,
         "stats_temporal_links": 8_344_084,
@@ -355,6 +368,42 @@ class StatsResult:
 
 
 @dataclass
+class _ObsHubBank:
+    """What _bulk_populate_obs_hub_bank actually loaded."""
+
+    units: int
+    observation_ids: list[uuid.UUID]
+    links: int
+    max_hub_degree: int
+
+
+@dataclass
+class _ExpandTiming:
+    seconds: float
+    # None when the call hit the statement timeout.
+    digest: str | None
+
+
+@dataclass
+class ObsHubResult:
+    units: int
+    observations: int
+    links: int
+    max_hub_degree: int
+    # Mean per seed set — compare with the issue: 81 seed sources, 17,488 connected.
+    seed_sources: float
+    connected_sources: float
+    latency: PercentileStats
+    concurrency: int
+    concurrent_wall_seconds: float
+    timeouts: int
+    # md5 over the returned (arm, id, score) rows, per seed set, minus rows tied
+    # at a full arm's cut-off score. Identical digests before and after a query
+    # change prove the output did not move.
+    result_digests: list[str]
+
+
+@dataclass
 class SuiteResult:
     name: str
     duration_seconds: float
@@ -366,6 +415,7 @@ class SuiteResult:
     graph_maintenance: GraphMaintenanceResult | None = None
     graph_contention: GraphContentionResult | None = None
     stats: StatsResult | None = None
+    obs_hubs: ObsHubResult | None = None
 
 
 @dataclass
@@ -471,6 +521,65 @@ _STATS_BULK_DROP_INDEXES = (
     "idx_memory_links_entity",
     "idx_memory_links_bank_id_link_type",
 )
+
+
+@asynccontextmanager
+async def _unindexed_link_load(conn: Any, q: Callable[[str], str], bulk_timeout: float) -> AsyncIterator[None]:
+    """Drop the memory_links indexes and FK triggers for a bulk COPY, restore them after.
+
+    FK triggers on memory_links/unit_entities are disabled (throwaway perf bank),
+    so COPY doesn't validate millions of edge endpoints. Every dropped index is
+    recreated so the bank plans against the prod index set.
+    """
+    dropped: list[str] = []
+    triggers_disabled = False
+    try:
+        for idx in _STATS_BULK_DROP_INDEXES:
+            await conn.execute(f"DROP INDEX IF EXISTS {q(idx)}", timeout=bulk_timeout)
+            dropped.append(idx)
+        try:
+            await conn.execute(f"ALTER TABLE {q('memory_links')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
+            await conn.execute(f"ALTER TABLE {q('unit_entities')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
+            triggers_disabled = True
+        except Exception as exc:  # noqa: BLE001 — best effort; fall back to validated COPY
+            console.print(f"  [yellow]Could not disable FK triggers ({exc}); COPY will validate FKs[/yellow]")
+        yield
+    finally:
+        if triggers_disabled:
+            await conn.execute(f"ALTER TABLE {q('memory_links')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
+            await conn.execute(f"ALTER TABLE {q('unit_entities')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
+        # Recreate the dropped indexes so the bank matches the prod schema
+        # (the planner sees the same index set when the query runs).
+        if "idx_memory_links_unique" in dropped:
+            await conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unique ON {q('memory_links')} "
+                "(from_unit_id, to_unit_id, link_type, "
+                "COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid))",
+                timeout=bulk_timeout,
+            )
+        if "idx_memory_links_from_unit" in dropped:
+            await conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_memory_links_from_unit ON {q('memory_links')} (from_unit_id)",
+                timeout=bulk_timeout,
+            )
+        if "idx_memory_links_to_unit" in dropped:
+            await conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_memory_links_to_unit ON {q('memory_links')} (to_unit_id)",
+                timeout=bulk_timeout,
+            )
+        if "idx_memory_links_entity" in dropped:
+            await conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_memory_links_entity ON {q('memory_links')} (entity_id)",
+                timeout=bulk_timeout,
+            )
+        if "idx_memory_links_bank_id_link_type" in dropped:
+            # The index the /stats link-count GROUP BY uses — restore it
+            # so the measured query plans against the prod index set.
+            await conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_memory_links_bank_id_link_type "
+                f"ON {q('memory_links')} (bank_id, link_type)",
+                timeout=bulk_timeout,
+            )
 
 
 async def _bulk_populate_stats_bank(
@@ -603,19 +712,7 @@ async def _bulk_populate_stats_bank(
                 timeout=bulk_timeout,
             )
 
-            dropped: list[str] = []
-            triggers_disabled = False
-            try:
-                for idx in _STATS_BULK_DROP_INDEXES:
-                    await conn.execute(f"DROP INDEX IF EXISTS {_q(idx)}", timeout=bulk_timeout)
-                    dropped.append(idx)
-                try:
-                    await conn.execute(f"ALTER TABLE {_q('memory_links')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
-                    await conn.execute(f"ALTER TABLE {_q('unit_entities')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
-                    triggers_disabled = True
-                except Exception as exc:  # noqa: BLE001 — best effort; fall back to validated COPY
-                    console.print(f"  [yellow]Could not disable FK triggers ({exc}); COPY will validate FKs[/yellow]")
-
+            async with _unindexed_link_load(conn, _q, bulk_timeout):
                 for link_type, count in (
                     ("semantic", semantic_links),
                     ("temporal", temporal_links),
@@ -636,42 +733,6 @@ async def _bulk_populate_stats_bank(
                     schema_name=schema,
                     timeout=bulk_timeout,
                 )
-            finally:
-                if triggers_disabled:
-                    await conn.execute(f"ALTER TABLE {_q('memory_links')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
-                    await conn.execute(f"ALTER TABLE {_q('unit_entities')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
-                # Recreate the dropped indexes so the bank matches the prod schema
-                # (the planner sees the same index set when the query runs).
-                if "idx_memory_links_unique" in dropped:
-                    await conn.execute(
-                        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unique ON {_q('memory_links')} "
-                        "(from_unit_id, to_unit_id, link_type, "
-                        "COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid))",
-                        timeout=bulk_timeout,
-                    )
-                if "idx_memory_links_from_unit" in dropped:
-                    await conn.execute(
-                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_from_unit ON {_q('memory_links')} (from_unit_id)",
-                        timeout=bulk_timeout,
-                    )
-                if "idx_memory_links_to_unit" in dropped:
-                    await conn.execute(
-                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_to_unit ON {_q('memory_links')} (to_unit_id)",
-                        timeout=bulk_timeout,
-                    )
-                if "idx_memory_links_entity" in dropped:
-                    await conn.execute(
-                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_entity ON {_q('memory_links')} (entity_id)",
-                        timeout=bulk_timeout,
-                    )
-                if "idx_memory_links_bank_id_link_type" in dropped:
-                    # The index the /stats link-count GROUP BY uses — restore it
-                    # so the measured query plans against the prod index set.
-                    await conn.execute(
-                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_bank_id_link_type "
-                        f"ON {_q('memory_links')} (bank_id, link_type)",
-                        timeout=bulk_timeout,
-                    )
             # VACUUM ANALYZE (not just ANALYZE): refresh planner stats AND set the
             # visibility map. Without the latter, the link_type COUNT can't use an
             # index-only scan (every tuple needs a heap visibility check), so a
@@ -2032,6 +2093,290 @@ async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
 
 # ---------------------------------------------------------------------------
+# Suite: observation-hubs (#4715)
+# ---------------------------------------------------------------------------
+
+# The bank from #4715: ~270k units of which ~50k observations, ~8.4M links, and
+# topic-hub entities mentioned by up to ~138k facts. On that shape one
+# consolidation batch (20 seed observations, 81 seed sources) reached 17,488
+# connected sources, and the single `source_memory_ids && <17k-element array>`
+# GIN probe in expand_observations took 5-21s — 8 of them in parallel passed the
+# 60s command timeout. Too big to retain, so it is COPY-loaded.
+ISSUE_4715_FACTS = 220_000
+ISSUE_4715_OBSERVATIONS = 50_000
+ISSUE_4715_LINKS = 8_400_000
+ISSUE_4715_HUB_DEGREES = (138_000, 110_000, 80_000, 50_000, 30_000)
+ISSUE_4715_TAIL_ENTITIES = 2_000
+# Sources per observation: Pareto, so most cite a handful but a thin tail cites
+# hundreds (consolidation appends and never prunes, #1725). The tail is what
+# matters: an observation citing hundreds of facts overlaps almost any
+# connected-source set, so the candidates are mostly the long arrays.
+OBS_HUB_SOURCE_PARETO_ALPHA = 1.1
+OBS_HUB_MAX_SOURCES = 1_000
+OBS_HUB_SEED_SETS = 8  # consolidation runs up to 8 recalls at once
+OBS_HUB_SEEDS_PER_SET = 20
+OBS_HUB_BUDGET = 100
+OBS_HUB_STATEMENT_TIMEOUT = "60s"  # the prod DB command timeout the issue hit
+
+
+async def _bulk_populate_obs_hub_bank(engine: Any, bank_id: str, fraction: float, rng: random.Random) -> _ObsHubBank:
+    """COPY-load a #4715-shaped bank.
+
+    Facts get every hub with probability degree/facts plus 1-2 long-tail
+    entities, so a seed batch fans out across ~a hundred entities the way the
+    reported bank did. Each observation cites a long-tailed number of nearby
+    facts (mean ~3.5), like consolidation clustering one topic.
+    """
+    from hindsight_api.engine.memory_engine import get_current_schema
+
+    schema = get_current_schema()
+    pool = await engine._get_pool()
+    bulk_timeout = 7200.0
+
+    n_facts = max(100, int(ISSUE_4715_FACTS * fraction))
+    n_obs = max(20 * OBS_HUB_SEEDS_PER_SET, int(ISSUE_4715_OBSERVATIONS * fraction))
+    n_links = int(ISSUE_4715_LINKS * fraction)
+    hub_degrees = [max(1, int(d * fraction)) for d in ISSUE_4715_HUB_DEGREES]
+    n_tail = max(10, int(ISSUE_4715_TAIL_ENTITIES * fraction))
+
+    def new_id() -> uuid.UUID:
+        return uuid.UUID(int=rng.getrandbits(128), version=4)
+
+    fact_ids = [new_id() for _ in range(n_facts)]
+    obs_ids = [new_id() for _ in range(n_obs)]
+    hub_ids = [new_id() for _ in hub_degrees]
+    tail_ids = [new_id() for _ in range(n_tail)]
+    tail_cum = list(itertools.accumulate(1.0 / (k + 1) ** 0.6 for k in range(n_tail)))
+
+    unit_entities: list[tuple[uuid.UUID, uuid.UUID]] = []
+    for fid in fact_ids:
+        ents = {h for h, d in zip(hub_ids, hub_degrees) if rng.random() < d / n_facts}
+        ents.update(rng.choices(tail_ids, cum_weights=tail_cum, k=rng.randint(1, 3)))
+        unit_entities.extend((fid, e) for e in ents)
+
+    obs_sources: list[list[uuid.UUID]] = []
+    for _ in range(n_obs):
+        anchor = rng.randrange(n_facts)
+        count = min(int(rng.paretovariate(OBS_HUB_SOURCE_PARETO_ALPHA)), OBS_HUB_MAX_SOURCES)
+        picks = {anchor} | {min(n_facts - 1, max(0, anchor + rng.randint(-2000, 2000))) for _ in range(count - 1)}
+        obs_sources.append([fact_ids[i] for i in picks])
+
+    base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    all_units = fact_ids + obs_ids
+
+    def unit_records():
+        for i, fid in enumerate(fact_ids):
+            yield (fid, bank_id, f"fact {i}", base_date + timedelta(minutes=i), "world", None)
+        for i, (oid, sources) in enumerate(zip(obs_ids, obs_sources)):
+            yield (oid, bank_id, f"observation {i}", base_date + timedelta(minutes=i), "observation", sources)
+
+    def link_records():
+        # Collision-free (from, to) pairs spread over every unit: pair k links
+        # unit k%N to the unit (k//N)+1 places after it.
+        n = len(all_units)
+        for k in range(n_links):
+            f = k % n
+            yield (all_units[f], all_units[(f + 1 + k // n) % n], "semantic", bank_id, 0.8)
+
+    def _q(table: str) -> str:
+        return f'"{schema}".{table}' if schema else table
+
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"), TimeElapsedColumn(), console=console
+    ) as progress:
+        progress.add_task(
+            f"Bulk-loading {len(all_units):,} units ({n_obs:,} observations), {n_links:,} links, "
+            f"{len(unit_entities):,} unit-entities…"
+        )
+        async with pool.acquire() as conn:
+            prev_stmt_timeout = await conn.fetchval("SHOW statement_timeout")
+            await conn.execute("SET statement_timeout = 0")
+            await conn.copy_records_to_table(
+                "entities",
+                records=[(e, f"hub {k}", bank_id) for k, e in enumerate(hub_ids)]
+                + [(e, f"tail {k}", bank_id) for k, e in enumerate(tail_ids)],
+                columns=["id", "canonical_name", "bank_id"],
+                schema_name=schema,
+                timeout=bulk_timeout,
+            )
+            await conn.copy_records_to_table(
+                "memory_units",
+                records=unit_records(),
+                columns=["id", "bank_id", "text", "event_date", "fact_type", "source_memory_ids"],
+                schema_name=schema,
+                timeout=bulk_timeout,
+            )
+            async with _unindexed_link_load(conn, _q, bulk_timeout):
+                await conn.copy_records_to_table(
+                    "memory_links",
+                    records=link_records(),
+                    columns=["from_unit_id", "to_unit_id", "link_type", "bank_id", "weight"],
+                    schema_name=schema,
+                    timeout=bulk_timeout,
+                )
+                await conn.copy_records_to_table(
+                    "unit_entities",
+                    records=unit_entities,
+                    columns=["unit_id", "entity_id"],
+                    schema_name=schema,
+                    timeout=bulk_timeout,
+                )
+            for table in ("memory_units", "memory_links", "unit_entities"):
+                await conn.execute(f"VACUUM (ANALYZE) {_q(table)}", timeout=bulk_timeout)
+            await conn.execute(f"SET statement_timeout = '{prev_stmt_timeout}'")
+    return _ObsHubBank(units=len(all_units), observation_ids=obs_ids, links=n_links, max_hub_degree=max(hub_degrees))
+
+
+async def run_obs_hubs_suite(scale_cfg: dict[str, int]) -> SuiteResult:
+    """Time expand_observations on a #4715-shaped bank with large entity hubs.
+
+    Drives DataAccessOps.expand_observations directly — the query that timed out
+    — once per seed set sequentially (after one warm-up), then all seed sets in
+    parallel the way a consolidation batch does. Each call runs under the prod
+    60s statement timeout, so the pre-fix query shows up as timeouts rather than
+    a hang. Seeds and data are seeded, so result digests are comparable across
+    commits: same digests before and after a fix means identical output.
+    """
+    import hashlib
+
+    import asyncpg
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.db import create_data_access_ops
+    from hindsight_api.engine.db.ops import UpdatedWindow
+    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.models import RequestContext
+
+    fraction = scale_cfg["obs_hub_percent"] / 100
+    bank_id = f"perf-obs-hubs-{uuid.uuid4().hex[:8]}"
+    console.print(f"\n[bold cyan]Suite: observation-hubs[/bold cyan]  fraction={fraction}  bank={bank_id}")
+
+    engine = _build_engine(disable_observations=True)
+    await engine.initialize()
+    rng = random.Random(4715)
+    bank = await _bulk_populate_obs_hub_bank(engine, bank_id, fraction, rng)
+    seed_sets = [rng.sample(bank.observation_ids, OBS_HUB_SEEDS_PER_SET) for _ in range(OBS_HUB_SEED_SETS)]
+
+    ops = create_data_access_ops("postgresql")
+    per_entity_limit = get_config().link_expansion_per_entity_limit
+    mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
+    pool = await engine._get_pool()
+
+    async def expand(seeds: list[uuid.UUID]) -> _ExpandTiming:
+        t0 = time.perf_counter()
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(f"SET LOCAL statement_timeout = '{OBS_HUB_STATEMENT_TIMEOUT}'")
+            try:
+                rows = await ops.expand_observations(
+                    conn,
+                    mu,
+                    ue,
+                    ml,
+                    seeds,
+                    OBS_HUB_BUDGET,
+                    per_entity_limit,
+                    UpdatedWindow(after=None, before=None, first_param_index=3),
+                )
+            except asyncpg.QueryCanceledError:
+                return _ExpandTiming(seconds=time.perf_counter() - t0, digest=None)
+        elapsed = time.perf_counter() - t0
+        # Each arm is ORDER BY score LIMIT budget with no tie-break, so which rows
+        # tied at the cut-off score make it in depends on the plan. Leave those
+        # out of a full arm, or a query change that keeps the same scored set
+        # still reads as different output.
+        lines: list[str] = []
+        for arm, arm_rows in (("entity", rows.entity), ("semantic", rows.semantic), ("causal", rows.causal)):
+            cut = min((r["score"] for r in arm_rows), default=None) if len(arm_rows) >= OBS_HUB_BUDGET else None
+            lines.extend(f"{arm}:{r['id']}:{float(r['score']):.6f}" for r in arm_rows if r["score"] != cut)
+        lines.sort()
+        return _ExpandTiming(seconds=elapsed, digest=hashlib.md5("\n".join(lines).encode()).hexdigest())
+
+    # Shape check against the issue (81 seed sources -> 17,488 connected sources).
+    seed_source_counts: list[int] = []
+    connected_counts: list[int] = []
+    async with pool.acquire() as conn:
+        for seeds in seed_sets:
+            row = await conn.fetchrow(
+                f"""
+                WITH seed_sources AS (
+                    SELECT DISTINCT unnest(source_memory_ids) AS source_id FROM {mu} WHERE id = ANY($1::uuid[])
+                ),
+                source_entities AS (
+                    SELECT DISTINCT ue.entity_id FROM seed_sources ss JOIN {ue} ue ON ue.unit_id = ss.source_id
+                ),
+                ranked AS (
+                    SELECT ue.unit_id,
+                           row_number() OVER (PARTITION BY ue.entity_id ORDER BY ue.unit_id DESC) AS rn
+                    FROM {ue} ue JOIN source_entities se ON se.entity_id = ue.entity_id
+                )
+                SELECT (SELECT COUNT(*) FROM seed_sources) AS seed_sources,
+                       (SELECT COUNT(DISTINCT unit_id) FROM ranked WHERE rn <= $2) AS connected
+                """,
+                seeds,
+                per_entity_limit,
+            )
+            seed_source_counts.append(row["seed_sources"])
+            connected_counts.append(row["connected"])
+
+    digests: list[str] = []
+    latencies: list[float] = []
+    timeouts = 0
+    for i, seeds in enumerate(seed_sets):
+        await expand(seeds)  # warm-up
+        timing = await expand(seeds)
+        latencies.append(timing.seconds)
+        digests.append(timing.digest or "TIMEOUT")
+        timeouts += timing.digest is None
+        console.print(f"  seed set {i}: {timing.seconds:.3f}s  {timing.digest or 'TIMEOUT'}")
+
+    t0 = time.perf_counter()
+    concurrent = await asyncio.gather(*[expand(seeds) for seeds in seed_sets])
+    concurrent_wall = time.perf_counter() - t0
+    timeouts += sum(t.digest is None for t in concurrent)
+    latencies.extend(t.seconds for t in concurrent)
+
+    await engine.delete_bank(bank_id=bank_id, request_context=RequestContext())
+    await engine.close()
+
+    lat = PercentileStats.from_samples(latencies)
+    result = ObsHubResult(
+        units=bank.units,
+        observations=len(bank.observation_ids),
+        links=bank.links,
+        max_hub_degree=bank.max_hub_degree,
+        seed_sources=statistics.mean(seed_source_counts),
+        connected_sources=statistics.mean(connected_counts),
+        latency=lat,
+        concurrency=len(seed_sets),
+        concurrent_wall_seconds=round(concurrent_wall, 3),
+        timeouts=timeouts,
+        result_digests=digests,
+    )
+
+    table = Table(title="expand_observations on a hub-heavy bank (#4715)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_row("Units / observations / links", f"{result.units:,} / {result.observations:,} / {result.links:,}")
+    table.add_row("Largest hub degree", f"{result.max_hub_degree:,}")
+    table.add_row(
+        "Seed sources / connected sources (mean)", f"{result.seed_sources:.0f} / {result.connected_sources:,.0f}"
+    )
+    table.add_row("Latency p50 / p95 / max", f"{lat.p50:.3f}s / {lat.p95:.3f}s / {lat.max:.3f}s")
+    table.add_row(f"{len(seed_sets)} in parallel (wall)", f"{concurrent_wall:.3f}s")
+    table.add_row(f"Timeouts (>{OBS_HUB_STATEMENT_TIMEOUT})", str(timeouts))
+    console.print(table)
+
+    return SuiteResult(
+        name="observation-hubs",
+        duration_seconds=round(sum(latencies), 3),
+        success=timeouts == 0,
+        error=f"{timeouts} expand_observations call(s) hit the {OBS_HUB_STATEMENT_TIMEOUT} timeout"
+        if timeouts
+        else None,
+        obs_hubs=result,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry and orchestrator
 # ---------------------------------------------------------------------------
 
@@ -2044,6 +2389,7 @@ SUITES = {
     "graph-maintenance": run_graph_maintenance_suite,
     "graph-maintenance-contention": run_graph_maintenance_contention_suite,
     "stats": run_stats_suite,
+    "observation-hubs": run_obs_hubs_suite,
 }
 
 
@@ -2378,6 +2724,21 @@ def _print_summary(results: PerfTestResults) -> None:
                 "",
                 "",
             )
+
+        if suite.obs_hubs:
+            oh = suite.obs_hubs
+            table.add_row(
+                suite.name,
+                status,
+                "expand latency",
+                f"mean={oh.latency.mean:.3f}s",
+                f"{oh.latency.p50:.3f}s",
+                f"{oh.latency.p95:.3f}s",
+                f"{oh.latency.p99:.3f}s",
+            )
+            table.add_row("", "", f"{oh.concurrency} in parallel (wall)", f"{oh.concurrent_wall_seconds}s", "", "", "")
+            table.add_row("", "", "timeouts", str(oh.timeouts), "", "", "")
+            table.add_row("", "", "connected sources (mean)", f"{oh.connected_sources:,.0f}", "", "", "")
 
         if not suite.success:
             table.add_row(suite.name, status, "error", suite.error or "unknown", "", "", "")

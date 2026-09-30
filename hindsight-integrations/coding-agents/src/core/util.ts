@@ -1,4 +1,4 @@
-/** Small shared helpers (no harness or Hindsight coupling). */
+/** Small shared helpers (no harness coupling). */
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -70,4 +70,21 @@ export async function pool<T>(
     }
   }
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
+
+/** Name ownership alone is insufficient: users can legitimately register another server as
+ * `hindsight`. Match the exact script shape this package has emitted under its source, npm, and
+ * staged directory names; an incidental "coding-agents" string must not grant ownership. */
+export function isOurMcpEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const candidate = entry as { command?: unknown; args?: unknown };
+  if (candidate.command !== "node" || !Array.isArray(candidate.args)) return false;
+  const script = candidate.args[0];
+  if (typeof script !== "string") return false;
+  const parts = script.replaceAll("\\", "/").split("/").filter(Boolean);
+  return (
+    parts.at(-1) === "mcp-server.js" &&
+    parts.at(-2) === "dist" &&
+    (parts.at(-3) === "coding-agents" || parts.at(-3) === "hindsight-coding-agents")
+  );
 }

@@ -15,9 +15,14 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from hindsight_api.engine.db.base import DatabaseConnection
+from hindsight_api.engine.db.ops import DataAccessOps
 from hindsight_api.engine.db.postgresql import PostgresConnection, PostgreSQLBackend
+from hindsight_api.engine.memories.pg.graph import relink_pass
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain.fact_storage import handle_document_tracking
+from hindsight_api.engine.schema import fq_table
+from hindsight_api.models import RequestContext
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.memory_backend_incompatible]
 
@@ -99,6 +104,126 @@ async def wait_for_lock(race: DeleteRace) -> None:
             != "Lock"
         ):
             await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("replace", [False, True])
+@pytest.mark.parametrize("cancel_relink", [False, True])
+async def test_document_mutation_and_relink_preserve_queue(
+    delete_race: DeleteRace,
+    request_context: RequestContext,
+    monkeypatch: pytest.MonkeyPatch,
+    replace: bool,
+    cancel_relink: bool,
+) -> None:
+    race = delete_race
+    worker, mutation = race.engines
+    bank = race.banks[0]
+    # The fixture's shared observation makes the sweep lock both documents'
+    # facts. Add a temporal edge into a, so deleting/replacing a must re-enqueue
+    # b. Exact topology and queue state are internal race preconditions.
+    await race.setup.execute(
+        "UPDATE memory_units SET event_date='2026-01-01T12:00:00Z' WHERE bank_id=$1 AND fact_type='world'",
+        bank,
+    )
+    sources = await race.setup.fetch(
+        "SELECT document_id, id FROM memory_units WHERE bank_id=$1 AND fact_type='world'",
+        bank,
+    )
+    units = {row["document_id"]: row["id"] for row in sources}
+    await race.setup.execute(
+        "INSERT INTO memory_links(from_unit_id, to_unit_id, link_type, weight, bank_id) "
+        "VALUES($1, $2, 'temporal', 1.0, $3)",
+        units["b"],
+        units["a"],
+        bank,
+    )
+    await race.setup.execute(
+        "INSERT INTO graph_maintenance_queue(bank_id, unit_id) VALUES($1, $2)",
+        bank,
+        units["b"],
+    )
+    claimed, release = asyncio.Event(), asyncio.Event()
+    ops_type = type(worker._backend.ops)
+    original_claim = ops_type.claim_graph_maintenance_batch
+
+    async def pause_claim(
+        ops: DataAccessOps, conn: DatabaseConnection, table: str, bank_id: str, limit: int
+    ) -> list[str]:
+        # Bound the first pass to one real batch. Otherwise it may consume the
+        # mutation's fresh repair before we can assert that it was re-enqueued.
+        if bank_id == bank and claimed.is_set():
+            return []
+        ids = await original_claim(ops, conn, table, bank_id, limit)
+        if bank_id == bank and ids and not claimed.is_set():
+            claimed.set()
+            await release.wait()
+        return ids
+
+    async def mutate() -> None:
+        if not replace:
+            await mutation.delete_document("a", bank, request_context=request_context)
+            return
+        backend = mutation._backend
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                await backend.ops.lock_document_for_write(conn, fq_table("documents"), "a", bank)
+                await handle_document_tracking(
+                    conn,
+                    bank,
+                    "a",
+                    "replacement",
+                    is_first_batch=True,
+                    ops=backend.ops,
+                    store_document_text=True,
+                )
+
+    monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", pause_claim)
+    worker_task = asyncio.create_task(
+        relink_pass(backend=worker._backend, fq_table=fq_table, bank_id=bank, config=None)
+    )
+    tasks = [worker_task]
+    try:
+        await asyncio.wait_for(claimed.wait(), 10)
+        tasks.append(asyncio.create_task(mutate()))
+        await wait_for_lock(race)
+        query = await race.setup.fetchval("SELECT query FROM pg_stat_activity WHERE pid=$1", race.second_pid)
+        assert "INSERT INTO public.graph_maintenance_queue" in query
+        if cancel_relink:
+            # Cancellation rolls back the real claim transaction before the
+            # mutation can finish. It must not consume the queued repair.
+            worker_task.cancel()
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
+        assert results[1] is None, results
+        if cancel_relink:
+            assert isinstance(results[0], asyncio.CancelledError), results
+        else:
+            assert not isinstance(results[0], BaseException), results
+        doc = await mutation.get_document("a", bank, request_context=request_context)
+        if replace:
+            assert doc is not None and doc["original_text"] == "replacement"
+        else:
+            assert doc is None
+        assert await mutation.get_document("b", bank, request_context=request_context) is not None
+        # The queue is not exposed by the document API. Verify the later
+        # mutation's repair survives either a committed or a cancelled claim.
+        queued = await race.setup.fetch(
+            "SELECT unit_id FROM graph_maintenance_queue WHERE bank_id=$1",
+            bank,
+        )
+        assert [row["unit_id"] for row in queued] == [units["b"]]
+        monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", original_claim)
+        await relink_pass(backend=worker._backend, fq_table=fq_table, bank_id=bank, config=None)
+        assert not await race.setup.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM graph_maintenance_queue WHERE bank_id=$1)",
+            bank,
+        )
+    finally:
+        release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize("rollback", [False, True])

@@ -194,6 +194,44 @@ export type BackgroundResponse = {
 };
 
 /**
+ * BankAliasEntry
+ *
+ * One id a bank answers to.
+ */
+export type BankAliasEntry = {
+  /**
+   * Alias
+   */
+  alias: string;
+  /**
+   * Primary
+   *
+   * Whether this alias is shown in place of the bank's own id. Display only — the bank keeps its id, and everything that names a bank still uses it. At most one alias per bank can be primary, and none has to be.
+   */
+  primary?: boolean;
+};
+
+/**
+ * BankAliasesResponse
+ *
+ * Response model for a bank's aliases.
+ */
+export type BankAliasesResponse = {
+  /**
+   * Bank Id
+   *
+   * The bank's own id, which an alias never replaces
+   */
+  bank_id: string;
+  /**
+   * Aliases
+   *
+   * Extra ids that also reach this bank, the primary one first then oldest first
+   */
+  aliases: Array<BankAliasEntry>;
+};
+
+/**
  * BankConfigResponse
  *
  * Response model for bank configuration.
@@ -282,6 +320,18 @@ export type BankListItem = {
    * When anything was last written to this bank: a document retained (including appends to an existing document) or a fact stored. Null if the bank is empty.
    */
   last_write_at?: string | null;
+  /**
+   * Display Alias
+   *
+   * The alias this bank is presented under, when one was promoted. Display only: `bank_id` remains the bank's identity everywhere else. Null when no alias is primary, in which case show `bank_id`.
+   */
+  display_alias?: string | null;
+  /**
+   * Matched Aliases
+   *
+   * Aliases of this bank that matched the search `q`. Empty when no search was made, or when the bank matched on its own id or name — so a non-empty value explains a result whose `bank_id` does not contain the search text.
+   */
+  matched_aliases?: Array<string>;
 };
 
 /**
@@ -1390,6 +1440,45 @@ export type ConsolidationStrategySpec = {
 };
 
 /**
+ * Content
+ *
+ * The raw content to retain or extract from. Either a plain string or an ordered list of content blocks.
+ */
+export type Content =
+  | string
+  | Array<
+      | ({
+          type: "text";
+        } & TextContentBlock)
+      | ({
+          type: "image";
+        } & ImageContentBlock)
+      | ({
+          type: "file";
+        } & FileContentBlock)
+    >;
+
+/**
+ * CreateBankAliasRequest
+ *
+ * Request model for adding an alias to a bank.
+ */
+export type CreateBankAliasRequest = {
+  /**
+   * Alias
+   *
+   * The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias.
+   */
+  alias: string;
+  /**
+   * Primary
+   *
+   * Also show the bank under this alias, replacing whichever alias is shown today.
+   */
+  primary?: boolean;
+};
+
+/**
  * CreateBankRequest
  *
  * Request model for creating/updating a bank.
@@ -2107,11 +2196,9 @@ export type DocumentResponse = {
  */
 export type DryRunExtractRequest = {
   /**
-   * Content
-   *
-   * Text to extract facts from (e.g. a document or a single chunk).
+   * The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear.
    */
-  content: string;
+  content: Content;
   /**
    * Context
    *
@@ -2548,6 +2635,38 @@ export type ExtractedFact = {
    * Index into `chunks` of the chunk this fact came from; null if it could not be attributed.
    */
   chunk_index?: number | null;
+  /**
+   * Attachments
+   *
+   * Attachments from user input that this fact is attributed to / associated with.
+   */
+  attachments?: Array<ExtractedFactAttachment>;
+};
+
+/**
+ * ExtractedFactAttachment
+ *
+ * An attachment from multimodal input associated with an extracted fact.
+ */
+export type ExtractedFactAttachment = {
+  /**
+   * Block Index
+   *
+   * Index of the content block in user's input (0-based)
+   */
+  block_index: number;
+  /**
+   * AttachmentType
+   *
+   * Content block type ('image' or 'file')
+   */
+  type: "image" | "file";
+  /**
+   * Media Type
+   *
+   * MIME media type of the attachment, e.g. 'image/png'
+   */
+  media_type: string;
 };
 
 /**
@@ -2656,12 +2775,10 @@ export type FeaturesInfo = {
 /**
  * FileContentBlock
  *
- * A non-image attachment — a PDF, a spreadsheet — in the position it was written.
+ * A non-image attachment — a PDF, a spreadsheet — in its input position.
  *
- * Split from ``image`` rather than folded into one type because the providers
- * split it: Anthropic has distinct image and document blocks, OpenAI has
- * image_url and file parts. Carrying the caller's own distinction through means
- * the per-provider conversion never has to guess from the media type alone.
+ * This stays distinct from ``image`` because providers use different request
+ * parts for images and documents; retaining the caller's kind avoids guessing.
  */
 export type FileContentBlock = {
   /**
@@ -2905,13 +3022,13 @@ export type KnowledgePageResponse = {
   /**
    * Body
    *
-   * The page's synthesized markdown body.
+   * The page's synthesized markdown body, exactly as stored. Empty until a refresh writes one — unlike `markdown`, which says so in words. Build a UI's own empty state off this field; read `markdown` to show the document itself.
    */
   body?: string | null;
   /**
    * Markdown
    *
-   * The full markdown document: YAML frontmatter + markdown body.
+   * The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document.
    */
   markdown: string;
 };
@@ -2951,7 +3068,15 @@ export type KnowledgePageSearchResult = {
    */
   mental_model_id?: string | null;
   /**
+   * Source Query
+   *
+   * The question the page answers.
+   */
+  source_query?: string | null;
+  /**
    * Snippet
+   *
+   * The page's opening text. A page whose body is still empty says so in words — 'No content yet.' — rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index.
    */
   snippet: string;
   /**
@@ -3068,6 +3193,10 @@ export type LlmRequestEntry = {
    * Cached Tokens
    */
   cached_tokens: number | null;
+  /**
+   * Thoughts Tokens
+   */
+  thoughts_tokens: number | null;
   /**
    * Total Tokens
    */
@@ -3195,6 +3324,10 @@ export type LlmRequestTokenSums = {
    * Cached
    */
   cached: number;
+  /**
+   * Thoughts
+   */
+  thoughts?: number | null;
   /**
    * Total
    */
@@ -3762,8 +3895,6 @@ export type MemoryGraphTableRow = {
  */
 export type MemoryItem = {
   /**
-   * Content
-   *
    * The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:
    *
    * [{"type": "text", "text": "click the button shown:"},
@@ -3772,19 +3903,7 @@ export type MemoryItem = {
    *
    * The block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form.
    */
-  content:
-    | string
-    | Array<
-        | ({
-            type: "text";
-          } & TextContentBlock)
-        | ({
-            type: "image";
-          } & ImageContentBlock)
-        | ({
-            type: "file";
-          } & FileContentBlock)
-      >;
+  content: Content;
   /**
    * Timestamp
    *
@@ -4595,23 +4714,18 @@ export type MentalModelTraceToolCall = {
  *
  * Trigger settings for a mental model.
  *
- * Inherits the reflect options an operator can also default per bank
- * (``reflect_default_options``): set here they apply to this model's refreshes
- * only, and win over the bank default.
+ * A refresh is not an ad-hoc reflect with different arguments: it synthesizes a
+ * whole document, so it wants its own retrieval and iteration settings. This
+ * trigger is therefore the only source for them — a bank's
+ * ``reflect_default_options`` deliberately does not reach a refresh. The
+ * per-bank default for these fields is ``knowledge_page_default_trigger``,
+ * which is merged over this same shape when a page is created.
  */
 export type MentalModelTriggerInput = {
   /**
-   * Reflect Search Observations Max Tokens
-   *
-   * Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).
+   * How many agent iterations a refresh may spend, as a multiple of reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. A refresh is the heaviest reflect there is — it writes a whole document, and with exclude_mental_models it must read raw facts first — so null means 'mid', not the 'low' an ad-hoc reflect defaults to.
    */
-  reflect_search_observations_max_tokens?: number | null;
-  /**
-   * Reflect Search Observations Include Entities
-   *
-   * Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.
-   */
-  reflect_search_observations_include_entities?: boolean | null;
+  budget?: Budget | null;
   /**
    * Mode
    *
@@ -4657,7 +4771,7 @@ export type MentalModelTriggerInput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match. Staleness ignores that widening: an untagged write never marks a tagged model stale, in any mode — only a write that matches the model's tags does.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
@@ -4685,6 +4799,18 @@ export type MentalModelTriggerInput = {
    */
   recall_chunks_max_tokens?: number | null;
   /**
+   * Reflect Search Observations Max Tokens
+   *
+   * Override the token budget for the refresh's search_observations calls. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. null means the shipped 5000.
+   */
+  reflect_search_observations_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Include Entities
+   *
+   * Override whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. null means enabled.
+   */
+  reflect_search_observations_include_entities?: boolean | null;
+  /**
    * Response Schema
    *
    * Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content.
@@ -4705,23 +4831,18 @@ export type MentalModelTriggerInput = {
  *
  * Trigger settings for a mental model.
  *
- * Inherits the reflect options an operator can also default per bank
- * (``reflect_default_options``): set here they apply to this model's refreshes
- * only, and win over the bank default.
+ * A refresh is not an ad-hoc reflect with different arguments: it synthesizes a
+ * whole document, so it wants its own retrieval and iteration settings. This
+ * trigger is therefore the only source for them — a bank's
+ * ``reflect_default_options`` deliberately does not reach a refresh. The
+ * per-bank default for these fields is ``knowledge_page_default_trigger``,
+ * which is merged over this same shape when a page is created.
  */
 export type MentalModelTriggerOutput = {
   /**
-   * Reflect Search Observations Max Tokens
-   *
-   * Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000).
+   * How many agent iterations a refresh may spend, as a multiple of reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. A refresh is the heaviest reflect there is — it writes a whole document, and with exclude_mental_models it must read raw facts first — so null means 'mid', not the 'low' an ad-hoc reflect defaults to.
    */
-  reflect_search_observations_max_tokens?: number | null;
-  /**
-   * Reflect Search Observations Include Entities
-   *
-   * Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled.
-   */
-  reflect_search_observations_include_entities?: boolean | null;
+  budget?: Budget | null;
   /**
    * Mode
    *
@@ -4767,7 +4888,7 @@ export type MentalModelTriggerOutput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match. Staleness ignores that widening: an untagged write never marks a tagged model stale, in any mode — only a write that matches the model's tags does.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
@@ -4796,6 +4917,18 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Max Tokens
+   *
+   * Override the token budget for the refresh's search_observations calls. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. null means the shipped 5000.
+   */
+  reflect_search_observations_max_tokens?: number | null;
+  /**
+   * Reflect Search Observations Include Entities
+   *
+   * Override whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. null means enabled.
+   */
+  reflect_search_observations_include_entities?: boolean | null;
   /**
    * Response Schema
    *
@@ -4982,6 +5115,18 @@ export type OperationResponse = {
    */
   task_type: string;
   /**
+   * Operation Id
+   *
+   * Same as `id`; the name the single-operation read uses.
+   */
+  operation_id?: string | null;
+  /**
+   * Operation Type
+   *
+   * Same as `task_type`; the name the single-operation read uses.
+   */
+  operation_type?: string | null;
+  /**
    * Items Count
    */
   items_count: number;
@@ -4998,7 +5143,7 @@ export type OperationResponse = {
   /**
    * Mental Model Id
    *
-   * Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`.
+   * Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata.
    */
   mental_model_id?: string | null;
   /**
@@ -5059,6 +5204,24 @@ export type OperationStatusResponse = {
    * Operation Type
    */
   operation_type?: string | null;
+  /**
+   * Id
+   *
+   * Same as `operation_id`; the name the operations list uses.
+   */
+  id?: string | null;
+  /**
+   * Task Type
+   *
+   * Same as `operation_type`; the name the operations list uses.
+   */
+  task_type?: string | null;
+  /**
+   * Mental Model Id
+   *
+   * Mental model this operation acted on (refresh_mental_model); null for other task types.
+   */
+  mental_model_id?: string | null;
   /**
    * Created At
    */
@@ -5504,7 +5667,7 @@ export type RecallResult = {
   /**
    * Attachments
    *
-   * Attachments this fact was drawn from, as recorded per fact at extraction time — the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none.
+   * Attachments this fact was drawn from, as recorded per fact at extraction time — the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none; an observation reports those of the facts it was consolidated from. Omitted when there are none.
    */
   attachments?: Array<ChunkAttachment> | null;
 };
@@ -5643,6 +5806,34 @@ export type ReflectFact = {
    * Occurred End
    */
   occurred_end?: string | null;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+  /**
+   * Document Id
+   */
+  document_id?: string | null;
+  /**
+   * Chunk Id
+   */
+  chunk_id?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string> | null;
+  /**
+   * Metadata
+   */
+  metadata?: {
+    [key: string]: string;
+  } | null;
+  /**
+   * Attachments
+   *
+   * Attachments this memory was drawn from — the same per-fact edge recall reports. An observation reports those of the facts it was consolidated from. Omitted when there are none.
+   */
+  attachments?: Array<ChunkAttachment> | null;
 };
 
 /**
@@ -6100,6 +6291,20 @@ export type RunSettingModel = {
    * Whether this bank may override the field via the bank config API.
    */
   editable?: boolean;
+};
+
+/**
+ * SetBankAliasPrimaryRequest
+ *
+ * Request model for showing (or no longer showing) an alias in place of the bank id.
+ */
+export type SetBankAliasPrimaryRequest = {
+  /**
+   * Primary
+   *
+   * True to present the bank under this alias; False to go back to its own id.
+   */
+  primary: boolean;
 };
 
 /**
@@ -9478,6 +9683,159 @@ export type AddBankBackgroundResponses = {
 
 export type AddBankBackgroundResponse =
   AddBankBackgroundResponses[keyof AddBankBackgroundResponses];
+
+export type ListBankAliasesData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/aliases";
+};
+
+export type ListBankAliasesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListBankAliasesError = ListBankAliasesErrors[keyof ListBankAliasesErrors];
+
+export type ListBankAliasesResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankAliasesResponse;
+};
+
+export type ListBankAliasesResponse = ListBankAliasesResponses[keyof ListBankAliasesResponses];
+
+export type CreateBankAliasData = {
+  body: CreateBankAliasRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/aliases";
+};
+
+export type CreateBankAliasErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CreateBankAliasError = CreateBankAliasErrors[keyof CreateBankAliasErrors];
+
+export type CreateBankAliasResponses = {
+  /**
+   * Successful Response
+   */
+  201: BankAliasesResponse;
+};
+
+export type CreateBankAliasResponse = CreateBankAliasResponses[keyof CreateBankAliasResponses];
+
+export type DeleteBankAliasData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Alias
+     */
+    alias: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/aliases/{alias}";
+};
+
+export type DeleteBankAliasErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteBankAliasError = DeleteBankAliasErrors[keyof DeleteBankAliasErrors];
+
+export type DeleteBankAliasResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankAliasesResponse;
+};
+
+export type DeleteBankAliasResponse = DeleteBankAliasResponses[keyof DeleteBankAliasResponses];
+
+export type SetBankAliasPrimaryData = {
+  body: SetBankAliasPrimaryRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Alias
+     */
+    alias: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/aliases/{alias}";
+};
+
+export type SetBankAliasPrimaryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type SetBankAliasPrimaryError = SetBankAliasPrimaryErrors[keyof SetBankAliasPrimaryErrors];
+
+export type SetBankAliasPrimaryResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankAliasesResponse;
+};
+
+export type SetBankAliasPrimaryResponse =
+  SetBankAliasPrimaryResponses[keyof SetBankAliasPrimaryResponses];
 
 export type DeleteBankData = {
   body?: never;

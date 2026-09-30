@@ -37,6 +37,10 @@ PG0_PORT = 15499
 
 SERVER_STARTUP_TIMEOUT = 180.0
 
+#: How often the server's worker looks for queued work. Stories that assert on what
+#: the worker has *not* claimed wait a multiple of this.
+WORKER_POLL_INTERVAL_MS = 500
+
 
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -143,6 +147,11 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         # deterministic stub the retry cannot change the answer, and the wait
         # turns a fast loud-miss into a 90-second timeout.
         "HINDSIGHT_API_WORKER_MAX_RETRIES": "0",
+        # Pinned, not inherited: story 33 waits a few poll intervals and then
+        # asserts that queued work is still pending *because it cannot be claimed*.
+        # A longer default would let that check pass without the worker ever
+        # having looked.
+        "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS": str(WORKER_POLL_INTERVAL_MS),
         # Bank stats are cached for 60s by default. A test that changes the bank
         # and then asserts on a counter would be reading a value from before its
         # own action — racy at best, a minute of waiting at worst.

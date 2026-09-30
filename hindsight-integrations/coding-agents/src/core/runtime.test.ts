@@ -31,6 +31,32 @@ describe("RuntimeCore", () => {
     expect(client.reflect).toHaveBeenCalledTimes(1);
     expect(runtime.getInjection("runtime-shared-lifecycle")).toContain("shared reflect");
   });
+
+  it("the knowledge roster tracks the pages a SESSION sees, not the ones plugin load saw", async () => {
+    // These hosts outlive every session. A preamble frozen at load told each new session "No
+    // knowledge pages yet" for the process's whole life, while the same turn's memory block listed
+    // pages by id — the agent was told both, and believed the stale half (#4607).
+    let pages: { id: string; name: string }[] = [];
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: pages })),
+      reflect: vi.fn(async () => ""),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+    await runtime.seedIfCold("/definitely-not-a-git-repository"); // cold: zero pages
+    await runtime.onPrompt("session-cold", "first prompt");
+    expect(runtime.getInjection("session-cold")).toContain("No knowledge pages yet");
+
+    pages = [
+      { id: "kp-1", name: "Component map" },
+      { id: "kp-2", name: "Key decisions and rationale" },
+    ];
+    await runtime.onPrompt("session-warm", "first prompt");
+    const warm = runtime.getInjection("session-warm") ?? "";
+    expect(warm).toContain("2 knowledge pages cover");
+    expect(warm).not.toContain("No knowledge pages yet");
+  });
 });
 
 /**

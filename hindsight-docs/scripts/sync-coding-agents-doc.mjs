@@ -58,8 +58,14 @@ function build() {
     if (heading) {
       const [, hashes, text] = heading;
       if (hashes.length === 1) continue; // the H1 becomes frontmatter `title`
-      dropping = hashes.length === 2 && DROP_SECTIONS.includes(text.trim());
-      if (dropping) continue;
+      // Only an H2 opens or closes a dropped section. Recomputing on every heading would let an
+      // H3 *inside* a dropped section switch dropping back off and leak the rest of it.
+      if (hashes.length === 2) {
+        dropping = DROP_SECTIONS.includes(text.trim());
+        if (dropping) continue;
+      } else if (dropping) {
+        continue;
+      }
     }
     if (!dropping) out.push(line);
   }

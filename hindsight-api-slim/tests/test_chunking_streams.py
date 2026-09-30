@@ -166,3 +166,45 @@ def test_chunk_text_idempotent_on_streamed_chunks():
     text = "\n\n".join(f"Para {i}. Sentence two here; clause three, word four!" for i in range(40))
     for chunk in iter_chunks(text, 120):
         assert chunk_text(chunk, 120) == [chunk]
+
+
+def test_conversation_chunks_drop_lone_surrogate_escapes():
+    """A lone ``\\ud83d`` escape (half an emoji) must not become an unencodable chunk.
+
+    json.loads turns the escape into a real surrogate; before the fix the chunk then
+    crashed ``compute_chunk_hash`` with ``UnicodeEncodeError: surrogates not allowed``.
+    """
+    turns = [{"role": "user", "content": "x" * 50 + " hi \\ud83d"} for _ in range(4)]
+    text = json.dumps(turns).replace("\\\\ud83d", "\\ud83d")
+    assert "\\ud83d" in text  # the ASCII escape, as the client sent it
+    chunks = chunk_text(text, max_chars=150)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        chunk.encode()  # raises on a lone surrogate
+        assert all(t["content"].endswith(" hi ") for t in json.loads(chunk))
+
+
+def test_conversation_chunks_keep_paired_surrogate_emoji():
+    turns = [{"role": "user", "content": "x" * 50 + " hi \U0001f600"} for _ in range(4)]
+    chunks = chunk_text(json.dumps(turns), max_chars=150)
+    assert len(chunks) > 1
+    assert all("\U0001f600" in chunk for chunk in chunks)
+
+
+def test_oversized_conversation_turn_fragments_drop_lone_surrogates():
+    """A turn too large to keep whole is fragmented — the fragments must encode too.
+
+    Distinct path from the packing case above: an oversized turn is serialized on its
+    own and split as text, so it reaches the reader through a different serialization
+    than a turn that shares a chunk.
+    """
+    turn = {"role": "user", "content": "y" * 400 + " hi \\ud83d"}
+    text = json.dumps([turn]).replace("\\\\ud83d", "\\ud83d")
+    assert "\\ud83d" in text  # the ASCII escape, as the client sent it
+
+    chunks = chunk_text(text, max_chars=150)
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        chunk.encode()  # raises on a lone surrogate
+    assert "\ud83d" not in "".join(chunks)

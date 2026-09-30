@@ -8,7 +8,7 @@ The `hindsight-all` Python package lets your code spawn and manage a local Hinds
 
 The daemon runs as a **separate OS process** on `127.0.0.1` (not in your Python process memory). Your code talks to it over HTTP via the bundled `HindsightClient`.
 
-If you already have a Hindsight server running and just need a client, use [Python Client (hindsight-client)](./python.mdx) instead.
+If you already have a Hindsight server running and just need a client, use [Python Client (hindsight-client)](./python.md) instead.
 
 ## How it works
 
@@ -27,7 +27,7 @@ pip install hindsight-all
 
 The `hindsight-all` wheel bundles `hindsight-api-slim`, `hindsight-client`, and `hindsight-embed` as dependencies, so one `pip install` gets you everything.
 
-On Intel (x86_64) Macs, install `hindsight-all-slim` instead — the full bundle's local ML models have no Intel-Mac wheels. See [Supported Platforms](../developer/installation#supported-platforms).
+On Intel (x86_64) Macs, install `hindsight-all-slim` instead — the full bundle's local ML models have no Intel-Mac wheels. See [Supported Platforms](../developer/installation.md#supported-platforms).
 
 ## `HindsightServer` — explicit lifecycle
 
@@ -89,7 +89,7 @@ A profile is an isolated Hindsight environment. Each profile gets its own embedd
 |---|---|
 | Tests, short-lived scripts, deterministic startup/shutdown | `HindsightServer` (context manager) |
 | Long-running application, auto-start on first use, don't want to manage lifecycle | `HindsightEmbedded` |
-| Existing Hindsight server running elsewhere | [`hindsight-client`](./python.mdx) directly |
+| Existing Hindsight server running elsewhere | [`hindsight-client`](./python.md) directly |
 
 ## API namespaces
 
@@ -145,4 +145,4 @@ client = embedded.client
 client.create_bank(bank_id="test", name="Test")  # Fails if daemon crashed
 ```
 
-For the full reference of retain/recall/reflect methods and their options (which work the same regardless of how you obtain the client) see the [Python Client page](./python.mdx).
+For the full reference of retain/recall/reflect methods and their options (which work the same regardless of how you obtain the client) see the [Python Client page](./python.md).

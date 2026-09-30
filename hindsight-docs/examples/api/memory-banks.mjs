@@ -202,6 +202,65 @@ const { data: docImportStatus } = await sdk.getOperationStatus({
 // [/docs:document-import]
 await waitFor('transfer-js-other', docImport.operation_id);
 await rm('transfer-js-documents.zip');
+
+// [docs:transfer-import-external]
+import { crc32 } from 'node:zlib';
+
+// Minimal uncompressed ZIP writer (Node has none built in); a library like jszip works too.
+function zip(files) {
+    const locals = [], centrals = [];
+    let offset = 0;
+    for (const [name, text] of Object.entries(files)) {
+        const n = Buffer.from(name), d = Buffer.from(text), crc = crc32(d);
+        const local = Buffer.alloc(30);
+        local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x21, 12);
+        local.writeUInt32LE(crc, 14); local.writeUInt32LE(d.length, 18); local.writeUInt32LE(d.length, 22);
+        local.writeUInt16LE(n.length, 26);
+        const central = Buffer.alloc(46);
+        central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(0x21, 14); central.writeUInt32LE(crc, 16); central.writeUInt32LE(d.length, 20);
+        central.writeUInt32LE(d.length, 24); central.writeUInt16LE(n.length, 28); central.writeUInt32LE(offset, 42);
+        locals.push(local, n, d);
+        centrals.push(central, n);
+        offset += 30 + n.length + d.length;
+    }
+    const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+    const count = Object.keys(files).length;
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10);
+    end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, dir, end]);
+}
+
+const doc = {
+    id: 'session-2026-09-22',
+    original_text: 'Full original session text...',
+    chunks: [{ chunk_index: 0, chunk_text: 'Caller-defined source region...' }],
+    facts: [{
+        text: 'The user prefers lightweight local speech recognition models.',
+        fact_type: 'experience',
+        chunk_index: 0,
+        mentioned_at: '2026-09-22T18:34:00Z',
+        entities: ['Parakeet'],
+    }],
+};
+const archiveZip = zip({
+    'manifest.json': JSON.stringify({ schema_version: 1, source_bank_id: 'external' }),
+    [`documents/${doc.id}.json`]: JSON.stringify(doc),
+});
+
+const { data: external } = await sdk.importBankTransfer({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other' },
+    query: { mode: 'merge', document_conflict: 'replace' },
+    body: { file: new Blob([archiveZip]) },
+});
+// [/docs:transfer-import-external]
+await waitFor('transfer-js-other', external.operation_id);
+const { data: importedDoc } = await sdk.getDocument({
+    client: apiClient,
+    path: { bank_id: 'transfer-js-other', document_id: 'session-2026-09-22' },
+});
+if (importedDoc.memory_unit_count !== 1) throw new Error(`external import stored ${importedDoc.memory_unit_count} facts`);
 for (const b of TRANSFER_BANKS) await fetch(`${HINDSIGHT_URL}/v1/default/banks/${b}`, { method: 'DELETE' });
 
 

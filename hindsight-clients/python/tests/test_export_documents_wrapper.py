@@ -1,14 +1,15 @@
 """Unit tests for the high-level export_documents convenience wrapper.
 
-These mock the generated sub-clients so no server is needed — they verify the
-submit -> poll -> download orchestration (the value the wrapper adds on top of
-the raw async export operation), not the HTTP behaviour (covered in the API's
-test_document_transfer.py).
+Most tests mock the generated sub-clients to verify submit -> poll -> download
+orchestration. The signed-URL test uses a local HTTP server to check the actual
+download request and credential boundary.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from hindsight_client import Hindsight
 
@@ -58,6 +59,44 @@ async def test_export_documents_submits_polls_and_downloads():
     # Polled until completed (twice), then downloaded the server-provided URL.
     assert client._operations_api.get_operation_status.await_count == 2
     assert client._api_client.param_serialize.call_args.kwargs["resource_path"] == DOWNLOAD_URL
+
+
+@pytest.mark.parametrize("export_method", ["aexport_documents", "aexport_bank"])
+async def test_export_downloads_signed_url_without_api_credentials(export_method):
+    requests = []
+
+    async def archive(request):
+        requests.append(request)
+        return web.Response(body=ARCHIVE_BYTES)
+
+    app = web.Application()
+    app.router.add_get("/archive", archive)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        download_url = str(server.make_url("/archive")) + "?X-Amz-Signature=abc%2Fdef+ghi"
+        client = Hindsight(base_url="http://localhost:8888", api_key="secret")
+        client._operations_api.get_operation_status = AsyncMock(
+            return_value=_status("completed", result_metadata={"download_url": download_url})
+        )
+        if export_method == "aexport_documents":
+            client._document_transfer_api.export_documents = AsyncMock(
+                return_value=MagicMock(operation_id=OPERATION_ID)
+            )
+        else:
+            client._bank_transfer_api.export_bank_transfer = AsyncMock(
+                return_value=MagicMock(operation_id=OPERATION_ID)
+            )
+        client._api_client.param_serialize = MagicMock(side_effect=AssertionError("API route used for signed URL"))
+
+        result = await getattr(client, export_method)("my-bank", poll_interval=0)
+
+        assert result == ARCHIVE_BYTES
+        assert len(requests) == 1
+        assert requests[0].raw_path == "/archive?X-Amz-Signature=abc%2Fdef+ghi"
+        assert "Authorization" not in requests[0].headers
+    finally:
+        await server.close()
 
 
 async def test_export_documents_forwards_subset_and_observations():

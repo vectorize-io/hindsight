@@ -194,7 +194,7 @@ This ensures responses stay accurate even as the underlying data changes.
 
 By default, observations are scoped to all of a memory's tags combined. The `observation_scopes` retain parameter lets you control this — building separate observations per tag, per combination, or with a custom list of scopes. This is key when a single memory carries multiple tags and you want each tag to accumulate its own observations independently.
 
-See [`observation_scopes` in the Retain API](./api/retain#observation_scopes) for the full explanation and options.
+See [`observation_scopes` in the Retain API](./api/retain.md#observation_scopes) for the full explanation and options.
 
 To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. The listing is paged (`limit`, default 100, and `offset`), with `total` reporting how many distinct scopes the bank holds. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags. To recall **only** the global scope — the untagged observations written by `observation_scopes: "shared"` — pass an empty list with exact matching: `tags: []`, `tags_match: "exact"`.
 
@@ -259,7 +259,7 @@ How a strategy is matched:
 
   Because the mode is per alternative, one strategy can mix them — `[{"tags": ["company:*"], "tags_match": "exact"}, {"tags": ["team:*"]}]` claims scopes that are *only* a company, or that have a team among other tags. To match *any one* of several tags, give each its own alternative: `[{"tags": ["company:*"]}, {"tags": ["team:*"]}]`. Excluding a tag ("has a company but no user") is not expressible.
 
-  Remember that a strategy matches **observation scopes** — the tag sets consolidation groups observations under, set by [`observation_scopes`](./api/retain#observation_scopes) at retain time — not the tags of individual memories. A memory tagged with a user, a team and a company but retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]` produces three single-tag scopes, none of which has both a company and a team.
+  Remember that a strategy matches **observation scopes** — the tag sets consolidation groups observations under, set by [`observation_scopes`](./api/retain.md#observation_scopes) at retain time — not the tags of individual memories. A memory tagged with a user, a team and a company but retained with `observation_scopes: [["user:dana"], ["team:exec"], ["company:acme"]]` produces three single-tag scopes, none of which has both a company and a team.
 - **What a strategy can set:** `observations_mission`, `max_observations_per_scope`, `consolidation_source_facts_max_tokens` and `consolidation_source_facts_max_tokens_per_observation`. Every one is optional.
 - **Anything a strategy leaves unset, and every scope no strategy matches,** uses the bank-wide value. The control plane shows these bank-wide values as the **Default** strategy.
 
@@ -347,13 +347,13 @@ The request body is optional. When omitted (or sent as an empty body), all uncon
 
 ## Configuration
 
-Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](configuration.md#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations).
+Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](configuration.md#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations.md).
 
 ---
 
 ## Next Steps
 
-- [**Retain**](./retain) — How facts are stored and trigger consolidation
-- [**Recall**](./retrieval) — How observations are retrieved
-- [**Reflect**](./reflect) — How the agentic loop uses observations
-- [**Mental Models**](./api/mental-models) — User-curated summaries for common queries
+- [**Retain**](./retain.md) — How facts are stored and trigger consolidation
+- [**Recall**](./retrieval.md) — How observations are retrieved
+- [**Reflect**](./reflect.md) — How the agentic loop uses observations
+- [**Mental Models**](./api/mental-models.md) — User-curated summaries for common queries

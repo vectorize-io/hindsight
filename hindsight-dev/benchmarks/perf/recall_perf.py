@@ -43,11 +43,15 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from hindsight_api.engine.search.reranking import RerankResult
+    from hindsight_api.engine.search.types import MergedCandidate
 
 console = Console()
 
@@ -1106,12 +1110,13 @@ class _RRFReranker:
     async def ensure_initialized(self) -> None:
         pass
 
-    async def rerank(self, query: str, candidates: list) -> list:
+    async def rerank(self, query: str, candidates: list["MergedCandidate"]) -> "RerankResult":
+        from hindsight_api.engine.search.reranking import RerankResult
         from hindsight_api.engine.search.types import ScoredResult
 
         scored = [ScoredResult(candidate=c, weight=c.rrf_score) for c in candidates]
         scored.sort(key=lambda x: x.weight, reverse=True)
-        return scored
+        return RerankResult(results=scored, provider_name="rrf")
 
 
 # ---------------------------------------------------------------------------

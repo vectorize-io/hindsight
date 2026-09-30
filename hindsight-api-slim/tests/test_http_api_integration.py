@@ -2316,10 +2316,16 @@ async def test_patch_authorizes_and_reads_profile_once(api_client, memory, monke
     assert response.status_code == 200, response.text
 
     validator = _make_operation_validator()
-    authenticate = AsyncMock(wraps=memory._authenticate_tenant)
+    # The tenant EXTENSION, not the engine method that calls it. A request now
+    # enters the engine twice — the route class resolves the bank id (it may be an
+    # alias, and aliases live in the tenant's schema) before the endpoint's own
+    # call — but that must not cost two identity lookups, which is the expense this
+    # test exists to catch. `RequestContext.authenticated_schema` memoises the
+    # first one, so the extension is asked exactly once per request.
+    authenticate = AsyncMock(wraps=memory._tenant_extension.authenticate)
     ensure_bank_exists = AsyncMock(wraps=memory._ensure_bank_exists)
     monkeypatch.setattr(memory, "_operation_validator", validator)
-    monkeypatch.setattr(memory, "_authenticate_tenant", authenticate)
+    monkeypatch.setattr(memory._tenant_extension, "authenticate", authenticate)
     monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
 
     response = await api_client.patch(f"/v1/default/banks/{bank_id}", json={"name": "Updated"})

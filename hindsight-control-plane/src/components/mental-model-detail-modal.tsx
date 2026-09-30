@@ -1386,6 +1386,18 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
         />
         {trigger.refresh_cron && <CronSchedulePreview cron={trigger.refresh_cron} />}
         <Metadata
+          label={t("labelMinRefreshInterval")}
+          value={
+            trigger.min_refresh_interval_seconds != null
+              ? `${trigger.min_refresh_interval_seconds.toLocaleString()}${t("secondsSuffix")}`
+              : t("minRefreshIntervalDefault")
+          }
+        />
+        <Metadata
+          label={t("labelKeepTrace")}
+          value={trigger.keep_trace ? t("valueYes") : t("valueNo")}
+        />
+        <Metadata
           label={t("labelFactTypes")}
           value={
             factTypes.length > 0 ? (
@@ -1423,7 +1435,7 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
         )}
       </InfoCard>
 
-      <InfoCard title={t("recallParamsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
+      <InfoCard title={t("reflectParamsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
         <Metadata
           label={t("labelIncludeChunks")}
           value={
@@ -1453,6 +1465,28 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
         <Metadata
           label={t("labelTagsMatch")}
           value={trigger.tags_match ? <Pill label={trigger.tags_match} /> : t("tagsMatchDefault")}
+        />
+        <Metadata
+          label={t("labelBudget")}
+          value={trigger.budget ? <Pill label={trigger.budget} /> : t("budgetDefault")}
+        />
+        <Metadata
+          label={t("labelObservationsMaxTokens")}
+          value={
+            trigger.reflect_search_observations_max_tokens != null
+              ? trigger.reflect_search_observations_max_tokens.toLocaleString()
+              : t("observationsMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelObservationEntities")}
+          value={
+            trigger.reflect_search_observations_include_entities == null
+              ? t("observationEntitiesDefault")
+              : trigger.reflect_search_observations_include_entities
+                ? t("valueYes")
+                : t("valueNo")
+          }
         />
       </InfoCard>
 

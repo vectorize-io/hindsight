@@ -74,6 +74,49 @@ describe("HindsightClient document-list safety", () => {
   });
 });
 
+describe("HindsightClient.documentTags", () => {
+  it("reads one document's tags from the id-filtered listing, not the full document", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const fetchMock = vi.fn(async (_url: string | URL | Request) =>
+      jsonResponse(200, {
+        items: [
+          { id: "gitlog:repo-fork", tags: ["gitlog-head:aaa"] },
+          { id: "gitlog:repo", tags: ["source:git-log", "gitlog-head:bbb"] },
+        ],
+        total: 2,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await client.documentTags("gitlog:repo")).toEqual(["source:git-log", "gitlog-head:bbb"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://x/v1/default/banks/shared-bank/documents?q=gitlog%3Arepo&limit=100&offset=0"
+    );
+  });
+
+  it("pages past ids that only contain the requested one, and answers undefined without it", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "shared-bank" });
+    const lookalikes = Array.from({ length: 100 }, (_, i) => ({
+      id: `gitlog:repo-${i}`,
+      tags: [],
+    }));
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      jsonResponse(200, {
+        items: String(url).includes("offset=100")
+          ? [{ id: "gitlog:repo-100", tags: [] }]
+          : lookalikes,
+        total: 101,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await client.documentTags("gitlog:repo")).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("q=gitlog%3Arepo&limit=100&offset=100");
+  });
+});
+
 describe("HindsightClient.drain", () => {
   it("polls at most maxParallelRetains ops concurrently", async () => {
     const cap = 2;
@@ -658,5 +701,87 @@ describe("HindsightClient.recallObservations", () => {
       max_tokens: 2000,
       include: { entities: null },
     });
+  });
+});
+
+/**
+ * #4868: the server gzips bodies >= 1 KB, and DSH runs plugins on a fetch that returns those bytes
+ * undecoded — so every tool died in `.json()` on the gzip magic. Asking for `identity` means the
+ * server never compresses, whatever fetch the host provides.
+ */
+describe("HindsightClient response encoding", () => {
+  it("asks the server not to compress responses", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await new HindsightClient({ apiUrl: "http://x", bank: "b" }).req("GET", "http://x/thing");
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Accept-Encoding")).toBe("identity");
+  });
+});
+
+/**
+ * #4886: every dist file is self-contained (tsup `noExternal`), so a runtime `dependencies` entry
+ * only gives hosts something to resolve — and DSH's install check fails on the MCP SDK, whose root
+ * export points at files its tarball does not ship.
+ */
+describe("package.json", () => {
+  it("declares no runtime dependencies", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "../../package.json"), "utf8")
+    ) as { dependencies?: Record<string, string> };
+    expect(pkg.dependencies ?? {}).toEqual({});
+  });
+});
+
+describe("HindsightClient rate-limit patience", () => {
+  const retainOnce = (client: HindsightClient) =>
+    client.retain("chat body", "developer chat", "chat:1", [], "conversation");
+
+  it("fails fast on a 429 by default — a hook answers to its host's deadline", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(429, {}, { "Retry-After": "0" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    await expect(retainOnce(client)).rejects.toMatchObject({ code: "rate_limited" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits out 429s and lands the write when given patience", async () => {
+    // Cloud answers "Retry-After: 0"; deepen used to log "failed to enqueue" and drop the item.
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(429, {}, { "Retry-After": "0" }))
+      .mockResolvedValueOnce(jsonResponse(429, {}, { "Retry-After": "0" }))
+      .mockResolvedValueOnce(jsonResponse(200, { operation_id: "op-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      rateLimitPatienceMs: 60_000,
+    });
+    const p = retainOnce(client);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await p;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(client.opIds).toEqual(["op-1"]);
+    // the same payload every time — a retry must not change what is written
+    const bodies = fetchMock.mock.calls.map((c) => (c[1] as RequestInit).body);
+    expect(new Set(bodies).size).toBe(1);
+  });
+
+  it("gives up with RateLimitedError once the patience is spent", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => jsonResponse(429, {}, { "Retry-After": "0" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      rateLimitPatienceMs: 5_000,
+    });
+    const p = retainOnce(client);
+    const settled = expect(p).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settled;
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(fetchMock.mock.calls.length).toBeLessThan(6);
   });
 });

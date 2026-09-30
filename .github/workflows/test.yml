@@ -79,6 +79,7 @@ jobs:
       integrations-claude-agent-sdk: ${{ steps.filter.outputs.integrations-claude-agent-sdk }}
       integrations-dify: ${{ steps.filter.outputs.integrations-dify }}
       integrations-gemini-spark: ${{ steps.filter.outputs.integrations-gemini-spark }}
+      integrations-meta-muse: ${{ steps.filter.outputs.integrations-meta-muse }}
       integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
       integrations-flowise: ${{ steps.filter.outputs.integrations-flowise }}
       integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
@@ -278,6 +279,8 @@ jobs:
             - 'hindsight-integrations/dify/**'
           integrations-gemini-spark:
             - 'hindsight-integrations/gemini-spark/**'
+          integrations-meta-muse:
+            - 'hindsight-integrations/meta-muse/**'
           integrations-vapi:
             - 'hindsight-integrations/vapi/**'
           integrations-flowise:
@@ -1328,6 +1331,39 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/gemini-spark
+      run: uv run pytest tests -v
+
+  test-meta-muse-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-meta-muse == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/meta-muse
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/meta-muse
       run: uv run pytest tests -v
 
   test-roo-code-integration:
@@ -5684,6 +5720,7 @@ jobs:
       - test-paperclip-integration
       - test-pipecat-integration
       - test-gemini-spark-integration
+      - test-meta-muse-integration
       - test-vapi-integration
       - test-google-adk-integration
       - test-roo-code-integration

@@ -206,7 +206,7 @@ export HINDSIGHT_API_TOKEN="hsk_your_token"
 
 Or use the in-app settings — `hindsight.apiUrl`, `hindsight.apiToken`, `hindsight.scoping`. The default `per-project-tagged` scoping kicks in automatically; mental-model seeding fires on the first session in each bank.
 
-You can [grab a Hindsight Cloud key for free](https://ui.hindsight.vectorize.io/signup), or [self-host Hindsight](https://hindsight.vectorize.io/developer/installation) and point oh-my-pi at `http://localhost:8888`. Same API surface either way.
+You can [grab a Hindsight Cloud key for free](https://ui.hindsight.vectorize.io), or [self-host Hindsight](https://hindsight.vectorize.io/developer/installation) and point oh-my-pi at `http://localhost:8888`. Same API surface either way.
 
 ---
 

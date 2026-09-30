@@ -10,6 +10,19 @@ For the source code, see [`hindsight-integrations/paperclip`](https://github.com
 
 ← [Back to main changelog](/changelog)
 
+## [0.4.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.4.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/paperclip/v0.4.0)
+
+**Improvements**
+
+- The Hindsight request timeout can now be configured for the Paperclip integration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/sdfantini-cs" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/sdfantini-cs.png?size=40" alt="@sdfantini-cs" width="18" height="18" style={{borderRadius: "50%"}} />@sdfantini-cs</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/82dcec054" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>82dcec054</a>
+
+**Bug Fixes**
+
+- Paperclip now resolves the Hindsight Cloud API key correctly from configured secret references.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/qveys" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/qveys.png?size=40" alt="@qveys" width="18" height="18" style={{borderRadius: "50%"}} />@qveys</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ac1962e6f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ac1962e6f</a>
+- The hindsight_recall tool now uses the query provided by the agent.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/sdfantini-cs" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/sdfantini-cs.png?size=40" alt="@sdfantini-cs" width="18" height="18" style={{borderRadius: "50%"}} />@sdfantini-cs</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/82dcec054" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>82dcec054</a>
+
 ## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.3.0)
 
 **Features**

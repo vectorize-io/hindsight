@@ -86,7 +86,7 @@ Yes, when the agent is configured with a memory layer that supports shared memor
 
 In practice this is one configuration value in the OpenCode plugin. Same bank ID, same memory.
 
-The easiest way to stand up a shared memory bank is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). Sign up, generate an API token, and have every team member set `HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN`, and `HINDSIGHT_BANK_ID` to the same values. No infrastructure to run; the bank is shared from the first session.
+The easiest way to stand up a shared memory bank is [Hindsight Cloud](https://ui.hindsight.vectorize.io). Sign up, generate an API token, and have every team member set `HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN`, and `HINDSIGHT_BANK_ID` to the same values. No infrastructure to run; the bank is shared from the first session.
 
 ---
 

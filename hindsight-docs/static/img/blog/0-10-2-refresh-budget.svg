@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="706" height="265" viewBox="0 0 706 265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":80,"children":[{"id":"trigger","label":"Mental model trigger","sub":"refresh budget: mid"},{"id":"reflect","label":"Reflect","sub":"writes the page"},{"id":"page","label":"Mental model","shape":"store"}]},"edges":[{"id":"t","from":"trigger","to":"reflect","label":"refresh"},{"id":"w","from":"reflect","to":"page","label":"write"}],"steps":[{"label":"Each page chooses how hard its refresh works","flow":[{"edges":{"edge":"t","data":"budget: mid"},"show":{"trigger":[{"tag":"before","tone":"gray","text":"always low · half the steps"},{"tag":"now","tone":"green","text":"low / mid / high, unset = mid","mark":"✓"}]},"say":"Refreshes used to run on the low budget. Now each model picks one; unset means mid."},{"light":["reflect"],"show":{"reflect":[{"tag":"ignored","tone":"orange","text":"reflect_default_options","mono":true}]},"say":"Bank defaults for answering questions no longer change how pages are written."},{"edges":"w","show":{"page":[{"tag":"page","tone":"purple","text":"Team conventions","mark":"↻"}]},"say":"The page is written with the steps it needs."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,22.2% { stroke: var(--accent) } 22.2%,44.4% { stroke: var(--accent) } 44.4%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 7.2s infinite step-end; }
+@keyframes a1 { 0%,22.2% { stroke: var(--accent); fill: var(--card-on) } 22.2%,44.4% { stroke: var(--accent); fill: var(--card-on) } 44.4%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 7.2s infinite step-end; }
+@keyframes a2 { 0%,22.2% { opacity: 1 } 22.2%,44.4% { opacity: 1 } 44.4%,100% { opacity: 1 } }
+.a2 { animation: a2 7.2s infinite step-end; }
+@keyframes a3 { 0%,22.2% { stroke: var(--border); fill: var(--surface) } 22.2%,44.4% { stroke: var(--accent); fill: var(--card-on) } 44.4%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a3 { animation: a3 7.2s infinite step-end; }
+@keyframes a4 { 0%,22.2% { opacity: 0 } 22.2%,44.4% { opacity: 1 } 44.4%,100% { opacity: 1 } }
+.a4 { animation: a4 7.2s infinite step-end; }
+@keyframes a5 { 0%,22.2% { opacity: 1 } 22.2%,44.4% { opacity: 0 } 44.4%,100% { opacity: 0 } }
+.a5 { animation: a5 7.2s infinite step-end; }
+@keyframes a6 { 0%,22.2% { stroke: var(--border) } 22.2%,44.4% { stroke: var(--border) } 44.4%,100% { stroke: var(--accent) } }
+.a6 { animation: a6 7.2s infinite step-end; }
+@keyframes a7 { 0%,22.2% { stroke: var(--border); fill: var(--surface) } 22.2%,44.4% { stroke: var(--border); fill: var(--surface) } 44.4%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a7 { animation: a7 7.2s infinite step-end; }
+@keyframes a8 { 0%,22.2% { opacity: 0 } 22.2%,44.4% { opacity: 0 } 44.4%,100% { opacity: 1 } }
+.a8 { animation: a8 7.2s infinite step-end; }
+@keyframes a9 { 0%,22.2% { opacity: 1 } 22.2%,44.4% { opacity: 1 } 44.4%,100% { opacity: 0 } }
+.a9 { animation: a9 7.2s infinite step-end; }
+@keyframes a10 { 0%,22.2% { stroke: var(--accent); stroke-width: 2 } 22.2%,44.4% { stroke: var(--accent); stroke-width: 2 } 44.4%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a10 { animation: a10 7.2s infinite step-end; }
+@keyframes a11 { 0%,22.2% { fill: var(--accent); stroke: var(--accent) } 22.2%,44.4% { fill: var(--accent); stroke: var(--accent) } 44.4%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a11 { animation: a11 7.2s infinite step-end; }
+@keyframes a12 { 0%,22.2% { fill: #fff } 22.2%,44.4% { fill: #fff } 44.4%,100% { fill: #fff } }
+.a12 { animation: a12 7.2s infinite step-end; }
+@keyframes a13 { 0%,22.2% { stroke: var(--muted); stroke-width: 1.25 } 22.2%,44.4% { stroke: var(--muted); stroke-width: 1.25 } 44.4%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a13 { animation: a13 7.2s infinite step-end; }
+@keyframes a14 { 0%,22.2% { fill: var(--bg); stroke: var(--border) } 22.2%,44.4% { fill: var(--bg); stroke: var(--border) } 44.4%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a14 { animation: a14 7.2s infinite step-end; }
+@keyframes a15 { 0%,22.2% { fill: var(--muted) } 22.2%,44.4% { fill: var(--muted) } 44.4%,100% { fill: #fff } }
+.a15 { animation: a15 7.2s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,22.2% { opacity: 1 } 22.2%,100% { opacity: 0 } }
+.p0 { animation: p0 7.2s infinite step-end; }
+@keyframes p1 { 0%,44.4% { opacity: 0 } 44.5%,66.7% { opacity: 1 } 66.7%,100% { opacity: 0 } }
+.p1 { animation: p1 7.2s infinite step-end; }
+@keyframes a16 { 0%,22.2% { opacity: 1 } 22.2%,44.4% { opacity: 1 } 44.4%,100% { opacity: 1 } }
+.a16 { animation: a16 7.2s infinite step-end; }
+@keyframes a17 { 0%,22.2% { opacity: 1 } 22.2%,44.4% { opacity: 0 } 44.4%,100% { opacity: 0 } }
+.a17 { animation: a17 7.2s infinite step-end; }
+@keyframes a18 { 0%,22.2% { opacity: 0 } 22.2%,44.4% { opacity: 1 } 44.4%,100% { opacity: 0 } }
+.a18 { animation: a18 7.2s infinite step-end; }
+@keyframes a19 { 0%,22.2% { opacity: 0 } 22.2%,44.4% { opacity: 0 } 44.4%,100% { opacity: 1 } }
+.a19 { animation: a19 7.2s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="24" width="166" height="167" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="107" y="47" class="label">Mental model trigger</text><text x="107" y="62" class="sub">refresh budget: mid</text><rect x="34" y="75" width="146" height="106" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="42" y="82" width="36.6" height="14" rx="4" fill="#8b949e" fill-opacity="0.15"/><text x="60.3" y="92.5" class="tag" fill="#8b949e">BEFORE</text><text x="42" y="107" class="row">always low · half the</text><text x="42" y="122" class="row">steps</text><rect x="42" y="131" width="22.3" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="53.2" y="141.5" class="tag" fill="#10b981">NOW</text><text x="172" y="141" class="mark">✓</text><text x="42" y="156" class="row">low / mid / high,</text><text x="42" y="171" class="row">unset = mid</text></g>
+<rect x="270" y="56" width="166" height="103" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="353" y="79" class="label">Reflect</text><text x="353" y="94" class="sub">writes the page</text><rect x="280" y="107" width="146" height="42" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a3"/><g opacity="0" class="a4"><rect x="288" y="114" width="41.4" height="14" rx="4" fill="#f59e0b" fill-opacity="0.15"/><text x="308.7" y="124.5" class="tag" fill="#f59e0b">IGNORED</text><text x="288" y="139" class="row mono">reflect_default_options</text></g><text x="288" y="124" opacity="0" class="row muted a5">—</text>
+<path d="M516 68.5 a 83 12 0 0 1 166 0 v 78 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a6"/><path d="M516 68.5 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a6"/><text x="599" y="93.5" class="label">Mental model</text><rect x="526" y="106.5" width="146" height="42" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a7"/><g opacity="0" class="a8"><rect x="534" y="113.5" width="27.1" height="14" rx="4" fill="#8b5cf6" fill-opacity="0.15"/><text x="547.5" y="124" class="tag" fill="#8b5cf6">PAGE</text><text x="664" y="123.5" class="mark">↻</text><text x="534" y="138.5" class="row">Team conventions</text></g><text x="534" y="123.5" opacity="0" class="row muted a9">—</text>
+<path id="p-t" d="M 190 107.5 C 230 107.5, 230 107.5, 270 107.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a10"/><rect x="202.6" y="98.5" width="54.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a11"/><text x="230" y="111.5" class="edgelabel a12">refresh</text>
+<path id="p-w" d="M 436 107.5 C 476 107.5, 476 107.5, 516 107.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a13"/><rect x="454.4" y="98.5" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a14"/><text x="476" y="111.5" class="edgelabel a15">write</text>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-42.5" y="-35" width="85" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">budget: mid</text><animateMotion dur="7.2s" repeatCount="indefinite" keyTimes="0;0;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-t" xlink:href="#p-t"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.2s" repeatCount="indefinite" keyTimes="0;0.4;0.7;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-w" xlink:href="#p-w"/></animateMotion></g>
+</g>
+<text x="353" y="231" opacity="0" class="steplabel a16">Each page chooses how hard its refresh works</text>
+<g opacity="0" class="a17"><text x="353" y="257" class="caption">Refreshes used to run on the low budget. Now each model picks one; unset means mid.</text></g>
+<g opacity="0" class="a18"><text x="353" y="257" class="caption">Bank defaults for answering questions no longer change how pages are written.</text></g>
+<g opacity="0" class="a19"><text x="353" y="257" class="caption">The page is written with the steps it needs.</text></g>
+</svg>

@@ -17,10 +17,12 @@ number could not mean the same thing in both. The level maps to a tuned
    trimmed by raw RRF score. Rank-aware: a candidate ranked #1 in the boosted
    arm is protected more than one ranked #200.
 
-2. **After the reranker** — :func:`additive_strategy_boost` uses
-   ``BoostWeights.additive`` as a flat bump to the final ranking weight (which
-   sits in ~[0, 1] after cross-encoder + recency/temporal scoring), nudging the
-   boosted arm's candidates up the final ordering.
+2. **After a cross-encoder rerank** — :func:`additive_strategy_boost` adds a
+   bump that is the level's full ``additive`` at rank 1 and shrinks as the
+   candidate's rank in that arm gets worse. A passthrough reranker skips this
+   bump (:func:`apply_post_rerank_boost`). The bump is still an absolute add, so
+   it does not fix cross-encoder score calibration and does not guarantee that a
+   strong direct match stays ahead.
 
 Both functions are no-ops when ``boosts`` is empty, preserving current behaviour.
 
@@ -42,14 +44,14 @@ The culprit is the ``k`` term. In score space the displacement reach is
 ``r_max = w*(k+s) - k``, so at the head of the ranking the constant ``w*k``
 dominates and the boosted arm's ~360th hit outranks the other arm's *first*.
 Boosting the rank instead — ``1/(k + rank/w)`` — cancels ``k``: the boosted arm's
-rank ``r`` beats another arm's rank ``s`` iff ``r < w*s``. Displacement becomes
-strictly proportional rather than an absolute offset, so it can never invert the
-head of the ranking, and the behaviour no longer depends on the pool size.
+rank ``r`` beats another arm's rank ``s`` iff ``r < w*s``. That comparison is one
+arm's contribution against another's. It is not a property of the fused list once
+several arms have been summed. Displacement no longer depends on the pool size.
 """
 
 from dataclasses import dataclass
 
-from .types import MergedCandidate
+from .types import MergedCandidate, ScoredResult
 
 
 @dataclass(frozen=True)
@@ -82,15 +84,24 @@ class BoostWeights:
 # is only ever displaced by boosted hits from the arm's own top `divisor` ranks —
 # which is the property the score-space form could not offer at `high`.
 #
-# Stage 2 (additive, flat bump to the post-rerank weight in [0, 1]). The local
+# Stage 2 (additive ceiling for rank 1 of a boosted arm, then decay). The local
 # cross-encoder is sharply bimodal: strong direct matches score 0.5-0.999, while
-# everything else — including graph hits the CE undervalues, which is exactly
-# what we boost — collapses near 0. So the additive lifts a ~0 candidate up the
-# weight scale. Levels are calibrated as relevance thresholds it can outrank:
-#   low=0.05  nudges above the near-0 tail; loses to any real CE match.
-#   medium=0.2 competes with weak/moderate matches.
-#   high=0.5  wins over most semantic matches (honouring "prioritise graph over
-#             semantic"); only a strong direct match (>0.5 normalized) still wins.
+# everything else — including graph hits the CE undervalues — collapses near 0.
+# ``additive`` is what rank 1 receives. A worse rank gets
+# ``additive * rank_divisor / (rank_divisor + rank - 1)``, so ``high`` is half
+# by rank 9. Reusing ``rank_divisor`` here is an initial parameter choice: in
+# stage 1 that number is a rank divisor (``r < divisor * s``), and here it is
+# only the decay scale. The two do not have to stay equal; a later change can
+# split them with an internal field and no new user setting.
+#
+# This is still an absolute add. It does not fix cross-encoder calibration
+# (a clearly relevant match can score ~0.001), it does not cap how far the
+# final order can move, and summed nudges from two arms have no shared cap.
+# Rank 1 ceilings, as a description of the full amount and not a guarantee
+# about who finishes first:
+#   low=0.05  nudges above the near-0 tail.
+#   medium=0.2 competes with weak matches when the arm rank is near 1.
+#   high=0.5  can pass a moderate match from rank 1; a deep rank should not.
 #
 # The keys are the user-facing contract; config.py validates env input against
 # them (kept in sync by a guard test).
@@ -129,19 +140,87 @@ def boosted_rrf_score(candidate: MergedCandidate, boosts: dict[str, str], k: int
 
 
 def additive_strategy_boost(source_ranks: dict[str, int], boosts: dict[str, str]) -> float:
-    """Return the flat additive boost for a candidate given its source ranks.
+    """Return the post-rerank bump for a candidate given its source ranks.
 
-    Sums the ``additive`` magnitude of every boosted arm that surfaced the
-    candidate. Flat by design: the bump does not depend on the candidate's rank
-    within the arm, matching the post-rerank "additive boost" semantics.
+    Each boosted arm that surfaced the candidate contributes
+    ``additive * rank_divisor / (rank_divisor + rank - 1)``: rank 1 keeps the
+    level's full ``additive``, and deeper ranks decay toward zero. Arms the
+    candidate did not appear in contribute nothing. Matched arms are summed, so
+    two rank-1 ``high`` hits add to ``1.0`` — there is no combined cap.
 
     Args:
         source_ranks: ``{"graph_rank": 3, "semantic_rank": 50, ...}`` from RRF.
         boosts: Map of strategy name -> priority level. Empty means no boost.
 
     Returns:
-        The additive boost (0.0 when no boosted arm surfaced this candidate).
+        The bump (0.0 when no boosted arm surfaced this candidate).
     """
     if not boosts:
         return 0.0
-    return sum(BOOST_LEVELS[level].additive for strategy, level in boosts.items() if f"{strategy}_rank" in source_ranks)
+    total = 0.0
+    for strategy, level in boosts.items():
+        rank = source_ranks.get(f"{strategy}_rank")
+        if rank is None:
+            continue
+        weights = BOOST_LEVELS[level]
+        total += weights.additive * weights.rank_divisor / (weights.rank_divisor + rank - 1)
+    return total
+
+
+@dataclass(frozen=True)
+class TrimmedCandidates:
+    """Who survived the pre-rerank cap, and how many were dropped."""
+
+    kept: list[MergedCandidate]
+    dropped: int
+
+
+def trim_merged_candidates(
+    candidates: list[MergedCandidate],
+    max_candidates: int,
+    boosts: dict[str, str],
+) -> TrimmedCandidates:
+    """Keep the pre-rerank budget, promoting boosted arms in rank space.
+
+    When the pool does not exceed ``max_candidates`` the same list is returned
+    and nothing is sorted: the boost does not run and does not rewrite
+    ``rrf_score``. When it does exceed the cap, candidates are ordered by
+    :func:`boosted_rrf_score` and the tail is dropped. ``rrf_score`` itself is
+    left as fusion wrote it.
+    """
+    if len(candidates) <= max_candidates:
+        return TrimmedCandidates(kept=candidates, dropped=0)
+    candidates.sort(key=lambda mc: boosted_rrf_score(mc, boosts), reverse=True)
+    dropped = len(candidates) - max_candidates
+    return TrimmedCandidates(kept=candidates[:max_candidates], dropped=dropped)
+
+
+def stage2_passthrough(reranking: str, provider_name: str | None) -> bool:
+    """Whether stage 2 must not add to the post-rerank weight.
+
+    Explicit ``reranking="rrf"`` keeps fusion order. A cross-encoder whose
+    ``provider_name`` is ``"rrf"`` is the same path, including a failover chain
+    whose ``rrf`` member served this request. ``provider_name`` must be the one
+    captured on the rerank result, not a later read of the chain's shared cursor.
+    """
+    return reranking == "rrf" or provider_name == "rrf"
+
+
+def apply_post_rerank_boost(
+    scored_results: list[ScoredResult],
+    boosts: dict[str, str],
+    *,
+    passthrough: bool,
+) -> str | None:
+    """Add the stage-2 bump in place, unless this recall is a passthrough.
+
+    Does not sort. Returns the ``stage2=...`` token for the ``[4.7]`` log, or
+    ``None`` when ``boosts`` is empty so the caller skips that log.
+    """
+    if not boosts:
+        return None
+    if passthrough:
+        return "stage2=skipped_passthrough"
+    for sr in scored_results:
+        sr.weight += additive_strategy_boost(sr.candidate.source_ranks, boosts)
+    return "stage2=rank_decay"

@@ -123,7 +123,9 @@ def head_db_url():
     finally:
         engine.dispose()
 
-    command.upgrade(cfg, "heads")
+    # Pinned to this revision, not heads: 7c2e5a9d1f40 later replaces the
+    # partial index this module asserts on.
+    command.upgrade(cfg, _REVISION)
     return url
 
 
@@ -185,6 +187,6 @@ def test_downgrade_restores_full_index_and_drops_column(head_db_url):
             assert _index_def(conn, _NEW_INDEX) is not None
             assert _index_def(conn, _OLD_INDEX) is None
     finally:
-        # Leave the module fixture's instance at head for any later user.
-        command.upgrade(cfg, "heads")
+        # Leave the module fixture's instance where the fixture put it.
+        command.upgrade(cfg, _REVISION)
         engine.dispose()

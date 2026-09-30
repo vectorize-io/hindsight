@@ -6,10 +6,12 @@ import {
   CalendarArrowDown,
   CalendarArrowUp,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Eye,
   FlaskConical,
   Globe,
+  Paperclip,
   User,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -27,6 +29,14 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { EntityLabelsEditor, type LabelGroup } from "@/components/entity-labels-editor";
+import {
+  ContentComposer,
+  hasComposedContent,
+  nonEmptyBlocks,
+  toRetainContent,
+  type ComposeMode,
+  type ComposerBlock,
+} from "@/components/content-composer";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { cn } from "@/lib/utils";
@@ -63,6 +73,7 @@ type Fact = {
   occurred_start?: string | null;
   occurred_end?: string | null;
   chunk_index?: number | null;
+  attachments?: { block_index: number; type: string; media_type: string }[];
 };
 type RunSetting = {
   field: string;
@@ -528,11 +539,13 @@ function ChunkCard({
   index,
   facts,
   defaultOpen,
+  fileNames,
 }: {
   chunk: Chunk;
   index: number;
   facts: Fact[];
   defaultOpen: boolean;
+  fileNames: Map<number, string>;
 }) {
   const t = useTranslations("bankConfig");
   const [open, setOpen] = useState(defaultOpen);
@@ -565,7 +578,7 @@ function ChunkCard({
           <ChunkText text={chunk.text} />
           <ul className="space-y-2">
             {facts.map((fact, i) => (
-              <FactRow key={i} fact={fact} />
+              <FactRow key={i} fact={fact} fileNames={fileNames} />
             ))}
           </ul>
         </div>
@@ -613,7 +626,7 @@ function factDate(value: string): string {
 }
 
 /** One extracted fact: what it is, when it happened, and what it mentions. */
-function FactRow({ fact }: { fact: Fact }) {
+function FactRow({ fact, fileNames }: { fact: Fact; fileNames?: Map<number, string> }) {
   const t = useTranslations("bankConfig");
   const isExperience = fact.fact_type === "experience";
 
@@ -656,6 +669,17 @@ function FactRow({ fact }: { fact: Fact }) {
             {factDate(fact.occurred_end)}
           </span>
         ) : null}
+
+        {(fact.attachments ?? []).map((attachment) => (
+          <span
+            key={attachment.block_index}
+            className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-900 dark:bg-amber-500/25 dark:text-amber-100"
+            title={attachment.media_type}
+          >
+            <Paperclip className="h-3 w-3" />
+            {fileNames?.get(attachment.block_index) ?? attachment.media_type}
+          </span>
+        ))}
 
         {fact.entities.length ? (
           <span className="ml-1 font-mono text-[11px] text-muted-foreground">
@@ -721,15 +745,83 @@ function RunSettingRow({
   );
 }
 
+type TesterColumn = "prompt" | "input" | "result";
+type Collapsed = Record<TesterColumn, boolean>;
+
+/**
+ * One of the tester's three columns. Collapsed, it shrinks to a thin rail that still
+ * names itself and opens on click — width goes to the columns being looked at, and
+ * nothing is ever hidden behind a control you have to remember.
+ */
+function Column({
+  title,
+  collapsed,
+  onToggle,
+  first,
+  bare,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  first?: boolean;
+  /** No header at all — for a lone column, where there is nothing to make room for. */
+  bare?: boolean;
+  children: React.ReactNode;
+}) {
+  const t = useTranslations("bankConfig");
+  if (bare) return <div className="flex min-h-0 flex-col gap-3">{children}</div>;
+  const edge = first ? "" : "border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0";
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={t("testerColumnExpand", { name: title })}
+        className={cn(
+          "flex min-h-0 items-center gap-2 text-sm font-semibold text-muted-foreground animate-soft-fade-in hover:text-foreground lg:flex-col",
+          edge
+        )}
+      >
+        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+        <span className="lg:[writing-mode:vertical-rl]">{title}</span>
+      </button>
+    );
+  }
+  return (
+    <section className={cn("flex min-h-0 flex-col gap-3 animate-soft-fade-in", edge)}>
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border pb-2">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={t("testerColumnCollapse", { name: title })}
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      </header>
+      {children}
+    </section>
+  );
+}
+
 function ExtractionPanel({
   bankId,
   strategy,
   raw,
   settings,
   onSaved,
+  collapsed,
+  onToggle,
+  onRun,
 }: {
   bankId: string;
   strategy?: string | null;
+  collapsed: Collapsed;
+  onToggle: (column: TesterColumn) => void;
+  /** Told the moment a run starts, so the dialog can make room for its result. */
+  onRun: () => void;
   /** Driven by the dialog's single Show raw switch, so prompt and result flip together. */
   raw: boolean;
   /** Settings that shape the run without appearing in the prompt — the chunk sizes. */
@@ -740,6 +832,11 @@ function ExtractionPanel({
   // Seeded, not left empty: the run button is disabled without text, so an empty box
   // makes the panel look broken until you think of something to paste.
   const [content, setContent] = useState(() => t("testerSampleDefault"));
+  const [mode, setMode] = useState<ComposeMode>("text");
+  const [blocks, setBlocks] = useState<ComposerBlock[]>([]);
+  // Which file each block index of the last run stood for — frozen with the result,
+  // so editing the blocks afterwards does not relabel the facts already on screen.
+  const [fileNames, setFileNames] = useState<Map<number, string>>(new Map());
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
@@ -748,14 +845,21 @@ function ExtractionPanel({
 
   function run() {
     setRunning(true);
+    onRun();
     setError(null);
     // Wall-clock around the whole call, which is what a reader is judging: extraction
     // is the slow part of a retain, and the number that matters is how long this
     // bank's configuration takes, not the provider's own accounting.
     const startedAt = performance.now();
+    // The API reports a fact's sources by their index in the blocks it was sent,
+    // which are the non-empty ones, in order.
+    const sent = mode === "blocks" ? nonEmptyBlocks(blocks) : [];
+    const names = new Map<number, string>();
+    sent.forEach((block, i) => block.kind === "attachment" && names.set(i, block.name));
     client
-      .dryRunExtract(bankId, content, strategy)
+      .dryRunExtract(bankId, toRetainContent(mode, content, blocks), strategy)
       .then((value) => {
+        setFileNames(names);
         setResult(value);
         setElapsedMs(Math.round(performance.now() - startedAt));
         setRunId((n) => n + 1);
@@ -767,108 +871,144 @@ function ExtractionPanel({
   const facts = result?.facts ?? null;
 
   return (
-    // Its own column beside the prompt, not a strip beneath it: the sample box and
-    // the run button are the point of the panel, and scrolling past a 6000-line
-    // prompt to reach them would defeat it. Only the results scroll.
-    <section className="flex min-h-0 flex-col gap-3 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-      {settings.length ? (
-        // Beside the sample rather than among the prompt blocks: these decide how the
-        // input is cut before a prompt exists, so they belong to the run, not the text.
-        // Folded away by default — this column is the sample box, the button and the
-        // results, and a chunk size you set once should not sit above all three.
-        <details className="group shrink-0">
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground">
-            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-            {t("testerRunSettingsLabel")}
-          </summary>
-          <div className="mt-1.5 space-y-1.5 pl-4">
-            {settings.map((setting) => (
-              <RunSettingRow
-                key={setting.field}
-                bankId={bankId}
-                setting={setting}
-                onSaved={onSaved}
-              />
-            ))}
+    <>
+      {/* The input and the result are columns of their own beside the prompt, not
+          strips beneath it: stacked, a few blocks of input squeezed the result into
+          a sliver. */}
+      <Column
+        title={t("testerSampleLabel")}
+        collapsed={collapsed.input}
+        onToggle={() => onToggle("input")}
+      >
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          {settings.length ? (
+            // Beside the sample rather than among the prompt blocks: these decide how the
+            // input is cut before a prompt exists, so they belong to the run, not the text.
+            // Folded away by default — a chunk size you set once should not sit above the
+            // sample you are editing.
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                {t("testerRunSettingsLabel")}
+              </summary>
+              <div className="mt-1.5 space-y-1.5 pl-4">
+                {settings.map((setting) => (
+                  <RunSettingRow
+                    key={setting.field}
+                    bankId={bankId}
+                    setting={setting}
+                    onSaved={onSaved}
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
+
+          <ContentComposer
+            // The column header already names it; this row only carries the switch.
+            label={<span />}
+            mode={mode}
+            onModeChange={setMode}
+            text={content}
+            onTextChange={setContent}
+            blocks={blocks}
+            onBlocksChange={setBlocks}
+            placeholder={t("testerSamplePlaceholder")}
+          />
+        </div>
+        <div className="flex shrink-0 items-start justify-between gap-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("testerRunNote")}</p>
+          <Button
+            size="sm"
+            className="shrink-0"
+            disabled={running || !hasComposedContent(mode, content, blocks)}
+            onClick={run}
+          >
+            {running ? <Spinner size="sm" className="mr-2" /> : null}
+            {t("testerRunAction")}
+          </Button>
+        </div>
+      </Column>
+
+      <Column
+        title={t("testerColumnResult")}
+        collapsed={collapsed.result}
+        onToggle={() => onToggle("result")}
+      >
+        {error && !running ? <p className="text-xs text-destructive">{error}</p> : null}
+
+        {running ? (
+          // Replaces the previous result rather than sitting above it: facts from the
+          // last run under a spinner read as the answer to this one.
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+            <Spinner size="sm" />
+            {t("testerRunning")}
           </div>
-        </details>
-      ) : null}
-
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {t("testerSampleLabel")}
-      </p>
-      <textarea
-        rows={3}
-        className="w-full shrink-0 resize-y rounded-md border border-border bg-background px-3 py-2 text-sm"
-        placeholder={t("testerSamplePlaceholder")}
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-      />
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs leading-relaxed text-muted-foreground">{t("testerRunNote")}</p>
-        <Button size="sm" className="shrink-0" disabled={running || !content.trim()} onClick={run}>
-          {running ? <Spinner size="sm" className="mr-2" /> : null}
-          {t("testerRunAction")}
-        </Button>
-      </div>
-
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-
-      {result ? (
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span>{t("testerFactCount", { count: result.facts.length })}</span>
-          {result.chunks?.length ? (
-            <>
-              <span>·</span>
-              <span>{t("testerChunkCount", { count: result.chunks.length })}</span>
-            </>
-          ) : null}
-          {elapsedMs !== null ? (
-            <>
-              <span>·</span>
-              <span className="tabular-nums">{t("testerElapsed", { ms: elapsedMs })}</span>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
-        {/* The dialog's one Show raw switch drives both halves: the prompt on the left
-            and the whole dry-run payload here, `usage` included. */}
-        {raw && result ? (
-          <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-xs leading-relaxed">
-            {JSON.stringify(result, null, 2)}
-          </pre>
-        ) : facts ? (
-          <>
-            {(result?.chunks ?? []).map((chunk, index) => (
-              <ChunkCard
-                // Keyed by the run as well as the position, so a new run remounts the
-                // cards and the "first one open" rule applies again rather than
-                // leaving whatever the last run was left scrolled open.
-                key={`${runId}-${index}`}
-                chunk={chunk}
-                index={index}
-                facts={facts.filter((fact) => fact.chunk_index === index)}
-                defaultOpen={index === 0}
-              />
-            ))}
-
-            {/* Anything the counts could not attribute — never expected, but dropping
-                facts on the floor because of it would be worse than an odd heading. */}
-            {facts.some((fact) => fact.chunk_index == null) ? (
-              <ul className="space-y-1">
-                {facts
-                  .filter((fact) => fact.chunk_index == null)
-                  .map((fact, i) => (
-                    <FactRow key={i} fact={fact} />
-                  ))}
-              </ul>
+        ) : result ? (
+          <p className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{t("testerFactCount", { count: result.facts.length })}</span>
+            {result.chunks?.length ? (
+              <>
+                <span>·</span>
+                <span>{t("testerChunkCount", { count: result.chunks.length })}</span>
+              </>
             ) : null}
-          </>
+            {elapsedMs !== null ? (
+              <>
+                <span>·</span>
+                <span className="tabular-nums">{t("testerElapsed", { ms: elapsedMs })}</span>
+              </>
+            ) : null}
+          </p>
+        ) : !error ? (
+          <p className="text-xs text-muted-foreground">{t("testerResultEmpty")}</p>
         ) : null}
-      </div>
-    </section>
+
+        <div
+          className={cn(
+            "min-h-0 flex-1 space-y-2 overflow-y-auto animate-soft-fade-in",
+            running && "hidden"
+          )}
+          key={runId}
+        >
+          {/* The dialog's one Show raw switch drives both halves: the prompt on the left
+            and the whole dry-run payload here, `usage` included. */}
+          {raw && result ? (
+            <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-xs leading-relaxed">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          ) : facts ? (
+            <>
+              {(result?.chunks ?? []).map((chunk, index) => (
+                <ChunkCard
+                  // Keyed by the run as well as the position, so a new run remounts the
+                  // cards and the "first one open" rule applies again rather than
+                  // leaving whatever the last run was left scrolled open.
+                  key={`${runId}-${index}`}
+                  chunk={chunk}
+                  index={index}
+                  facts={facts.filter((fact) => fact.chunk_index === index)}
+                  defaultOpen={index === 0}
+                  fileNames={fileNames}
+                />
+              ))}
+
+              {/* Anything the counts could not attribute — never expected, but dropping
+                facts on the floor because of it would be worse than an odd heading. */}
+              {facts.some((fact) => fact.chunk_index == null) ? (
+                <ul className="space-y-1">
+                  {facts
+                    .filter((fact) => fact.chunk_index == null)
+                    .map((fact, i) => (
+                      <FactRow key={i} fact={fact} fileNames={fileNames} />
+                    ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </Column>
+    </>
   );
 }
 
@@ -919,6 +1059,14 @@ function PromptPreviewDialog({
   // The whole message as one plain panel — for reading it end to end, or copying
   // it out, which the blocks make awkward.
   const [raw, setRaw] = useState(false);
+  // The result starts folded — there is none until a run — and a run folds the
+  // prompt away in turn: by then it has been read, and the result needs the room.
+  const [collapsed, setCollapsed] = useState<Collapsed>({
+    prompt: false,
+    input: false,
+    result: true,
+  });
+  const toggle = (column: TesterColumn) => setCollapsed((c) => ({ ...c, [column]: !c[column] }));
   // Bumped after a save, to refetch the preview against the value now stored.
   const [reloads, setReloads] = useState(0);
 
@@ -986,13 +1134,48 @@ function PromptPreviewDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {preview && !preview.skipped_reason && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span className="rounded bg-muted px-2 py-0.5 font-mono text-[11px]">{operation}</span>
-            <span>·</span>
-            <span>{t("promptPreviewMessageCount", { count: preview.messages.length })}</span>
-            <span>·</span>
-            <span>{t("promptPreviewChars", { count: totalChars })}</span>
+        {preview && (
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            {!preview.skipped_reason ? (
+              <>
+                <span className="rounded bg-muted px-2 py-0.5 font-mono text-[11px]">
+                  {operation}
+                </span>
+                <span>·</span>
+                <span>{t("promptPreviewMessageCount", { count: preview.messages.length })}</span>
+                <span>·</span>
+                <span>{t("promptPreviewChars", { count: totalChars })}</span>
+              </>
+            ) : null}
+            {operation === "retain" ? (
+              // On the stats line rather than a row of its own: it steers both the
+              // prompt and the run, and every row here is height the columns lose.
+              <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                {t("testerStrategyLabel")}
+                <select
+                  className="h-7 rounded-md border border-border bg-background px-1.5 text-xs disabled:opacity-60"
+                  // Bound to the local selection, not the resolved one: picking
+                  // "default" must stay on "default" rather than jumping to the
+                  // name the server resolved it to.
+                  value={strategy ?? ""}
+                  disabled={(preview.strategies?.length ?? 0) === 0}
+                  onChange={(e) => setStrategy(e.target.value || null)}
+                >
+                  <option value="">
+                    {(preview.strategies?.length ?? 0) === 0
+                      ? t("testerNoStrategies")
+                      : preview.strategy
+                        ? t("testerDefaultStrategyNamed", { name: preview.strategy })
+                        : t("testerDefaultStrategy")}
+                  </option>
+                  {preview.strategies?.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         )}
 
@@ -1010,58 +1193,48 @@ function PromptPreviewDialog({
               </p>
             ) : null}
 
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-              <div className="flex gap-1 rounded-lg bg-muted p-1">
-                {preview.messages.map((m) => (
-                  <button
-                    key={m.role}
-                    type="button"
-                    onClick={() => setRole(m.role)}
-                    className={cn(
-                      "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                      m.role === role
-                        ? "bg-background shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {m.role === "system"
-                      ? t("promptPreviewSystemLabel")
-                      : t("promptPreviewUserLabel")}
-                    <span className="ml-1.5 text-muted-foreground">· {m.blocks.length}</span>
-                  </button>
-                ))}
-              </div>
-              {operation === "retain" ? (
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {t("testerStrategyLabel")}
-                  <select
-                    className="h-7 rounded-md border border-border bg-background px-1.5 text-xs disabled:opacity-60"
-                    // Bound to the local selection, not the resolved one: picking
-                    // "default" must stay on "default" rather than jumping to the
-                    // name the server resolved it to.
-                    value={strategy ?? ""}
-                    disabled={(preview.strategies?.length ?? 0) === 0}
-                    onChange={(e) => setStrategy(e.target.value || null)}
-                  >
-                    <option value="">
-                      {(preview.strategies?.length ?? 0) === 0
-                        ? t("testerNoStrategies")
-                        : preview.strategy
-                          ? t("testerDefaultStrategyNamed", { name: preview.strategy })
-                          : t("testerDefaultStrategy")}
-                    </option>
-                    {preview.strategies?.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="flex min-h-0 flex-col">
+            <div
+              // Every track is minmax(rail, Nfr), open at 1fr and folded at 0fr, so the
+              // browser can animate between them: mixing a fixed rail width with fr
+              // tracks made the columns jump instead of slide.
+              className="grid min-h-0 flex-1 grid-cols-1 gap-4 transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none lg:grid-cols-(--tester-cols)"
+              style={
+                {
+                  "--tester-cols": isLab
+                    ? (["prompt", "input", "result"] as const)
+                        .map((c) => `minmax(1.25rem,${collapsed[c] ? 0 : 1}fr)`)
+                        .join(" ")
+                    : "minmax(0,1fr)",
+                } as React.CSSProperties
+              }
+            >
+              <Column
+                title={t("testerColumnPrompt")}
+                collapsed={isLab && collapsed.prompt}
+                onToggle={() => toggle("prompt")}
+                first
+                bare={!isLab}
+              >
+                <div className="flex shrink-0 gap-1 self-start rounded-lg bg-muted p-1">
+                  {preview.messages.map((m) => (
+                    <button
+                      key={m.role}
+                      type="button"
+                      onClick={() => setRole(m.role)}
+                      className={cn(
+                        "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                        m.role === role
+                          ? "bg-background shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {m.role === "system"
+                        ? t("promptPreviewSystemLabel")
+                        : t("promptPreviewUserLabel")}
+                      <span className="ml-1.5 text-muted-foreground">· {m.blocks.length}</span>
+                    </button>
+                  ))}
+                </div>
                 {raw && !preview.skipped_reason ? (
                   <pre
                     className={cn(
@@ -1092,7 +1265,7 @@ function PromptPreviewDialog({
                     })}
                   </div>
                 )}
-              </div>
+              </Column>
 
               {/* Retain only: the other operations have no dry run to pair with. */}
               {/* Shown in chunks mode too: no prompt is sent, but the mode still
@@ -1105,6 +1278,9 @@ function PromptPreviewDialog({
                   raw={raw}
                   settings={preview.run_settings ?? []}
                   onSaved={() => setReloads((n) => n + 1)}
+                  collapsed={collapsed}
+                  onToggle={toggle}
+                  onRun={() => setCollapsed((c) => ({ ...c, prompt: true, result: false }))}
                 />
               ) : null}
             </div>

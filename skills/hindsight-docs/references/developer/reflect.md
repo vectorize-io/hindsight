@@ -37,7 +37,8 @@ The reflect agent runs in a loop with access to these tools:
 
 | Tool | Purpose | Priority |
 |------|---------|----------|
-| `search_mental_models` | User-curated summaries | Highest (check first) |
+| `search_mental_models` | User-curated summaries — best match in full, a snippet of the others | Highest (check first) |
+| `read_mental_models` | Full text of the pages returned as snippets | When a snippet looks relevant |
 | `search_observations` | Consolidated knowledge | High |
 | `recall` | Raw facts (ground truth) | Fallback |
 | `expand` | Get more context for a memory | As needed |
@@ -310,7 +311,7 @@ Disposition creates **consistent character** across conversations while observat
 
 ## Next Steps
 
-- [**Observations**](./observations) — How knowledge is consolidated
-- [**Retain**](./retain) — How rich facts are stored
-- [**Recall**](./retrieval) — How multi-strategy search works
-- [**Reflect API**](./api/reflect) — Code examples and parameters
+- [**Observations**](./observations.md) — How knowledge is consolidated
+- [**Retain**](./retain.md) — How rich facts are stored
+- [**Recall**](./retrieval.md) — How multi-strategy search works
+- [**Reflect API**](./api/reflect.md) — Code examples and parameters

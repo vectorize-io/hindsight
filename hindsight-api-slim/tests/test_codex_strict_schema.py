@@ -192,3 +192,25 @@ async def test_non_strict_repairs_invalid_escapes_without_retrying():
     assert mock_stream.call_count == 1
     assert isinstance(result, _Fact)
     assert result.fact == r"run rig-control \d serial \s command"
+
+
+@pytest.mark.asyncio
+async def test_non_strict_keeps_a_fence_marker_inside_a_json_value():
+    """A ``` inside a string value must not cut the payload short (#4819)."""
+    llm = build_llm()
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+
+    with stub_codex_stream(llm, response):
+        with patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock) as mock_parse:
+            mock_parse.return_value = '```json\n{"fact": "wrap it in ```json fences"}\n```'
+            result = (
+                await llm.call(
+                    messages=[{"role": "user", "content": "hi"}],
+                    response_format=_Fact,
+                    strict_schema=False,
+                    max_retries=0,
+                )
+            ).content
+
+    assert result.fact == "wrap it in ```json fences"

@@ -87,7 +87,7 @@ pip install hindsight-vapi
 
 ### 2. Pick a Hindsight Deployment
 
-**Hindsight Cloud** is the fastest path — [sign up free](https://ui.hindsight.vectorize.io/signup), grab an API key, point your code at `https://api.hindsight.vectorize.io`. No daemon to run.
+**Hindsight Cloud** is the fastest path — [sign up free](https://ui.hindsight.vectorize.io), grab an API key, point your code at `https://api.hindsight.vectorize.io`. No daemon to run.
 
 **Self-hosted** is a single command:
 
@@ -262,7 +262,7 @@ Two events. One endpoint. Memory that compounds across every call to your Vapi a
 
 ## Next Steps
 
-- **Try it on a free Hindsight Cloud account**: [sign up](https://ui.hindsight.vectorize.io/signup), grab a key, point your FastAPI webhook at the Cloud URL
+- **Try it on a free Hindsight Cloud account**: [sign up](https://ui.hindsight.vectorize.io), grab a key, point your FastAPI webhook at the Cloud URL
 - **Run the local example**: `python examples/interactive_webhook.py --bank demo-user` in `hindsight-integrations/vapi/` simulates Vapi events end-to-end (with `:script`, `:end <transcript>`, `:call <number>`, `:memories` commands)
 - **Tune `recall_budget`**: start with `"mid"`, drop to `"low"` if you're optimizing first-response latency
 - **Pick a bank-scoping strategy** that matches your customer model — per-caller, per-assistant, or per-account

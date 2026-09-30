@@ -12,6 +12,7 @@ Sections:
 """
 
 import json
+import uuid
 
 import pytest
 
@@ -737,6 +738,62 @@ async def test_retain_blocks_secret_item(api_client) -> None:
         json={"items": [{"content": "the roadmap meeting is on friday"}]},
     )
     assert r2.status_code == 200, r2.text
+
+
+@pytest.mark.asyncio
+async def test_mixed_retain_preserves_input_positions_in_results_and_hook(
+    pg0_db_url, query_analyzer, request_context
+) -> None:
+    from hindsight_api.engine.memory_engine import MemoryEngine
+    from hindsight_api.engine.task_backend import SyncTaskBackend
+    from tests.test_extensions import TrackingValidator
+    from tests.test_llm_reasoning_effort_env import DummyCrossEncoder
+    from tests.test_retain_same_document_concurrency import _StubEmbeddings
+
+    validator = TrackingValidator({})
+    memory = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=_StubEmbeddings(),
+        cross_encoder=DummyCrossEncoder(),
+        query_analyzer=query_analyzer,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+        operation_validator=validator,
+    )
+    await memory.initialize()
+    memory._config_resolver._global_config.enable_auto_consolidation = False
+    bank = f"md-retain-mixed-order-{uuid.uuid4().hex[:8]}"
+    await memory.update_bank_config(
+        bank,
+        {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]}},
+        request_context=request_context,
+    )
+    # Each document is processed as its own group, with a blocked item before
+    # the item that creates memories.
+    contents = [
+        {"content": "key=" + "ghp_" + "A" * 36, "document_id": "doc-a"},
+        {"content": "Alice lives in Paris.", "document_id": "doc-a"},
+        {"content": "key=" + "sk-ant-" + "B" * 40, "document_id": "doc-b"},
+        {"content": "Bob enjoys hiking.", "document_id": "doc-b"},
+    ]
+
+    try:
+        memory_ids = await memory.retain_batch_async(bank, contents, request_context=request_context)
+
+        assert len(memory_ids) == len(contents)
+        assert memory_ids[0] == []
+        assert memory_ids[1]
+        assert memory_ids[2] == []
+        assert memory_ids[3]
+        assert len(validator.post_retain_calls) == 1
+        hook_result = validator.post_retain_calls[0]
+        assert hook_result.contents == contents
+        assert hook_result.unit_ids == memory_ids
+    finally:
+        await memory.close()
 
 
 async def _memory_defense_webhook_events(memory, bank: str) -> list[dict]:

@@ -12,7 +12,7 @@ When you **retain** content, Hindsight doesn't just store the raw text—it inte
 Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](../retain.md) guide.
 > **💡 Prerequisites**
 >
-Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+Make sure you've completed the [Quick Start](./quickstart.md) to install the client and start the server.
 ## Store a Document
 
 A single retain call accepts one or more **items**. Each item is a piece of raw content — a conversation, a document, a note — that Hindsight will analyze and decompose into one or many memories. The content itself is never stored verbatim; what gets stored are the structured facts the LLM extracts from it.
@@ -267,7 +267,7 @@ Set `resolve_entities: false` when the names you are passing are authoritative a
 
 This applies **only to the entities you supply**. Auto-extracted entities are always resolved, because they are the extractor's guess at a name rather than yours — turning resolution off for them would fill the bank with near-duplicate entities.
 
-The same flag exists on [editing a memory](./memories#resolving-entity-names), where it matters most: a correction you type by hand is exactly the case where a similar existing entity should not win.
+The same flag exists on [editing a memory](./memories.md#resolving-entity-names), where it matters most: a correction you type by hand is exactly the case where a similar existing entity should not win.
 
 ### tags and document_tags
 
@@ -275,11 +275,11 @@ Tags control **visibility scoping** — which memories are visible during recall
 
 Use consistent naming patterns to keep tag filtering predictable. Common conventions: `user:<id>` for per-user scoping, `session:<id>` for session isolation, `room:<id>` for chat rooms, `topic:<name>` for category filtering. The bank also exposes a list-tags endpoint that returns all tags with their memory counts, useful for UI autocomplete or wildcard expansion.
 
-See [Recall API](./recall#tags) for filtering by tags during retrieval.
+See [Recall API](./recall.md#tags) for filtering by tags during retrieval.
 
 ### observation_scopes
 
-Controls which [observations](../observations) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
+Controls which [observations](../observations.md) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
 
 > **ℹ️ Scope isolation**
 >
@@ -560,7 +560,7 @@ fmt.Println("Operation IDs:", fileResp.GetOperationIds()) // Track processing vi
 
 > **ℹ️ File Storage**
 >
-Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration#file-processing) for details.
+Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration.md#file-processing) for details.
 ---
 
 ## Async Ingestion

@@ -271,3 +271,32 @@ async def test_call_with_tools_raises_with_result_text_on_error_result(monkeypat
         )
 
     assert QUOTA_ERROR_TEXT in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_call_keeps_a_fence_marker_inside_a_json_value(monkeypatch):
+    """A ``` inside a string value must not cut the payload short (#4819)."""
+    import claude_agent_sdk
+
+    fenced = '```json\n{"fact": "wrap it in ```json fences"}\n```'
+
+    async def fake_query(prompt: str, options: _FakeOptions):
+        yield _FakeAssistantMessage(content=[_FakeTextBlock(text=fenced)])
+        yield _FakeResultMessage(subtype="success", is_error=False, result=fenced)
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _FakeOptions)
+    monkeypatch.setattr(claude_agent_sdk, "AssistantMessage", _FakeAssistantMessage)
+    monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
+    monkeypatch.setattr(claude_agent_sdk, "ResultMessage", _FakeResultMessage)
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    result = (
+        await _instantiate_provider().call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_StructuredResponse,
+            max_retries=0,
+            scope="retain_extract_facts",
+        )
+    ).content
+
+    assert result.fact == "wrap it in ```json fences"

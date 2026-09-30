@@ -247,7 +247,7 @@ Subagents are how Claude Code scales beyond one context window. A shared memory 
 
 ## Next Steps
 
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and add memory to Claude Code in minutes
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) and add memory to Claude Code in minutes
 - Read the [quickstart](https://hindsight.vectorize.io/developer/api/quickstart) for self-hosted deployment
 - Browse the [integration guides](https://hindsight.vectorize.io/integrations) for Claude Code and other harnesses
 - Configure [memory banks](https://hindsight.vectorize.io/developer/api/memory-banks) to match how your team works — one project bank, per-user banks, or shared team banks

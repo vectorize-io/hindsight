@@ -58,6 +58,24 @@ land at a moment no test controls — after the assertions, sometimes after the
 next test has started. Both are per-bank settings, so a story about either
 switches it on for its own bank and waits for the operation to finish.
 
+**To assert on work that is still running, hold a step.** `llm.hold("<step>")`
+parks that step's calls until the story lets them go, so an operation stays in
+`processing` for as long as the assertions need:
+
+```python
+async with llm.hold("reflect") as held:
+    first = await client.mental_models.refresh_mental_model(bank_id, model)
+    await held.reached()          # the step is parked, so the operation is running
+    ...                           # assert what a second request does meanwhile
+await settled(bank_id)
+```
+
+Without it a story about in-flight work can only submit and hope the worker has
+not finished yet, which makes the assertion a race between request latency and
+claim latency — story 33 failed that way about one run in fifty. A hold changes
+*when* the answer is sent, never what it is: the rule still has to be declared,
+and an unscripted call still fails the test.
+
 ## Conventions
 
 - One story per file, named `test_NN_<story>.py`. The number is **reading order for

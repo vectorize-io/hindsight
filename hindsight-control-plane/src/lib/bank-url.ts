@@ -33,7 +33,19 @@ export function memoryApi(memoryId: string, bankId: string, suffix = ""): string
   return `/api/memories/${enc(memoryId)}${suffix}${suffix.includes("?") ? "&" : "?"}bank_id=${enc(bankId)}`;
 }
 
-/** Control-plane proxy URL for document operations scoped to a bank via query string. */
-export function documentApi(documentId: string, bankId: string): string {
-  return `/api/documents/${enc(documentId)}?bank_id=${enc(bankId)}`;
+/**
+ * Control-plane proxy URL for document operations.
+ *
+ * Document ids are user-supplied and routinely contain `/` (S3 keys, file paths).
+ * They stay in the query string, never in a path segment: ingress proxies decode
+ * `%2F` back to `/` during path normalization (Azure Container Apps, AWS ALB), which
+ * splits the id across segments and 404s the route. Query strings are left alone.
+ */
+export function documentApi(documentId: string, bankId: string, suffix = ""): string {
+  return `/api/documents${suffix}?bank_id=${enc(bankId)}&document_id=${enc(documentId)}`;
+}
+
+/** Control-plane proxy URL for a single chunk. See `documentApi` on why the id is a query param. */
+export function chunkApi(chunkId: string): string {
+  return `/api/chunks?chunk_id=${enc(chunkId)}`;
 }

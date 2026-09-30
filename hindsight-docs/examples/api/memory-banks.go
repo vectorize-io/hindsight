@@ -1,10 +1,13 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -259,6 +262,42 @@ func main() {
 	// [/docs:document-import]
 	must(err)
 	waitFor("transfer-go-other", imported.OperationId)
+
+	// [docs:transfer-import-external]
+	doc := map[string]any{
+		"id":            "session-2026-09-22",
+		"original_text": "Full original session text...",
+		"chunks":        []map[string]any{{"chunk_index": 0, "chunk_text": "Caller-defined source region..."}},
+		"facts": []map[string]any{{
+			"text":         "The user prefers lightweight local speech recognition models.",
+			"fact_type":    "experience",
+			"chunk_index":  0,
+			"mentioned_at": "2026-09-22T18:34:00Z",
+			"entities":     []string{"Parakeet"},
+		}},
+	}
+	zipPath := filepath.Join(os.TempDir(), "import.zip")
+	out, _ := os.Create(zipPath)
+	zw := zip.NewWriter(out)
+	w, _ := zw.Create("manifest.json")
+	json.NewEncoder(w).Encode(map[string]any{"schema_version": 1, "source_bank_id": "external"})
+	w, _ = zw.Create("documents/session-2026-09-22.json")
+	json.NewEncoder(w).Encode(doc)
+	zw.Close()
+	out.Close()
+
+	file, _ = os.Open(zipPath)
+	external, _, err := client.BankTransferAPI.ImportBankTransfer(ctx, "transfer-go-other").
+		File(file).Mode("merge").DocumentConflict("replace").Execute()
+	// [/docs:transfer-import-external]
+	must(err)
+	waitFor("transfer-go-other", external.OperationId)
+	importedDoc, _, err := client.DocumentsAPI.GetDocument(ctx, "transfer-go-other", "session-2026-09-22").Execute()
+	must(err)
+	if importedDoc.MemoryUnitCount != 1 {
+		panic(fmt.Sprintf("external import stored %d facts", importedDoc.MemoryUnitCount))
+	}
+	os.Remove(zipPath)
 	os.Remove(archivePath)
 	os.Remove(zipFile.Name())
 	deleteBanks(transferBanks)

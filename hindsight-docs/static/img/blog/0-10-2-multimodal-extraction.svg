@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="718.3" height="279" viewBox="0 0 718.3 279" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<metadata id="figure-spec"><![CDATA[{"props":{"speed":2000,"layout":{"gap":80,"children":[{"id":"input","label":"Test data","sub":"text · image · text"},{"id":"tester","label":"Extraction Tester","sub":"dry run, nothing stored"},{"id":"result","label":"Extracted facts","shape":"store"}]},"edges":[{"id":"in","from":"input","to":"tester","label":"blocks"},{"id":"out","from":"tester","to":"result","label":"facts"}],"steps":[{"label":"See what a screenshot turns into","flow":[{"edges":{"edge":"in","data":"invoice.png"},"show":{"input":[{"tag":"text","tone":"gray","text":"Here is last month's invoice"},{"tag":"image","tone":"blue","text":"invoice.png"}]},"say":"Mix text, images and files, in order, like retain."},{"edges":"out","ms":2800,"show":{"result":[{"tag":"world","tone":"blue","text":"Invoice total is €1,240","meta":"📎 invoice.png","mark":"new"},{"tag":"world","tone":"blue","text":"User shared last month's invoice","mark":"new"}]},"say":"Each fact read off a file shows which file it came from. Nothing is saved."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,25.6% { stroke: var(--accent) } 25.6%,100% { stroke: var(--accent) } }
+.a0 { animation: a0 6.2s infinite step-end; }
+@keyframes a1 { 0%,25.6% { stroke: var(--accent); fill: var(--card-on) } 25.6%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a1 { animation: a1 6.2s infinite step-end; }
+@keyframes a2 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 1 } }
+.a2 { animation: a2 6.2s infinite step-end; }
+@keyframes a3 { 0%,25.6% { stroke: var(--border) } 25.6%,100% { stroke: var(--accent) } }
+.a3 { animation: a3 6.2s infinite step-end; }
+@keyframes a4 { 0%,25.6% { stroke: var(--border); fill: var(--surface) } 25.6%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a4 { animation: a4 6.2s infinite step-end; }
+@keyframes a5 { 0%,25.6% { opacity: 0 } 25.6%,100% { opacity: 1 } }
+.a5 { animation: a5 6.2s infinite step-end; }
+@keyframes a6 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.a6 { animation: a6 6.2s infinite step-end; }
+@keyframes a7 { 0%,25.6% { stroke: var(--accent); stroke-width: 2 } 25.6%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a7 { animation: a7 6.2s infinite step-end; }
+@keyframes a8 { 0%,25.6% { fill: var(--accent); stroke: var(--accent) } 25.6%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a8 { animation: a8 6.2s infinite step-end; }
+@keyframes a9 { 0%,25.6% { fill: #fff } 25.6%,100% { fill: #fff } }
+.a9 { animation: a9 6.2s infinite step-end; }
+@keyframes a10 { 0%,25.6% { stroke: var(--muted); stroke-width: 1.25 } 25.6%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a10 { animation: a10 6.2s infinite step-end; }
+@keyframes a11 { 0%,25.6% { fill: var(--bg); stroke: var(--border) } 25.6%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a11 { animation: a11 6.2s infinite step-end; }
+@keyframes a12 { 0%,25.6% { fill: var(--muted) } 25.6%,100% { fill: #fff } }
+.a12 { animation: a12 6.2s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.p0 { animation: p0 6.2s infinite step-end; }
+@keyframes p1 { 0%,25.6% { opacity: 0 } 25.7%,61.5% { opacity: 1 } 61.5%,100% { opacity: 0 } }
+.p1 { animation: p1 6.2s infinite step-end; }
+@keyframes a13 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 1 } }
+.a13 { animation: a13 6.2s infinite step-end; }
+@keyframes a14 { 0%,25.6% { opacity: 1 } 25.6%,100% { opacity: 0 } }
+.a14 { animation: a14 6.2s infinite step-end; }
+@keyframes a15 { 0%,25.6% { opacity: 0 } 25.6%,100% { opacity: 1 } }
+.a15 { animation: a15 6.2s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="38.5" width="166" height="152" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="107" y="61.5" class="label">Test data</text><text x="107" y="76.5" class="sub">text · image · text</text><rect x="34" y="89.5" width="146" height="91" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a1"/><g opacity="0" class="a2"><rect x="42" y="96.5" width="27.1" height="14" rx="4" fill="#8b949e" fill-opacity="0.15"/><text x="55.5" y="107" class="tag" fill="#8b949e">TEXT</text><text x="42" y="121.5" class="row">Here is last month's</text><text x="42" y="136.5" class="row">invoice</text><rect x="42" y="145.5" width="31.9" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="57.9" y="156" class="tag" fill="#3b82f6">IMAGE</text><text x="42" y="170.5" class="row">invoice.png</text></g>
+<rect x="270" y="88" width="178.3" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="359.1" y="112.5" class="label">Extraction Tester</text><text x="359.1" y="127.5" class="sub">dry run, nothing stored</text>
+<path d="M528.3 36 a 83 12 0 0 1 166 0 v 157 a 83 12 0 0 1 -166 0 z" fill="var(--bg)" stroke="var(--border)" class="a3"/><path d="M528.3 36 a 83 12 0 0 0 166 0" fill="none" stroke="var(--border)" class="a3"/><text x="611.3" y="61" class="label">Extracted facts</text><rect x="538.3" y="74" width="146" height="121" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a4"/><g opacity="0" class="a5"><rect x="546.3" y="81" width="31.9" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="562.2" y="91.5" class="tag" fill="#3b82f6">WORLD</text><text x="676.3" y="91" class="mark">new</text><text x="546.3" y="106" class="row">Invoice total is</text><text x="546.3" y="121" class="row">€1,240 · 📎</text><text x="546.3" y="136" class="row">invoice.png</text><rect x="546.3" y="145" width="31.9" height="14" rx="4" fill="#3b82f6" fill-opacity="0.15"/><text x="562.2" y="155.5" class="tag" fill="#3b82f6">WORLD</text><text x="676.3" y="155" class="mark">new</text><text x="546.3" y="170" class="row">User shared last</text><text x="546.3" y="185" class="row">month's invoice</text></g><text x="546.3" y="91" opacity="0" class="row muted a6">—</text>
+<path id="p-in" d="M 190 114.5 C 230 114.5, 230 114.5, 270 114.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/><rect x="205.5" y="105.5" width="49" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a8"/><text x="230" y="118.5" class="edgelabel a9">blocks</text>
+<path id="p-out" d="M 448.28 114.5 C 488.28 114.5, 488.28 114.5, 528.28 114.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a10"/><rect x="466.7" y="105.5" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a11"/><text x="488.3" y="118.5" class="edgelabel a12">facts</text>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><rect x="-42.5" y="-35" width="85" height="23" rx="8" fill="var(--accent)"/><text x="0" y="-20" class="chip">invoice.png</text><animateMotion dur="6.2s" repeatCount="indefinite" keyTimes="0;0;0.3;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-in" xlink:href="#p-in"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="6.2s" repeatCount="indefinite" keyTimes="0;0.3;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-out" xlink:href="#p-out"/></animateMotion></g>
+</g>
+<text x="359.1" y="245" opacity="0" class="steplabel a13">See what a screenshot turns into</text>
+<g opacity="0" class="a14"><text x="359.1" y="271" class="caption">Mix text, images and files, in order, like retain.</text></g>
+<g opacity="0" class="a15"><text x="359.1" y="271" class="caption">Each fact read off a file shows which file it came from. Nothing is saved.</text></g>
+</svg>

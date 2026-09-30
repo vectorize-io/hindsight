@@ -307,7 +307,7 @@ hindsight webhook delete my-cli-bank "$WEBHOOK_ID" -y
 
 ## Knowledge Base
 
-Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages) for what they are and how they refresh.
+Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages.md) for what they are and how they refresh.
 
 ```bash
 # Show the folder/page tree (pages that have fallen behind are marked stale)

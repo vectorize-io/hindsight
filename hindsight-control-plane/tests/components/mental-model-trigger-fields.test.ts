@@ -52,6 +52,14 @@ describe("triggerFromForm", () => {
     expect(trigger?.refresh_cron).toBeNull();
   });
 
+  it("round-trips the refresh budget and leaves it out when unset", () => {
+    expect(triggerFromForm(triggerFormFromTrigger({ budget: "high" }))?.budget).toBe("high");
+    // Omitted, not null: the server reads a null as "no budget" and so would the
+    // merge, but omitting keeps the stored value untouched when nothing was chosen.
+    expect(triggerFromForm(triggerFormFromTrigger({}))).not.toHaveProperty("budget", null);
+    expect(triggerFromForm(triggerFormFromTrigger({}))?.budget).toBeUndefined();
+  });
+
   it("returns null when the tag groups are not valid JSON", () => {
     expect(triggerFromForm({ ...triggerFormFromTrigger(), tagGroups: "[{" })).toBeNull();
   });

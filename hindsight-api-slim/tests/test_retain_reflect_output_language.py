@@ -145,6 +145,7 @@ async def test_reflect_done_path_configured_output_language_overrides_question_l
         query=_REFLECT_QUERY,
         bank_profile=_REFLECT_BANK_PROFILE,
         search_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
+        read_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
         search_observations_fn=AsyncMock(return_value={"observations": []}),
         recall_fn=recall_fn,
         expand_fn=AsyncMock(return_value={"memories": []}),

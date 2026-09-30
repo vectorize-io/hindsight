@@ -8,6 +8,7 @@ The reflect agent uses hierarchical retrieval:
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -324,6 +325,9 @@ def build_system_prompt_for_tools(
                 [
                     "- User-curated summaries about specific topics",
                     "- HIGHEST quality - manually created and maintained",
+                    "- Search returns the best match in full and a SNIPPET of the others; call "
+                    "read_mental_models on any id whose snippet looks like it answers the question, and read it "
+                    "before answering from it",
                     "- If a relevant mental model exists and is FRESH, it may fully answer the question",
                     "- Check `is_stale` field - if stale, also verify with lower levels",
                 ],
@@ -398,6 +402,27 @@ def build_system_prompt_for_tools(
         parts.append(f"### {idx}. {header}{suffix}")
         parts.extend(body)
         parts.append("")
+
+    # Stating the ladder here, rather than only forcing it turn by turn: the agent
+    # still pins the first turns with ``tool_choice`` (see ``forced_sequence`` in
+    # agent.py), but a model that has read the plan keeps following it once the
+    # forcing stops, instead of answering from whatever the last forced turn left.
+    if len(levels) > 1:
+        names = [header.split(" (")[0].split(" - ")[0].title() for header, _ in levels]
+        parts.extend(
+            [
+                "## Search Plan",
+                f"Work down the levels in order ({' → '.join(names)}) before you answer:",
+                "- Search a level before deciding it has nothing; a level you did not search is not evidence of absence.",
+                # Named from the levels actually offered: on a bank with no mental
+                # models the top level is observations, and pointing at a layer the
+                # model has no tool for is how #1724 happened.
+                f"- Stop descending as soon as what you have answers the question — fresh {names[0]} often do.",
+                "- Go deeper when the level above is stale, thin, or silent on what was asked.",
+                "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.",
+                "",
+            ]
+        )
 
     parts.extend(
         [
@@ -565,6 +590,12 @@ def build_system_prompt_for_tools(
 #: these entry boundaries so no retrieved evidence is dropped.
 _SPLITTABLE_RESULT_KEYS = ("observations", "memories", "results")
 
+#: A sibling of the split list bigger than this fraction of the per-chunk budget
+#: is packed into blocks of its own instead of riding along in every piece of the
+#: list. Half, not the whole budget: a sibling just under budget still leaves no
+#: room for a second item, so the list would fan out one item per chunk (#4495).
+_MAX_SHARED_SIBLING_FRACTION = 0.5
+
 #: Above this many synthesis chunks the retrieval volume is pathological
 #: (each chunk is ~0.8 * max_context_tokens); we still process everything,
 #: but loudly, so the real cause (an unbounded tool result) gets looked at.
@@ -616,8 +647,10 @@ def _render_history_block(entry: dict) -> str:
     """Render one context-history entry as a fenced JSON block."""
     tool = entry["tool"]
     output = entry["output"]
+    # Compact, like the tool messages the loop sends: indentation was 7% of the
+    # synthesis prompt and tells the model nothing.
     try:
-        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+        output_str = json.dumps(output, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
         output_str = str(output)
     return f"\n### From {tool}:\n```json\n{output_str}\n```"
@@ -656,10 +689,12 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
     (``observations``/``memories``/``results``) into synthetic partial blocks,
     so evidence is split across chunks rather than dropped — the failure mode
     of the old ``break`` was answering from nothing while citing everything
-    (#3122). Only an *indivisible* over-budget entry gets token-cut.
+    (#3122). A big sibling of that list (recall's raw ``chunks``) is packed
+    into blocks of its own rather than copied into every piece (#4495). Only
+    an *indivisible* over-budget entry gets token-cut.
 
     Returns at least one chunk when history is non-empty; every original
-    result entry appears in exactly one chunk.
+    result entry, and every entry of a big sibling, appears in exactly one chunk.
     """
     budget = max(_MIN_SPLIT_CHUNK_TOKENS, int(max_context_tokens * _FINAL_PROMPT_CONTEXT_FRACTION))
     chunks: list[list[dict]] = []
@@ -679,6 +714,26 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
             _close_current()
         current.append(entry)
         current_tokens += tokens
+
+    def _pack_items(entry: dict, shared: dict, key: str, items: list, join: Callable[[list], Any]) -> None:
+        """Pack ``items`` under ``output[key]`` (next to ``shared``) into in-budget blocks."""
+        piece: list = []
+        for item in items:
+            candidate = {**entry, "output": {**shared, key: join(piece + [item])}}
+            if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
+                partial = {**entry, "output": {**shared, key: join(piece)}}
+                _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
+                piece = []
+                candidate = {**entry, "output": {**shared, key: join([item])}}
+            single_tokens = count_prompt_tokens(_render_history_block(candidate))
+            if not piece and single_tokens > budget:
+                cut = _cut_entry_to_budget(candidate, budget)
+                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
+            else:
+                piece.append(item)
+        if piece:
+            partial = {**entry, "output": {**shared, key: join(piece)}}
+            _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
 
     for entry in context_history:
         tokens = count_prompt_tokens(_render_history_block(entry))
@@ -701,24 +756,29 @@ def split_context_history(context_history: list[dict], max_context_tokens: int) 
             _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
             continue
 
-        items = output[split_key]
-        piece: list = []
-        for item in items:
-            candidate = {**entry, "output": {**output, split_key: piece + [item]}}
-            if piece and count_prompt_tokens(_render_history_block(candidate)) > budget:
-                partial = {**entry, "output": {**output, split_key: piece}}
-                _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
-                piece = []
-                candidate = {**entry, "output": {**output, split_key: [item]}}
-            single_tokens = count_prompt_tokens(_render_history_block(candidate))
-            if not piece and single_tokens > budget:
-                cut = _cut_entry_to_budget({**entry, "output": {**output, split_key: [item]}}, budget)
-                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
+        # Every piece of the list carries the entry's other keys, so a big one
+        # (tool_recall's raw "chunks" beside its "memories") left no piece room
+        # for a second item: N items became N cut blocks, each re-carrying the
+        # same sibling (#4495). A big sibling is packed on its own instead —
+        # once, and split by its own entries, so none of it is dropped.
+        allowance = int(budget * _MAX_SHARED_SIBLING_FRACTION)
+        big = [
+            k
+            for k, v in output.items()
+            if k != split_key
+            and count_prompt_tokens(_render_history_block({"tool": entry["tool"], "output": {k: v}})) > allowance
+        ]
+        shared = {k: v for k, v in output.items() if k != split_key and k not in big}
+        _pack_items(entry, shared, split_key, output[split_key], list)
+        for k in big:
+            value = output[k]
+            if isinstance(value, dict):
+                _pack_items(entry, shared, k, list(value.items()), dict)
+            elif isinstance(value, list):
+                _pack_items(entry, shared, k, value, list)
             else:
-                piece.append(item)
-        if piece:
-            partial = {**entry, "output": {**output, split_key: piece}}
-            _append_block(partial, count_prompt_tokens(_render_history_block(partial)))
+                cut = _cut_entry_to_budget({**entry, "output": {**shared, k: value}}, budget)
+                _append_block(cut, count_prompt_tokens(_render_history_block(cut)))
 
     _close_current()
     return chunks
@@ -829,6 +889,31 @@ def build_final_prompt(
     if length_directive is not None:
         parts.append(length_directive)
 
+    return "\n".join(parts) + output_language_directive(llm_output_language)
+
+
+def build_done_request_prompt(
+    query: str,
+    max_tokens: int | None = None,
+    llm_output_language: str | None = None,
+) -> str:
+    """The closing user turn that asks for the answer as a ``done`` call.
+
+    Sent inside the tool-loop conversation, so it carries only what the answer
+    needs beyond the evidence already there: stop retrieving, the question, the
+    instructions and the length target.
+    """
+    parts = [
+        "## Answer now",
+        "Stop retrieving. Call the `done` tool with your final answer, built from the tool results above.",
+        "This is the ANSWER, not a summary of it: carry over every relevant fact, date and number from the "
+        "tool results, at the same depth you would write for a reader who cannot see them.",
+        f"\n## Question\n{query}",
+        "\n## Instructions\n" + _FINAL_INSTRUCTIONS,
+    ]
+    length_directive = _length_directive(max_tokens)
+    if length_directive is not None:
+        parts.append(length_directive)
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 

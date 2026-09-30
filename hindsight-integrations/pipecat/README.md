@@ -8,7 +8,7 @@ Persistent long-term memory for [Pipecat](https://github.com/pipecat-ai/pipecat)
 pip install hindsight-pipecat
 ```
 
-> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
 
 ```python
 from pipecat.pipeline.pipeline import Pipeline
@@ -75,7 +75,7 @@ export HINDSIGHT_API_LLM_API_KEY=your-api-key
 hindsight-api  # starts on http://localhost:8888
 ```
 
-**Hindsight Cloud:** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
+**Hindsight Cloud:** [Sign up](https://ui.hindsight.vectorize.io) — no self-hosting required.
 
 ## Configuration
 

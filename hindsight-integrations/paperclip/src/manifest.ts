@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "paperclip-plugin-hindsight",
   apiVersion: 1,
-  version: "0.2.0",
+  version: "0.4.0",
   displayName: "Hindsight Memory",
   author: "Vectorize <support@vectorize.io>",
   description:
@@ -35,10 +35,26 @@ const manifest: PaperclipPluginManifestV1 = {
         default: "https://api.hindsight.vectorize.io",
       },
       hindsightApiKeyRef: {
-        type: "string",
+        // `format` drives the host's secret picker; the picker writes a
+        // { type: "secret_ref", secretId } object, and the host validates the raw
+        // config with Ajv before extracting refs — so the schema has to admit that
+        // object as well as a plain string (a pasted value or a legacy UUID).
+        format: "secret-ref",
         title: "Hindsight API Key (secret ref)",
         description:
-          "Name of the Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
+          "Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
+        oneOf: [
+          { type: "string" },
+          {
+            type: "object",
+            required: ["type", "secretId"],
+            properties: {
+              type: { const: "secret_ref" },
+              secretId: { type: "string" },
+              version: { type: "string" },
+            },
+          },
+        ],
       },
       dynamicBankId: {
         type: "boolean",
@@ -67,6 +83,14 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "'low' is fastest, 'mid' balances speed and depth, 'high' is most thorough.",
         enum: ["low", "mid", "high"],
         default: "mid",
+      },
+      requestTimeoutMs: {
+        type: "number",
+        title: "Request Timeout (ms)",
+        description:
+          "Timeout for each request to Hindsight. Raise it for self-hosted instances where recall on long issue descriptions takes longer than the default.",
+        minimum: 1000,
+        default: 15000,
       },
       autoRetain: {
         type: "boolean",

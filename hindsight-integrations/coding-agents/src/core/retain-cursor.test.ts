@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TransportTurn } from "./chat";
 import {
+  MAX_CURSOR_PATHS,
   PENDING_MAX_AGE_MS,
   PENDING_MAX_BYTES,
+  advancePaths,
   fingerprintTurns,
   memoryCursorStore,
   planRetain,
@@ -94,6 +96,75 @@ describe("planRetain", () => {
     expect(planRetain(all, cursorFor(all, 3), { ...SUPPORTED, bank: "other-repo" })).toEqual({
       mode: "replace",
     });
+  });
+
+  it("appends a continuation FILE whole instead of replacing the document with it", () => {
+    // Codex writes a later segment of the same task into a new rollout under the same session id
+    // (#4493). Its turns are not a continuation of the prefix we wrote — they are the turns that
+    // come AFTER it — so a replace would drop everything the earlier file contributed.
+    const fileA = turns(4);
+    const cursor = { ...cursorFor(fileA, 4), paths: ["/rollouts/a.jsonl"] };
+    const fileB = turns(2, 100);
+    expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 0,
+    });
+    // Equal-or-larger continuation with a different prefix: same answer, it is still a segment.
+    expect(planRetain(turns(6, 100), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 0,
+    });
+  });
+
+  it("does not re-append a continuation file that was already written", () => {
+    const fileB = turns(2, 100);
+    const cursor = { ...cursorFor(fileB, 2), paths: ["/rollouts/a.jsonl", "/rollouts/b.jsonl"] };
+    expect(planRetain(fileB, cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "skip",
+    });
+    // And the next turns in that same file append from where it left off, not from zero.
+    expect(planRetain(turns(4, 100), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 2,
+    });
+  });
+
+  it("does not re-append an earlier file whose hook arrives after the session moved on", () => {
+    // A -> B retained, then a late Stop for A (a delayed hook, or a second process still writing the
+    // earlier rollout). Against the latest path alone every alternation reads as a brand-new segment
+    // and appends the whole file again, without bound. A is a file we already wrote, so it is not a
+    // segment: this replaces, exactly as it did before #4493.
+    const fileA = turns(4);
+    const cursor = {
+      ...cursorFor(turns(2, 100), 2),
+      paths: ["/rollouts/a.jsonl", "/rollouts/b.jsonl"],
+    };
+    expect(planRetain(fileA, cursor, { ...SUPPORTED, path: "/rollouts/a.jsonl" })).toEqual({
+      mode: "replace",
+    });
+  });
+
+  it("does not duplicate a resumed transcript that copies the earlier turns", () => {
+    // A new file that REPEATS the retained prefix is an ordinary extension, not a new segment.
+    const fileA = turns(4);
+    const cursor = { ...cursorFor(fileA, 4), paths: ["/rollouts/a.jsonl"] };
+    expect(planRetain(turns(6), cursor, { ...SUPPORTED, path: "/rollouts/b.jsonl" })).toEqual({
+      mode: "append",
+      fromTurn: 4,
+    });
+  });
+
+  it("remembers the files already written, newest last and bounded", () => {
+    expect(advancePaths(["/a"], "/b")).toEqual(["/a", "/b"]);
+    // Re-writing a file we already hold moves it to the end rather than listing it twice, since it
+    // is the one the cursor's turns/fingerprint now describe.
+    expect(advancePaths(["/a", "/b"], "/a")).toEqual(["/b", "/a"]);
+    // No file (the persistent-plugin runtime) leaves the list alone.
+    expect(advancePaths(["/a"], undefined)).toEqual(["/a"]);
+    // A session that keeps moving cannot grow the cursor file without bound.
+    const many = Array.from({ length: MAX_CURSOR_PATHS + 5 }, (_, i) => `/f${i}`);
+    const capped = many.reduce<string[] | undefined>((acc, p) => advancePaths(acc, p), undefined);
+    expect(capped).toEqual(many.slice(-MAX_CURSOR_PATHS));
   });
 
   it("skips when nothing was added since the last write", () => {

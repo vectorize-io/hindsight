@@ -23,7 +23,7 @@ pip install hindsight-crewai
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+[Sign up free](https://ui.hindsight.vectorize.io) and grab an API key — no self-hosting required.
 ```python
 from hindsight_crewai import configure, HindsightStorage
 from crewai.memory.external.external_memory import ExternalMemory

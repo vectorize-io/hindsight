@@ -140,8 +140,9 @@ def test_rejects_missing_api_key():
 
 
 @pytest.mark.asyncio
-async def test_call_sends_reasoning_object_and_omits_temperature_for_reasoning_model():
-    llm = _make_llm()
+@pytest.mark.parametrize("model", ["gpt-5.6", "gpt-6-luna"])
+async def test_call_sends_reasoning_object_and_omits_temperature_for_reasoning_model(model):
+    llm = _make_llm(model=model)
     create = _mock_create(llm, _fake_response(output_text="hello"))
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
         result = (

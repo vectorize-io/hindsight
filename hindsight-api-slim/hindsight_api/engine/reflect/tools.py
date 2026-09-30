@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..chunk_ids import resolve_chunk_id_in
+from .tokenization import count_prompt_tokens
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -24,14 +25,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Snippet length for a mental-model search hit, matching the knowledge-page search
+#: API's own ``LEFT(content, 280)`` so both surfaces show a page the same way.
+_SNIPPET_CHARS = 280
+
 
 #: Retrieval plumbing that the reflect agent never reads, dropped from tool
 #: results before they reach the model.
 #:
-#: These are scoring and provenance internals, not evidence: the agent cites by
-#: ``id``, ``based_on`` persists only id/text/type/context, and the expand tool
-#: takes ``memory_ids`` and resolves chunks server-side -- so nothing downstream
-#: needs them, while on real banks they measure several times the size of the
+#: These are scores and internal pointers, not evidence the agent can reason with
+#: (provenance it CAN reason with is kept -- see ``metadata`` below): the agent cites by
+#: ``id``, ``based_on`` re-reads the cited memories' provenance from the store
+#: (``MemoryEngine._evidence_as_stored``), and the expand tool takes
+#: ``memory_ids`` and resolves chunks server-side -- so nothing downstream needs
+#: them here, while on real banks they measure several times the size of the
 #: observation text they accompany.
 #:
 #: Identity, text, dates, tags and ``source_fact_ids`` are deliberately kept.
@@ -40,7 +47,22 @@ logger = logging.getLogger(__name__)
 #: the surface text ("Bob" in the text vs canonical "Robert Smith"). Reflect's
 #: recalls don't populate it today (``include_entities`` defaults to False), but
 #: trimming it would bake in dropping the names if that ever flips on.
-_UNREAD_RESULT_FIELDS = ("scores", "metadata", "chunk_id", "document_id")
+#:
+#: ``metadata`` used to be dropped here too, and that made a document's own
+#: metadata unusable for reasoning: a bank that stamps where each document came
+#: from (``{"source": "guide"}`` on the handbook, ``{"source": "conversation"}``
+#: on a transcript) had no way to tell reflect which to believe, because the
+#: model never saw the stamp. Once extraction has flattened both into plain
+#: assertions -- "a pull request needs two approvals" and "one approval is enough
+#: for small ones" -- provenance is the ONLY thing left that separates a policy
+#: from someone's opinion, and recency picks the wrong one because the chatter is
+#: newer. So it is sent now, and an operator can rank the sources in the bank's
+#: reflect mission with no new configuration at all.
+#:
+#: The cost is paid only by banks that write metadata: ``_prune_nulls`` drops an
+#: empty bag, so a bank that stamps nothing sends nothing, and a bank that stamps
+#: a lot pays for what it chose to stamp.
+_UNREAD_RESULT_FIELDS = ("scores", "chunk_id", "document_id")
 
 
 def _drop_unread_fields(d: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +116,7 @@ async def tool_search_mental_models(
     query: str,
     query_embedding: list[float],
     max_results: int = 5,
+    top_result_max_tokens: int = 4000,
     tags: list[str] | None = None,
     tags_match: str = "any",
     tag_groups: "list | None" = None,
@@ -112,6 +135,8 @@ async def tool_search_mental_models(
         query: Search query (for logging/tracing)
         query_embedding: Pre-computed embedding for semantic search
         max_results: Maximum number of mental models to return
+        top_result_max_tokens: Size limit for returning the best-ranked page in full; above it
+            every result is a snippet and the model reads what it wants with read_mental_models
         tags: Optional tags to filter mental models
         tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         exclude_ids: Optional list of mental model IDs to exclude (e.g., when refreshing a mental model)
@@ -121,7 +146,7 @@ async def tool_search_mental_models(
     Returns:
         Dict with matching mental models including content and freshness info
     """
-    from ..memory_engine import _mental_model_stale_scope_from_row, fq_table
+    from ..memory_engine import _knowledge_snippet, _mental_model_stale_scope_from_row, fq_table
     from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
 
     # Build filters dynamically
@@ -230,11 +255,32 @@ async def tool_search_mental_models(
         is_stale = staleness[str(row["id"])]
         staleness_reason = "new in-scope memories ingested since last refresh" if is_stale else None
 
+        content = row["content"] or ""
+        # The top-ranked page comes back whole, the rest as snippets. A model that
+        # answers from a snippet without reading the page is a measured failure
+        # (test_06), and the best hit is the one it is most likely to need; the
+        # cost is one page instead of five.
+        top_hit = not mental_models and count_prompt_tokens(content) <= top_result_max_tokens
         mental_models.append(
             {
                 "id": str(row["id"]),
                 "name": row["name"],
-                "content": row["content"],
+                # A snippet, like the knowledge-page search this mirrors — not the whole
+                # page. Five whole pages measured 8.7-19k tokens and were re-sent on
+                # every later turn of the loop, the largest single item in a reflect's
+                # floor (#4533). The model reads the ones it wants with
+                # ``read_mental_models``.
+                **(
+                    {"content": content}
+                    if top_hit
+                    # ``_knowledge_snippet`` so a page with no body reads as
+                    # empty-on-purpose rather than as a blank match — the same
+                    # wording the knowledge-page search gives for the same state.
+                    else {
+                        "snippet": _knowledge_snippet(content)[:_SNIPPET_CHARS].strip(),
+                        "content_chars": len(content),
+                    }
+                ),
                 "tags": row["tags"] or [],
                 # The store path carries relevance beside the rows (its SELECT hydrates only what
                 # the store does not hold); the SQL path has it as a computed column.
@@ -253,6 +299,68 @@ async def tool_search_mental_models(
         "count": len(mental_models),
         "mental_models": mental_models,
     }
+
+
+async def tool_read_mental_models(
+    conn: "Connection",
+    bank_id: str,
+    mental_model_ids: list[str],
+    max_tokens: int = 6000,
+) -> dict[str, Any]:
+    """Read the full text of mental models the search returned as snippets.
+
+    The budget is spent in the order asked for and stops at the first page that
+    would cross it, so one enormous page cannot swallow the reflect's context —
+    the failure ``search_mental_models`` used to have by returning five of them
+    whole (#4533). A page that does not fit at all is reported by name rather
+    than silently missing.
+    """
+    from ..memory_engine import fq_table
+
+    if not mental_model_ids:
+        return {"error": "read_mental_models requires mental_model_ids"}
+
+    rows = await conn.fetch(
+        f"""
+        SELECT id, name, content, tags, last_refreshed_at
+        FROM {fq_table("mental_models")}
+        WHERE bank_id = $1 AND id = ANY($2::text[])
+        """,
+        bank_id,
+        [str(i) for i in mental_model_ids],
+    )
+    by_id = {str(r["id"]): r for r in rows}
+
+    pages: list[dict[str, Any]] = []
+    omitted: list[str] = []
+    spent = 0
+    for wanted in mental_model_ids:
+        row = by_id.get(str(wanted))
+        if row is None:
+            omitted.append(str(wanted))
+            continue
+        content = row["content"] or ""
+        cost = count_prompt_tokens(content)
+        if pages and spent + cost > max_tokens:
+            # The id, not the name: ``not_read`` is a retry list, and the model can
+            # only ask again with an id.
+            omitted.append(str(row["id"]))
+            continue
+        spent += cost
+        last_refreshed_at = row["last_refreshed_at"]
+        pages.append(
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "content": content,
+                "tags": row["tags"] or [],
+                "updated_at": last_refreshed_at.isoformat() if last_refreshed_at else None,
+            }
+        )
+    out: dict[str, Any] = {"mental_models": pages}
+    if omitted:
+        out["not_read"] = omitted
+    return out
 
 
 async def tool_search_observations(

@@ -17,6 +17,7 @@ params actually reach the call.
 """
 
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -379,7 +380,15 @@ def _fake_litellm_response():
     choice.finish_reason = "stop"
     resp = MagicMock()
     resp.choices = [choice]
-    resp.usage = MagicMock(prompt_tokens=5, completion_tokens=2)
+    # A real usage block, not a MagicMock: visible_token_usage does arithmetic on
+    # total_tokens and completion_tokens_details, which auto-created mocks break.
+    resp.usage = SimpleNamespace(
+        prompt_tokens=5,
+        completion_tokens=2,
+        total_tokens=7,
+        prompt_tokens_details=None,
+        completion_tokens_details=None,
+    )
     return resp
 
 

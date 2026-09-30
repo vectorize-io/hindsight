@@ -73,11 +73,11 @@ hindsight-worker --worker-id worker-2
 
 Each worker exposes `/health/live` (liveness, no database access), `/health` and
 `/health/ready` (readiness, checks the database), and `/metrics` for monitoring.
-See [Monitoring - Health Endpoints](./monitoring#health-endpoints).
+See [Monitoring - Health Endpoints](./monitoring.md#health-endpoints).
 
 Before scaling down or removing workers, release their tasks with `hindsight-admin decommission-worker <worker-id>`.
 
-See [Configuration - Distributed Workers](./configuration#distributed-workers) for all worker settings and [Installation - Helm](./installation#distributed-workers) for Kubernetes deployment.
+See [Configuration - Distributed Workers](./configuration.md#distributed-workers) for all worker settings and [Installation - Helm](./installation.md#distributed-workers) for Kubernetes deployment.
 
 ## Control Plane
 
@@ -90,4 +90,4 @@ Web UI for managing and exploring your memory banks:
 
 The Control Plane connects to the API service and provides a visual interface for development and debugging.
 
-For bare metal deployments, you can run the Control Plane standalone using npx. See [Installation - Bare Metal](./installation#control-plane) for details.
+For bare metal deployments, you can run the Control Plane standalone using npx. See [Installation - Bare Metal](./installation.md#control-plane) for details.

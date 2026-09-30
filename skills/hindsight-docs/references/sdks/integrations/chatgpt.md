@@ -16,7 +16,7 @@ ChatGPT's built-in memory helps with preferences, but knowledge from specific co
 
 ### 1. Create a Hindsight Cloud Account
 
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for Hindsight Cloud.
+[Sign up free](https://ui.hindsight.vectorize.io) for Hindsight Cloud.
 
 ### 2. Add Hindsight as a Connector in ChatGPT
 

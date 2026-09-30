@@ -20,7 +20,7 @@ async def test_duplicate_mental_model_id_raises_conflict(memory: MemoryEngine, r
         bank_id=bank_id,
         name="Account standing",
         source_query="what is the standing of this account",
-        content="Generating content...",
+        content="",
         mental_model_id=mental_model_id,
         request_context=request_context,
     )

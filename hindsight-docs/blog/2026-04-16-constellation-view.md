@@ -195,4 +195,4 @@ The key idea is simple: **memory quality is easier to improve when you can see t
 - Browse the [developer quickstart](/developer/api/quickstart) to get a Hindsight server running
 - Explore [bank templates](/templates) to standardize your retain configuration across deployments
 - Read the [cookbook](/cookbook) for memory patterns across agent frameworks
-- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to use the Control Plane without running local infrastructure
+- [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io) to use the Control Plane without running local infrastructure

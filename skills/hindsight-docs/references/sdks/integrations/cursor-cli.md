@@ -24,7 +24,7 @@ Persistent memory for [Cursor CLI](https://docs.cursor.com/en/cli/overview) usin
 
 > **💡 Recommended: Hindsight Cloud**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+[Sign up free](https://ui.hindsight.vectorize.io) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
 ```bash
 # Install the CLI
 pip install hindsight-cursor-cli

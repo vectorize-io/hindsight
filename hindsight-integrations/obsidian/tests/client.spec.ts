@@ -105,10 +105,24 @@ describe("HindsightClient", () => {
     expect(body.tag_groups).toBeUndefined();
   });
 
-  it("retain omits the tags field when no tags are given", async () => {
+  it("retain sends a named observation scope beside existing tags", async () => {
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    await client.retain("b", "Note.md", "body", {
+      tags: ["vault:Notes", "topic:planning"],
+      observationScopes: "shared",
+    });
+    const body = JSON.parse(lastCall().body ?? "{}");
+    expect(body.items[0]).toMatchObject({
+      tags: ["vault:Notes", "topic:planning"],
+      observation_scopes: "shared",
+    });
+  });
+
+  it("retain omits optional tags and observation scopes when unset", async () => {
     const client = new HindsightClient("https://api.example.com", undefined, mock);
     await client.retain("b", "Note.md", "body");
     const body = JSON.parse(lastCall().body ?? "{}");
     expect(body.items[0].tags).toBeUndefined();
+    expect(body.items[0].observation_scopes).toBeUndefined();
   });
 });

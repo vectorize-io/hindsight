@@ -41,7 +41,7 @@ async def _page(memory: MemoryEngine, request_context: RequestContext) -> tuple[
         bank_id=bank_id,
         name="Homelab Infrastructure",
         source_query="NAS, ThinkPad, docker containers, jellyfin",
-        content="Generating content...",
+        content="",
         tags=["type:runbook", "homelab"],
         request_context=request_context,
     )

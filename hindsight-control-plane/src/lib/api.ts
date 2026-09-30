@@ -4,7 +4,7 @@
  */
 
 import { toast } from "sonner";
-import { bankApi, bankStatsApi, documentApi, memoryApi } from "./bank-url";
+import { bankApi, bankStatsApi, chunkApi, documentApi, memoryApi } from "./bank-url";
 import { stripBasePath, withBasePath } from "./base-path";
 
 /**
@@ -154,6 +154,7 @@ export interface LLMRequestEntry {
   duration_ms: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  thoughts_tokens: number | null;
   cached_tokens: number | null;
   total_tokens: number | null;
   input: unknown | null;
@@ -174,6 +175,9 @@ export interface LLMRequestsResponse {
 export interface LLMRequestTokenSums {
   input: number;
   output: number;
+  // Absent on a server predating reasoning usage; the generated schema is
+  // nullable for the same reason.
+  thoughts: number | null;
   cached: number;
   total: number;
 }
@@ -249,6 +253,7 @@ export interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    budget?: "low" | "mid" | "high";
     reflect_search_observations_max_tokens?: number;
     reflect_search_observations_include_entities?: boolean;
     response_schema?: Record<string, unknown>;
@@ -376,6 +381,18 @@ export interface BankTemplateImportResponse {
   mental_models_updated: string[];
   operation_ids: string[];
   dry_run: boolean;
+}
+
+export interface BankAliasEntry {
+  alias: string;
+  /** Shown in place of the bank's own id. At most one per bank; often none. */
+  primary: boolean;
+}
+
+export interface BankAliasesResponse {
+  /** The bank's own id, which an alias never replaces. */
+  bank_id: string;
+  aliases: BankAliasEntry[];
 }
 
 export class ControlPlaneClient {
@@ -1035,10 +1052,10 @@ export class ControlPlaneClient {
     limit?: number;
     offset?: number;
   }) {
-    const queryParams = new URLSearchParams();
-    queryParams.append("bank_id", params.bank_id);
-    if (params.limit) queryParams.append("limit", params.limit.toString());
-    if (params.offset) queryParams.append("offset", params.offset.toString());
+    const queryParams = new URLSearchParams({
+      limit: String(params.limit ?? 100),
+      offset: String(params.offset ?? 0),
+    });
     return this.fetchApi<{
       items: Array<{
         chunk_id: string;
@@ -1051,7 +1068,7 @@ export class ControlPlaneClient {
       total: number;
       limit: number;
       offset: number;
-    }>(`/api/documents/${params.document_id}/chunks?${queryParams}`);
+    }>(`${documentApi(params.document_id, params.bank_id, "/chunks")}&${queryParams}`);
   }
 
   /**
@@ -1062,7 +1079,7 @@ export class ControlPlaneClient {
       success: boolean;
       operation_id: string;
       items_count: number;
-    }>(`/api/documents/${encodeURIComponent(documentId)}/reprocess?bank_id=${bankId}`, {
+    }>(documentApi(documentId, bankId, "/reprocess"), {
       method: "POST",
     });
   }
@@ -1237,7 +1254,7 @@ export class ControlPlaneClient {
    * Get chunk
    */
   async getChunk(chunkId: string) {
-    return this.fetchApi(`/api/chunks/${chunkId}`);
+    return this.fetchApi(chunkApi(chunkId));
   }
 
   /**
@@ -1328,6 +1345,48 @@ export class ControlPlaneClient {
       },
       mission: (config.reflect_mission as string | undefined) ?? "",
     };
+  }
+
+  /**
+   * List the extra ids this bank also answers to.
+   *
+   * `bank_id` in the response is the bank's own id, which an alias never
+   * replaces — so a request made *through* an alias still reports the real one.
+   */
+  async listBankAliases(bankId: string) {
+    return this.fetchApi<BankAliasesResponse>(bankApi(bankId, "/aliases"));
+  }
+
+  /**
+   * Add an id that also reaches this bank. Rejected with 409 if the name is
+   * already a bank or another alias.
+   */
+  async createBankAlias(bankId: string, alias: string) {
+    return this.fetchApi<BankAliasesResponse>(bankApi(bankId, "/aliases"), {
+      method: "POST",
+      body: JSON.stringify({ alias }),
+    });
+  }
+
+  /**
+   * Show this bank under one of its aliases, or (with false) under its own id
+   * again. Display only — `bank_id` stays the bank's identity everywhere else.
+   */
+  async setBankAliasPrimary(bankId: string, alias: string, primary: boolean) {
+    return this.fetchApi<BankAliasesResponse>(
+      bankApi(bankId, `/aliases/${encodeURIComponent(alias)}`),
+      { method: "PATCH", body: JSON.stringify({ primary }) }
+    );
+  }
+
+  /**
+   * Stop an id reaching this bank. The bank and its memories are untouched.
+   */
+  async deleteBankAlias(bankId: string, alias: string) {
+    return this.fetchApi<BankAliasesResponse>(
+      bankApi(bankId, `/aliases/${encodeURIComponent(alias)}`),
+      { method: "DELETE" }
+    );
   }
 
   /**
@@ -1674,6 +1733,7 @@ export class ControlPlaneClient {
           include_chunks?: boolean;
           recall_max_tokens?: number;
           recall_chunks_max_tokens?: number;
+          budget?: "low" | "mid" | "high";
           reflect_search_observations_max_tokens?: number;
           reflect_search_observations_include_entities?: boolean;
           response_schema?: Record<string, unknown>;
@@ -1743,6 +1803,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
         reflect_search_observations_max_tokens?: number;
         reflect_search_observations_include_entities?: boolean;
         response_schema?: Record<string, unknown>;
@@ -1791,6 +1852,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
         reflect_search_observations_max_tokens?: number;
         reflect_search_observations_include_entities?: boolean;
         response_schema?: Record<string, unknown>;
@@ -1818,6 +1880,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        budget?: "low" | "mid" | "high";
         reflect_search_observations_max_tokens?: number;
         reflect_search_observations_include_entities?: boolean;
         response_schema?: Record<string, unknown>;
@@ -2142,13 +2205,17 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Extract facts from sample text without storing anything — a real LLM call.
+   * Extract facts from sample text (and optional attachments) without storing anything — a real LLM call.
    *
    * The paid half of the prompt tester: `previewPrompt` shows what would be sent,
    * this shows what comes back. Runs under the same strategy-resolved config a real
    * retain would, so what it extracts is what retain would extract.
    */
-  async dryRunExtract(bankId: string, content: string, strategy?: string | null) {
+  async dryRunExtract(
+    bankId: string,
+    content: string | RetainContentBlock[],
+    strategy?: string | null
+  ) {
     return this.fetchApi<{
       facts: {
         text: string;
@@ -2158,6 +2225,8 @@ export class ControlPlaneClient {
         occurred_end?: string | null;
         /** Index into `chunks` of the chunk this fact came from. */
         chunk_index?: number | null;
+        /** The input blocks (by position in `content`) the model read this fact off. */
+        attachments?: { block_index: number; type: string; media_type: string }[];
       }[];
       /** The chunks the input was cut into before extraction. */
       chunks?: { text: string; fact_count: number }[];

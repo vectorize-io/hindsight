@@ -81,6 +81,73 @@ a 9B — so a green run means "extraction is sound on this model", not "the
 regression cannot return". The test that fails on that is
 `hindsight-api-slim/tests/test_fact_extraction_nullable_dimensions.py`.
 
+**`test_05` — refresh cost.** Not a quality grade: a baseline of what a
+knowledge-page refresh spends. Every LLM call the refresh makes is read back from
+`/llm-requests` — input, cached and output tokens, and the prompt — for a full
+rebuild and for a delta after a small wave of new facts. Behind it: on real
+project banks a refresh sent 30–90k-token synthesis prompts, because a tool's
+`max_tokens` counts fact text only and the JSON around each fact is 3–4× larger
+(#4566). That missed the 30s call deadline (#4568), ended searches before
+`recall` ran (#4563), and billed metered keys all night (#4532).
+
+It runs against a **frozen bank**, `fixtures/refresh-cost-bank.zip`: 900 facts
+generated from a seed as one fictional product's history, consolidated by a real
+model, with the six pages a coding agent seeds. Seeding that live would cost a
+consolidation pass per run and start each run from a different bank. Rebuild it
+only on purpose — every earlier baseline then measured a different bank:
+
+```bash
+uv run python -m hindsight_system_evals.refresh_cost build
+# measure a candidate archive before replacing the committed one
+HINDSIGHT_EVAL_REFRESH_COST_FIXTURE=/tmp/new.zip uv run pytest evals/test_05_refresh_cost.py
+```
+
+`--cost-output DIR` writes `refresh-cost.json` (every call, every prompt), a
+summary table, and each refresh's synthesis prompt on its own. The table ends in
+USD at the model's list price (`PRICES` in `refresh_cost.py`), including what
+explicit Gemini caching costs to create and store — those are not LLM calls and
+never reach the trace, so they are estimated from the cached tokens. Each refresh
+also records its page size, distinct specifics and citations, a floor under any
+cost cut. The model is not frozen, so compare medians over a few runs, not one.
+
+To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
+`HINDSIGHT_API_<X>=v` (the server's environment is otherwise wiped):
+
+```bash
+HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED=true uv run pytest evals/test_05_refresh_cost.py
+```
+
+**`test_06` — reflect reads the page it was given.** The only suite where the
+page layer is live: the others create their pages with `exclude_mental_models`, so
+`has_mental_models` is false and reflect is never offered the page tools at all.
+This one builds the page, then asks the page's own question and checks reflect
+went to the page layer (from the tool trace) and that the answer says what the
+page says (judged against the page, not the corpus gold — whether the page itself
+converged is `test_01`'s grade).
+
+It exists because that layer changed: `search_mental_models` used to return five
+pages whole, and now returns the best hit whole plus a snippet of the others, with
+`read_mental_models` for the rest. It is what showed that snippets *alone* let the
+model answer from a snippet without ever reading the page, which is why the best
+hit still arrives in full.
+
+**`test_07` — source priority.** One bank holding a handbook AND the
+conversations about it, which is what a bank someone has actually used looks
+like. After extraction both are flat assertions — "a pull request needs two
+approvals" and "one approval is enough for small ones" — equally on-topic and
+equally retrievable, and the chatter is the more recent of the two, so the
+temporal rule actively picks the wrong one. Six questions in the same bank, built
+so no blunt rule passes: two where the handbook is right and the chatter is
+confidently wrong, one only the handbook answers, one only the chatter answers,
+one where a dated decision in a meeting supersedes the handbook, and one where an
+approved exception applies alongside the rule. Provenance is recorded in each
+document's metadata, which is what the model has to read — it was stripped from
+reflect's tool results until this suite landed, so no amount of prompting could
+rank the sources. The ways an operator can state the precedence with no new configuration
+(the bank's reflect mission, a directive, the question itself) are selectable with
+`HINDSIGHT_EVAL_SOURCE_STRATEGY`. It uses `hindsight_system_evals/sources.py`,
+not the shared corpus.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels

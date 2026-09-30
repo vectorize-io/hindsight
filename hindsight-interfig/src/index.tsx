@@ -19,11 +19,11 @@ export type * from './model';
 
 const DEFAULTS: Required<FigTheme> = {
   accent: '#0074d9',
-  fg: '#1c1e21',
-  muted: '#606770',
+  fg: '#111418',
+  muted: '#4b5563',
   bg: '#ffffff',
   surface: '#f5f7fa',
-  border: '#d0d7de',
+  border: '#b6c0cc',
   font: 'inherit',
 };
 const v = (k: keyof FigTheme) => `var(--fig-${k}, ${DEFAULTS[k]})`;
@@ -303,19 +303,27 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
             transition: 'border-color .25s, box-shadow .25s',
           }}
         >
-          {item.label != null && (
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: '.04em',
-                textTransform: 'uppercase',
-                color: v('muted'),
-                marginBottom: 12,
-              }}
-            >
-              {item.label}
-            </div>
+          {item.logo != null ? (
+            <img
+              src={item.logo}
+              alt={typeof item.label === 'string' ? item.label : ''}
+              style={{ display: 'block', height: 36, marginBottom: 12 }}
+            />
+          ) : (
+            item.label != null && (
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: '.04em',
+                  textTransform: 'uppercase',
+                  color: v('muted'),
+                  marginBottom: 12,
+                }}
+              >
+                {item.label}
+              </div>
+            )
           )}
           <div
             style={{
@@ -364,7 +372,7 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
           color: v('fg'),
           border: diamond ? undefined : `1px solid ${lit ? v('accent') : v('border')}`,
           boxShadow: diamond ? undefined : lit ? glow : '0 1px 2px rgba(0,0,0,.06)',
-          opacity: focus && !lit ? 0.7 : 1,
+          opacity: focus && !lit ? 0.85 : 1,
           borderRadius: store ? '50% / 12px' : 10,
           fontSize: 14,
           fontWeight: 500,
@@ -432,7 +440,7 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
               color: shown[item.id] != null ? v('fg') : v('muted'),
               background: shown[item.id] != null ? `color-mix(in srgb, ${v('accent')} 8%, ${v('bg')})` : v('surface'),
               border: `1px dashed ${shown[item.id] != null ? v('accent') : v('border')}`,
-              animation: shown[item.id] != null ? 'interfig-in .35s ease-out' : undefined,
+              animation: shown[item.id] != null ? 'interfig-in .35s ease-out, interfig-ring 1.4s ease-out' : undefined,
             }}
           >
             {/* Invisible copies of every content stack in one grid cell and set the size; the real one sits on top. */}
@@ -496,7 +504,11 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
       >
         <Icon d={full ? 'M4 4l8 8M12 4l-8 8' : 'M9 3h4v4M7 13H3V9M13 3L9 7M3 13l4-4'} />
       </button>
-      <style>{'@keyframes interfig-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}'}</style>
+      <style>
+        {'@keyframes interfig-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}' +
+          // a ring that spreads out from a card whose content just changed, so the eye finds it
+          `@keyframes interfig-ring{from{box-shadow:0 0 0 0 color-mix(in srgb, ${v('accent')} 70%, transparent)}to{box-shadow:0 0 0 10px transparent}}`}
+      </style>
       {/* The canvas: a dotted grid that runs to the figure's edges, with a line under it. */}
       <div
         style={{
@@ -549,8 +561,8 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
                     viewBox="0 0 10 10"
                     refX="9"
                     refY="5"
-                    markerWidth="7"
-                    markerHeight="7"
+                    markerWidth="5"
+                    markerHeight="5"
                     orient="auto-start-reverse"
                   >
                     <path d="M 0 1 L 9 5 L 0 9 z" fill={k === 'on' ? v('accent') : v('muted')} />
@@ -569,7 +581,7 @@ export function Flow({ layout, edges, steps = [], theme, speed = 900, autoplay =
                     d={r.d}
                     fill="none"
                     stroke={on ? v('accent') : v('muted')}
-                    strokeWidth={on ? 2 : 1.25}
+                    strokeWidth={on ? 3 : 1.75}
                     strokeOpacity={hidden ? 0 : focus && !on ? 0.35 : 1}
                     markerEnd={hidden ? undefined : `url(#fig-arrow-${on ? 'on' : 'off'})`}
                     style={{ transition: 'stroke .25s, stroke-opacity .25s' }}

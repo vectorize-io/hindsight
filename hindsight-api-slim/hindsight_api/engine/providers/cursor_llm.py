@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import pathlib
-import re
 import shutil
 import tempfile
 import threading
@@ -37,6 +36,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.response_models import (
     LLMCallResult,
     LLMToolCall,
@@ -233,20 +233,10 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
 
 def _extract_json(text: str) -> Any:
     """Parse JSON out of a free-form reply, tolerating markdown fences and prose."""
-    candidate = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL)
-    if fenced:
-        candidate = fenced.group(1).strip()
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        # A chatty model wraps the object in a sentence; take the outermost
-        # brace/bracket span rather than failing the whole call over prose.
-        start = min((i for i in (candidate.find("{"), candidate.find("[")) if i != -1), default=-1)
-        end = max(candidate.rfind("}"), candidate.rfind("]"))
-        if start == -1 or end <= start:
-            raise
-        return json.loads(candidate[start : end + 1])
+    # The shared helper finds fences by line and falls back to the outermost JSON
+    # span. The non-greedy ```(.*?)``` regex used here before cut the payload at a
+    # ``` inside a JSON string value (#4819).
+    return json.loads(_strip_code_fences(text.strip()))
 
 
 class CursorLLM(LLMInterface):

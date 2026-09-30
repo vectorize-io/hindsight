@@ -88,7 +88,7 @@ The `-v` flag persists your data across container restarts. Without it, memories
 
 Once running, the MCP endpoint is available at `http://localhost:8888/mcp/your_bank_id/` (replace `your_bank_id` with any name you like).
 
-**Or use Hindsight Cloud** — skip Docker entirely. [Sign up for a free account](https://ui.hindsight.vectorize.io/signup), grab your API key, and connect via MCP:
+**Or use Hindsight Cloud** — skip Docker entirely. [Sign up for a free account](https://ui.hindsight.vectorize.io), grab your API key, and connect via MCP:
 
 ```json
 {

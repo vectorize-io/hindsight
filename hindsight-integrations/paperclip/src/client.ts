@@ -13,15 +13,22 @@ export interface RecallResponse {
   results: Memory[];
 }
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
 export class HindsightClient {
   private readonly baseUrl: string;
   private readonly token: string | undefined;
+  private readonly timeoutMs: number;
 
-  constructor(baseUrl: string, token?: string) {
+  constructor(baseUrl: string, token?: string, timeoutMs?: number) {
     const url = baseUrl.trim();
     if (!url) throw new Error("hindsightApiUrl is required");
     this.baseUrl = url.replace(/\/$/, "");
     this.token = token;
+    this.timeoutMs =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   private headers(): Record<string, string> {
@@ -32,7 +39,7 @@ export class HindsightClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
       const resp = await fetch(`${this.baseUrl}${path}`, {

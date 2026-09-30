@@ -24,7 +24,7 @@ This post is a walkthrough of the Hindsight integration for OpenHands. One comma
 - `init` adds the Hindsight **MCP server** to `config.toml` (giving the agent `recall` / `retain` / `reflect` tools) and writes a recall/retain **rule** into `AGENTS.md`.
 - Because `AGENTS.md` is always-on context, the rule reliably steers the agent: recall first, retain durable facts — no prompting required.
 - Memory lives in a Hindsight **bank** you choose per project, so each repo gets its own isolated memory.
-- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io)
 
 ## Why OpenHands Needs Persistent Memory
 
@@ -67,7 +67,7 @@ cd your-project
 hindsight-openhands init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-project
 ```
 
-`init` merges the `[mcp]` entry into `./config.toml` and writes the rule into `./AGENTS.md`. The recommended backend is **Hindsight Cloud** — [sign up free](https://ui.hindsight.vectorize.io/signup) and create an API key.
+`init` merges the `[mcp]` entry into `./config.toml` and writes the rule into `./AGENTS.md`. The recommended backend is **Hindsight Cloud** — [sign up free](https://ui.hindsight.vectorize.io) and create an API key.
 
 Self-hosting works the same way; run the API locally and point `init` at it (no token needed for an open local server):
 
@@ -120,6 +120,6 @@ Each repo gets its own isolated memory — decisions and conventions for `acme-a
 
 ## Next Steps
 
-- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
+- **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **Integration docs:** [OpenHands + Hindsight](/sdks/integrations/openhands)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/openhands](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/openhands)

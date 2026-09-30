@@ -383,3 +383,42 @@ async def test_append_mode_conversation_arrays_produce_valid_json(memory, reques
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_append_keeps_caller_fields_in_retain_params(memory, request_context):
+    """An append must record the caller's own fields on the document.
+
+    `_build_retain_params` reads `contents_dicts[0]`, and an append onto an EXISTING
+    document makes that element a synthetic item holding the stored body. A field that
+    item does not carry is a field the document never records, so the reprocess replays
+    under the bank default instead of what the caller asked for (#4590).
+    """
+    bank_id = f"test_append_retain_params_{_ts()}"
+    document_id = "conversation-append-strategy"
+
+    try:
+        for content in (
+            "Alice works at Google as a software engineer.",
+            "Bob works at Microsoft as a data scientist.",
+        ):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[
+                    {
+                        "content": content,
+                        "context": "team info",
+                        "document_id": document_id,
+                        "update_mode": "append",
+                        "strategy": "conversation",
+                    }
+                ],
+                request_context=request_context,
+            )
+            doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+            params = doc.get("retain_params") or {}
+            assert params.get("strategy") == "conversation", f"append dropped the strategy: {params!r}"
+            assert params.get("context") == "team info", f"append dropped the context: {params!r}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

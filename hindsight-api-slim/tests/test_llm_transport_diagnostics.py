@@ -127,6 +127,32 @@ def test_every_provider_that_owns_an_httpx_client_caps_its_connect_phase(monkeyp
         assert timeout.read == 150.0, f"{label} lost the request budget"
 
 
+def test_anthropic_client_gets_a_timeout_its_own_sdk_accepts(monkeypatch):
+    """The capped timeout must be built with the Anthropic SDK's own ``Timeout`` class.
+
+    anthropic 1.x runs on ``httpx2``, not ``httpx``. Handed an ``httpx.Timeout`` it
+    either rejects the client outright or, on 1.0.x, fails every request inside its
+    retry timing with ``TypeError: unsupported operand type(s) for +: 'float' and
+    'Timeout'``, which surfaces as ``APIConnectionError`` (issue #4683).
+    """
+    monkeypatch.delenv(ENV_LLM_CONNECT_TIMEOUT, raising=False)
+    import anthropic
+
+    from hindsight_api.engine.providers.anthropic_llm import AnthropicLLM
+
+    if anthropic.Timeout is httpx.Timeout:
+        # anthropic 0.x re-exports httpx.Timeout, so the check below could not tell the
+        # SDK's class from httpx's. Stand in a distinct subclass, which 0.x still accepts.
+        monkeypatch.setattr(anthropic, "Timeout", type("SdkTimeout", (httpx.Timeout,), {}))
+
+    provider = AnthropicLLM(provider="anthropic", api_key="k", base_url="", model="m", timeout=150.0)
+
+    timeout = provider._client.timeout
+    assert isinstance(timeout, anthropic.Timeout)
+    assert timeout.connect == DEFAULT_LLM_CONNECT_TIMEOUT
+    assert timeout.read == 150.0
+
+
 async def test_every_provider_that_owns_an_aiohttp_session_caps_its_connect_phase(monkeypatch):
     """The same parity guard for the providers that build their own aiohttp session.
 

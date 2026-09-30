@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-dev"
-version = "0.10.1"
+version = "0.10.2"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api==0.10.1",
+    "hindsight-api==0.10.2",
     "openai>=1.0.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
@@ -43,6 +43,7 @@ token-count-bench = "benchmarks.micro.token_counting:main"
 vector-serialization-bench = "benchmarks.micro.vector_serialization:main"
 semantic-within-batch-bench = "benchmarks.micro.semantic_within_batch:main"
 entity-resolver-bench = "benchmarks.micro.entity_resolver_bench:main"
+transfer-streaming-bench = "benchmarks.micro.transfer_streaming_bench:main"
 find-duplicate-observations = "hindsight_dev.obs_dedup.cli:main"
 
 [dependency-groups]

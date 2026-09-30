@@ -16,6 +16,8 @@ at all and quietly proves nothing.
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -25,6 +27,20 @@ pytestmark = pytest.mark.asyncio
 EXISTING = "Alice Smith"
 FUZZY_VARIANT = "Alice Smyth"
 CASE_VARIANT = "alice smith"
+
+# What extraction hands back on a production bank when it mistakes markup or an
+# encoded blob for a name. Two properties matter and neither is decoration:
+#
+# - it is past the ~2704-byte btree tuple limit (prod reported an index row of
+#   3032), which is the threshold that failed the INSERT and took every fact in
+#   the document with it;
+# - it is *incompressible*. PostgreSQL compresses the indexed value, so a
+#   repetitive artifact — a run of SVG path segments, say — stores fine at any
+#   length and would prove only half the point.
+#
+# So: a seeded random base64-shaped run, which is one of the shapes prod saw.
+_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+ARTIFACT = "".join(random.Random(3032).choices(_B64, k=3000))
 
 
 @pytest.fixture(autouse=True)
@@ -95,3 +111,32 @@ async def test_an_unrelated_name_is_never_merged(client, bank_id, settled):
     await _seed_and_supply(client, bank_id, settled, "Bob Jones")
 
     assert await _entities(client, bank_id) == [(EXISTING, 1), ("Bob Jones", 1)]
+
+
+async def test_an_unstorable_entity_name_does_not_cost_the_document_its_facts(client, bank_id, settled, llm):
+    """The composition this story exists to pin (issue #3275).
+
+    Extraction occasionally returns something that is not a name at all — an
+    encoded blob, a fragment of serialized JSON, a run of markup. Long enough and
+    dense enough, it does not fit the btree index over ``canonical_name``, so the
+    entity INSERT raised and the whole retain failed: every fact in the document
+    was lost, not just the bogus entity. No single-mechanism test spans that,
+    because the intake that accepts the name and the index that rejects it are two
+    steps apart.
+
+    So: the retain succeeds, the fact is recallable, the real entity beside the
+    artifact is registered, and the artifact itself is not in the bank.
+    """
+    llm.on_step("extract_facts", contains="signed").returns(
+        extracted(fact("Acme signed the contract", who="Acme", entities=["Acme", ARTIFACT]))
+    )
+
+    await client.aretain(bank_id=bank_id, content="Acme signed the contract.")
+    await settled(bank_id)
+
+    response = await client.arecall(bank_id=bank_id, query="Who signed the contract?")
+    assert [result.text for result in response.results] == ["Acme signed the contract | Involving: Acme"]
+
+    # The real entity survives; the artifact was dropped at intake rather than
+    # truncated, so it never becomes a registry entity that junk can merge onto.
+    assert await _entities(client, bank_id) == [("Acme", 1)]

@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import os
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -61,83 +64,169 @@ def _export_port_health_grace_timeout(config: dict[str, Any]) -> None:
     os.environ.setdefault(_PORT_HEALTH_GRACE_ENV, repr(seconds))
 
 
-def _check_local_runtime() -> tuple[bool, str | None]:
-    """Whether the local embedded stack imports cleanly (older CPUs: NumPy can raise
-    at import, so Hermes degrades instead of retrying a broken backend).
-    ``sentence_transformers`` is probed too: ``hindsight`` imports fine with a broken
-    embedding stack, and the daemon would then abort on every retain/recall."""
+@dataclass(frozen=True)
+class LocalRuntimeStatus:
+    """Whether local_embedded can run in this process, and why not when it cannot."""
+
+    available: bool
+    reason: str | None = None
+
+
+def _check_local_runtime() -> LocalRuntimeStatus:
+    """Whether what local_embedded needs IN THIS PROCESS imports cleanly: an HTTP client and
+    the daemon manager. Nothing else belongs here.
+
+    The server itself (``hindsight-api``, its embedding/reranking stack, pg0) runs as a separate
+    process that ``hindsight_embed`` starts — from an installed ``hindsight-api`` binary, else a
+    ``uvx hindsight-api`` fallback in its own environment. So we no longer probe for the
+    top-level ``hindsight`` module or ``sentence_transformers``: requiring those in-process is
+    what forced ``hindsight-all`` (the whole hindsight-api-slim tree) into Hermes' single pinned
+    venv, where it cannot resolve — api-slim needs protobuf>=7.35.1 against mem0ai's and modal's
+    protobuf<7.0, and otel-semconv>=0.65b0 against mistralai's <0.61. Both packages probed here
+    are declared in this plugin's pyproject and conflict with nothing.
+    """
     try:
-        for module in ("hindsight", "hindsight_embed.daemon_embed_manager", "sentence_transformers"):
+        for module in ("hindsight_client", "hindsight_embed.daemon_embed_manager"):
             importlib.import_module(module)
-        return True, None
+        return LocalRuntimeStatus(available=True)
     except Exception as exc:
-        return False, str(exc)
+        return LocalRuntimeStatus(available=False, reason=str(exc))
 
 
 def _local_runtime_hint(reason: str | None) -> str:
-    """Install guidance when the local_embedded runtime is missing: ``plugin.yaml``
-    declares only ``hindsight-client``, so a hand-written config, the legacy
-    ``"mode": "local"`` alias or a restored backup hits ``No module named 'hindsight'``.
+    """Guidance when what local_embedded needs in-process is missing.
 
-    ``local_embedded`` imports ``from hindsight import HindsightEmbedded``, which is provided only by the
-    ``hindsight-all`` package (its wheel ships the top-level ``hindsight`` module).
-    NousResearch/hermes-agent#7718.
+    Both packages are declared in this plugin's ``pyproject.toml``, so a miss means the
+    environment was rebuilt without them (a pm generation that dropped the plugin member, a
+    stripped venv), not that the user has to install a server by hand. Reinstalling the plugin
+    is the fix. NousResearch/hermes-agent#7718, #123784.
     """
     text = (reason or "").lower()
-    if "no module named" in text and any(m in text for m in ("hindsight'", 'hindsight"', "hindsight_embed")):
+    if "no module named" in text and any(m in text for m in ("hindsight_client", "hindsight_embed")):
         return (
-            f" Install the embedded runtime with: uv pip install --python "
-            f"{sys.executable} hindsight-all — or run 'hermes memory setup'. "
-            "(local_embedded needs the 'hindsight-all' package, which provides the "
-            "top-level 'hindsight' module; 'hindsight-client' alone only covers "
-            "cloud / local_external.)"
+            " The plugin's own packages (hindsight-client, hindsight-embed) are missing from "
+            "this environment: run 'hermes plugins install hindsight' (or 'hermes memory setup') "
+            "to reinstall them. The Hindsight server itself is NOT needed here — it runs as a "
+            "separate process."
         )
     return ""
 
 
-_local_runtime_install_attempted = False
+# Interpreter-selection variables of this process: meaningful only for the interpreter that set
+# them. hindsight-embed drops them from the daemon child itself since the release after 0.10.2;
+# on 0.10.1/0.10.2 we have to keep them away from it ourselves (see _start_daemon_in_clean_child).
+_PARENT_INTERPRETER_ENV = frozenset({"PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "VIRTUAL_ENV"})
+
+# Ask the installed hindsight-embed to start the daemon, reading the config off stdin so an LLM
+# API key never appears in the process list.
+_DAEMON_START_SNIPPET = (
+    "import json, sys\n"
+    "from hindsight_embed import get_embed_manager\n"
+    "sys.exit(0 if get_embed_manager().ensure_running(json.load(sys.stdin), sys.argv[1]) else 1)\n"
+)
+
+# Generous: the first start on a machine with no hindsight-api binary downloads the server through
+# uvx before the manager's own 180s health deadline even begins.
+_DAEMON_START_TIMEOUT = 900
 
 
-def _ensure_local_runtime() -> tuple[bool, str | None]:
-    """``_check_local_runtime``, self-installing ``hindsight-all`` once if that is what's missing.
+def _embed_scrubs_parent_env() -> bool:
+    """Whether the installed hindsight-embed keeps our PYTHONPATH out of the daemon child itself.
 
-    ``plugin.yaml`` can only declare the cloud-sized ``hindsight-client`` — declaring
-    ``hindsight-all`` there would push the whole local-ML stack onto cloud-mode users, who never
-    need it. That left the embedded package to a special case in Hermes core
-    (``hermes_cli/memory_setup.py::_provider_pip_dependencies``, keyed on the literal provider name),
-    which is core-side logic this plugin cannot carry with it out of the Hermes tree. Installing it
-    here keeps embedded mode working without that: on a `plugins install` that never ran
-    `hermes memory setup`, after a venv rebuild stripped the package (#70636), and on a restored
-    backup or hand-written config.
-
-    Only fires for the configured provider, so a stale ``local_embedded`` in ``config.json`` cannot
-    make a dashboard availability probe pull the ML stack down. Only fires when the hint recognises
-    the reason as a missing package: an import that fails for another cause (older CPUs raise inside
-    NumPy) is not something reinstalling can fix. Once per process, and ``install_specs`` enforces
-    ``security.allow_lazy_installs`` and sealed-venv policy for us.
+    Unreadable for any reason reads as "no", so the safe path (our own clean child) is the default.
     """
-    global _local_runtime_install_attempted
-    available, reason = _check_local_runtime()
-    if available or _local_runtime_install_attempted or not _local_runtime_hint(reason):
-        return available, reason
+    try:
+        from hindsight_embed import daemon_embed_manager
 
-    from plugins.memory import _get_active_memory_provider
+        return hasattr(daemon_embed_manager, "_strip_parent_interpreter_env")
+    except Exception:
+        return False
 
-    if _get_active_memory_provider() != "hindsight":
-        return available, reason
 
-    _local_runtime_install_attempted = True
-    logger.warning("Hindsight local_embedded runtime is missing (%s); installing hindsight-all...", reason)
-    from tools.lazy_deps import install_specs
+def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
+    """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
 
-    outcome = install_specs(["hindsight-all"], timeout=600)
-    if not outcome.ok:
-        logger.warning(
-            "Could not install hindsight-all automatically: %s",
-            outcome.reason or (outcome.stderr or "").strip() or "install error",
+    Workaround for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process.
+    Hermes' package-manager install exports ``PYTHONPATH=<repo>:<its 3.14 generation>``
+    (pm/environments.py), and the daemon usually runs through ``uvx hindsight-api`` on whatever
+    Python uv picks. When those minor versions differ the server imports Hermes' pydantic and dies
+    on ``ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'``; when they happen to
+    match it works, which is why this fails on some machines and not others.
+
+    Deliberately NOT done by scrubbing ``os.environ`` around ``ensure_running``: that hole would be
+    process-wide for the whole spawn *and* health wait — minutes while uvx downloads the server on
+    a first run — and Hermes' own children rely on that PYTHONPATH. A child process confines it.
+    """
+    env = {key: value for key, value in os.environ.items() if key not in _PARENT_INTERPRETER_ENV}
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile],
+            input=json.dumps(config),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_DAEMON_START_TIMEOUT,
         )
-        return available, reason
-    return _check_local_runtime()
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not start the Hindsight daemon helper for profile %r: %s", profile, exc)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "Hindsight daemon helper failed for profile %r: %s",
+            profile,
+            (result.stderr or result.stdout or "").strip()[-500:],
+        )
+    return result.returncode == 0
+
+
+def _start_daemon(config: dict[str, str], profile: str) -> str:
+    """Start (or reuse) the out-of-process daemon for *profile* and return its base URL.
+
+    This is what ``hindsight.HindsightEmbedded`` does internally — it is a composition of
+    ``hindsight_client.Hindsight`` + ``hindsight_embed.get_embed_manager()`` and nothing more
+    (see hindsight-all/hindsight/embedded.py). Calling the manager directly keeps the identical
+    daemon, profile, profile ``.env`` and pg0 database while dropping the ``hindsight-all``
+    dependency that cannot be installed alongside Hermes.
+
+    *config* is an environment mapping, not a structured record — it is handed straight to the
+    daemon manager as the subprocess's env, so a dict of ``HINDSIGHT_*`` names is the interface.
+    It carries only explicitly-set keys: an omitted key is resolved by the
+    daemon from the profile's ``.env``, then the parent environment, then its own default, and
+    sending a placeholder instead would overwrite the profile's real value (#3253).
+    """
+    from hindsight_embed import get_embed_manager
+
+    manager = get_embed_manager()
+    if _embed_scrubs_parent_env():
+        started = manager.ensure_running(config, profile)
+    else:
+        started = manager.is_running(profile) or _start_daemon_in_clean_child(config, profile)
+    if not started:
+        raise RuntimeError(f"Failed to start the Hindsight daemon for profile {profile!r}")
+    return manager.get_url(profile)
+
+
+def _stop_daemon(profile: str) -> bool:
+    """Stop the daemon for *profile* (used when the profile env drifted and must be re-read).
+    The database lives outside the process, so a stop loses no data."""
+    try:
+        from hindsight_embed import get_embed_manager
+
+        return bool(get_embed_manager().stop(profile))
+    except Exception as exc:
+        logger.warning("Could not stop the Hindsight daemon for profile %r: %s", profile, exc)
+        return False
+
+
+def _daemon_is_running(profile: str) -> bool:
+    """Whether the daemon for *profile* is up (used for status reporting, never to gate a call:
+    the retry path in ``_run_hindsight_operation`` recreates the client, which restarts it)."""
+    try:
+        from hindsight_embed import get_embed_manager
+
+        return bool(get_embed_manager().is_running(profile))
+    except Exception:
+        return False
 
 
 def _load_simple_env(path) -> dict[str, str]:

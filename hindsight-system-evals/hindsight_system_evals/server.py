@@ -156,6 +156,11 @@ def provider_environment() -> dict[str, str]:
     for suffix in ("LLM_BASE_URL", "LLM_EXTRA_BODY", "LLM_TEMPERATURE", "LLM_STRICT_SCHEMA"):
         if value := pick(suffix):
             env[f"HINDSIGHT_API_{suffix}"] = value
+    # A/B switches for one run: HINDSIGHT_EVAL_SET_<X> becomes HINDSIGHT_API_<X>.
+    # Explicit, so a developer's own HINDSIGHT_API_* never leaks into a run by accident.
+    for key, value in os.environ.items():
+        if key.startswith("HINDSIGHT_EVAL_SET_"):
+            env["HINDSIGHT_API_" + key.removeprefix("HINDSIGHT_EVAL_SET_")] = value
     return env
 
 

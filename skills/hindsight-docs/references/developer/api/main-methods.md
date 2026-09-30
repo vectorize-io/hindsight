@@ -7,7 +7,7 @@ Hindsight provides three core operations: **retain**, **recall**, and **reflect*
 
 > **💡 Prerequisites**
 >
-Make sure you've [installed Hindsight](../installation) and completed the [Quick Start](./quickstart).
+Make sure you've [installed Hindsight](../installation.md) and completed the [Quick Start](./quickstart.md).
 ## Retain: Store Information
 
 Store conversations, documents, and facts into a memory bank.
@@ -99,7 +99,7 @@ client.MemoryAPI.RetainMemories(ctx, "my-bank").
 
 **What happens:** Content is processed by an LLM to extract rich facts, identify entities, and build connections in a knowledge graph.
 
-**See:** [Retain Details](./retain) for advanced options and parameters.
+**See:** [Retain Details](./retain.md) for advanced options and parameters.
 
 ---
 
@@ -206,7 +206,7 @@ for _, r := range resp.Results {
 
 **What happens:** Four search strategies (semantic, keyword, graph, temporal) run in parallel, results are fused and reranked.
 
-**See:** [Recall Details](./recall) for tuning quality vs latency.
+**See:** [Recall Details](./recall.md) for tuning quality vs latency.
 
 ---
 
@@ -284,7 +284,7 @@ fmt.Println(answer.GetText())
 
 **What happens:** Memories and observations are recalled, bank disposition is applied, and the LLM reasons through the evidence to generate a response.
 
-**See:** [Reflect Details](./reflect) for disposition configuration.
+**See:** [Reflect Details](./reflect.md) for disposition configuration.
 
 ---
 
@@ -303,7 +303,7 @@ fmt.Println(answer.GetText())
 
 ## Next Steps
 
-- [**Retain**](./retain) — Advanced options for storing memories
-- [**Recall**](./recall) — Tuning search quality and performance
-- [**Reflect**](./reflect) — Configuring disposition
-- [**Memory Banks**](./memory-banks) — Managing memory bank disposition
+- [**Retain**](./retain.md) — Advanced options for storing memories
+- [**Recall**](./recall.md) — Tuning search quality and performance
+- [**Reflect**](./reflect.md) — Configuring disposition
+- [**Memory Banks**](./memory-banks.md) — Managing memory bank disposition

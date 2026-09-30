@@ -1351,6 +1351,7 @@ class LLMProvider:
                         input_tokens=usage.input_tokens if usage else 0,
                         output_tokens=usage.output_tokens if usage else 0,
                         cached_tokens=usage.cached_tokens if usage else 0,
+                        thoughts_tokens=usage.thoughts_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
@@ -1499,6 +1500,7 @@ class LLMProvider:
                         input_tokens=usage.input_tokens if usage else 0,
                         output_tokens=usage.output_tokens if usage else 0,
                         cached_tokens=usage.cached_tokens if usage else 0,
+                        thoughts_tokens=usage.thoughts_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )

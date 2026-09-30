@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { defaultLocale, locales, type Locale } from "@/i18n/config";
 
 import de from "@/messages/de.json";
@@ -213,4 +214,21 @@ export function localizeApiErrorPayload<TPayload extends ApiErrorPayload>(
   }
 
   return localizedPayload as TPayload;
+}
+
+/** 400 response for a missing required query parameter on a control-plane route. */
+export function missingQueryParam(
+  request: RequestLike | undefined,
+  name: "bank_id" | "document_id" | "chunk_id"
+): NextResponse {
+  return NextResponse.json(
+    localizeApiErrorPayload(request, {
+      error: `${name} is required`,
+      errorKey:
+        name === "bank_id"
+          ? "api.errors.validation.bankIdRequired"
+          : "api.errors.validation.missingRequestData",
+    }),
+    { status: 400 }
+  );
 }

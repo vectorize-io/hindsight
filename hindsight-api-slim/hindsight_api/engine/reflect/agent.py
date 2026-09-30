@@ -28,12 +28,14 @@ from .models import (
     TokenUsageSummary,
     ToolCall,
 )
+from .presentation import ToolResultPresenter
 from .prompts import (
     _SPLIT_SYNTHESIS_WARN_CHUNKS,
     CLAIMS_SYSTEM_PROMPT,
     _extract_directive_rules,
     build_agent_user_prompt,
     build_chunk_claims_prompt,
+    build_done_request_prompt,
     build_final_prompt,
     build_final_system_prompt,
     build_reduce_prompt,
@@ -63,9 +65,15 @@ _TOOL_ARG_MAX_TOKENS = 16000
 
 #: Default budget for ``search_observations``: the value the tool schema advertises
 #: to the model. It is the floor of the chain a bank can raise or lower through
-#: ``reflect_default_options.reflect_search_observations_max_tokens`` (or a mental model's trigger),
+#: ``reflect_default_options.reflect_search_observations_max_tokens`` (or, for a refresh, the
+#: mental model's own trigger, which does not read ``reflect_default_options``),
 #: which is why it stays a plain constant here rather than a ``config`` field.
 DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS = 5000
+
+#: Default budget for one ``read_mental_models`` call. Pages are whole documents, so
+#: this is the ceiling on how much page text one read can put in the conversation —
+#: the bound ``search_mental_models`` never had when it returned five of them whole.
+DEFAULT_MENTAL_MODELS_READ_MAX_TOKENS = 6000
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,7 @@ class ReflectToolTokenLimits:
     recall_max_tokens: int
     recall_chunk_max_tokens: int
     observations_max_tokens: int
+    mental_models_read_max_tokens: int
 
 
 def _resolve_tool_arg_ceiling(remaining_context_tokens: int | None, concurrent_calls: int) -> int:
@@ -112,6 +121,7 @@ _SHIPPED_DEFAULT_TOOL_LIMITS = ReflectToolTokenLimits(
     recall_max_tokens=DEFAULT_RECALL_MAX_TOKENS,
     recall_chunk_max_tokens=DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     observations_max_tokens=DEFAULT_OBSERVATIONS_TOOL_MAX_TOKENS,
+    mental_models_read_max_tokens=DEFAULT_MENTAL_MODELS_READ_MAX_TOKENS,
 )
 
 
@@ -177,9 +187,11 @@ class ReflectToolCallError(RuntimeError):
     calling and silently drop the tool definitions from the request (e.g. litellm's
     Vertex AI gpt-oss MaaS path strips ``tools``/``tool_choice`` when the model is
     flagged as not supporting them). The model then answers in free text that may
-    mimic a ``done`` payload. Rather than salvage that untooled text -- and risk
-    surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
-    switch to a tool-calling-capable model/transport.
+    mimic a ``done`` payload. Other endpoints support tools but ignore the forced
+    tool choice for some prompts only (#4557). Rather than salvage that untooled
+    text -- and risk surfacing raw tool-call JSON as the answer -- we fail loudly,
+    naming the requested tool choice and the response's finish reason so the
+    operator can tell the two cases apart.
     """
 
 
@@ -453,7 +465,10 @@ def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool
     for model in models:
         if model.get("is_stale") is not False:
             return False
-        if not str(model.get("content") or "").strip():
+        # A search hit carries a snippet, not the page (see presentation of
+        # search_mental_models); a page read in full carries ``content``. Either
+        # proves the page has something in it to answer from.
+        if not str(model.get("snippet") or model.get("content") or "").strip():
             return False
     return True
 
@@ -504,6 +519,7 @@ async def run_reflect_agent(
     query: str,
     bank_profile: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -540,6 +556,7 @@ async def run_reflect_agent(
             query,
             bank_profile,
             search_mental_models_fn,
+            read_mental_models_fn,
             search_observations_fn,
             recall_fn,
             expand_fn,
@@ -561,6 +578,7 @@ async def _run_reflect_agent_inner(
     query: str,
     bank_profile: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -600,6 +618,7 @@ async def _run_reflect_agent_inner(
         query: Question to answer
         bank_profile: Bank profile with name and mission
         search_mental_models_fn: Tool callback for searching mental models (query, max_results) -> result
+        read_mental_models_fn: Tool callback reading mental models in full (ids, max_tokens) -> result
         search_observations_fn: Tool callback for searching observations (query, max_results) -> result
         recall_fn: Tool callback for recall (query, max_tokens) -> result
         expand_fn: Tool callback for expand (memory_ids, depth) -> result
@@ -671,6 +690,9 @@ async def _run_reflect_agent_inner(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": build_agent_user_prompt(query, llm_output_language)},
     ]
+    # What the model reads of each tool result, and the alias table that maps the
+    # short ids it writes back to real ones — see presentation.py.
+    presenter = ToolResultPresenter()
 
     # Step-by-step context caching for the agentic tool loop.
     #
@@ -679,8 +701,11 @@ async def _run_reflect_agent_inner(
     # Instead we roll a cache forward one step at a time — after each turn the
     # cache is extended to cover that turn's FULL input, so the next ``auto`` turn
     # reuses the entire prior conversation at the cached rate and sends only its
-    # own new tool results as the delta. Each new tool payload is therefore billed
-    # at full price exactly once (the turn it's produced), then cached thereafter.
+    # own new tool results as the delta. Note what this costs on Gemini: a cache
+    # CREATE is billed at the full input rate plus storage, and each rolling cache is
+    # read once, so the whole prior conversation is paid in full at every step anyway
+    # — measured at ~4.6% more than running uncached. See the note on
+    # DEFAULT_REFLECT_PROMPT_CACHE_ENABLED in config.py.
     #
     # The cache create for turn N+1 covers turn N's input, which is fully known the
     # moment turn N's LLM call returns — so we kick it off as a background task that
@@ -851,6 +876,88 @@ async def _run_reflect_agent_inner(
         )
         return response.strip()
 
+    async def _ask_for_done() -> "LLMToolCall | None":
+        """Ask for the answer as a ``done`` call, in the conversation it was gathered in.
+
+        The model stopping with prose is the common case (measured: only ~29% of
+        refreshes ever call ``done`` on their own), and it costs twice. The prose
+        is dropped — it can be a raw done payload with ids leaking into
+        user-visible text — and the standalone synthesis prompt then re-renders
+        every tool result into a NEW prompt, so the whole evidence set is billed
+        again at the full input rate. Asking here reuses the prefix the provider
+        already has, and comes back as the structured document a page wants
+        instead of markdown that has to be split back apart.
+
+        Returns None when the provider will not produce the call, and the caller
+        falls back to the standalone prompt.
+        """
+        nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+        if not messages or messages[-1].get("role") != "tool":
+            return None
+        llm_start = time.time()
+        try:
+            result = await llm_config.call_with_tools(
+                messages=[
+                    *messages,
+                    {"role": "user", "content": build_done_request_prompt(query, max_tokens, llm_output_language)},
+                ],
+                tools=tools,
+                scope="reflect",
+                tool_choice=LLMToolChoice.named("done"),
+                temperature=get_config().llm_temperature_reflect,
+                max_completion_tokens=synthesis_max_completion_tokens,
+            )
+        except OperationCancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[REFLECT {reflect_id}] closing done call failed, using the standalone prompt: {e}")
+            return None
+        total_input_tokens += result.input_tokens
+        total_output_tokens += result.output_tokens
+        total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
+        total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
+        llm_trace.append(
+            {
+                # Its own scope, not the "final" the standalone synthesis records:
+                # they are different calls with different costs — this one rides the
+                # prefix the provider already holds — and a reader (or a test) has to
+                # be able to tell which path produced the answer.
+                "scope": "closing_done",
+                "duration_ms": int((time.time() - llm_start) * 1000),
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+            }
+        )
+        return next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
+
+    async def _finish(iterations_completed: int) -> ReflectAgentResult:
+        """Produce the answer for a loop that has stopped retrieving.
+
+        Through ``done`` when the model will make the call (structured, and on a
+        prefix the provider already holds), otherwise through the standalone
+        synthesis prompt.
+        """
+        closing = await _ask_for_done()
+        if closing is None:
+            return await _forced_final_synthesis(iterations_completed)
+        return await _process_done_tool(
+            closing.model_copy(update={"arguments": presenter.resolve(closing.arguments)}),
+            available_memory_ids,
+            available_mental_model_ids,
+            available_observation_ids,
+            iterations_completed,
+            total_tools_called,
+            tool_trace,
+            _get_llm_trace(),
+            _get_usage(),
+            _log_completion,
+            reflect_id,
+            directives_applied=directives_applied,
+            llm_config=llm_config,
+            response_schema=response_schema,
+            max_tokens=max_tokens,
+        )
+
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
         """Answer without tools from the accumulated tool results.
 
@@ -988,8 +1095,8 @@ async def _run_reflect_agent_inner(
         is_last = iteration == max_iterations - 1
 
         if is_last:
-            # Force text response on last iteration - no tools
-            return await _forced_final_synthesis(iteration + 1)
+            # Out of iterations: no more retrieval, just the answer.
+            return await _finish(iteration + 1)
 
         # Proactive context-window guard: if accumulated messages would exceed the
         # configured token budget, bail out early and synthesize from what we have.
@@ -1001,6 +1108,8 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
+            # Not ``_finish``: asking for ``done`` appends to a conversation that is
+            # already over the budget. The standalone prompt splits the evidence.
             return await _forced_final_synthesis(iteration + 1)
 
         # Call LLM with tools
@@ -1131,24 +1240,32 @@ async def _run_reflect_agent_inner(
             # means one of two things:
             #   * the model already gathered evidence via earlier tool calls and is
             #     now stopping -- fine, synthesize a clean final answer below;
-            #   * the transport can't produce tool calls at all, so it only ever
-            #     returns free text (e.g. litellm strips tools on the Vertex gpt-oss
-            #     MaaS path). In that case ``saw_tool_call`` is still False.
+            #   * no usable tool call has been produced yet. The endpoint may have
+            #     ignored this prompt's tool choice, or lack tool support altogether
+            #     (e.g. litellm strips tools on the Vertex gpt-oss MaaS path).
             # We no longer salvage that free text as the answer -- it can be a raw
             # done()-payload with sibling id fields leaking into user-visible text.
-            # Fail loudly instead so the caller picks a tool-calling-capable model.
+            # Fail loudly with request/response diagnostics instead.
             if not saw_tool_call:
                 snippet = (result.content or "").strip()
                 if len(snippet) > 500:
                     snippet = snippet[:500] + "..."
                 detail = f" Response: {snippet!r}" if snippet else " The model returned no content."
+                # A single text-only response does not prove the model lacks tool
+                # support: some endpoints ignore a forced choice for short prompts.
+                # Report the requested choice and normalized response so operators can probe the
+                # failing contract, including truncation, without changing providers.
+                requested_choice = iter_tool_choice.function_name or iter_tool_choice.mode.value
                 raise ReflectToolCallError(
                     f"Reflect requires a tool-calling model, but {llm_config.provider}/{llm_config.model} "
-                    f"produced no usable tool call (the transport may not support function calling)." + detail
+                    "produced no usable tool call during initial tool selection "
+                    f"(iteration={iteration + 1}, tool_choice={requested_choice!r}, "
+                    f"finish_reason={result.finish_reason!r}). "
+                    "Check tool-choice handling for this prompt on the configured endpoint; "
+                    "a successful tool call for another prompt does not establish compatibility." + detail
                 )
-            # Model tool-called earlier and is now stopping: fall through to a clean
-            # forced final synthesis (tools disabled, prose expected).
-            return await _forced_final_synthesis(iteration + 1)
+            # Model tool-called earlier and is now stopping with prose.
+            return await _finish(iteration + 1)
 
         # The model produced at least one tool call reflect could parse: it can
         # drive the loop, so a later text-only turn is a legitimate stop, not a
@@ -1198,7 +1315,7 @@ async def _run_reflect_agent_inner(
                 span.set_attribute("hindsight.scope", "reflect_tool_call")
                 span.set_attribute("hindsight.operation", "reflect_tool_call")
                 return await _process_done_tool(
-                    done_call,
+                    done_call.model_copy(update={"arguments": presenter.resolve(done_call.arguments)}),
                     available_memory_ids,
                     available_mental_model_ids,
                     available_observation_ids,
@@ -1294,8 +1411,9 @@ async def _run_reflect_agent_inner(
             # Execute tools in parallel
             tool_tasks = [
                 _execute_tool_with_timing(
-                    tc,
+                    tc.model_copy(update={"arguments": presenter.resolve(tc.arguments)}),
                     search_mental_models_fn,
+                    read_mental_models_fn,
                     search_observations_fn,
                     recall_fn,
                     expand_fn,
@@ -1366,6 +1484,11 @@ async def _run_reflect_agent_inner(
                             "releasing forced lower-level retrieval to auto."
                         )
 
+                if normalized_tool_name == "read_mental_models" and isinstance(output, dict):
+                    for page in output.get("mental_models", []):
+                        if "id" in page:
+                            available_mental_model_ids.add(page["id"])
+
                 if (
                     normalized_tool_name == "search_observations"
                     and isinstance(output, dict)
@@ -1374,14 +1497,16 @@ async def _run_reflect_agent_inner(
                     for obs in output["observations"]:
                         if "id" in obs:
                             available_observation_ids.add(obs["id"])
-
                 if normalized_tool_name == "recall" and isinstance(output, dict) and "memories" in output:
                     for memory in output["memories"]:
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Record the serialized result; emitted in original order below.
-                tool_outputs[position] = json.dumps(output, default=str, ensure_ascii=False)
+                # Record the serialized result; emitted in original order below. The
+                # model reads the presented form (see presentation.py); the trace
+                # below keeps the raw output.
+                presented = presenter.present(output)
+                tool_outputs[position] = json.dumps(presented, default=str, ensure_ascii=False)
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
@@ -1416,7 +1541,7 @@ async def _run_reflect_agent_inner(
                 )
 
                 # Keep context history for fallback final prompt
-                context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+                context_history.append({"tool": tc.name, "input": input_dict, "output": presented})
 
             # Emit tool_result messages in the assistant tool_calls order so the
             # serialized history matches the tool_use blocks (Anthropic requires
@@ -1620,24 +1745,38 @@ async def _process_done_tool(
     # markdown is rendered from it. The rendered text still flows on as ``text``
     # so every consumer (structured-output extraction, the length rewrite, the
     # HTTP response) is unchanged -- what changes is that nobody has to read the
-    # model's markdown back to find out what it meant.
+    # model's markdown back to find out what it meant. A string-encoded
+    # ``document`` argument is decoded first: models on OpenAI-compatible
+    # transports sometimes double-encode nested tool arguments (same class as
+    # #899's MCP coercion).
     document: StructuredDocument | None = None
     raw_document = args.get("document")
+    if isinstance(raw_document, str):
+        try:
+            raw_document = json.loads(raw_document)
+        except json.JSONDecodeError:
+            raw_document = None
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
         answer = render_document(document).strip()
     else:
         answer = args.get("answer", "").strip()
     if not answer:
-        # The model called ``done`` with nothing in it -- typically its output was
-        # cut off mid-tool-call by the completion cap, so the answer field arrived
-        # empty even though the evidence was gathered. Fail instead of standing in
+        # The model called ``done`` with nothing usable in it -- no ``answer``
+        # field and no decodable ``document`` object. Typically its output was
+        # cut off mid-tool-call by the completion cap (finish_reason "length"),
+        # but the same signature also comes from a well-formed completion whose
+        # ``document`` argument never parsed to an object, so truncation is one
+        # possible cause, not the only one. Fail instead of standing in
         # a placeholder: it is non-empty, so every downstream emptiness guard reads
         # it as a real answer and stores it over working content (#2959).
         raise ReflectNoAnswerError(
             f"Reflect's done tool returned no answer (iteration {iterations}, "
-            f"{total_tools_called} tool call(s) made). The model's output may have been "
-            "truncated before the answer field was written."
+            f"{total_tools_called} tool call(s) made): the done call carried no usable "
+            "answer and no decodable document object. If the model's output was cut off "
+            "mid-tool-call, the answer field may have arrived empty; a document argument "
+            "that is not a JSON object (e.g. a string-encoded document) produces the "
+            "same signature."
         )
 
     final_usage = usage
@@ -1702,6 +1841,7 @@ async def _process_done_tool(
 async def _execute_tool_with_timing(
     tc: "LLMToolCall",
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -1738,6 +1878,7 @@ async def _execute_tool_with_timing(
                 tc.name,
                 tc.arguments,
                 search_mental_models_fn,
+                read_mental_models_fn,
                 search_observations_fn,
                 recall_fn,
                 expand_fn,
@@ -1780,6 +1921,7 @@ async def _execute_tool(
     tool_name: str,
     args: dict[str, Any],
     search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    read_mental_models_fn: Callable[[list[str], int], Awaitable[dict[str, Any]]],
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
@@ -1810,6 +1952,25 @@ async def _execute_tool(
         if error:
             return {"error": error}
         return await search_mental_models_fn(query, max_results)
+
+    elif tool_name == "read_mental_models":
+        page_ids = args.get("mental_model_ids") or []
+        # A model that passes one id as a bare string would otherwise be iterated
+        # character by character into a read of nothing.
+        if isinstance(page_ids, str):
+            page_ids = [page_ids]
+        if not isinstance(page_ids, list) or not page_ids:
+            return {"error": "read_mental_models requires mental_model_ids"}
+        max_tokens, error = _parse_tool_int_arg_or_error(
+            args,
+            "max_tokens",
+            default=token_limits.mental_models_read_max_tokens,
+            minimum=_TOOL_ARG_MIN_TOKENS,
+            maximum=ceiling,
+        )
+        if error:
+            return {"error": error}
+        return await read_mental_models_fn(page_ids, max_tokens)
 
     elif tool_name == "search_observations":
         query = args.get("query")

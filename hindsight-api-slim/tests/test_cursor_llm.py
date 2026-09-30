@@ -203,6 +203,15 @@ async def test_structured_output_injects_schema_and_parses_fenced_json():
 
 
 @pytest.mark.asyncio
+async def test_structured_output_keeps_a_fence_marker_inside_a_json_value():
+    """A ``` inside a string value must not cut the payload short (#4819)."""
+    with _provider(_result_line('```json\n{"answer": "wrap it in ```json fences"}\n```')) as s:
+        result = await s.llm.call(messages=[{"role": "user", "content": "q"}], response_format=_Answer, max_retries=0)
+
+    assert result.content.answer == "wrap it in ```json fences"
+
+
+@pytest.mark.asyncio
 async def test_structured_output_recovers_json_wrapped_in_prose():
     """The unfenced prose case is the one this provider exists to absorb."""
     with _provider(_result_line('Here is what I found: {"answer": "42"} — hope that helps!')) as s:

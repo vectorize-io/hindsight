@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.10.1"
+    "version": "0.10.2"
   },
   "paths": {
     "/health": {
@@ -4701,6 +4701,276 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/aliases": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "List the bank's aliases",
+        "description": "Extra bank ids that reach this bank. Every endpoint accepts an alias wherever it accepts a bank id, so callers can be moved onto a new id in phases while the old one keeps working.",
+        "operationId": "list_bank_aliases",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Add an alias to the bank",
+        "description": "Give the bank another id to answer to. Nothing is copied or moved: the bank keeps its own id and all of its data, and the alias is only a second way to reach it \u2014 which is what makes it a zero-downtime alternative to renaming.\n\nReturns 409 if the name is already a bank or another alias.",
+        "operationId": "create_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBankAliasRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/aliases/{alias}": {
+      "patch": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Show this alias in place of the bank id",
+        "description": "Present the bank under one of its aliases. Purely cosmetic: the bank keeps its own `bank_id`, which every other part of the system \u2014 authorisation, metering, exports, audit logs \u2014 continues to use.\n\nPromoting an alias demotes whichever one was shown before, so a bank is presented under at most one alias. Send `primary: false` to go back to showing its own id.",
+        "operationId": "set_bank_alias_primary",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBankAliasPrimaryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Remove an alias from the bank",
+        "description": "Stop an id reaching this bank. The bank and its memories are untouched; only the extra name goes away, and callers still using it get the same 404 (or new empty bank) they would have got before it existed.",
+        "operationId": "delete_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}": {
       "put": {
         "tags": [
@@ -7948,6 +8218,63 @@
           "mission": "I was born in Texas. I am a software engineer with 10 years of experience."
         }
       },
+      "BankAliasEntry": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Whether this alias is shown in place of the bank's own id. Display only \u2014 the bank keeps its id, and everything that names a bank still uses it. At most one alias per bank can be primary, and none has to be.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "BankAliasEntry",
+        "description": "One id a bank answers to."
+      },
+      "BankAliasesResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "The bank's own id, which an alias never replaces"
+          },
+          "aliases": {
+            "items": {
+              "$ref": "#/components/schemas/BankAliasEntry"
+            },
+            "type": "array",
+            "title": "Aliases",
+            "description": "Extra ids that also reach this bank, the primary one first then oldest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "aliases"
+        ],
+        "title": "BankAliasesResponse",
+        "description": "Response model for a bank's aliases.",
+        "example": {
+          "aliases": [
+            {
+              "alias": "user-123",
+              "primary": true
+            },
+            {
+              "alias": "legacy-user123",
+              "primary": false
+            }
+          ],
+          "bank_id": "user123"
+        }
+      },
       "BankConfigResponse": {
         "properties": {
           "bank_id": {
@@ -8090,6 +8417,26 @@
             ],
             "title": "Last Write At",
             "description": "When anything was last written to this bank: a document retained (including appends to an existing document) or a fact stored. Null if the bank is empty."
+          },
+          "display_alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Alias",
+            "description": "The alias this bank is presented under, when one was promoted. Display only: `bank_id` remains the bank's identity everywhere else. Null when no alias is primary, in which case show `bank_id`."
+          },
+          "matched_aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Aliases",
+            "description": "Aliases of this bank that matched the search `q`. Empty when no search was made, or when the bank matched on its own id or name \u2014 so a non-empty value explains a result whose `bank_id` does not contain the search text."
           }
         },
         "type": "object",
@@ -9876,6 +10223,63 @@
         "title": "ConsolidationStrategySpec",
         "description": "One `consolidation_strategies` entry: the rules it claims scopes with, and\nthe observation settings those scopes use. Every setting is optional; unset\nones come from the bank-wide values."
       },
+      "Content": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/FileContentBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "file": "#/components/schemas/FileContentBlock",
+                  "image": "#/components/schemas/ImageContentBlock",
+                  "text": "#/components/schemas/TextContentBlock"
+                }
+              }
+            },
+            "type": "array"
+          }
+        ],
+        "title": "Content",
+        "description": "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
+      },
+      "CreateBankAliasRequest": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias",
+            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias."
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Also show the bank under this alias, replacing whichever alias is shown today.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "CreateBankAliasRequest",
+        "description": "Request model for adding an alias to a bank.",
+        "example": {
+          "alias": "user-123"
+        }
+      },
       "CreateBankRequest": {
         "properties": {
           "name": {
@@ -11009,9 +11413,8 @@
       "DryRunExtractRequest": {
         "properties": {
           "content": {
-            "type": "string",
-            "title": "Content",
-            "description": "Text to extract facts from (e.g. a document or a single chunk)."
+            "$ref": "#/components/schemas/Content",
+            "description": "The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear."
           },
           "context": {
             "type": "string",
@@ -11738,6 +12141,14 @@
             ],
             "title": "Chunk Index",
             "description": "Index into `chunks` of the chunk this fact came from; null if it could not be attributed."
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFactAttachment"
+            },
+            "type": "array",
+            "title": "Attachments",
+            "description": "Attachments from user input that this fact is attributed to / associated with."
           }
         },
         "type": "object",
@@ -11747,6 +12158,37 @@
         ],
         "title": "ExtractedFact",
         "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape \u2014 only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, \u2026)\nare omitted because nothing is stored. Entities are raw, unresolved names."
+      },
+      "ExtractedFactAttachment": {
+        "properties": {
+          "block_index": {
+            "type": "integer",
+            "title": "Block Index",
+            "description": "Index of the content block in user's input (0-based)"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "file"
+            ],
+            "title": "AttachmentType",
+            "description": "Content block type ('image' or 'file')"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME media type of the attachment, e.g. 'image/png'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_index",
+          "type",
+          "media_type"
+        ],
+        "title": "ExtractedFactAttachment",
+        "description": "An attachment from multimodal input associated with an extracted fact."
       },
       "ExtractionChunk": {
         "properties": {
@@ -11879,7 +12321,7 @@
           "source"
         ],
         "title": "FileContentBlock",
-        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in the position it was written.\n\nSplit from ``image`` rather than folded into one type because the providers\nsplit it: Anthropic has distinct image and document blocks, OpenAI has\nimage_url and file parts. Carrying the caller's own distinction through means\nthe per-provider conversion never has to guess from the media type alone."
+        "description": "A non-image attachment \u2014 a PDF, a spreadsheet \u2014 in its input position.\n\nThis stays distinct from ``image`` because providers use different request\nparts for images and documents; retaining the caller's kind avoids guessing."
       },
       "FileRetainResponse": {
         "properties": {
@@ -12289,12 +12731,12 @@
               }
             ],
             "title": "Body",
-            "description": "The page's synthesized markdown body."
+            "description": "The page's synthesized markdown body, exactly as stored. Empty until a refresh writes one \u2014 unlike `markdown`, which says so in words. Build a UI's own empty state off this field; read `markdown` to show the document itself."
           },
           "markdown": {
             "type": "string",
             "title": "Markdown",
-            "description": "The full markdown document: YAML frontmatter + markdown body."
+            "description": "The full markdown document: YAML frontmatter + markdown body. A page with no body yet renders 'No content yet.' as its body rather than frontmatter alone, which reads as a page that failed to render. The notice is added here on the way out; the stored body in `body` stays empty, and the export bundle keeps the bare document."
           }
         },
         "type": "object",
@@ -12350,9 +12792,22 @@
             ],
             "title": "Mental Model Id"
           },
+          "source_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Query",
+            "description": "The question the page answers."
+          },
           "snippet": {
             "type": "string",
-            "title": "Snippet"
+            "title": "Snippet",
+            "description": "The page's opening text. A page whose body is still empty says so in words \u2014 'No content yet.' \u2014 rather than coming back blank, so a caller can tell an unwritten page from a page whose snippet simply did not render. The marker is produced on the way out; the stored body stays empty and out of the search index."
           },
           "score": {
             "type": "number",
@@ -12583,6 +13038,17 @@
             ],
             "title": "Cached Tokens"
           },
+          "thoughts_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thoughts Tokens"
+          },
           "total_tokens": {
             "anyOf": [
               {
@@ -12640,6 +13106,7 @@
           "input_tokens",
           "output_tokens",
           "cached_tokens",
+          "thoughts_tokens",
           "total_tokens",
           "error",
           "llm_info",
@@ -12766,6 +13233,17 @@
           "cached": {
             "type": "integer",
             "title": "Cached"
+          },
+          "thoughts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thoughts"
           },
           "total": {
             "type": "integer",
@@ -13614,36 +14092,7 @@
       "MemoryItem": {
         "properties": {
           "content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "items": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/TextContentBlock"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ImageContentBlock"
-                    },
-                    {
-                      "$ref": "#/components/schemas/FileContentBlock"
-                    }
-                  ],
-                  "discriminator": {
-                    "propertyName": "type",
-                    "mapping": {
-                      "file": "#/components/schemas/FileContentBlock",
-                      "image": "#/components/schemas/ImageContentBlock",
-                      "text": "#/components/schemas/TextContentBlock"
-                    }
-                  }
-                },
-                "type": "array"
-              }
-            ],
-            "title": "Content",
+            "$ref": "#/components/schemas/Content",
             "description": "The raw content to retain. Either a plain string, or an ordered list of content blocks so images sit inline where they actually appear:\n\n  [{\"type\": \"text\", \"text\": \"click the button shown:\"},\n   {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"image/png\", \"data\": \"...\"}},\n   {\"type\": \"text\", \"text\": \"...then reconnect.\"}]\n\nThe block form requires a vision-capable retain LLM; a retain carrying images against a text-only model is rejected rather than silently dropping them. A single text block is equivalent to the plain string form."
           },
           "timestamp": {
@@ -14889,30 +15338,16 @@
       },
       "MentalModelTrigger-Input": {
         "properties": {
-          "reflect_search_observations_max_tokens": {
+          "budget": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "$ref": "#/components/schemas/Budget"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Reflect Search Observations Max Tokens",
-            "description": "Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000)."
-          },
-          "reflect_search_observations_include_entities": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reflect Search Observations Include Entities",
-            "description": "Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled."
+            "description": "How many agent iterations a refresh may spend, as a multiple of reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. A refresh is the heaviest reflect there is \u2014 it writes a whole document, and with exclude_mental_models it must read raw facts first \u2014 so null means 'mid', not the 'low' an ad-hoc reflect defaults to."
           },
           "mode": {
             "type": "string",
@@ -15013,7 +15448,7 @@
               }
             ],
             "title": "Tags Match",
-            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match."
+            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match. Staleness ignores that widening: an untagged write never marks a tagged model stale, in any mode \u2014 only a write that matches the model's tags does."
           },
           "tag_groups": {
             "anyOf": [
@@ -15079,6 +15514,31 @@
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
           },
+          "reflect_search_observations_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Search Observations Max Tokens",
+            "description": "Override the token budget for the refresh's search_observations calls. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. null means the shipped 5000."
+          },
+          "reflect_search_observations_include_entities": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Search Observations Include Entities",
+            "description": "Override whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. null means enabled."
+          },
           "response_schema": {
             "anyOf": [
               {
@@ -15101,34 +15561,20 @@
         },
         "type": "object",
         "title": "MentalModelTrigger",
-        "description": "Trigger settings for a mental model.\n\nInherits the reflect options an operator can also default per bank\n(``reflect_default_options``): set here they apply to this model's refreshes\nonly, and win over the bank default."
+        "description": "Trigger settings for a mental model.\n\nA refresh is not an ad-hoc reflect with different arguments: it synthesizes a\nwhole document, so it wants its own retrieval and iteration settings. This\ntrigger is therefore the only source for them \u2014 a bank's\n``reflect_default_options`` deliberately does not reach a refresh. The\nper-bank default for these fields is ``knowledge_page_default_trigger``,\nwhich is merged over this same shape when a page is created."
       },
       "MentalModelTrigger-Output": {
         "properties": {
-          "reflect_search_observations_max_tokens": {
+          "budget": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "$ref": "#/components/schemas/Budget"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Reflect Search Observations Max Tokens",
-            "description": "Token budget for reflect's search_observations tool when the model names none. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. None means use the shipped default (5000)."
-          },
-          "reflect_search_observations_include_entities": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reflect Search Observations Include Entities",
-            "description": "Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled."
+            "description": "How many agent iterations a refresh may spend, as a multiple of reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. A refresh is the heaviest reflect there is \u2014 it writes a whole document, and with exclude_mental_models it must read raw facts first \u2014 so null means 'mid', not the 'low' an ad-hoc reflect defaults to."
           },
           "mode": {
             "type": "string",
@@ -15229,7 +15675,7 @@
               }
             ],
             "title": "Tags Match",
-            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match."
+            "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY one of the model's tags and untagged memories are excluded, which is why a model tagged with labels its memories do not carry refreshes to empty content. Set to 'all' to keep requiring the tags while including untagged memories, or to 'any' to include untagged memories alongside any single tag match. Staleness ignores that widening: an untagged write never marks a tagged model stale, in any mode \u2014 only a write that matches the model's tags does."
           },
           "tag_groups": {
             "anyOf": [
@@ -15295,6 +15741,31 @@
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
           },
+          "reflect_search_observations_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Search Observations Max Tokens",
+            "description": "Override the token budget for the refresh's search_observations calls. Observation evidence is often the largest contributor to the reflect context; lowering it trades the lowest-ranked observations for a smaller LLM context. null means the shipped 5000."
+          },
+          "reflect_search_observations_include_entities": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Search Observations Include Entities",
+            "description": "Override whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. null means enabled."
+          },
           "response_schema": {
             "anyOf": [
               {
@@ -15317,7 +15788,7 @@
         },
         "type": "object",
         "title": "MentalModelTrigger",
-        "description": "Trigger settings for a mental model.\n\nInherits the reflect options an operator can also default per bank\n(``reflect_default_options``): set here they apply to this model's refreshes\nonly, and win over the bank default."
+        "description": "Trigger settings for a mental model.\n\nA refresh is not an ad-hoc reflect with different arguments: it synthesizes a\nwhole document, so it wants its own retrieval and iteration settings. This\ntrigger is therefore the only source for them \u2014 a bank's\n``reflect_default_options`` deliberately does not reach a refresh. The\nper-bank default for these fields is ``knowledge_page_default_trigger``,\nwhich is merged over this same shape when a page is created."
       },
       "MinScores": {
         "properties": {
@@ -15528,6 +15999,30 @@
             "type": "string",
             "title": "Task Type"
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "Same as `id`; the name the single-operation read uses."
+          },
+          "operation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Type",
+            "description": "Same as `task_type`; the name the single-operation read uses."
+          },
           "items_count": {
             "type": "integer",
             "title": "Items Count"
@@ -15565,7 +16060,7 @@
               }
             ],
             "title": "Mental Model Id",
-            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`."
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata."
           },
           "details": {
             "anyOf": [
@@ -15693,6 +16188,42 @@
               }
             ],
             "title": "Operation Type"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Same as `operation_id`; the name the operations list uses."
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Same as `operation_type`; the name the operations list uses."
+          },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types."
           },
           "created_at": {
             "anyOf": [
@@ -16575,7 +17106,7 @@
               }
             ],
             "title": "Attachments",
-            "description": "Attachments this fact was drawn from, as recorded per fact at extraction time \u2014 the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none. Omitted when there are none."
+            "description": "Attachments this fact was drawn from, as recorded per fact at extraction time \u2014 the same edge the memory read endpoints return, not everything its chunk happened to carry. A fact stated in prose reports none; an observation reports those of the facts it was consolidated from. Omitted when there are none."
           }
         },
         "type": "object",
@@ -16798,6 +17329,82 @@
               }
             ],
             "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Attachments this memory was drawn from \u2014 the same per-fact edge recall reports. An observation reports those of the facts it was consolidated from. Omitted when there are none."
           }
         },
         "type": "object",
@@ -17604,6 +18211,21 @@
         ],
         "title": "RunSettingModel",
         "description": "A setting that shapes the operation without appearing in its prompt.\n\nChunk sizes decide how the input is cut before extraction runs, so they change\nwhat comes back while contributing no prompt text \u2014 they cannot be blocks, which\npartition the message, and these are in none of it."
+      },
+      "SetBankAliasPrimaryRequest": {
+        "properties": {
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "True to present the bank under this alias; False to go back to its own id."
+          }
+        },
+        "type": "object",
+        "required": [
+          "primary"
+        ],
+        "title": "SetBankAliasPrimaryRequest",
+        "description": "Request model for showing (or no longer showing) an alias in place of the bank id."
       },
       "SourceFactsIncludeOptions": {
         "properties": {

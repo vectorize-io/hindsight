@@ -20,14 +20,20 @@ class _FakeConnection:
 async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The codec-enabled admin producer must identify its rows as decoded."""
     connection = _FakeConnection()
-    export_bank = AsyncMock(return_value=b"archive")
+    call_record: dict = {}
+
+    async def fake_stream_export_bank(conn, bank_id, **kwargs):
+        call_record["args"] = (conn, bank_id)
+        call_record["kwargs"] = kwargs
+        yield b"arch"
+        yield b"ive"
 
     async def fake_admin_connect(db_url: str) -> _FakeConnection:
         assert db_url == "postgresql://example"
         return connection
 
     monkeypatch.setattr(cli, "_admin_connect", fake_admin_connect)
-    monkeypatch.setattr(cli, "export_bank", export_bank)
+    monkeypatch.setattr(cli, "stream_export_bank", fake_stream_export_bank)
     # The CLI resolves the configured memories store and hands it to the export: a bank whose
     # memories live outside SQL cannot be read from this connection, and without the store the
     # archive would come out well-formed and empty.
@@ -45,17 +51,16 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
 
     from hindsight_api.engine.transfer import TransferScope
 
-    call = export_bank.await_args
-    assert call.args == (connection, "source-bank")
-    assert call.kwargs["bank_rows_json_encoding"] == "decoded"
-    assert call.kwargs["memories"] is store
+    assert call_record["args"] == (connection, "source-bank")
+    assert call_record["kwargs"]["bank_rows_json_encoding"] == "decoded"
+    assert call_record["kwargs"]["memories"] is store
     # --include-history maps onto the scope's third flag; the other two are what a
     # migration always carries.
-    assert call.kwargs["scope"] == TransferScope(data=True, bank_config=True, history=True)
+    assert call_record["kwargs"]["scope"] == TransferScope(data=True, bank_config=True, history=True)
     # Attachment bytes live in file storage rather than in a column, so the CLI has
     # to hand the export a storage client or a bank with attachments exports rows
     # pointing at blobs the archive does not carry.
-    assert call.kwargs["file_storage"] is not None
+    assert call_record["kwargs"]["file_storage"] is not None
     assert output.read_bytes() == b"archive"
     assert size == len(b"archive")
     assert connection.closed is True

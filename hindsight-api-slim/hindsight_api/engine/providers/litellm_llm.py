@@ -31,6 +31,7 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, visible_token_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -73,18 +74,13 @@ _STRUCTURED_TOOL_NAME = "structured_response"
 
 
 def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
-    """Extract prompt/completion/cached token counts from a LiteLLM (OpenAI-shaped) usage block."""
-    usage = getattr(response, "usage", None)
-    if not usage:
-        return LLMResponseUsage()
-    cached_tokens = 0
-    details = getattr(usage, "prompt_tokens_details", None)
-    if details:
-        cached_tokens = getattr(details, "cached_tokens", 0) or 0
+    """Extract input / visible-output / cached / reasoning counts from a LiteLLM (OpenAI-shaped) usage block."""
+    usage = visible_token_usage(response)
     return LLMResponseUsage(
-        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-        cached_tokens=cached_tokens,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cached_tokens=usage.cached_tokens,
+        thoughts_tokens=usage.thoughts_tokens,
     )
 
 
@@ -370,27 +366,20 @@ class LiteLLMLLM(LLMInterface):
                     raise OutputTooLongError("LiteLLM response was truncated due to token limit")
 
                 if response_format is not None:
-                    # Strip markdown code fences if present
-                    clean_content = content
-                    if "```json" in content:
-                        clean_content = content.split("```json")[1].split("```")[0].strip()
-                    elif "```" in content:
-                        clean_content = content.split("```")[1].split("```")[0].strip()
-
+                    # Fences are stripped line-based by the shared helper, so a
+                    # JSON value that itself contains the text "```json" is no
+                    # longer truncated mid-payload (#4819).
                     try:
-                        json_data = json.loads(clean_content)
+                        json_data = json.loads(_strip_code_fences(content))
                     except json.JSONDecodeError:
-                        try:
-                            json_data = json.loads(content)
-                        except json.JSONDecodeError:
-                            if attempt < max_retries:
-                                # Prefer a clean re-roll first — a fresh generation
-                                # usually beats repairing a malformed one.
-                                raise
-                            # Retry budget spent: structural repair as a last
-                            # resort (#2547/#2544). Raises again if unrecoverable,
-                            # which the outer handler surfaces loudly.
-                            json_data = parse_llm_json(content)
+                        if attempt < max_retries:
+                            # Prefer a clean re-roll first — a fresh generation
+                            # usually beats repairing a malformed one.
+                            raise
+                        # Retry budget spent: structural repair as a last
+                        # resort (#2547/#2544). Raises again if unrecoverable,
+                        # which the outer handler surfaces loudly.
+                        json_data = parse_llm_json(content)
 
                     if skip_validation:
                         result = json_data
@@ -403,6 +392,7 @@ class LiteLLMLLM(LLMInterface):
                 response_usage = _usage_from_litellm_response(response)
                 input_tokens = response_usage.input_tokens
                 output_tokens = response_usage.output_tokens
+                thoughts_tokens = response_usage.thoughts_tokens
                 total_tokens = input_tokens + output_tokens
 
                 # Record metrics
@@ -416,6 +406,8 @@ class LiteLLMLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     success=True,
+                    cached_input_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 # Record trace span
@@ -433,6 +425,8 @@ class LiteLLMLLM(LLMInterface):
                     duration=duration,
                     finish_reason=finish_reason,
                     error=None,
+                    cached_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 if duration > 10.0:
@@ -446,6 +440,8 @@ class LiteLLMLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                    cached_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
                 return LLMCallResult(content=result, usage=token_usage)
 
@@ -577,8 +573,10 @@ class LiteLLMLLM(LLMInterface):
                         )
 
                 # Extract usage
-                input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                response_usage = _usage_from_litellm_response(response)
+                input_tokens = response_usage.input_tokens
+                output_tokens = response_usage.output_tokens
+                thoughts_tokens = response_usage.thoughts_tokens
 
                 # Record metrics
                 duration = time.time() - start_time
@@ -591,6 +589,8 @@ class LiteLLMLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     success=True,
+                    cached_input_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 # Record trace span
@@ -614,6 +614,8 @@ class LiteLLMLLM(LLMInterface):
                     finish_reason=finish_reason,
                     error=None,
                     tool_calls=tool_calls_dict,
+                    cached_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 return LLMToolCallResult(
@@ -622,6 +624,8 @@ class LiteLLMLLM(LLMInterface):
                     finish_reason=finish_reason or ("tool_calls" if tool_calls else "stop"),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cached_tokens=response_usage.cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
             except (TimeoutError, asyncio.TimeoutError, _litellm_timeout_exc()) as e:

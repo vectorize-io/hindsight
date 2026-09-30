@@ -52,7 +52,11 @@ async def test_a_model_that_never_calls_a_tool_is_an_error(client, llm, bank_wit
     with pytest.raises(ServiceException) as raised:
         await client.areflect(bank_id=bank_with_facts, query=QUERY)
 
-    assert "tool" in str(raised.value).lower()
+    message = str(raised.value)
+    assert "produced no usable tool call during initial tool selection" in message
+    assert "tool_choice=" in message
+    assert "finish_reason=" in message
+    assert "I think Alice lives in Berlin." in message
 
 
 async def test_an_empty_answer_is_an_error_rather_than_an_empty_result(client, llm, bank_with_facts):

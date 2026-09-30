@@ -189,7 +189,7 @@ Tags enable visibility scoping—useful when one memory bank serves multiple use
 - **Document tags**: Apply tags to all items in a batch
 - **Tag filtering**: Filter during recall/reflect by tags
 
-See [Retain API](./api/retain) for code examples and [Recall API](./api/recall) for filtering options.
+See [Retain API](./api/retain.md) for code examples and [Recall API](./api/recall.md) for filtering options.
 
 ---
 
@@ -237,6 +237,12 @@ with a URL you can fetch:
 Facts that came from the prose have no `attachments`, even when the same document
 is full of pictures. So an attachment shown next to a memory means the model
 looked at it to produce that memory — it is evidence, not decoration.
+
+An observation carries the attachments of the facts it was consolidated from, so
+a screenshot still reaches you when recall or reflect answers from the
+observation rather than the raw fact. Reflect's `based_on` (with
+`include.facts`) returns each cited memory with its `attachments`, plus the
+`document_id`, `chunk_id`, `tags` and `metadata` it was stored with.
 
 ### What to expect from charts and tables
 
@@ -346,7 +352,7 @@ After `retain()` completes, Hindsight automatically triggers **observation conso
 
 This happens asynchronously — your `retain()` call returns immediately while consolidation runs in the background.
 
-See [Observations](./observations) for details on how consolidation works.
+See [Observations](./observations.md) for details on how consolidation works.
 
 ---
 
@@ -380,7 +386,7 @@ See [Memory Defense](./memory-defense/index.md) for the full guide.
 
 ## Next Steps
 
-- [**Observations**](./observations) — How knowledge is consolidated after retain
-- [**Recall**](./retrieval) — How multi-strategy search retrieves relevant memories
-- [**Reflect**](./reflect) — How the agentic loop uses observations
-- [**Retain API**](./api/retain) — Code examples and parameters
+- [**Observations**](./observations.md) — How knowledge is consolidated after retain
+- [**Recall**](./retrieval.md) — How multi-strategy search retrieves relevant memories
+- [**Reflect**](./reflect.md) — How the agentic loop uses observations
+- [**Retain API**](./api/retain.md) — Code examples and parameters

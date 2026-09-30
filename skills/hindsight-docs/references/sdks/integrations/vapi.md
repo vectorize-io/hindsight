@@ -9,7 +9,7 @@ Persistent long-term memory for [Vapi](https://vapi.ai) voice AI calls via [Hind
 
 > **💡 Hindsight Cloud (recommended)**
 >
-[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run.
+[Sign up free](https://ui.hindsight.vectorize.io) — get an API key instantly, no infrastructure to run.
 ```bash
 pip install hindsight-vapi
 ```
@@ -128,4 +128,4 @@ export HINDSIGHT_API_LLM_API_KEY=your-api-key
 hindsight-api  # starts on http://localhost:8888
 ```
 
-**Hindsight Cloud:** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
+**Hindsight Cloud:** [Sign up](https://ui.hindsight.vectorize.io) — no self-hosting required.

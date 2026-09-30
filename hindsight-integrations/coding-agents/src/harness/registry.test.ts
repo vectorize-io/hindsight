@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { getHarness, HARNESS_NAMES, PLUGIN_ENTRYPOINTS } from "./registry";
+import { ALL_HARNESS_SETUPS } from "../e2e/harnesses";
 
 describe("HARNESS_NAMES", () => {
   it("lists all registered harnesses", () => {
@@ -26,9 +27,30 @@ describe("HARNESS_NAMES", () => {
         "qwen-code",
         "factory-droid",
         "zcode",
+        "traecode",
+        "kimi-code",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(18);
+    expect(HARNESS_NAMES).toHaveLength(20);
+  });
+
+  // Family guard: a new harness that lands without a Docker E2E setup is never driven through its
+  // real CLI, and no per-harness test can notice the absence. Kimi's prompt-parsing bug (a block
+  // array read as a string, so recall never ran) passed every unit test and only the real CLI
+  // showed it.
+  it("gives every installable harness a Docker E2E setup and image", () => {
+    // Antigravity's harness E2E is covered separately (see e2e/harnesses.ts).
+    // TraeCode is the agent inside the TRAE desktop IDE, with no documented headless mode a
+    // container could drive; its hook wire is covered by journal-harnesses.test.ts instead.
+    const exempt = new Set(["antigravity-cli", "traecode"]);
+    const root = fileURLToPath(new URL("../..", import.meta.url));
+    const setups = new Set(ALL_HARNESS_SETUPS.map((setup) => setup.name));
+    for (const name of HARNESS_NAMES.filter((n) => !exempt.has(n))) {
+      expect(setups.has(name), `${name} has no entry in ALL_HARNESS_SETUPS`).toBe(true);
+      expect(existsSync(join(root, "e2e", `Dockerfile.${name}`)), `e2e/Dockerfile.${name}`).toBe(
+        true
+      );
+    }
   });
 });
 

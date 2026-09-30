@@ -178,4 +178,4 @@ You don't need to pre-summarize, pre-chunk, or hand-extract facts. Hindsight doe
 - **Retain API:** [Ingesting conversations and the full parameter list](/developer/api/retain)
 - **How retain works:** [Fact extraction, entity resolution, and the world vs. experience split](/developer/retain)
 - **Recall:** [Retrieving memories, including tag filtering](/developer/api/recall)
-- **Try it:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or [self-host with one Docker command](https://hindsight.vectorize.io/developer/installation)
+- **Try it:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) or [self-host with one Docker command](https://hindsight.vectorize.io/developer/installation)

@@ -37,8 +37,7 @@ async def page(client, llm, bank_id, settled):
     )
     # A page refreshes by delta over the *observation* layer (story 35 pins those
     # defaults), so a bank with no observations gives its refresh nothing to read
-    # and the page keeps its placeholder — which looks like a broken refresh and
-    # is not.
+    # and the page stays empty — which looks like a broken refresh and is not.
     llm.on_step("consolidate").answers_with(observes("Alice is settled in Berlin"))
     reflect_loop(llm, answer=ORIGINAL_ANSWER)
 

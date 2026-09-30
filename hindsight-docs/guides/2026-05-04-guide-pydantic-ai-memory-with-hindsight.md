@@ -44,7 +44,7 @@ pip install hindsight-pydantic-ai
 
 ## Step 2: Connect Pydantic AI to Hindsight
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — free tier, no self-hosting required.
 
 ```python
 from hindsight_client import Hindsight

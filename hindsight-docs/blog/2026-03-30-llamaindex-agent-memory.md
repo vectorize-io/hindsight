@@ -22,7 +22,7 @@ That's the core limitation of LlamaIndex's built-in memory: it's session-scoped.
 - How to set up cross-session memory in three steps with full code examples
 - When to use persistent memory and when to skip it
 
-Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or self-hosted.
+Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) or self-hosted.
 
 <!-- truncate -->
 
@@ -83,7 +83,7 @@ hindsight-api
 
 Runs locally at `http://localhost:8888` with embedded Postgres, embeddings, and reranking.
 
-Or use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and skip self-hosting entirely.
+Or use [Hindsight Cloud](https://ui.hindsight.vectorize.io) and skip self-hosting entirely.
 
 ## Step 2: Install the Integration
 
@@ -303,7 +303,7 @@ Session memory resets. Long-term memory doesn't have to.
 
 That's the practical difference between a session-scoped tool and an agent with genuine memory. The more it's used, the more useful it becomes.
 
-Try it now: `pip install hindsight-all hindsight-llamaindex` and run the example above. Or start with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) if you'd rather skip self-hosting.
+Try it now: `pip install hindsight-all hindsight-llamaindex` and run the example above. Or start with [Hindsight Cloud](https://ui.hindsight.vectorize.io) if you'd rather skip self-hosting.
 
 ## Next Steps
 

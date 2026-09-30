@@ -44,7 +44,7 @@ pip install hindsight-crewai
 
 ## Step 2: Connect CrewAI to Hindsight
 
-> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io) — free tier, no self-hosting required.
 
 ```python
 from hindsight_crewai import configure

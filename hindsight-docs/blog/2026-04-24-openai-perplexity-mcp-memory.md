@@ -11,7 +11,7 @@ image: /img/blog/openai-perplexity-mcp-memory.png
 
 ![Connect ChatGPT and Perplexity to Hindsight](/img/blog/openai-perplexity-mcp-memory.png)
 
-[ChatGPT](https://chatgpt.com) and [Perplexity](https://www.perplexity.ai) are powerful AI tools, but conversation history doesn't persist across separate chats. ChatGPT has built-in memory for personal preferences, but knowledge from specific conversations (research, decisions, code) is lost when you start a new thread. [Hindsight](https://ui.hindsight.vectorize.io/signup) adds persistent, searchable memory that carries context forward through the Model Context Protocol (MCP).
+[ChatGPT](https://chatgpt.com) and [Perplexity](https://www.perplexity.ai) are powerful AI tools, but conversation history doesn't persist across separate chats. ChatGPT has built-in memory for personal preferences, but knowledge from specific conversations (research, decisions, code) is lost when you start a new thread. [Hindsight](https://ui.hindsight.vectorize.io) adds persistent, searchable memory that carries context forward through the Model Context Protocol (MCP).
 
 This guide walks you through connecting ChatGPT and Perplexity to Hindsight for persistent memory across sessions. You'll learn how to set up OAuth-secured connections, store knowledge from your conversations, and automatically recall it in future sessions, all with a no-code setup.
 
@@ -274,7 +274,7 @@ Once you connect ChatGPT and Perplexity to Hindsight, a few practices maximize v
 
 ## Getting Started with ChatGPT and Perplexity Memory
 
-1. **Create a Hindsight Cloud account**, [Sign up free](https://ui.hindsight.vectorize.io/signup)
+1. **Create a Hindsight Cloud account**, [Sign up free](https://ui.hindsight.vectorize.io)
 2. **Add the connector**, follow the ChatGPT or Perplexity setup steps above
 3. **Set up your memory bank structure**, decide whether single-bank mode (separate memories per tool) or multi-bank mode (shared memory) fits your workflow
 4. **Store your first memory**, ask ChatGPT or Perplexity to remember something important to you

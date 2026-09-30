@@ -4,7 +4,9 @@
 one on ``compute_mental_model_is_stale``. The prefilter must key off the model's
 *resolved* refresh scope (``_resolve_refresh_tag_filtering``), not its ``tags``
 column: ``tags_match`` "any"/"all" and ``trigger.tag_groups`` both let a tagged model
-see untagged memories, and gating on the column starved them (#3053).
+see untagged memories, and gating on the column starved them (#3053). Since #4857 a
+tagged model's staleness counts only writes carrying its tags, so tagged "any"/"all"
+models are no longer candidates for an untagged-only run; tag_groups still are.
 
 Deterministic — no LLM, no consolidation run: the trigger function is called directly
 and refresh submission is monkeypatched.
@@ -98,31 +100,33 @@ async def test_tagged_strict_model_skipped_when_only_untagged_consolidated(
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
-async def test_tagged_non_strict_model_refreshed_when_only_untagged_consolidated(
+async def test_tagged_non_strict_model_skipped_when_only_untagged_consolidated(
     memory: MemoryEngine, request_context, monkeypatch
 ):
-    """A tagged model with tags_match="any" IS refreshed by an untagged-only
-    consolidation: non-strict matching puts untagged memories in its scope (#3053)."""
+    """A tagged model with tags_match="any" reads untagged memories on refresh, but an
+    untagged write does not make it stale (#4857), so an untagged-only consolidation
+    does not refresh it."""
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
         mm_id = await _insert_mm(conn, bank, tags=["alpha"], trigger_extra={"tags_match": "any"})
-        await _insert_fact(conn, bank)  # untagged -> inside a non-strict scope
+        await _insert_fact(conn, bank)  # untagged -> read by the refresh, but not a staleness signal
 
     submitted = _patch_submit(memory, monkeypatch)
     await _trigger_mental_model_refreshes(
         memory_engine=memory, bank_id=bank, request_context=request_context, consolidated_tags=None
     )
 
-    assert mm_id in submitted
+    assert mm_id not in submitted
 
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
-async def test_tag_groups_model_refreshed_when_only_untagged_consolidated(
+async def test_tag_groups_model_skipped_when_only_untagged_consolidated(
     memory: MemoryEngine, request_context, monkeypatch
 ):
-    """trigger.tag_groups overrides the tags column entirely, so a model carrying
-    tags can still have untagged memories in scope and must stay a candidate."""
+    """trigger.tag_groups overrides the tags column entirely; a leaf's non-strict mode
+    lets the refresh read untagged memories, but an untagged write alone does not make
+    the model stale (#4857)."""
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
         mm_id = await _insert_mm(
@@ -131,14 +135,14 @@ async def test_tag_groups_model_refreshed_when_only_untagged_consolidated(
             tags=["alpha"],
             trigger_extra={"tag_groups": [{"tags": ["beta"], "match": "any"}]},
         )
-        await _insert_fact(conn, bank)  # untagged -> matched by the group's "any"
+        await _insert_fact(conn, bank)  # untagged -> read under the group's "any", not a staleness signal
 
     submitted = _patch_submit(memory, monkeypatch)
     await _trigger_mental_model_refreshes(
         memory_engine=memory, bank_id=bank, request_context=request_context, consolidated_tags=None
     )
 
-    assert mm_id in submitted
+    assert mm_id not in submitted
 
 
 @pytest.mark.asyncio
@@ -178,12 +182,12 @@ async def test_tagged_model_refreshed_when_its_tag_was_consolidated(memory: Memo
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
-async def test_non_strict_model_refreshed_on_mixed_run_with_foreign_tags(
+async def test_non_strict_model_skipped_on_mixed_run_with_foreign_tags(
     memory: MemoryEngine, request_context, monkeypatch
 ):
     """A run that consolidates both untagged and foreign-tagged memories reports only
-    the foreign tags. A non-strict model whose tags do not overlap them is still
-    reached by the untagged half, so the overlap branch must widen the same way."""
+    the foreign tags. Neither half is in a tagged model's staleness scope — foreign tags
+    never were, untagged writes no longer are (#4857) — so neither model refreshes."""
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
         strict_mm = await _insert_mm(conn, bank, tags=["alpha"])
@@ -195,5 +199,5 @@ async def test_non_strict_model_refreshed_on_mixed_run_with_foreign_tags(
         memory_engine=memory, bank_id=bank, request_context=request_context, consolidated_tags=["beta"]
     )
 
-    assert loose_mm in submitted
+    assert loose_mm not in submitted
     assert strict_mm not in submitted

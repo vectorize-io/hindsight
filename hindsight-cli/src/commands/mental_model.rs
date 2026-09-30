@@ -80,6 +80,7 @@ fn default_trigger_input() -> types::MentalModelTriggerInput {
         recall_chunks_max_tokens: None,
         reflect_search_observations_max_tokens: None,
         reflect_search_observations_include_entities: None,
+        budget: None,
         response_schema: None,
         keep_trace: false,
     }
@@ -107,6 +108,7 @@ fn stored_trigger_as_input(
         recall_chunks_max_tokens: stored.recall_chunks_max_tokens,
         reflect_search_observations_max_tokens: stored.reflect_search_observations_max_tokens,
         reflect_search_observations_include_entities: stored.reflect_search_observations_include_entities,
+        budget: stored.budget,
         response_schema: stored.response_schema.clone(),
         keep_trace: stored.keep_trace,
     }
@@ -774,6 +776,7 @@ mod tests {
             recall_chunks_max_tokens: Some(2048),
             reflect_search_observations_max_tokens: Some(std::num::NonZeroU64::new(3000).unwrap()),
             reflect_search_observations_include_entities: Some(false),
+            budget: Some(types::Budget::High),
             response_schema: None,
             keep_trace: true,
         }

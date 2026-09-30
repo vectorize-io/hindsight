@@ -86,7 +86,7 @@ hindsight-api
 
 This runs locally at `http://localhost:8888`. It includes embedded Postgres, local embeddings, and local reranking. No external services are required beyond an LLM API key for entity extraction.
 
-> **Note:** You can also use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and skip the self-hosted setup entirely. The cloud version provides the same API with managed infrastructure.
+> **Note:** You can also use [Hindsight Cloud](https://ui.hindsight.vectorize.io) and skip the self-hosted setup entirely. The cloud version provides the same API with managed infrastructure.
 
 ### Step 2: Install the Pydantic AI Memory Integration
 
@@ -340,9 +340,9 @@ Memories survive process restarts, build a knowledge graph over time, and compou
 ## Next Steps
 
 - **Try it locally**: `pip install hindsight-all hindsight-pydantic-ai "pydantic-ai-slim[openai]"` and run the example above
-- **Use Hindsight Cloud**: Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io/signup)
+- **Use Hindsight Cloud**: Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io)
 - **Tag memories for scoping**: Use `tags` on retain and `recall_tags` on search to partition memories by project, environment, or topic
 - **Combine tools and instructions**: Use `memory_instructions` for automatic context and tools for explicit store and retrieve during conversations
 - **Read the Pydantic AI docs**: Learn more about [Pydantic AI tools and instructions](https://ai.pydantic.dev/tools/) to extend your agent further
 - **Explore other integrations**: Add memory to [CrewAI agents](/blog/2026/03/02/crewai), [OpenAI apps](/blog/2026/03/05/add-memory-to-openai-application), or any framework via [MCP](/blog/2026/03/04/mcp-agent-memory)
-- **Inspect the knowledge graph**: Run the Hindsight control plane or use the [cloud dashboard](https://ui.hindsight.vectorize.io/signup) to browse extracted facts, entities, and relationships
+- **Inspect the knowledge graph**: Run the Hindsight control plane or use the [cloud dashboard](https://ui.hindsight.vectorize.io) to browse extracted facts, entities, and relationships

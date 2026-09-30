@@ -17,7 +17,7 @@
     "fast-xml-parser": ">=5.5.6",
     "serialize-javascript": "^7.0.5",
     "minimatch": "^3.1.4",
-    "undici": ">=7.29.0 <8.0.0",
+    "undici": ">=7.29.1 <8.0.0",
     "flatted": ">=3.4.2",
     "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
     "yaml": ">=1.10.3",

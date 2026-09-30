@@ -166,6 +166,23 @@ export function TagChip({ tag, truncate, ...rest }: BaseChipProps & { tag: strin
   );
 }
 
+/**
+ * An identifier the system routes on, such as a bank alias.
+ *
+ * Shares the entity pill's form and tone rather than getting a kind of its own:
+ * it is the same sort of thing visually — a bare name, not a `key=value` — and
+ * the kinds here are a closed set distinguished by form, so a fourth tone would
+ * be a distinction without a difference. Rendered monospace because, unlike an
+ * entity, it is a literal string someone has to type correctly.
+ */
+export function IdChip({ id, truncate, ...rest }: BaseChipProps & { id: string }) {
+  return (
+    <ChipShell kind="entity" {...rest}>
+      <span className={`font-mono ${truncate ? "truncate" : ""}`}>{id}</span>
+    </ChipShell>
+  );
+}
+
 /** A resolved entity (person, place, thing) linked to a memory. */
 export function EntityChip({ entity, truncate, ...rest }: BaseChipProps & { entity: string }) {
   return (

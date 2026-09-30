@@ -3,7 +3,7 @@
 Hindsight can be deployed in several ways depending on your infrastructure and requirements.
 
 :::tip Don't want to manage infrastructure?
-**[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** is a fully managed service that handles all infrastructure, scaling, and maintenance — [sign up here](https://ui.hindsight.vectorize.io/signup).
+**[Hindsight Cloud](https://ui.hindsight.vectorize.io)** is a fully managed service that handles all infrastructure, scaling, and maintenance — [sign up here](https://ui.hindsight.vectorize.io).
 :::
 
 ## Supported Platforms
@@ -32,7 +32,7 @@ Hindsight requires PostgreSQL 14+ with a vector extension for similarity search.
 - **vchord**
 - **scann** (AlloyDB)
 
-Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configuration](./configuration) for details.
+Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configuration](./configuration.md) for details.
 
 **By default**, Hindsight uses **pg0** — an embedded PostgreSQL that runs locally on your machine. This is convenient for development but **not recommended for production**.
 
@@ -46,7 +46,7 @@ Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configura
 
 ### LLM Provider
 
-You need an LLM API key for fact extraction, entity resolution, and answer generation. See [Models](./models) for supported providers, model recommendations, and configuration.
+You need an LLM API key for fact extraction, entity resolution, and answer generation. See [Models](./models.md) for supported providers, model recommendations, and configuration.
 
 ### Hardware
 
@@ -55,16 +55,16 @@ Hindsight is designed to run on commodity hardware. The footprint depends mainly
 | Component | Minimum RAM | Recommended RAM | Notes |
 |-----------|-------------|-----------------|-------|
 | **API — Full image** | 1.5 GB | 2 GB | Loads local BGE embedder (~130 MB) and MiniLM cross-encoder (~90 MB) into memory, plus PyTorch/ONNX runtime arenas. Idle RSS settles around 0.8–1.0 GB; expect 1.2–1.5 GB under load. |
-| **API — Slim image** | 512 MB | 1 GB | No local models. Steady-state RSS is dominated by Python runtime and DB connections. Requires [external embedding and reranker providers](./configuration#embeddings) (e.g. TEI, OpenAI, Cohere). |
+| **API — Slim image** | 512 MB | 1 GB | No local models. Steady-state RSS is dominated by Python runtime and DB connections. Requires [external embedding and reranker providers](./configuration.md#embeddings) (e.g. TEI, OpenAI, Cohere). |
 | **Control Plane (UI)** | 128 MB | 256 MB | Next.js process, lightweight. |
 | **Worker** (if separated) | Same as API image variant | Same as API image variant | Workers load the same models as the API server. |
 | **PostgreSQL** | 512 MB | 1 GB+ | Scales with the number of memories and indexes. |
 
 :::tip Reducing the footprint
-The bulk of the full image's memory comes from the bundled embedding and reranker models and their PyTorch/ONNX runtimes. To shrink the deployment to a few hundred MB of RAM, switch to the **slim** image and configure [external embedding and reranker providers](./configuration#embeddings).
+The bulk of the full image's memory comes from the bundled embedding and reranker models and their PyTorch/ONNX runtimes. To shrink the deployment to a few hundred MB of RAM, switch to the **slim** image and configure [external embedding and reranker providers](./configuration.md#embeddings).
 :::
 
-CPU vs GPU: 2 vCPUs on CPU-only is fine for development and basic workloads. For production traffic, the local reranker (cross-encoder) is the main bottleneck and typically benefits from a GPU to keep recall latency reasonable; alternatively, offload reranking to an [external reranker provider](./configuration#embeddings) (e.g. TEI, Cohere) on dedicated GPU hardware.
+CPU vs GPU: 2 vCPUs on CPU-only is fine for development and basic workloads. For production traffic, the local reranker (cross-encoder) is the main bottleneck and typically benefits from a GPU to keep recall latency reasonable; alternatively, offload reranking to an [external reranker provider](./configuration.md#embeddings) (e.g. TEI, Cohere) on dedicated GPU hardware.
 
 ---
 
@@ -109,7 +109,7 @@ All published images are [signed with Cosign](#verifying-image-signatures) — v
 :::tip Set a stable `HINDSIGHT_API_WORKER_ID` in production
 The worker uses the container hostname as its identity, which Docker sets to the container ID by default. That value changes on every restart, so any task that was being processed when the container went down stays parked under the old ID with no way for the new container to recognize it as its own.
 
-Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations).
+Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](./admin-cli.md#recovering-stuck-or-zombie-operations).
 :::
 
 ### Docker Image Variants
@@ -117,9 +117,9 @@ Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
 |---------|--------------|--------------|-------------|
 | **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Embeddings and reranking run in the image; the LLM is always external, including for local inference. |
-| **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
+| **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration.md#embeddings). |
 
-The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
+The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration.md#embeddings) for external provider options.
 
 Neither image bundles llama.cpp, so the built-in `llamacpp` provider is not available in Docker. To run inference locally, start llama.cpp (or Ollama, LM Studio, vLLM) alongside Hindsight and point `HINDSIGHT_API_LLM_BASE_URL` at it — see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm) for a working compose file.
 
@@ -211,9 +211,9 @@ helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
   --set worker.replicaCount=3
 ```
 
-The chart deploys workers as a StatefulSet, so each pod gets a stable name (e.g. `hindsight-worker-0`) that the worker uses as its `HINDSIGHT_API_WORKER_ID`. Tasks claimed by a pod are recognized as its own across restarts. If you swap the chart for a plain Deployment, set `HINDSIGHT_API_WORKER_ID` explicitly per replica — otherwise hostnames are randomized and previously-claimed tasks become orphaned. See [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations) for diagnosis.
+The chart deploys workers as a StatefulSet, so each pod gets a stable name (e.g. `hindsight-worker-0`) that the worker uses as its `HINDSIGHT_API_WORKER_ID`. Tasks claimed by a pod are recognized as its own across restarts. If you swap the chart for a plain Deployment, set `HINDSIGHT_API_WORKER_ID` explicitly per replica — otherwise hostnames are randomized and previously-claimed tasks become orphaned. See [Admin CLI - Recovering stuck operations](./admin-cli.md#recovering-stuck-or-zombie-operations) for diagnosis.
 
-See [Services - Worker Service](./services#worker-service) for configuration details and architecture.
+See [Services - Worker Service](./services.md#worker-service) for configuration details and architecture.
 
 See the [Helm chart values.yaml](https://github.com/vectorize-io/hindsight/tree/main/helm/hindsight/values.yaml) for all chart options.
 
@@ -230,7 +230,7 @@ pip install hindsight-api        # Full — works out of the box
 pip install hindsight-api-slim   # Slim — requires external services for embeddings, reranking, and the database
 ```
 
-When using `hindsight-api-slim`, you must configure external providers for all model operations. See [Configuration](./configuration#embeddings) for details.
+When using `hindsight-api-slim`, you must configure external providers for all model operations. See [Configuration](./configuration.md#embeddings) for details.
 
 ### Run with Embedded Database
 
@@ -357,7 +357,7 @@ hindsight-api
 - **API Server**: http://localhost:8888
 
 :::tip
-You can also use the slim package (`pip install hindsight-api-slim`) if you configure external providers for embeddings and reranking. See [Configuration](./configuration#embeddings) for details.
+You can also use the slim package (`pip install hindsight-api-slim`) if you configure external providers for embeddings and reranking. See [Configuration](./configuration.md#embeddings) for details.
 :::
 
 ### Windows + China Network Notes
@@ -422,12 +422,12 @@ client.retain(bank_id="alice", content="Alice prefers concise answers.")
 results = client.recall(bank_id="alice", query="How should I respond to Alice?")
 ```
 
-See the [Python SDK](../sdks/python.mdx) for the full API reference.
+See the [Python SDK](../sdks/python.md) for the full API reference.
 
 ---
 
 ## Next Steps
 
-- [Configuration](./configuration.mdx) — Environment variables and settings
-- [Models](./models.mdx) — ML models and providers
+- [Configuration](./configuration.md) — Environment variables and settings
+- [Models](./models.md) — ML models and providers
 - [Monitoring](./monitoring.md) — Metrics and observability

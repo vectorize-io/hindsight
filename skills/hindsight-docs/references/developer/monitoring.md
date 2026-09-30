@@ -331,7 +331,7 @@ Hindsight supports OpenTelemetry distributed tracing for memory operations and L
 
 ### Configuration
 
-See [Configuration - OpenTelemetry Tracing](./configuration#opentelemetry-tracing) for environment variables.
+See [Configuration - OpenTelemetry Tracing](./configuration.md#opentelemetry-tracing) for environment variables.
 
 **Quick Start:**
 ```bash

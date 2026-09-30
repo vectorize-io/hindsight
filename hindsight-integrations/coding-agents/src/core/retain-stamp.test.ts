@@ -124,3 +124,37 @@ describe("buildRetainStamp", () => {
     expect(tags[0]).toBe(`t:${metadata.at}`);
   });
 });
+
+describe("retainContext", () => {
+  it("is undefined when unconfigured, so the caller keeps its own default", () => {
+    expect(buildRetainStamp({}, ctx()).context).toBeUndefined();
+    expect(buildRetainStamp({ retainTags: ["a:b"] }, ctx()).context).toBeUndefined();
+  });
+
+  it("is returned verbatim when it carries no placeholder", () => {
+    const text =
+      "Conversation between the user and a coding agent. Assistant turns are agent-generated.";
+    expect(buildRetainStamp({ retainContext: text }, ctx()).context).toBe(text);
+  });
+
+  it("resolves the same placeholders as retainTags", () => {
+    const stamp = buildRetainStamp(
+      { retainContext: "session {sessionId} via {harness} in {bankId}" },
+      ctx()
+    );
+    expect(stamp.context).toBe("session sess-1 via codex in shared-bank");
+  });
+
+  it("builds a stamp even when it is the ONLY setting configured", () => {
+    // The early return used to bail when tags and metadata were both empty, which
+    // would have silently dropped a context-only config.
+    const stamp = buildRetainStamp({ retainContext: "ctx" }, ctx());
+    expect(stamp.context).toBe("ctx");
+    expect(stamp.tags).toEqual([]);
+  });
+
+  it("falls back to undefined rather than empty when a template collapses", () => {
+    // An empty context would STRIP the caller's default instead of replacing it.
+    expect(buildRetainStamp({ retainContext: "   " }, ctx()).context).toBeUndefined();
+  });
+});

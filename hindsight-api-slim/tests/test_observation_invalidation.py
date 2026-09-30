@@ -1446,3 +1446,53 @@ class TestConsolidationSourceMemoryFiltering:
         assert stored_sources == {str(source)}, "no dead source appended"
 
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestRetagDuringConsolidation:
+    @pytest.mark.asyncio
+    async def test_retag_while_llm_runs_discards_stale_write(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """#4831: a retag landing while consolidation's LLM call runs must not let the
+        response write an observation under the old tags, nor stamp the fact consolidated.
+        The batch is discarded and the job's next fetch redoes the fact under its new tags."""
+        from hindsight_api.engine.consolidation import consolidator as C
+
+        if get_memories().store_owned:
+            pytest.skip("updated_at re-check is SQL-store only")
+
+        bank_id = f"test-retag-race-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+        doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+        async with pool.acquire() as conn:
+            [mem_id] = await _insert_document_with_memories(
+                memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
+            )
+            # Pending, as a freshly retained fact is.
+            await get_memories().mark_consolidated(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(mem_id)], when=None
+            )
+
+        calls = 0
+
+        async def fake_llm(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+                    await memory.update_document(doc_id, bank_id, tags=["new-tag"], request_context=request_context)
+            return C._BatchLLMResult(
+                creates=[C._CreateAction(text="Alice loves hiking.", source_fact_ids=[str(mem_id)])]
+            )
+
+        with patch.object(C, "_consolidate_batch_with_llm", side_effect=fake_llm):
+            await C.run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+        assert calls == 2, "the stale batch is discarded and the fact redone on the next fetch"
+        obs = await memory.list_memory_units(bank_id, fact_type="observation", request_context=request_context)
+        assert [o["tags"] for o in obs["items"]] == [["new-tag"]]
+        done = await memory.list_memory_units(bank_id, consolidation_state="done", request_context=request_context)
+        assert [o["id"] for o in done["items"]] == [str(mem_id)]
+
+        await memory.delete_bank(bank_id, request_context=request_context)

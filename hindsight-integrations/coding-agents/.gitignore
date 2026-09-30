@@ -1,2 +1,4 @@
 node_modules/
 dist/
+# Installer/hook runtime state (installer snapshot + hint rate limits) — machine-local.
+.workspace-mcp.json

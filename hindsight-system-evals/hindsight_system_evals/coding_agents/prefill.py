@@ -16,14 +16,18 @@ Two problems this fixes, both measured rather than guessed:
    `reserve` must reject quantity 0, the catalog stays uncached on purpose. A
    turn that skips the search gets these wrong.
 
-**Why the placeholder pages are replaced rather than refreshed.** Refreshing one
-fails on the server's own guard — ``delta operations did not reach the document,
-and the reflect candidate covers only memories newer than the last refresh, so
-writing it would drop the rest of the document`` — because the page was created
-with a watermark and a placeholder body, and every prefilled memory is newer
-than that. The guard is right in general and unhelpful here, where the document
-it is protecting is the placeholder. A page created *after* the documents are in
-has no such history, so its first synthesis covers everything.
+**Why the placeholder pages are replaced rather than refreshed.** This
+describes a server that still created pages with a placeholder body; a current
+one creates them empty, which falls back to a full refresh instead of hitting
+the guard below. The replacement is kept because ``--api-url`` can point this
+harness at either. Refreshing a placeholder page fails on the server's own
+guard — ``delta operations did not reach the document, and the reflect
+candidate covers only memories newer than the last refresh, so writing it would
+drop the rest of the document`` — because the page was created with a watermark
+and a placeholder body, and every prefilled memory is newer than that. The
+guard is right in general and unhelpful here, where the document it is
+protecting is the placeholder. A page created *after* the documents are in has
+no such history, so its first synthesis covers everything.
 
 That replacement is also what an established repo looks like: pages with real
 bodies, which is the steady state the cron reaches after a day of use and the
@@ -44,6 +48,9 @@ from hindsight_client import Hindsight
 
 from hindsight_system_evals.coding_agents.scenario import SettleFn
 
+#: A never-refreshed page carries an empty body, and the emptiness checks below
+#: catch that on their own. This string is what older servers wrote instead, kept
+#: because ``--api-url`` can point this harness at any deployment.
 PLACEHOLDER = "Generating content..."
 
 #: How long to wait for the prefill's own background work. Shorter than the

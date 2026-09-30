@@ -49,6 +49,15 @@ class RequestContext:
     # the Authorization header — e.g. a per-caller assertion sent alongside a
     # shared bearer token by an authenticating proxy.
     extra_headers: dict[str, str] = field(default_factory=dict)
+    # Tenant schema this context already authenticated into, memoised so one
+    # request authenticates once. A request can reach the engine through more
+    # than one entry point — the bank-alias resolution on the route class runs
+    # before the endpoint's own engine call, and `precheck_for` before that — and
+    # re-running the tenant extension for each would bill a deployment two or
+    # three identity lookups per request for a single caller. Scoped to this
+    # object, which the transports build per request; `internal` and
+    # `mcp_authenticated` contexts skip authentication entirely and never set it.
+    authenticated_schema: str | None = None
 
     def raise_if_cancelled(self) -> None:
         """Abort the current operation if its cancellation token has fired.

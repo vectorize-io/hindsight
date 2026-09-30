@@ -91,7 +91,7 @@ The two approaches are not a fork. They read and write the **same Hindsight bank
 
 ## Quick start
 
-The fast path is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup): sign up free, grab an API key, nothing to self-host.
+The fast path is [Hindsight Cloud](https://ui.hindsight.vectorize.io): sign up free, grab an API key, nothing to self-host.
 
 1. Get your `hsk_...` key from [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
 2. Set the two environment variables the plugin reads:
@@ -111,7 +111,7 @@ Once it is installed, ask the agent something that depends on past context, or t
 
 Standards are boring until they remove real work. A week ago, giving five different agents memory meant five integrations to build and maintain. Now it is one plugin that every compatible client loads the same way, and it stays in sync with the native integrations through shared banks.
 
-Memory is the layer that turns a capable-but-amnesiac agent into one that gets more useful the longer you work with it. Agent Plugins makes that layer portable. If you are running Codex, Cursor, Copilot, Kiro, or VS Code, you can give it long-term memory today — [start here](https://ui.hindsight.vectorize.io/signup).
+Memory is the layer that turns a capable-but-amnesiac agent into one that gets more useful the longer you work with it. Agent Plugins makes that layer portable. If you are running Codex, Cursor, Copilot, Kiro, or VS Code, you can give it long-term memory today — [start here](https://ui.hindsight.vectorize.io).
 
 ---
 

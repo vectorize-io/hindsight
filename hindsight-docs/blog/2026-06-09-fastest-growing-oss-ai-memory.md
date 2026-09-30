@@ -145,7 +145,7 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 API at `http://localhost:8888`, web UI at `http://localhost:9999`. Connect it to your agent framework and start extracting facts from conversations.
 
 - **Star [the repo](https://github.com/vectorize-io/hindsight)** — the real kind — and help us find out how fast the *next* milestone arrives
-- **Try [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — managed, scaled, usage-based pricing
+- **Try [Hindsight Cloud](https://ui.hindsight.vectorize.io)** — managed, scaled, usage-based pricing
 - **Join the conversation** — [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions) or [Slack](https://vectorize.io/slack)
 
 Seven months, two stars to sixteen thousand — every one of them earned, for the agent memory that learns. Thanks for building with us — let's see where the curve goes next.

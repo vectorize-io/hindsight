@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-client"
-version = "0.10.1"
+version = "0.10.2"
 description = "Python client for Hindsight - Semantic memory system with personality-driven thinking"
 license = "MIT"
 authors = [
@@ -15,6 +15,7 @@ dependencies = [
   "aiohttp-retry (>=2.8.3)",
   "pydantic (>=2)",
   "typing-extensions (>=4.7.1)",
+  "yarl (>=1.9,<2.0)",
 ]
 
 [project.optional-dependencies]
