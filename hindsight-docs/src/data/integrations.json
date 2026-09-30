@@ -669,6 +669,16 @@
       "category": "framework",
       "link": "https://github.com/agentguard-ai/tealtiger/tree/main/packages/tealtiger-hindsight",
       "icon": "/img/icons/tealtiger.png"
+    },
+    {
+      "id": "notion-to-hindsight-sync",
+      "name": "Notion Sync",
+      "description": "Syncs Notion databases into Hindsight so agents can recall your notes. Runs on Cloudflare Workers with incremental sync and deletion handling.",
+      "type": "community",
+      "by": "Nyrest",
+      "category": "tool",
+      "link": "https://github.com/Nyrest/notion-to-hindsight-sync",
+      "icon": "/img/icons/notion.svg"
     }
   ]
 }
