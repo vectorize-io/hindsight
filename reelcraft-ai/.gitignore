@@ -1,0 +1,11 @@
+.env.local
+.env*.local
+node_modules/
+.next/
+out/
+build/
+*.log
+.DS_Store
+uploads/
+tmp/
+data/projects.json
