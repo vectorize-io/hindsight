@@ -281,6 +281,7 @@ def test_batch_request_body_strict_follows_retain_config(strict):
         # regressed to reading llm_strict_schema, this test would catch it.
         llm_strict_schema=not strict,
         llm_strict_schema_retain=strict,
+        llm_json_mode="auto",
         llm_temperature_retain=None,
     )
 
