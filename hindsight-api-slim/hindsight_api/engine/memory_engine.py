@@ -602,7 +602,7 @@ if TYPE_CHECKING:
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoriesExtension, MemoryScopeWatermark
-    from .memories.base import AttachmentRef, StoredMemory
+    from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
@@ -2497,7 +2497,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._webhook_client: GuardedWebhookClient | None = None
 
         # Initialize entity resolver (will be created in initialize())
-        self.entity_resolver = None
+        self.entity_resolver: EntityResolverHandle | None = None
 
         # Initialize embeddings (from env vars if not provided)
         if embeddings is not None:

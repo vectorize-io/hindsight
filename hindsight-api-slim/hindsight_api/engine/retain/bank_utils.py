@@ -1050,12 +1050,15 @@ async def _bank_rows(pool, bank_ids: "list[str]") -> list:
     """
     if not bank_ids:
         return []
-    from ..memories import get_memories
+    from ..memories import get_memories, sql_memories
 
     store = get_memories()
     sql_owned = [b for b in bank_ids if not store.store_owned_for(b)]
+    # The SQL store runs the page query: it reads the `banks` rows, and joins `memory_units` for
+    # exactly the `sql_owned` banks. A non-Postgres store's default would leave those banks'
+    # fact watermark NULL. Postgres-only deployments get the same instance back.
     async with acquire_with_retry(pool) as conn:
-        rows = await store.bank_page_rows(conn=conn, fq_table=fq_table, bank_ids=bank_ids, sql_owned=sql_owned)
+        rows = await sql_memories().bank_page_rows(conn=conn, fq_table=fq_table, bank_ids=bank_ids, sql_owned=sql_owned)
     by_id = {}
     for row in rows:
         disposition_data = row["disposition"]
@@ -1192,7 +1195,7 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
     """
     if not banks:
         return
-    from ..memories import get_memories
+    from ..memories import get_memories, sql_memories
 
     store = get_memories()
     # Zeroed up front so a store-owned bank still carries a number if the store cannot be reached
@@ -1205,7 +1208,9 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
     if not sql_owned:
         return
     async with acquire_with_retry(pool) as conn:
-        counts = await store.bank_fact_counts(conn=conn, fq_table=fq_table, bank_ids=list(sql_owned))
+        # Every bank asked about here is SQL-backed, so the SQL store counts them — a non-Postgres
+        # store's default would count its own (absent) rows and report 0.
+        counts = await sql_memories().bank_fact_counts(conn=conn, fq_table=fq_table, bank_ids=list(sql_owned))
     # Only the SQL-owned ones: a store-owned bank keeps the zero above for `apply_store_fact_counts`
     # to replace, rather than being re-zeroed here by a query that never asked about it.
     for bank in banks:

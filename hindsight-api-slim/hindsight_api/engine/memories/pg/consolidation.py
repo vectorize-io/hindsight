@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ....config import get_config
 
@@ -55,7 +55,7 @@ async def lock_live_memory_ids(
 
 
 async def memories_changed_since(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, read_at: dict[str, Any]
+    *, conn, fq_table: Callable[[str], str], bank_id: str, read_at: dict[str, datetime]
 ) -> list[str]:
     """Ids in ``read_at`` whose ``updated_at`` moved since it was read, ``FOR SHARE``-locked."""
     rows = await conn.fetch(

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -668,7 +668,7 @@ async def list_documents(
 # ------------------------------------------------------------------ chunks
 
 
-async def get_chunk_row(*, conn, fq_table: Callable[[str], str], chunk_id: str):
+async def get_chunk_row(*, conn, fq_table: Callable[[str], str], chunk_id: str) -> Mapping[str, Any] | None:
     """One `chunks` row by id, or ``None``."""
     return await conn.fetchrow(
         f"""

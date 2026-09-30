@@ -57,7 +57,7 @@ async def _dedup_reconcile_create(
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
             return await _apply_dedup_create_fold(
-                conn, memory_engine, bank_id, config, outcome, create_source_ids, source_bounds
+                conn, memory_engine, bank_id, outcome, create_source_ids, source_bounds
             )
 
 

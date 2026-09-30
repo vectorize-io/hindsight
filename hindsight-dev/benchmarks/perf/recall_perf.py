@@ -939,9 +939,9 @@ async def _wait_for_operation(pool: Any, operation_id: str, timeout: float = 864
     """
     import uuid
 
-    from hindsight_api.engine.schema import fq_store_table_explicit
+    from hindsight_api.engine.schema import fq_table_explicit
 
-    table = fq_store_table_explicit("async_operations")
+    table = fq_table_explicit("async_operations")
     deadline = asyncio.get_event_loop().time() + timeout
     parent_uuid = uuid.UUID(operation_id)
 

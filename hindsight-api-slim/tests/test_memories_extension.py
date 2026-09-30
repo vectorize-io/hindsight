@@ -2425,3 +2425,51 @@ async def test_a_resumed_streaming_retain_reports_a_store_owned_documents_unit_i
     )
 
     assert result.memory_ids == [[first, second]]
+
+
+# ---------------------------------------------------------------------------
+# Retag requeue gate (#4969). The base `retag_document_memories` cleared the consolidation
+# marker on every retag, even one that invalidated nothing — so the document's memories were
+# re-consolidated for no reason, and the marker saying they already had been was lost.
+# ---------------------------------------------------------------------------
+
+
+async def _retag(store: InMemoryMemories) -> int:
+    return await store.retag_document_memories(
+        conn=None,
+        ops=None,
+        fq_table=None,
+        bank_id="bank-x",
+        document_id="doc-1",
+        tags=["new"],
+        retagged=lambda _old: ["new"],
+        rescoped=lambda _scopes: None,
+    )
+
+
+def _consolidated_fact(when: datetime) -> StoredMemory:
+    return StoredMemory(
+        unit_id="fact-1", text="a fact", fact_type="world", document_id="doc-1", tags=["old"], consolidated_at=when
+    )
+
+
+async def test_a_retag_that_deletes_no_observation_keeps_the_consolidation_marker():
+    when = datetime.now(timezone.utc)
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = _consolidated_fact(when)
+
+    assert await _retag(store) == 0
+    assert store.rows["fact-1"].tags == ["new"]
+    assert store.rows["fact-1"].consolidated_at == when
+
+
+async def test_a_retag_that_deletes_an_observation_requeues_its_sources():
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = _consolidated_fact(datetime.now(timezone.utc))
+    store.rows["obs-1"] = StoredMemory(
+        unit_id="obs-1", text="an observation", fact_type="observation", source_memory_ids=["fact-1"]
+    )
+
+    assert await _retag(store) == 1
+    assert "obs-1" not in store.rows
+    assert store.rows["fact-1"].consolidated_at is None

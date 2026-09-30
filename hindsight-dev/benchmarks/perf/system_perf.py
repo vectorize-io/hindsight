@@ -1439,7 +1439,7 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
         enqueue_relink_victims,
     )
     from hindsight_api.engine.memory_engine import acquire_with_retry
-    from hindsight_api.engine.schema import fq_store_table
+    from hindsight_api.engine.schema import fq_store_table, fq_table
 
     backend = await engine._get_backend()
     deleted_uuids = [uuid_module.UUID(uid) for uid in deleted_ids]
@@ -1459,7 +1459,7 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
 
     pool = await engine._get_pool()
     depth = await pool.fetchval(
-        f"SELECT COUNT(*) FROM {fq_store_table('graph_maintenance_queue')} WHERE bank_id = $1",
+        f"SELECT COUNT(*) FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1",
         bank_id,
     )
     return int(depth or 0)
@@ -1701,7 +1701,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     """
     from asyncpg.exceptions import DeadlockDetectedError
     from hindsight_api.engine.graph_maintenance import run_graph_maintenance_job
-    from hindsight_api.engine.schema import fq_store_table
+    from hindsight_api.engine.schema import fq_store_table, fq_table
     from hindsight_api.models import RequestContext
 
     n_entities = scale_cfg["graph_contention_entities"]
@@ -1781,7 +1781,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     async def _rearm_entity_queue() -> None:
         async with pool.acquire() as conn:
             await conn.executemany(
-                f"INSERT INTO {fq_store_table('entity_maintenance_queue')} (bank_id, entity_id) "
+                f"INSERT INTO {fq_table('entity_maintenance_queue')} (bank_id, entity_id) "
                 f"VALUES ($1, $2) ON CONFLICT DO NOTHING",
                 [(bank_id, eid) for eid in entity_ids],
             )

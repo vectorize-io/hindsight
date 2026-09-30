@@ -982,12 +982,23 @@ class EntityResolverHandle(Protocol):
 
     A Protocol rather than the Postgres ``EntityResolver`` class: this module may not import the
     Postgres store's modules (``tests/test_store_table_boundary.py``). The two per-task stats
-    hooks are what the retain and import paths call on every batch whatever store owns the bank.
+    hooks are what the retain and import paths call on every batch whatever store owns the bank;
+    the memory edit calls the reassert / link pair after :meth:`MemoriesExtension.resolve_entities`
+    resolved something.
     """
 
     def discard_pending_stats(self) -> None: ...
 
     async def flush_pending_stats(self) -> None: ...
+
+    async def reassert_entities_batch(self, bank_id: str, resolved_entities: list[Any], conn) -> None: ...
+
+    async def link_units_to_entities_batch(
+        self,
+        unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
+        conn=None,
+        bank_id: str | None = None,
+    ) -> None: ...
 
 
 class NullEntityResolver:
@@ -1003,6 +1014,19 @@ class NullEntityResolver:
         pass
 
     async def flush_pending_stats(self) -> None:
+        pass
+
+    # Unreachable in practice: the edit links only what resolve_entities resolved, and the default
+    # resolve_entities resolves nothing. No-ops, like the stats hooks, rather than a raise.
+    async def reassert_entities_batch(self, bank_id: str, resolved_entities: list[Any], conn) -> None:
+        pass
+
+    async def link_units_to_entities_batch(
+        self,
+        unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
+        conn=None,
+        bank_id: str | None = None,
+    ) -> None:
         pass
 
 

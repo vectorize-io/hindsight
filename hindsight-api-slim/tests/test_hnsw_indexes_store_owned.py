@@ -215,6 +215,36 @@ async def test_a_store_that_cannot_answer_still_gets_its_indexes(memory, request
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+class _SqlBackedStub(InMemoryMemories):
+    """A non-Postgres store that says every bank is SQL-backed — a router's legacy banks."""
+
+    store_owned = False
+
+    def store_owned_for(self, bank_id: str) -> bool:
+        return False
+
+
+async def test_a_sql_bank_under_a_non_postgres_store_still_gets_all_three(memory, request_context):
+    """The indexes are Postgres's, over Postgres's rows, whatever store is configured.
+
+    Asking the configured store to build them hits a non-Postgres store's no-op default, and
+    the bank silently loses ANN. The ``_Unanswerable`` test above cannot catch that: it wraps
+    the real Postgres store, whose method does build them.
+    """
+    real_store = memories_mod.get_memories()
+    bank_id = f"test_so_router_sql_{uuid.uuid4().hex[:8]}"
+    try:
+        memories_mod.set_memories(_SqlBackedStub())
+        try:
+            await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        finally:
+            memories_mod.set_memories(real_store)
+
+        assert len(await _bank_indexes(memory._pool, bank_id)) == 3
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
 async def test_repair_does_not_rebuild_what_creation_declined_to_build(memory, request_context, store_owned):
     """The second builder, and the one that would silently undo the whole fix.
 
