@@ -3410,53 +3410,6 @@ class MemoriesExtension(Extension, ABC):
         :attr:`derives_semantic_links_internally`, which skips the pass altogether)."""
         return []
 
-    async def create_bank_vector_indexes(
-        self, *, conn, ops, fq_table, bank_id: str, internal_id: str, index_clause: str, fact_types: dict[str, str]
-    ) -> None:
-        """Build a new bank's per-fact_type vector indexes. A no-op here: the store indexes its
-        own memories, and SQL indexes over rows it never writes would stay empty."""
-
-    async def list_bank_rows(self, *, conn, fq_table, where_clause: str, params: list[str]) -> list:
-        """Every bank row matching ``where_clause`` (over alias ``b``), with its document and
-        memory write watermarks (``last_document_at``, ``last_document_write_at``,
-        ``last_fact_at``), ordered by bank_id.
-
-        The watermarks are NULL here — the store has no SQL rows to take them from, and the bank
-        list asks the store for them (``last_write_at_many`` / ``last_document_at_many``)."""
-        return await conn.fetch(
-            f"""
-            SELECT
-                b.bank_id, b.name, b.disposition, b.mission,
-                b.created_at, b.updated_at,
-                NULL AS last_document_at,
-                NULL AS last_document_write_at,
-                NULL AS last_fact_at
-            FROM {fq_table("banks")} b
-            {where_clause}
-            ORDER BY b.bank_id
-            """,
-            *params,
-        )
-
-    async def bank_page_rows(self, *, conn, fq_table, bank_ids: list[str], sql_owned: list[str]) -> list:
-        """The rows of the named banks (any order), with the same three watermarks as
-        :meth:`list_bank_rows`; ``sql_owned`` are the banks whose memories are SQL rows. NULL
-        watermarks here, for the same reason."""
-        return await conn.fetch(
-            f"""
-            SELECT b.bank_id, b.name, b.disposition, b.mission, b.created_at, b.updated_at,
-                   NULL AS last_document_at, NULL AS last_document_write_at, NULL AS last_fact_at
-            FROM {fq_table("banks")} b
-            WHERE b.bank_id = ANY($1::text[])
-            """,
-            bank_ids,
-        )
-
-    async def bank_fact_counts(self, *, conn, fq_table, bank_ids: list[str]) -> dict[str, int]:
-        """Live memory count per bank, for the banks named; absent = 0."""
-        counts = await self.count_memories_many(bank_ids=bank_ids, strong=True)
-        return {bank_id: sum(by_type.values()) for bank_id, by_type in counts.items()}
-
     # ------------------------------------------------------------------ retain links and entity resolution
     #
     # The retain-time link writes, the ANN neighbour search behind them, and entity resolution.

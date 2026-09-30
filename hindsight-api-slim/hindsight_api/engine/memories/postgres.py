@@ -1188,6 +1188,9 @@ class PostgresMemories(MemoriesExtension):
     async def unit_embeddings(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list:
         return await pg_retain.unit_embeddings(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
+    # Not on the interface: the bank list and a new bank's vector indexes are about Postgres's own
+    # rows whatever store is configured, so callers reach these through ``sql_memories()``.
+
     async def create_bank_vector_indexes(
         self, *, conn, ops, fq_table, bank_id: str, internal_id: str, index_clause: str, fact_types: dict[str, str]
     ) -> None:

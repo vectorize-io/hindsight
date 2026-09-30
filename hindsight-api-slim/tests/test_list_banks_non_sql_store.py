@@ -78,8 +78,6 @@ class _NonSqlStore:
     # reach only the methods above, plus the Postgres rows every store keeps).
     count_bank_contents = MemoriesExtension.count_bank_contents
     purge_bank_rows = MemoriesExtension.purge_bank_rows
-    # The bank list's rows, with the interface's store-owned default: no SQL watermarks.
-    list_bank_rows = MemoriesExtension.list_bank_rows
 
 
 @pytest.mark.asyncio
