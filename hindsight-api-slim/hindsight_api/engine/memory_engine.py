@@ -15547,6 +15547,8 @@ class MemoryEngine(MemoryEngineInterface):
         offset = max(offset, 0)
         from hindsight_api.extensions import BankListScope
 
+        from . import bank_aliases
+
         # What the validator lets this caller see, declared before anything is read. A validator
         # that declares nothing (None) gets the full ranked list to filter; one that declares a
         # scope never sees the list at all.
@@ -15573,8 +15575,6 @@ class MemoryEngine(MemoryEngineInterface):
             # of banks pays for a handful however large the tenant is. Aliases are resolved here
             # because a request reaches a bank by its canonical id — an allowed alias must list the
             # bank it names.
-            from . import bank_aliases
-
             allowed = await bank_aliases.resolve_many(self._backend, scope.bank_ids)
             banks = await bank_utils.list_banks_among(self._backend, allowed, search_query=search_query)
             total = len(banks)
@@ -15601,8 +15601,6 @@ class MemoryEngine(MemoryEngineInterface):
         # Resolved for the page here rather than left to the caller: every client
         # renders a bank list, and none of them should need a second round trip to
         # learn what to label it.
-        from . import bank_aliases
-
         display = await bank_aliases.primary_aliases(self._backend, [bank["bank_id"] for bank in page])
         for bank in page:
             bank["display_alias"] = display.get(bank["bank_id"])

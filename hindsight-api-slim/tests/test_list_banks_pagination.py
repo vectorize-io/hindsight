@@ -15,7 +15,18 @@ import uuid
 
 import pytest
 
-from hindsight_api.extensions import BankListResult, BankListScope, OperationValidatorExtension, ValidationResult
+from hindsight_api import MemoryEngine
+from hindsight_api.extensions import (
+    BankListContext,
+    BankListResult,
+    BankListScope,
+    OperationValidatorExtension,
+    RecallContext,
+    ReflectContext,
+    RetainContext,
+    ValidationResult,
+)
+from hindsight_api.models import RequestContext
 
 
 @pytest.fixture
@@ -145,28 +156,30 @@ class _ScopedValidator(OperationValidatorExtension):
     """A validator whose bank list is either declared up front (``scope``) or filtered after the
     fact (``scope=None``, hiding ``hidden``), recording whether the filter ran."""
 
-    def __init__(self, scope: BankListScope | None, hidden: str | None = None):
+    def __init__(self, scope: BankListScope | None, hidden: str | None = None) -> None:
         super().__init__({})
         self.scope, self.hidden, self.filtered = scope, hidden, False
 
-    async def validate_retain(self, ctx) -> ValidationResult:
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         return ValidationResult.accept()
 
-    async def validate_recall(self, ctx) -> ValidationResult:
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
         return ValidationResult.accept()
 
-    async def validate_reflect(self, ctx) -> ValidationResult:
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
         return ValidationResult.accept()
 
-    async def bank_list_scope(self, request_context) -> BankListScope | None:
+    async def bank_list_scope(self, request_context: RequestContext) -> BankListScope | None:
         return self.scope
 
-    async def filter_bank_list(self, ctx) -> BankListResult:
+    async def filter_bank_list(self, ctx: BankListContext) -> BankListResult:
         self.filtered = True
         return BankListResult(banks=[bank for bank in ctx.banks if bank["bank_id"] != self.hidden])
 
 
-async def _list_with(memory, request_context, validator, **kwargs):
+async def _list_with(
+    memory: MemoryEngine, request_context: RequestContext, validator: _ScopedValidator, **kwargs: object
+) -> dict:
     saved, memory._operation_validator = memory._operation_validator, validator
     try:
         return await memory.list_banks(request_context=request_context, **kwargs)
