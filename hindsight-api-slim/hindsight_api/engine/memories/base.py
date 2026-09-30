@@ -977,8 +977,8 @@ class RelabelResult:
 
 
 class EntityResolverHandle(Protocol):
-    """What the engine holds as its entity resolver, whichever store built it (see
-    :meth:`MemoriesExtension.create_entity_resolver`).
+    """What the engine holds as its entity resolver: the Postgres store's SQL resolver, built once at
+    startup through ``sql_memories()`` and handed to :meth:`MemoriesExtension.resolve_entities`.
 
     A Protocol rather than the Postgres ``EntityResolver`` class: this module may not import the
     Postgres store's modules (``tests/test_store_table_boundary.py``). The two per-task stats
@@ -999,35 +999,6 @@ class EntityResolverHandle(Protocol):
         conn=None,
         bank_id: str | None = None,
     ) -> None: ...
-
-
-class NullEntityResolver:
-    """The entity resolver of a store that resolves entities itself (see
-    :meth:`MemoriesExtension.create_entity_resolver`).
-
-    The retain and import paths flush or discard the resolver's per-task stats on every batch,
-    whichever store owns the bank; resolution is what accumulates them, and a store-owned bank
-    never resolves through the engine, so there is never anything to flush.
-    """
-
-    def discard_pending_stats(self) -> None:
-        pass
-
-    async def flush_pending_stats(self) -> None:
-        pass
-
-    # Unreachable in practice: the edit links only what resolve_entities resolved, and the default
-    # resolve_entities resolves nothing. No-ops, like the stats hooks, rather than a raise.
-    async def reassert_entities_batch(self, bank_id: str, resolved_entities: list[Any], conn) -> None:
-        pass
-
-    async def link_units_to_entities_batch(
-        self,
-        unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
-        conn=None,
-        bank_id: str | None = None,
-    ) -> None:
-        pass
 
 
 class MemoriesExtension(Extension, ABC):
@@ -3418,22 +3389,6 @@ class MemoriesExtension(Extension, ABC):
     # temporal / semantic links, and the memory edit branches on ``store_owned_for`` before it
     # resolves anything. So each default is the store-owned answer: nothing to write, no
     # neighbours, no entities resolved.
-
-    def create_entity_resolver(
-        self,
-        *,
-        backend,
-        entity_lookup: str,
-        entity_resolution_batch_size: int,
-        intrabatch_merge_similarity: float,
-        entity_resolution_max_candidates: int,
-        merge_min_similarity: float,
-    ) -> EntityResolverHandle:
-        """The entity resolver the engine builds once at startup and threads through retain,
-        import and the memory edit, handing it back to :meth:`resolve_entities`.
-
-        Here a :class:`NullEntityResolver`: a store that owns its entities resolves names itself."""
-        return NullEntityResolver()
 
     async def resolve_entities(
         self,

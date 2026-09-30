@@ -34,7 +34,7 @@ def _fact(entity_names: list[str]) -> ProcessedFact:
 
 @pytest.mark.asyncio
 # Exercises the Postgres entity resolver's merging. A store that owns its entities resolves
-# the names in its own write, so the engine builds a NullEntityResolver and nothing merges here.
+# the names in its own write, so the engine's SQL resolver is never asked and nothing merges here.
 @pytest.mark.memory_backend_incompatible
 async def test_intrabatch_variants_collapse_but_distinct_names_stay_separate(memory, request_context):
     bank_id = f"test-3107-intrabatch-{uuid.uuid4().hex[:8]}"
@@ -72,7 +72,7 @@ async def test_intrabatch_variants_collapse_but_distinct_names_stay_separate(mem
 
 @pytest.mark.asyncio
 # Exercises the Postgres entity resolver's merging. A store that owns its entities resolves
-# the names in its own write, so the engine builds a NullEntityResolver and nothing merges here.
+# the names in its own write, so the engine's SQL resolver is never asked and nothing merges here.
 @pytest.mark.memory_backend_incompatible
 async def test_intrabatch_dedup_leaves_label_values_separate(memory, request_context):
     """The fuzzy in-batch pass must exclude label entities — distinct label values stay separate

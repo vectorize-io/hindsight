@@ -1221,6 +1221,8 @@ class PostgresMemories(MemoriesExtension):
     # and arguments unchanged. The functions are looked up on the module at call time, so a test
     # that patches one there still sees its patch.
 
+    # Not on the interface: engine-side entity resolution is Postgres's alone, so the engine builds
+    # this one resolver through ``sql_memories()`` whatever store is configured.
     def create_entity_resolver(
         self,
         *,

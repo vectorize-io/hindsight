@@ -5512,13 +5512,16 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             self._read_backend = self._backend
 
-        # Initialize entity resolver with pool and configured lookup strategy. The memories
-        # store builds it: the registry it resolves against is the store's (Postgres: SQL).
+        # Initialize entity resolver with pool and configured lookup strategy. It is the Postgres
+        # store's SQL resolver whatever store is configured: engine-side entity resolution only
+        # ever runs for a bank whose memories are SQL rows (a store that owns its memories resolves
+        # names in its own write), and it is built once here, not per bank — so building it from
+        # the configured store handed a router's SQL-backed banks a resolver that resolves nothing.
         # Imported here: the memories package imports the extensions package, which imports
         # this module.
-        from .memories import get_memories
+        from .memories import sql_memories
 
-        self.entity_resolver = get_memories().create_entity_resolver(
+        self.entity_resolver = sql_memories().create_entity_resolver(
             backend=self._backend,
             entity_lookup=self._retain_entity_lookup,
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,

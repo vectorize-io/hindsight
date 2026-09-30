@@ -567,20 +567,20 @@ class InMemoryMemories(MemoriesExtension):
 
     async def update_memories(self, bank_id, patches):
         self.calls.append("update_memories")
-        for patch in patches:
-            row = self.rows.get(str(patch.unit_id))
+        for mp in patches:
+            row = self.rows.get(str(mp.unit_id))
             if row is None:
                 continue
-            if patch.text is not None:
-                row.text = patch.text
-            if patch.tags is not None:
-                row.tags = list(patch.tags)
-            if patch.event_date is not None:
-                row.event_date = patch.event_date
-            if patch.proof_count_delta:
-                row.proof_count += patch.proof_count_delta
-            if patch.metadata:
-                row.metadata = {**(row.metadata or {}), **patch.metadata}
+            if mp.text is not None:
+                row.text = mp.text
+            if mp.tags is not None:
+                row.tags = list(mp.tags)
+            if mp.event_date is not None:
+                row.event_date = mp.event_date
+            if mp.proof_count_delta:
+                row.proof_count += mp.proof_count_delta
+            if mp.metadata:
+                row.metadata = {**(row.metadata or {}), **mp.metadata}
 
     async def apply_edit(
         self,
@@ -2473,3 +2473,41 @@ async def test_a_retag_that_deletes_an_observation_requeues_its_sources():
     assert await _retag(store) == 1
     assert "obs-1" not in store.rows
     assert store.rows["fact-1"].consolidated_at is None
+
+
+async def test_the_engine_resolves_entities_in_sql_whatever_store_is_configured(
+    pg0_db_url, embeddings, cross_encoder, query_analyzer
+):
+    """Engine-side entity resolution only ever runs for a bank whose memories are SQL rows, and the
+    engine builds its resolver once at startup, not per bank. Built from the configured store, a
+    non-Postgres store handed its router's SQL-backed banks a resolver that resolves nothing, and
+    their retain failed on the first entity. It is the Postgres resolver regardless, as on main.
+    """
+    from hindsight_api.engine.memories.pg.entity_resolver import EntityResolver
+    from hindsight_api.engine.memory_engine import MemoryEngine
+    from hindsight_api.engine.task_backend import SyncTaskBackend
+    from tests.conftest import _teardown_memory_engine
+
+    real_store = get_memories()
+    set_memories(InMemoryMemories({}))
+    try:
+        engine = MemoryEngine(
+            db_url=pg0_db_url,
+            memory_llm_provider="mock",
+            memory_llm_api_key="",
+            memory_llm_model="mock",
+            embeddings=embeddings,
+            cross_encoder=cross_encoder,
+            query_analyzer=query_analyzer,
+            pool_min_size=1,
+            pool_max_size=2,
+            run_migrations=False,
+            task_backend=SyncTaskBackend(),
+        )
+        await engine.initialize()
+        try:
+            assert isinstance(engine.entity_resolver, EntityResolver)
+        finally:
+            await _teardown_memory_engine(engine)
+    finally:
+        set_memories(real_store)
