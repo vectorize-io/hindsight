@@ -8,8 +8,10 @@ import importlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -98,15 +100,14 @@ def _local_runtime_hint(reason: str | None) -> str:
 
     Both packages are declared in this plugin's ``pyproject.toml``, so a miss means the
     environment was rebuilt without them (a pm generation that dropped the plugin member, a
-    stripped venv), not that the user has to install a server by hand. Reinstalling the plugin
-    is the fix. NousResearch/hermes-agent#7718, #123784.
+    stripped venv), not that the user has to install a server by hand. ``hermes pm repair`` is the
+    fix; Hermes' own missing-dependency warning names the same command. NousResearch/hermes-agent#7718, #123784.
     """
     text = (reason or "").lower()
     if "no module named" in text and any(m in text for m in ("hindsight_client", "hindsight_embed")):
         return (
             " The plugin's own packages (hindsight-client, hindsight-embed) are missing from "
-            "this environment: run 'hermes plugins install hindsight' (or 'hermes memory setup') "
-            "to reinstall them. The Hindsight server itself is NOT needed here — it runs as a "
+            "this environment: run 'hermes pm repair' and restart Hermes to rebuild them. The Hindsight server itself is NOT needed here — it runs as a "
             "separate process."
         )
     return ""
@@ -177,6 +178,21 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
             (result.stderr or result.stdout or "").strip()[-500:],
         )
     return result.returncode == 0
+
+
+def _installed_api_binary_exists() -> bool:
+    """Whether a ``hindsight-api`` entry point is installed in this environment, i.e. the daemon
+    starts from disk instead of being fetched.
+
+    False means the daemon manager falls back to ``uvx hindsight-api@<version>``, which downloads
+    the server before it can boot — the case worth warning the user about. Checks the same
+    scripts directory the manager prefers (``_find_api_command`` reads the sysconfig scripts path),
+    plus the interpreter's own directory for layouts where they differ. A ``pip install --target``
+    bundle is not covered, so such a user may see the notice and then no download; that way round
+    is harmless, while missing the notice is the stall this exists to explain.
+    """
+    candidates = {sysconfig.get_path("scripts"), str(Path(sys.executable).parent)}
+    return any(shutil.which("hindsight-api", path=path) for path in candidates if path)
 
 
 def _start_daemon(config: dict[str, str], profile: str) -> str:
