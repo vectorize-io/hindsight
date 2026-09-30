@@ -15,6 +15,7 @@ const loaders = {
   "zh-CN": () => import("../messages/zh-CN.json"),
   "zh-TW": () => import("../messages/zh-TW.json"),
   "yue-Hant": () => import("../messages/yue-Hant.json"),
+  id: () => import("../messages/id.json"),
 } as const;
 
 export default getRequestConfig(async ({ requestLocale }) => {

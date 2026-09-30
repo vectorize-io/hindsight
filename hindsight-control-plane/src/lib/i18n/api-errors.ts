@@ -5,6 +5,7 @@ import de from "@/messages/de.json";
 import en from "@/messages/en.json";
 import es from "@/messages/es.json";
 import fr from "@/messages/fr.json";
+import id from "@/messages/id.json";
 import ja from "@/messages/ja.json";
 import ko from "@/messages/ko.json";
 import pt from "@/messages/pt.json";
@@ -29,6 +30,7 @@ const resources = {
   en,
   es,
   fr,
+  id,
   ja,
   ko,
   pt,
