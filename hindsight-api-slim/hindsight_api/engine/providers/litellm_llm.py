@@ -72,6 +72,25 @@ logger = logging.getLogger(__name__)
 # tool call instead of ``response_format`` (see ``structured_output_forced_tool``).
 _STRUCTURED_TOOL_NAME = "structured_response"
 
+# Message keywords that mark an error retryable when it carries no HTTP status.
+_RETRYABLE_ERROR_KEYWORDS = ("rate", "limit", "timeout", "connection", "500", "502", "503", "529")
+
+
+def _is_retryable_error(error: Exception, error_str: str) -> bool:
+    """Whether a failed LiteLLM request is worth another attempt.
+
+    LiteLLM's mapped exceptions carry the upstream HTTP status on ``status_code``, but
+    their message need not repeat it: Bedrock's transient ``ServiceUnavailableError``
+    (503) reads "The system encountered an unexpected error during processing. Try your
+    request again.", which matches none of the keywords, so it failed on the first
+    attempt. Retry what the OpenAI and Anthropic SDKs retry -- 408, 409, 429 and any
+    5xx -- and keep the keyword match for errors that carry no status.
+    """
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and (status in (408, 409, 429) or status >= 500):
+        return True
+    return any(keyword in error_str for keyword in _RETRYABLE_ERROR_KEYWORDS)
+
 
 def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
     """Extract input / visible-output / cached / reasoning counts from a LiteLLM (OpenAI-shaped) usage block."""
@@ -491,10 +510,7 @@ class LiteLLMLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     # Retry on rate limits, connection errors, server errors
-                    is_retryable = any(
-                        keyword in error_str
-                        for keyword in ("rate", "limit", "timeout", "connection", "500", "502", "503", "529")
-                    )
+                    is_retryable = _is_retryable_error(e, error_str)
                     if is_retryable:
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
                         jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
@@ -655,10 +671,7 @@ class LiteLLMLLM(LLMInterface):
 
                 last_exception = e
                 if attempt < max_retries:
-                    is_retryable = any(
-                        keyword in error_str
-                        for keyword in ("rate", "limit", "timeout", "connection", "500", "502", "503", "529")
-                    )
+                    is_retryable = _is_retryable_error(e, error_str)
                     if is_retryable:
                         await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                         continue
