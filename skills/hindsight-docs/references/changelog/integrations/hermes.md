@@ -10,6 +10,30 @@ For the source code, see [`hindsight-integrations/hermes`](https://github.com/ve
 
 ← [Back to main changelog](../index.md)
 
+## [1.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/hermes/v1.2.1)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/hermes/v1.2.1)
+
+**Improvements**
+
+- Hermes now announces embedded server downloads and reuses its client during startup.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a3c8e2a61" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a3c8e2a61</a>
+
+**Bug Fixes**
+
+- Hermes repair guidance now points to the package manager and avoids duplicate dependency listings.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/ethernet8023" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@ethernet8023</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/05e7958f6" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>05e7958f6</a>
+
+## [1.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/hermes/v1.2.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/hermes/v1.2.0)
+
+**Features**
+
+- Added usage guidance to the Hermes system prompt block to help agents use Hindsight memory effectively.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/dragonkid" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@dragonkid</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c296e7c57" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c296e7c57</a>
+
+**Bug Fixes**
+
+- Improved embedded Hermes daemon startup by running it in an isolated subprocess and preventing parent Python environments from interfering.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/42104fff6" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>42104fff6</a>
+
 ## [1.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/hermes/v1.1.0)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/hermes/v1.1.0)
