@@ -213,3 +213,91 @@ def test_system_prompt_guides_tool_choice_only_when_tools_exist(provider):
         assert "hindsight_reflect" in blocks[mode] and "hindsight_retain" in blocks[mode]
     assert "automatically injected" in blocks["hybrid"]
     assert "automatically injected" not in blocks["tools"]
+
+
+def test_the_first_run_download_is_announced_through_the_warning_sink(provider, monkeypatch):
+    """A first embedded start fetches the server through uvx, which took minutes with nothing on
+    screen (hermes-agent#4936: a 6m23s reply that retained nothing and printed no error). The
+    notice goes to the same gated sink as the root-refusal warning."""
+    seen = []
+    instance, _ = provider({}, warning_callback=seen.append, platform="telegram")
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: False)
+    monkeypatch.setattr(plugin, "_installed_api_binary_exists", lambda: False)
+
+    instance._announce_slow_first_start("hermes")
+
+    assert len(seen) == 1 and "downloading its local memory server" in seen[0]
+    instance.shutdown()
+
+
+def test_no_announcement_when_the_server_is_already_there(provider, monkeypatch):
+    seen = []
+    instance, _ = provider({}, warning_callback=seen.append)
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: False)
+    monkeypatch.setattr(plugin, "_installed_api_binary_exists", lambda: True)
+    instance._announce_slow_first_start("hermes")
+
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: True)
+    monkeypatch.setattr(plugin, "_installed_api_binary_exists", lambda: False)
+    instance._announce_slow_first_start("hermes")
+
+    assert seen == []
+    instance.shutdown()
+
+
+def test_concurrent_callers_start_the_daemon_and_build_the_client_once(provider, monkeypatch):
+    """The start worker and the first memory operation both reach _get_client. Unguarded, each
+    started a daemon and built a client, and the loser's client was dropped without being closed.
+
+    No barrier inside the build: with the lock in place only one caller ever gets there, so the
+    contention window is opened with a sleep instead.
+    """
+    import threading
+    import time as _time
+
+    instance, _ = provider({})
+    instance._mode = "local_embedded"
+    built = []
+
+    def _slow_build(self):
+        _time.sleep(0.2)  # as wide as a real daemon start, in miniature
+        built.append(object())
+        return built[-1]
+
+    monkeypatch.setattr(type(instance), "_new_embedded_client", _slow_build)
+
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(instance._get_client())) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+
+    assert len(built) == 1, f"client built {len(built)} times"
+    assert len({id(r) for r in results}) == 1  # every caller got the same client
+    instance.shutdown()
+
+
+def test_building_the_embedded_client_announces_before_it_waits(provider, monkeypatch):
+    """The notice has to fire from the path that actually blocks — asserting the helper in
+    isolation would keep passing if nothing called it."""
+    seen = []
+    instance, _ = provider({"mode": "local_embedded", "profile": "hermes"}, warning_callback=seen.append)
+    instance._mode = "local_embedded"
+    order = []
+    from hindsight_hermes.embedded import LocalRuntimeStatus
+
+    monkeypatch.setattr(plugin, "_check_local_runtime", lambda: LocalRuntimeStatus(available=True))
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: False)
+    monkeypatch.setattr(plugin, "_installed_api_binary_exists", lambda: False)
+    monkeypatch.setattr(plugin, "_build_embedded_profile_env", lambda cfg: {})
+    monkeypatch.setattr(
+        plugin, "_start_daemon", lambda config, profile: order.append("started") or "http://127.0.0.1:1"
+    )
+    monkeypatch.setattr(plugin, "Hindsight", lambda **kw: object(), raising=False)
+    instance._warning_callback = lambda m: order.append("announced")
+
+    instance._new_embedded_client()
+
+    assert order == ["announced", "started"], order
+    instance.shutdown()

@@ -109,7 +109,7 @@ def _check_mode_dependencies(mode: str) -> None:
 
 
 def run_setup(provider, hermes_home: str, config: dict) -> None:
-    """Interactive wizard — installs only the deps the selected mode needs."""
+    """Interactive wizard. Installs nothing: dependencies arrive through Hermes' package manager."""
     from hermes_cli.config import save_config
 
     from . import _load_config
