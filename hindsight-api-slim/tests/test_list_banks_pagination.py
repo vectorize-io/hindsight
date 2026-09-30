@@ -15,6 +15,8 @@ import uuid
 
 import pytest
 
+from hindsight_api.extensions import BankListResult, BankListScope, OperationValidatorExtension, ValidationResult
+
 
 @pytest.fixture
 async def three_banks(memory, request_context):
@@ -137,3 +139,105 @@ async def test_http_endpoint_echoes_paging_and_filters(api_client, three_banks):
     assert body["offset"] == 1
     assert len(body["banks"]) == 1
     assert body["banks"][0]["bank_id"].startswith(prefix)
+
+
+class _ScopedValidator(OperationValidatorExtension):
+    """A validator whose bank list is either declared up front (``scope``) or filtered after the
+    fact (``scope=None``, hiding ``hidden``), recording whether the filter ran."""
+
+    def __init__(self, scope: BankListScope | None, hidden: str | None = None):
+        super().__init__({})
+        self.scope, self.hidden, self.filtered = scope, hidden, False
+
+    async def validate_retain(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def bank_list_scope(self, request_context) -> BankListScope | None:
+        return self.scope
+
+    async def filter_bank_list(self, ctx) -> BankListResult:
+        self.filtered = True
+        return BankListResult(banks=[bank for bank in ctx.banks if bank["bank_id"] != self.hidden])
+
+
+async def _list_with(memory, request_context, validator, **kwargs):
+    saved, memory._operation_validator = memory._operation_validator, validator
+    try:
+        return await memory.list_banks(request_context=request_context, **kwargs)
+    finally:
+        memory._operation_validator = saved
+
+
+@pytest.mark.asyncio
+async def test_undeclared_scope_filters_the_full_list(memory, request_context, three_banks):
+    """A validator written before scopes existed keeps its contract: it is handed the list."""
+    prefix, bank_ids = three_banks
+    validator = _ScopedValidator(None, hidden=bank_ids[0])
+
+    page = await _list_with(memory, request_context, validator, search_query=prefix)
+
+    assert validator.filtered
+    assert {bank["bank_id"] for bank in page["banks"]} == set(bank_ids[1:])
+    assert page["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_an_all_banks_scope_skips_the_filter(memory, request_context, three_banks):
+    prefix, bank_ids = three_banks
+    validator = _ScopedValidator(BankListScope())
+
+    page = await _list_with(memory, request_context, validator, search_query=prefix)
+
+    assert not validator.filtered
+    assert {bank["bank_id"] for bank in page["banks"]} == set(bank_ids)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_scope_lists_only_those_banks_newest_first(memory, request_context, three_banks):
+    """No search, so this is the by-id read, not a ranking of the tenant: the other banks in the
+    test database must not appear, and an id naming no bank is ignored."""
+    _, bank_ids = three_banks
+    allowed = [bank_ids[0], bank_ids[2], "no-such-bank"]
+    validator = _ScopedValidator(BankListScope(bank_ids=allowed))
+
+    page = await _list_with(memory, request_context, validator, limit=1)
+    rest = await _list_with(memory, request_context, validator, limit=10, offset=1)
+
+    assert not validator.filtered
+    listed = [bank["bank_id"] for bank in page["banks"] + rest["banks"]]
+    assert sorted(listed) == sorted([bank_ids[0], bank_ids[2]])
+    assert page["total"] == rest["total"] == 2
+    written = [bank["last_write_at"] or bank["created_at"] for bank in page["banks"] + rest["banks"]]
+    assert written == sorted(written, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_scope_accepts_aliases(memory, request_context, three_banks):
+    """A request reaches a bank by its canonical id, so a scope naming an alias must list the bank
+    the alias points at — and not the alias as if it were a bank of its own."""
+    _, bank_ids = three_banks
+    alias = f"{bank_ids[1]}-alias"
+    await memory.create_bank_alias(bank_ids[1], alias, request_context=request_context)
+    validator = _ScopedValidator(BankListScope(bank_ids=[alias, bank_ids[0]]))
+
+    page = await _list_with(memory, request_context, validator)
+
+    assert {bank["bank_id"] for bank in page["banks"]} == {bank_ids[0], bank_ids[1]}
+    assert page["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_scope_narrows_a_search(memory, request_context, three_banks):
+    prefix, bank_ids = three_banks
+    validator = _ScopedValidator(BankListScope(bank_ids=[bank_ids[2]]))
+
+    page = await _list_with(memory, request_context, validator, search_query=prefix)
+
+    assert [bank["bank_id"] for bank in page["banks"]] == [bank_ids[2]]
+    assert page["total"] == 1

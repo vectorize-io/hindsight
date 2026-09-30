@@ -57,6 +57,8 @@ def _make_operation_validator(
     # A pass-through list filter: several tests assert a bank was not created by
     # looking it up through the bank list, which runs this hook.
     validator.filter_bank_list = AsyncMock(side_effect=lambda ctx: BankListResult(banks=ctx.banks))
+    # No declared scope, so the list reaches the filter above.
+    validator.bank_list_scope = AsyncMock(return_value=None)
     return validator
 
 

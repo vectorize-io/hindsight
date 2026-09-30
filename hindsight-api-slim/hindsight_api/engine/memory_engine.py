@@ -15545,10 +15545,20 @@ class MemoryEngine(MemoryEngineInterface):
         # trim from the end instead of raising.
         limit = max(limit, 0)
         offset = max(offset, 0)
-        if self._operation_validator:
+        from hindsight_api.extensions import BankListScope
+
+        # What the validator lets this caller see, declared before anything is read. A validator
+        # that declares nothing (None) gets the full ranked list to filter; one that declares a
+        # scope never sees the list at all.
+        scope = (
+            await self._operation_validator.bank_list_scope(request_context)
+            if self._operation_validator
+            else BankListScope()
+        )
+        if scope is None:
             # The validator may drop ANY bank, so the page has to be cut after it runs — and it
             # takes the list, not a page. Ranking the tenant is the price of a filter that can
-            # reject anything, and it is paid only by deployments that install one.
+            # reject anything, and it is paid only by validators that do not declare a scope.
             from hindsight_api.extensions import BankListContext
 
             banks = await bank_utils.list_banks(self._backend, search_query=search_query)
@@ -15558,8 +15568,19 @@ class MemoryEngine(MemoryEngineInterface):
             banks = result.banks
             total = len(banks)
             page = banks[offset : offset + limit]
+        elif scope.bank_ids is not None:
+            # An explicit set: read those banks and nothing else, so a caller scoped to a handful
+            # of banks pays for a handful however large the tenant is. Aliases are resolved here
+            # because a request reaches a bank by its canonical id — an allowed alias must list the
+            # bank it names.
+            from . import bank_aliases
+
+            allowed = await bank_aliases.resolve_many(self._backend, scope.bank_ids)
+            banks = await bank_utils.list_banks_among(self._backend, allowed, search_query=search_query)
+            total = len(banks)
+            page = banks[offset : offset + limit]
         else:
-            # No filter, so the page can be cut before the rows are read: the order comes from the
+            # Every bank, so the page can be cut before the rows are read: the order comes from the
             # store, already sorted, and Postgres fills the page by id. O(page) rather than
             # O(total banks) — see `bank_utils.list_banks_page`.
             bank_page = await bank_utils.list_banks_page(

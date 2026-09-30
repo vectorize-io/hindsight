@@ -480,6 +480,17 @@ class BankListResult:
     banks: list[dict]
 
 
+@dataclass
+class BankListScope:
+    """Which banks a request's bank list may show, declared before the list is read.
+
+    ``bank_ids=None`` means every bank. A list means only those banks; an entry may be a bank's
+    own id or one of its aliases, and an entry that names no bank is ignored.
+    """
+
+    bank_ids: list[str] | None = None
+
+
 # =============================================================================
 # Mental Model Contexts
 # =============================================================================
@@ -1074,9 +1085,32 @@ class OperationValidatorExtension(Extension, ABC):
         """
         return ValidationResult.accept()
 
+    async def bank_list_scope(self, request_context: "RequestContext") -> BankListScope | None:
+        """
+        Declare which banks this request's bank list may show, so the engine reads only those.
+
+        filter_bank_list takes the whole list, so running it means ranking every bank in the
+        tenant before a page can be cut. A validator that can say up front which banks a caller
+        may see returns a BankListScope instead: every bank (read one page directly), or an
+        explicit set of ids or aliases (read only those banks). filter_bank_list is then not
+        called for the request.
+
+        The default returns None — nothing declared — and the engine ranks every bank and runs
+        filter_bank_list, as a validator written before this hook expects.
+
+        Args:
+            request_context: Request context with auth info (already authenticated)
+
+        Returns:
+            A BankListScope, or None to run filter_bank_list over the full list.
+        """
+        return None
+
     async def filter_bank_list(self, ctx: BankListContext) -> BankListResult:
         """
         Filter the bank list after querying.
+
+        Runs only when bank_list_scope returns None for the request.
 
         Unlike validate_* methods, this is a post-query filter that narrows results
         rather than a gate that blocks the operation.

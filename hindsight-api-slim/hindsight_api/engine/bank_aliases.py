@@ -104,6 +104,28 @@ async def resolve(pool, bank_id: str) -> str:
     return row.get("bank_id") or bank_id
 
 
+async def resolve_many(pool, bank_ids: list[str]) -> list[str]:
+    """Canonical ids for ``bank_ids``, any of which may be an alias — :func:`resolve` for a set.
+
+    The same rule as :func:`resolve`: an id naming a real bank is kept even if it is also some
+    alias, and an id naming nothing comes back unchanged (it then matches no bank). One query for
+    the whole set, uncached: this serves a bank list scoped to a caller's allowed ids, where a
+    per-id lookup would cost a round trip each.
+    """
+    ids = list(dict.fromkeys(bank_ids))
+    if not ids:
+        return []
+    async with acquire_with_retry(pool) as conn:
+        rows = await conn.fetch(
+            f"SELECT a.alias, a.bank_id FROM {fq_table('bank_aliases')} a "
+            "WHERE a.alias = ANY($1::text[]) "
+            f"AND NOT EXISTS (SELECT 1 FROM {fq_table('banks')} b WHERE b.bank_id = a.alias)",
+            ids,
+        )
+    target = {row["alias"]: row["bank_id"] for row in rows}
+    return list(dict.fromkeys(target.get(bank_id, bank_id) for bank_id in ids))
+
+
 async def invalidate(alias: str) -> None:
     """Drop a cached alias entry. Called by every path that writes one.
 
