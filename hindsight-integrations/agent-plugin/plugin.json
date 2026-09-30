@@ -21,9 +21,10 @@
   ],
   "extensions": {
     "io.vectorize.hindsight": {
-      "bankSelection": "Set HINDSIGHT_BANK_ID to scope memory to a user, project, or team. The mcp.json endpoint is per-bank, so tools never need a bank_id argument.",
-      "selfHosted": "Point HINDSIGHT_MCP_URL at your own deployment instead of Hindsight Cloud; the plugin is transport-only and stays otherwise identical.",
-      "deepIntegration": "For automatic capture/injection (session hooks that recall before each prompt and retain transcripts on exit), see the native Claude Code plugin at hindsight-integrations/claude-code. This portable plugin exposes the same memory via explicit MCP tools."
+      "bankSelection": "Set HINDSIGHT_BANK_ID to scope memory to a user, project, or team. It is sent as the X-Bank-Id header, so tools never need a bank_id argument.",
+      "selfHosted": "Replace the host in mcp.json (https://api.hindsight.vectorize.io) with your own deployment's URL; the plugin is transport-only and stays otherwise identical.",
+      "deepIntegration": "For automatic capture/injection (session hooks that recall before each prompt and retain transcripts on exit), use the Coding Agents integration at hindsight-integrations/coding-agents. This portable plugin exposes the same memory via explicit MCP tools.",
+      "codex": "Codex's Agent Plugins loader removes the Authorization header and does not expand ${VAR} in headers, so this plugin cannot authenticate from Codex. Use `npx @vectorize-io/hindsight-coding-agents install codex` instead."
     }
   }
 }
