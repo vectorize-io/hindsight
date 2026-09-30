@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -180,12 +181,18 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
 
 
 def _installed_api_binary_exists() -> bool:
-    """Whether a ``hindsight-api`` entry point sits next to us, i.e. the daemon starts locally.
+    """Whether a ``hindsight-api`` entry point is installed in this environment, i.e. the daemon
+    starts from disk instead of being fetched.
 
     False means the daemon manager falls back to ``uvx hindsight-api@<version>``, which downloads
-    the server before it can boot — the case worth warning the user about.
+    the server before it can boot — the case worth warning the user about. Checks the same
+    scripts directory the manager prefers (``_find_api_command`` reads the sysconfig scripts path),
+    plus the interpreter's own directory for layouts where they differ. A ``pip install --target``
+    bundle is not covered, so such a user may see the notice and then no download; that way round
+    is harmless, while missing the notice is the stall this exists to explain.
     """
-    return shutil.which("hindsight-api", path=str(Path(sys.executable).parent)) is not None
+    candidates = {sysconfig.get_path("scripts"), str(Path(sys.executable).parent)}
+    return any(shutil.which("hindsight-api", path=path) for path in candidates if path)
 
 
 def _start_daemon(config: dict[str, str], profile: str) -> str:

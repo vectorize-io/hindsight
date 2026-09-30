@@ -766,7 +766,8 @@ class HindsightMemoryProvider(MemoryProvider):
         if _daemon_is_running(profile) or _installed_api_binary_exists():
             return
         msg = (
-            "Hindsight is downloading its local memory server (a few hundred MB on first use). "
+            "Hindsight is downloading its local memory server (0.5-3 GB on first use, depending "
+            "on platform). "
             "Memory will start working once it finishes; progress is in "
             f"{get_hermes_home() / 'logs' / 'hindsight-embed.log'}."
         )
