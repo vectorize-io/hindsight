@@ -24,6 +24,8 @@ from hindsight_api.engine.consolidation.consolidator import (
     _embed_observation_text,
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.memories.base import MemoriesExtension
+from hindsight_api.engine.memories.postgres import PostgresMemories
 from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
@@ -2093,7 +2095,18 @@ async def test_download_route_rejects_unauthorized_keys(api_client, memory, requ
 
 
 class _StoreOwnedMemories:
-    """A memories store that keeps memories outside SQL, like an external store extension."""
+    """A memories store that keeps memories outside SQL, like an external store extension.
+
+    Duck-typed rather than a full store, so the transfer entry points borrow the interface's
+    store-owned defaults — the code under test — and each fake supplies only the reads they make.
+    """
+
+    iter_transfer_documents = MemoriesExtension.iter_transfer_documents
+    load_transfer_documents = MemoriesExtension.load_transfer_documents
+    load_transfer_observations = MemoriesExtension.load_transfer_observations
+    dump_entity_maintenance_queue = MemoriesExtension.dump_entity_maintenance_queue
+    dump_archived_memories = MemoriesExtension.dump_archived_memories
+    transfer_document_exists = MemoriesExtension.transfer_document_exists
 
     def store_owned_for(self, bank_id: str) -> bool:
         return True
@@ -2257,11 +2270,6 @@ class _FakeStoreOwned(_StoreOwnedMemories):
         return {"e-ada": "Ada Lovelace"}
 
 
-class _SqlMemories:
-    def store_owned_for(self, bank_id: str) -> bool:
-        return False
-
-
 @pytest.mark.asyncio
 async def test_export_of_a_store_owned_bank_contains_its_memories():
     """The archive must carry the bank's facts, entities and causal edges — not be empty.
@@ -2329,7 +2337,7 @@ async def test_a_sql_backed_bank_is_not_read_through_the_store():
     from hindsight_api.engine.transfer.export import export_documents
 
     with pytest.raises(Exception) as ei:  # noqa: PT011 - backend=None fails once SQL is reached
-        await export_documents(None, "bank-x", None, memories=_SqlMemories())
+        await export_documents(None, "bank-x", None, memories=PostgresMemories({}))
     assert "list_documents" not in str(ei.value), "a SQL bank must not be read through the store"
 
 

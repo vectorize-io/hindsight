@@ -230,11 +230,15 @@ def _patch_update_action_deps(consolidator, conn, source_ids, append_mock) -> Ex
     capability flag, config, and the history append — leaving the UPDATE
     rowcount as the single variable under test.
     """
-    # The capability is consulted per bank (#3388), so the stub answers the bank-scoped
-    # form rather than carrying the bare class attribute it replaced.
-    store = SimpleNamespace(store_owned_for=lambda bank_id: False)
+    # The real Postgres store: its UPDATE runs on the stub connection, so the rowcount the
+    # test sets is what the store reports (#4969 moved that SQL into the store).
+    from hindsight_api.engine.memories.pg import consolidation as pg_consolidation
+    from hindsight_api.engine.memories.postgres import PostgresMemories
+
+    store = PostgresMemories({})
     stack = ExitStack()
     stack.enter_context(patch("hindsight_api.config.get_config", _fake_config))
+    stack.enter_context(patch.object(pg_consolidation, "get_config", _fake_config))
     stack.enter_context(patch.object(consolidator, "acquire_with_retry", MagicMock(return_value=_AsyncNullCtx(conn))))
     stack.enter_context(patch.object(consolidator, "get_memories", MagicMock(return_value=store)))
     stack.enter_context(patch.object(consolidator, "_any_live_source_memory", AsyncMock(return_value=True)))

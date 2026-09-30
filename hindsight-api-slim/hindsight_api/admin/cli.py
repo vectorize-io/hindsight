@@ -23,6 +23,7 @@ import typer
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..db_url import is_oracle_url
 from ..engine.memories import get_memories
+from ..engine.memories.postgres import PostgresMemories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
@@ -345,6 +346,7 @@ async def _backup(
     extension-augmented list from ``_effective_backup_tables()``.
     """
     backup_tables = backup_tables if backup_tables is not None else BACKUP_TABLES
+    pg_store = PostgresMemories({})
     conn = await asyncpg.connect(database_url)
     try:
         tables: dict[str, Any] = {}
@@ -383,9 +385,9 @@ async def _backup(
                     data = buffer.getvalue()
                     zf.writestr(f"{table}.bin", data)
 
-                    # Get row count for manifest
-                    qualified_table = _fq_table(table, schema)
-                    row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {qualified_table}")
+                    # Get row count for manifest. Through the Postgres store, which alone may
+                    # name its own tables (#4969) — this walks every table of the schema.
+                    row_count = await pg_store.admin_count_rows(conn=conn, schema=schema, table=table)
                     tables[table] = {
                         "rows": row_count,
                         "size_bytes": len(data),
@@ -432,10 +434,11 @@ async def _restore(
             # restored or none are, preventing partial/inconsistent state.
             async with conn.transaction():
                 typer.echo("  Clearing existing data...")
-                # Truncate tables in reverse order (respects FK constraints)
-                for table in reversed(backup_tables):
-                    qualified_table = _fq_table(table, schema)
-                    await conn.execute(f"TRUNCATE TABLE {qualified_table} CASCADE")
+                # Truncate tables in reverse order (respects FK constraints). Through the
+                # Postgres store, which alone may name its own tables (#4969).
+                await PostgresMemories({}).admin_truncate_tables(
+                    conn=conn, schema=schema, tables=list(reversed(backup_tables))
+                )
 
                 # Restore tables in forward order
                 for i, table in enumerate(backup_tables, 1):
@@ -1061,16 +1064,15 @@ async def _move_bank_rows(
             schema,
         )
         await conn.execute("SET CONSTRAINTS ALL DEFERRED")
-        moved: dict[str, int] = {}
-        for row in tables:
-            status = await conn.execute(
-                f"UPDATE {_fq_table(row['table_name'], schema)} SET bank_id = $1 WHERE bank_id = $2",
-                new_bank_id,
-                old_bank_id,
-            )
-            count = int(status.split()[-1])
-            if count:
-                moved[row["table_name"]] = count
+        # Every table, store tables included, so the rewrite goes through the Postgres store,
+        # which alone may name its own tables (#4969).
+        moved = await PostgresMemories({}).admin_move_bank_id(
+            conn=conn,
+            schema=schema,
+            tables=[row["table_name"] for row in tables],
+            old_bank_id=old_bank_id,
+            new_bank_id=new_bank_id,
+        )
         await conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
     except BaseException:
         await tx.rollback()
@@ -1111,19 +1113,12 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
             pool_getter=lambda: pool,
             schema=schema,
         )
-        # starts_with, not LIKE: key segments are percent-encoded, so a prefix can
-        # contain '%' and would read as a wildcard. Keys written before the tenant
-        # layout sit outside the prefix and stay where they are: delete_bank sweeps
-        # those from their rows, which the rename carries to the new id.
-        rows = await conn.fetch(
-            f"SELECT 'attachments' AS table_name, storage_key AS key FROM {_fq_table('attachments', schema)} "
-            f"WHERE bank_id = $1 AND starts_with(storage_key, $2) "
-            f"UNION ALL "
-            f"SELECT 'documents', file_storage_key FROM {_fq_table('documents', schema)} "
-            f"WHERE bank_id = $1 AND file_storage_key IS NOT NULL AND starts_with(file_storage_key, $2)",
-            new_id,
-            old_prefix,
-        )
+        # Keys written before the tenant layout sit outside the prefix and stay where
+        # they are: delete_bank sweeps those from their rows, which the rename carries
+        # to the new id. `documents` is a store table, so the Postgres store reads and
+        # repoints the keys (#4969).
+        pg_store = PostgresMemories({})
+        rows = await pg_store.admin_bank_file_keys(conn=conn, schema=schema, bank_id=new_id, prefix=old_prefix)
         columns = {"attachments": "storage_key", "documents": "file_storage_key"}
         moved = 0
         for row in rows:
@@ -1137,12 +1132,14 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
                 typer.echo(f"Warning: {row['key']} has no stored bytes; its row keeps the old key.")
                 continue
             await storage.store(file_data=data, key=new_key)
-            column = columns[row["table_name"]]
-            await conn.execute(
-                f"UPDATE {_fq_table(row['table_name'], schema)} SET {column} = $1 WHERE bank_id = $2 AND {column} = $3",
-                new_key,
-                new_id,
-                row["key"],
+            await pg_store.admin_repoint_file_key(
+                conn=conn,
+                schema=schema,
+                table=row["table_name"],
+                column=columns[row["table_name"]],
+                bank_id=new_id,
+                old_key=row["key"],
+                new_key=new_key,
             )
             moved += 1
         # The originals, plus whatever else the bank left under the old prefix:

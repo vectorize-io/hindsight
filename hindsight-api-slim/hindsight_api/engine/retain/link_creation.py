@@ -7,7 +7,6 @@ Handles creation of temporal, semantic, and causal links between facts.
 import logging
 from collections.abc import Sequence
 
-from . import link_utils
 from .types import EmbeddingLike, ProcessedFact
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,10 @@ async def create_temporal_links_batch(conn, bank_id: str, unit_ids: list[str], o
     if not unit_ids:
         return 0
 
-    return await link_utils.create_temporal_links_batch_per_fact(conn, bank_id, unit_ids, log_buffer=[], ops=ops)
+    # Imported here: the memories package imports the extensions, which import the engine.
+    from ..memories import get_memories
+
+    return await get_memories().create_temporal_links(conn=conn, ops=ops, bank_id=bank_id, unit_ids=unit_ids)
 
 
 async def create_semantic_links_batch(
@@ -66,15 +68,16 @@ async def create_semantic_links_batch(
     if len(unit_ids) != len(embeddings):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and embeddings ({len(embeddings)})")
 
-    return await link_utils.create_semantic_links_batch(
-        conn,
-        bank_id,
-        unit_ids,
-        embeddings,
-        threshold=threshold,
-        log_buffer=[],
-        pre_computed_ann_links=pre_computed_ann_links,
+    from ..memories import get_memories
+
+    return await get_memories().create_semantic_links(
+        conn=conn,
         ops=ops,
+        bank_id=bank_id,
+        unit_ids=unit_ids,
+        embeddings=embeddings,
+        threshold=threshold,
+        pre_computed_ann_links=pre_computed_ann_links,
     )
 
 
@@ -102,8 +105,10 @@ async def create_causal_links_batch(
     if len(unit_ids) != len(facts):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and facts ({len(facts)})")
 
+    from ..memories import get_memories
+
     causal_relations_per_fact = [fact.causal_relations or [] for fact in facts]
 
-    link_count = await link_utils.create_causal_links_batch(conn, bank_id, unit_ids, causal_relations_per_fact, ops=ops)
-
-    return link_count
+    return await get_memories().create_causal_links(
+        conn=conn, ops=ops, bank_id=bank_id, unit_ids=unit_ids, causal_relations_per_fact=causal_relations_per_fact
+    )

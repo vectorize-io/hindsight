@@ -9,6 +9,8 @@ this test catches what the runtime guard cannot see:
 * SQL text naming a store table directly (``FROM memory_units``), without a
   resolver call;
 * a call to the guard-free resolver (``fq_store_table``) outside the store;
+* an import of the Postgres store's own modules (``engine.memories.pg``), whose functions run
+  that SQL with the guard-free resolver — code outside the store asks ``get_memories()``;
 * code that is never run by a test.
 """
 
@@ -85,6 +87,61 @@ def test_no_store_table_sql_outside_the_store() -> None:
     assert not found, "Direct access to store-owned tables outside the memories store:\n" + "\n".join(
         sorted(set(found))
     )
+
+
+# Only the Postgres store itself may import its SQL modules.
+_PG_IMPORTERS = ("engine/memories/pg/", "engine/memories/postgres.py")
+_PG_MODULE = "hindsight_api.engine.memories.pg"
+
+
+def _pg_imports(rel: str, source: str) -> list[str]:
+    """Every import of ``engine.memories.pg`` (or a module under it) in ``source``, the file at
+    ``rel`` in the package: absolute or relative, at module level or inside a function."""
+    # The dotted package this file's relative imports resolve against (for `x/__init__.py`, `x`).
+    package = ("hindsight_api/" + rel).removesuffix(".py").split("/")[:-1]
+    out: list[str] = []
+    for node in ast.walk(ast.parse(source, filename=rel)):
+        if isinstance(node, ast.Import):
+            targets = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else []
+            module = ".".join(base + ([node.module] if node.module else []))
+            # `from ..memories import pg` names the package as an imported attribute.
+            targets = [module] + [f"{module}.{a.name}" for a in node.names]
+        else:
+            continue
+        if any(t == _PG_MODULE or t.startswith(_PG_MODULE + ".") for t in targets):
+            out.append(f"{rel}:{node.lineno}: imports the Postgres store's SQL modules")
+    return out
+
+
+def test_no_postgres_store_imports_outside_the_store() -> None:
+    found: list[str] = []
+    for path in sorted(PKG.rglob("*.py")):
+        rel = path.relative_to(PKG).as_posix()
+        if rel.startswith(_PG_IMPORTERS):
+            continue
+        found.extend(_pg_imports(rel, path.read_text()))
+    assert not found, "Imports of engine.memories.pg outside the Postgres store (go through get_memories()):\n" + (
+        "\n".join(found)
+    )
+
+
+def test_pg_import_scan_sees_every_form() -> None:
+    """The scan above is only as good as its import resolution; pin the forms it must catch."""
+    source = (
+        "from ..memories.pg import links\n"
+        "from ..memories import pg\n"
+        "import hindsight_api.engine.memories.pg.graph\n"
+        "def f():\n"
+        "    from ..memories.pg.links import x\n"
+        "from ..memories import get_memories\n"
+        "from .memories.pg import y\n"
+    )
+    found = _pg_imports("engine/retain/probe.py", source)
+    assert [line.split(":")[1] for line in found] == ["1", "2", "3", "5"]
+    # One level up, `.memories` is the engine's: caught there.
+    assert len(_pg_imports("engine/probe.py", "from .memories.pg import y\n")) == 1
 
 
 def test_resolvers_refuse_store_tables() -> None:

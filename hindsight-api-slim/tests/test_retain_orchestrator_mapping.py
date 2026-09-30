@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from hindsight_api.engine.retain import embedding_utils, entity_processing, link_creation, link_utils, orchestrator
+from hindsight_api.engine.memories.pg import links as link_utils
+from hindsight_api.engine.retain import embedding_utils, entity_processing, link_creation, orchestrator
 from hindsight_api.engine.retain.orchestrator import (
     _map_results_to_contents,
     _pre_resolve_phase1,

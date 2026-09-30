@@ -1218,7 +1218,7 @@ class MetricsCollector(MetricsCollectorBase):
         failed: dict[_BacklogKey, int] = {}
         per_bank = self._include_bank_id
         bank_sel = "bank_id, " if per_bank else ""
-        bank_grp = " GROUP BY bank_id" if per_bank else ""
+        from .engine.memories import get_memories
 
         async with self._db_pool.acquire() as conn:
             # memory_units is the central per-tenant table; its presence marks a
@@ -1249,59 +1249,37 @@ class MetricsCollector(MetricsCollectorBase):
                 except Exception:
                     logger.debug("Async-ops queue query failed for schema %s", schema, exc_info=True)
 
-                # Consolidation backlog + stranded counts. Two separate COUNT(*)
-                # queries rather than one with two FILTERs — each WHERE matches a
-                # partial-index predicate exactly:
-                #   idx_memory_units_unconsolidated        WHERE consolidated_at IS NULL ...
-                #   idx_memory_units_consolidation_failed  WHERE consolidation_failed_at IS NOT NULL ...
-                # GROUP BY bank_id still composes — bank_id is each index's lead column.
+                # Consolidation backlog + stranded counts, from the memories store: a bank whose
+                # memories live outside Postgres has none in `memory_units`, so counting that
+                # table alone read 0 for it and its backlog alert never fired (#4969). Postgres
+                # counts the whole schema in two queries, each matching a partial index (see
+                # pg/admin.py); a store that owns its memories counts the schema's banks, which
+                # it is handed lazily so the Postgres path never lists them.
                 #
-                # The backlog gauge is disjoint from the failed gauge: it carries the
-                # consolidator's own `consolidation_failed_at IS NULL` (see
-                # reads.find_unconsolidated), so a permanently failed fact does not hold
-                # the backlog above zero forever and "backlog > 0 for N minutes" stays an
-                # alertable condition. That extra term is not in the partial index's
-                # predicate, so it is a cheap recheck on the rows the index already
-                # returned — the failed set is tiny by construction.
-                #
-                # The backlog count runs with seqscan disabled in a scoped
-                # transaction. The partial index matches its predicate, but
-                # `consolidated_at IS NULL` is true for a large fraction of the
-                # table (every observation has a null consolidated_at), so the
-                # planner misjudges selectivity and otherwise seq-scans the whole
-                # (largest) table on every refresh — verified on a 114k-row table
-                # via EXPLAIN: seq scan ~92 ms vs index scan ~0.1 ms. SET LOCAL
-                # forces the index path and resets at transaction end. The failed
-                # count below needs no such nudge: `consolidation_failed_at IS NOT
-                # NULL` is rare, so its index is chosen on cost.
+                # The backlog gauge is disjoint from the failed gauge: a permanently failed fact
+                # does not hold the backlog above zero forever, so "backlog > 0 for N minutes"
+                # stays an alertable condition.
+                async def _schema_bank_ids(schema: str = schema) -> list[str]:
+                    rows = await conn.fetch(f'SELECT bank_id FROM "{schema}".banks')
+                    return [row["bank_id"] for row in rows]
+
                 try:
-                    async with conn.transaction():
-                        await conn.execute("SET LOCAL enable_seqscan = off")
-                        rows = await conn.fetch(
-                            f"SELECT {bank_sel}COUNT(*) AS count "
-                            f'FROM "{schema}".memory_units '
-                            "WHERE consolidated_at IS NULL AND consolidation_failed_at IS NULL "
-                            "AND fact_type IN ('experience', 'world')"
-                            f"{bank_grp}"
-                        )
-                    for row in rows:
-                        bank = row["bank_id"] if per_bank else None
+                    counts = await get_memories().count_consolidation_backlog(
+                        conn=conn, schema=schema, per_bank=per_bank, bank_ids=_schema_bank_ids
+                    )
+                    for bank, count in counts.items():
                         key = _BacklogKey(schema, bank)
-                        backlog[key] = backlog.get(key, 0) + int(row["count"])
+                        backlog[key] = backlog.get(key, 0) + count
                 except Exception:
                     logger.debug("Consolidation backlog query failed for schema %s", schema, exc_info=True)
 
                 try:
-                    rows = await conn.fetch(
-                        f"SELECT {bank_sel}COUNT(*) AS count "
-                        f'FROM "{schema}".memory_units '
-                        "WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')"
-                        f"{bank_grp}"
+                    counts = await get_memories().count_consolidation_failed(
+                        conn=conn, schema=schema, per_bank=per_bank, bank_ids=_schema_bank_ids
                     )
-                    for row in rows:
-                        bank = row["bank_id"] if per_bank else None
+                    for bank, count in counts.items():
                         key = _BacklogKey(schema, bank)
-                        failed[key] = failed.get(key, 0) + int(row["count"])
+                        failed[key] = failed.get(key, 0) + count
                 except Exception:
                     logger.debug("Consolidation failed query failed for schema %s", schema, exc_info=True)
 

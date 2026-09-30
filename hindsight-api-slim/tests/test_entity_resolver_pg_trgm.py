@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hindsight_api.engine.entity_resolver import EntityResolver
+from hindsight_api.engine.memories.pg.entity_resolver import EntityResolver
 
 
 def _make_conn(pg_trgm_available: bool) -> MagicMock:
@@ -180,7 +180,7 @@ class TestPgTrgmAutoDetection:
         entities_data = [{"text": f"Entity {idx}"} for idx in range(5)]
 
         with (
-            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch("hindsight_api.engine.memories.pg.entity_resolver.fq_table", side_effect=lambda table: table),
             patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
         ):
             await resolver._resolve_entities_batch_trigram(
@@ -225,7 +225,7 @@ class TestPgTrgmAutoDetection:
         ]
 
         with (
-            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch("hindsight_api.engine.memories.pg.entity_resolver.fq_table", side_effect=lambda table: table),
             patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
         ):
             await resolver._resolve_entities_batch_trigram(
@@ -274,7 +274,7 @@ class TestPgTrgmAutoDetection:
         entities_data = [{"text": "use:use-001"}, {"text": "Alice"}]
 
         with (
-            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch("hindsight_api.engine.memories.pg.entity_resolver.fq_table", side_effect=lambda table: table),
             patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
         ):
             await resolver._resolve_entities_batch_trigram(

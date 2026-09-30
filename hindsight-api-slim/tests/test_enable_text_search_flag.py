@@ -21,7 +21,7 @@ import pytest
 from hindsight_api.config import ENV_ENABLE_TEXT_SEARCH, HindsightConfig, _get_raw_config
 from hindsight_api.engine.retain import orchestrator as retain_orchestrator
 from hindsight_api.engine.search import bm25_term_selection as bm25_mod
-from hindsight_api.engine.search import retrieval as retrieval_mod
+from hindsight_api.engine.memories.pg import recall as recall_mod
 
 
 class _FakeDialect:
@@ -79,7 +79,7 @@ def harness(monkeypatch):
     tokenized: list[str] = []
     selective_lookups: list[bool] = []
 
-    real_tokenize = retrieval_mod.tokenize_query
+    real_tokenize = recall_mod.tokenize_query
 
     def counting_tokenize(query_text: str) -> list[str]:
         tokenized.append(query_text)
@@ -89,11 +89,11 @@ def harness(monkeypatch):
         selective_lookups.append(True)
         return tokens[:5]
 
-    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: dialect)
-    monkeypatch.setattr(retrieval_mod, "tokenize_query", counting_tokenize)
+    monkeypatch.setattr(recall_mod, "create_sql_dialect", lambda backend: dialect)
+    monkeypatch.setattr(recall_mod, "tokenize_query", counting_tokenize)
     monkeypatch.setattr(bm25_mod, "select_selective_bm25_tokens", fake_select_selective)
     monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: "public")
-    monkeypatch.setattr(retrieval_mod, "fq_table", lambda name: name)
+    monkeypatch.setattr(recall_mod, "fq_table", lambda name: name)
 
     return SimpleNamespace(
         dialect=dialect,
@@ -109,8 +109,8 @@ _LONG_QUERY = " ".join(f"term{i}" for i in range(20))
 
 
 async def _run(harness, *, enable_text_search: bool, monkeypatch, query: str = _LONG_QUERY):
-    monkeypatch.setattr(retrieval_mod, "get_config", lambda: _config())
-    return await retrieval_mod.retrieve_semantic_bm25_combined_sql(
+    monkeypatch.setattr(recall_mod, "get_config", lambda: _config())
+    return await recall_mod.retrieve_semantic_bm25_combined_sql(
         harness.conn,
         "[0.0]",
         query,

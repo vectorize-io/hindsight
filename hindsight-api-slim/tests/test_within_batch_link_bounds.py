@@ -19,8 +19,8 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pytest
 
-from hindsight_api.engine.retain import link_utils
-from hindsight_api.engine.retain.link_utils import (
+from hindsight_api.engine.memories.pg import links as link_utils
+from hindsight_api.engine.memories.pg.links import (
     MAX_TEMPORAL_LINKS_PER_UNIT,
     _cap_links_per_unit,
     _normalize_datetime,

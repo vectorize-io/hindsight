@@ -35,6 +35,7 @@ from hindsight_api.engine.memories.base import (
     DOC_META_ATTACHMENT_FILENAMES,
     META_ATTACHMENT_IDS,
     FactRecord,
+    MemoriesExtension,
     StoredMemory,
     build_fact_records,
     document_attachment_filenames,
@@ -387,7 +388,10 @@ def _observation_store(memories: "list[StoredMemory]"):
         reads.append(list(unit_ids))
         return [by_id[u] for u in unit_ids if u in by_id]
 
-    return SimpleNamespace(store_owned_for=lambda bank_id: True, get_memories=get_memories, reads=reads)
+    store = SimpleNamespace(store_owned_for=lambda bank_id: True, get_memories=get_memories, reads=reads)
+    # The interface default: a store-owned store answers attachment ids off its own rows.
+    store.memory_attachment_refs = lambda **kw: MemoriesExtension.memory_attachment_refs(store, **kw)
+    return store
 
 
 OBSERVATION = "00000000-0000-0000-0000-0000000000ob"

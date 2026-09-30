@@ -429,7 +429,7 @@ async def invalidate_memory(*, conn, fq_table, bank_id: str, unit_id: str, reaso
     # Causal edges are retain-time extraction output the FK cascade would destroy for good —
     # unlike temporal/semantic links they can't be recomputed, so snapshot their descriptors onto
     # the archive row and revert rematerializes them (#2864).
-    from ...retain.link_utils import snapshot_causal_links
+    from .links import snapshot_causal_links
 
     causal_links = await snapshot_causal_links(conn, bank_id, str(unit_id))
     inserted = await conn.fetchval(
@@ -519,7 +519,7 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
     # Rematerialize the causal edges parked at invalidation (#2864). Edges whose peer is still
     # archived or permanently deleted are skipped — the peer keeps its own copy and recreates the
     # edge when it reverts, so the restore is order-independent and idempotent.
-    from ...retain.link_utils import rematerialize_causal_links
+    from .links import rematerialize_causal_links
 
     causal_json = await conn.fetchval(
         f"SELECT causal_links FROM {arch} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id

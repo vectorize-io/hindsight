@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from hindsight_api.engine.entity_resolver import (
+from hindsight_api.engine.memories.pg.entity_resolver import (
     EntityResolver,
     _build_cooccurrence_index,
     _cooccurrence_weight,

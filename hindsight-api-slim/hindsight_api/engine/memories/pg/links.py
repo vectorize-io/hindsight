@@ -11,19 +11,19 @@ from typing import cast
 
 import numpy as np
 
-from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
-from ..causal_links import (
+from ...._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ...causal_links import (
     CANONICAL_CAUSAL_LINK_TYPES,
     CAUSAL_LINK_TYPES,
     DEFAULT_CAUSAL_LINK_WEIGHT,
     LEGACY_CAUSAL_LINK_TYPES,
     CausalLinkDescriptor,
 )
-from ..db.base import DatabaseConnection
-from ..db.ops import DataAccessOps
-from ..db.postgresql import setting_rejected_by_server
-from ..memory_engine import fq_table
-from .types import CausalRelation, EmbeddingLike, EntityResolutionResult, embedding_to_pgvector
+from ...db.base import DatabaseConnection
+from ...db.ops import DataAccessOps
+from ...db.postgresql import setting_rejected_by_server
+from ...retain.types import CausalRelation, EmbeddingLike, EntityResolutionResult, embedding_to_pgvector
+from ...schema import fq_store_table as fq_table
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ def _prepare_entities_for_resolution(
     sentences: list[str],
     fact_dates: list,
     llm_entities: list[list[dict]],
-    log_buffer: list[str] = None,
+    log_buffer: list[str] | None = None,
 ) -> tuple[list[dict], list[list[dict]], list[tuple]]:
     """
     Convert LLM entities into the flat format expected by entity resolver.
@@ -415,7 +415,7 @@ async def resolve_entities_only(
     context: str,
     fact_dates: list,
     llm_entities: list[list[dict]],
-    log_buffer: list[str] = None,
+    log_buffer: list[str] | None = None,
     entity_labels: list | None = None,
 ) -> EntityResolutionResult:
     """
@@ -491,7 +491,7 @@ async def create_temporal_links_batch_per_fact(
     bank_id: str,
     unit_ids: list[str],
     time_window_hours: int = 24,
-    log_buffer: list[str] = None,
+    log_buffer: list[str] | None = None,
     ops=None,
 ) -> int:
     """
@@ -613,7 +613,7 @@ async def compute_semantic_links_ann(
     top_k: int = 50,
     *,
     threshold: float,
-    log_buffer: list[str] = None,
+    log_buffer: list[str] | None = None,
 ) -> list[tuple]:
     """
     Phase 1: ANN search for semantic neighbors among existing units.
@@ -895,7 +895,7 @@ async def create_semantic_links_batch(
     top_k: int = 50,
     *,
     threshold: float,
-    log_buffer: list[str] = None,
+    log_buffer: list[str] | None = None,
     pre_computed_ann_links: list[tuple] | None = None,
     ops=None,
 ) -> int:

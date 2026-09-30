@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 import hindsight_api.engine.memories as memories_mod
+from hindsight_api.engine.memories.base import MemoriesExtension
 from hindsight_api.models import RequestContext
 
 
@@ -73,6 +74,13 @@ class _StoreOwnedStore:
         """Reached by a fact_type-scoped delete of a bank the store owns. Nothing stored here."""
         self._require(bank_id, "scan_memories")
         return SimpleNamespace(memories=[])
+
+    # The bank-delete surfaces, with the interface's store-owned defaults: they reach the
+    # storage methods above, which is what the gate under test must keep from happening.
+    bank_memories_of_type = MemoriesExtension.bank_memories_of_type
+    delete_bank_memories_of_type = MemoriesExtension.delete_bank_memories_of_type
+    count_bank_contents = MemoriesExtension.count_bank_contents
+    purge_bank_rows = MemoriesExtension.purge_bank_rows
 
 
 @pytest.fixture

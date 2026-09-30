@@ -56,7 +56,7 @@ NAMED_RESULT_FAMILIES = [
         {"GraphRetrieval"},
     ),
     (
-        "engine/search/link_expansion_retrieval.py",
+        "engine/memories/pg/link_expansion.py",
         ["retrieve"],
         {"GraphRetrieval"},
     ),

@@ -19,12 +19,12 @@ import pytest
 
 from hindsight_api import RequestContext
 from hindsight_api.engine.graph_maintenance import (
-    MAX_SEMANTIC_LINKS_PER_UNIT,
-    MAX_TEMPORAL_LINKS_PER_UNIT,
     enqueue_entity_prune_candidates,
     enqueue_relink_victims,
     run_graph_maintenance_job,
 )
+from hindsight_api.engine.memories.pg.graph import MAX_SEMANTIC_LINKS_PER_UNIT
+from hindsight_api.engine.memories.pg.links import MAX_TEMPORAL_LINKS_PER_UNIT
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 # Every test here seeds memory_units / memory_links / entities with raw INSERTs and
@@ -1173,10 +1173,7 @@ class TestTimeBudget:
 
 
 def test_caps_match_retain_defaults():
-    """If retain bumps its caps but graph_maintenance stays put, top-up will
-    silently never reach the retain ceiling — the asserts here exist so a
-    future cap change forces a paired update."""
-    from hindsight_api.engine.retain.link_utils import MAX_TEMPORAL_LINKS_PER_UNIT as RETAIN_TEMPORAL
-
-    assert MAX_TEMPORAL_LINKS_PER_UNIT == RETAIN_TEMPORAL
+    """The relink pass tops semantic links up to this cap; retain's ANN defaults to the
+    same top_k, so a change to one forces a paired update of the other. (The temporal cap
+    is a single constant both passes import, so it cannot drift.)"""
     assert MAX_SEMANTIC_LINKS_PER_UNIT == 50  # mirrors compute_semantic_links_ann's top_k default

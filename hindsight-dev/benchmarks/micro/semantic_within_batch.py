@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from hindsight_api.engine.retain.link_utils import compute_semantic_links_within_batch
+from hindsight_api.engine.memories.pg.links import compute_semantic_links_within_batch
 from rich.console import Console
 from rich.table import Table
 

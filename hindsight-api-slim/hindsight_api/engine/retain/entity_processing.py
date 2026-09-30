@@ -7,7 +7,6 @@ Handles entity extraction and resolution for stored facts.
 import logging
 from dataclasses import dataclass
 
-from . import link_utils
 from .types import EntityResolutionResult, ProcessedFact, UserEntities
 
 logger = logging.getLogger(__name__)
@@ -122,15 +121,18 @@ async def resolve_entities(
     fact_dates = prepared.fact_dates
     entities_per_fact = prepared.entities_per_fact
 
-    return await link_utils.resolve_entities_only(
-        entity_resolver,
-        conn,
-        bank_id,
-        unit_ids,
-        fact_texts,
-        "",  # context (not used in current implementation)
-        fact_dates,
-        entities_per_fact,
-        log_buffer,
+    # Imported here: the memories package imports the extensions, which import the engine.
+    from ..memories import get_memories
+
+    return await get_memories().resolve_entities(
+        entity_resolver=entity_resolver,
+        conn=conn,
+        bank_id=bank_id,
+        unit_ids=unit_ids,
+        sentences=fact_texts,
+        context="",  # not used in current implementation
+        fact_dates=fact_dates,
+        llm_entities=entities_per_fact,
+        log_buffer=log_buffer,
         entity_labels=entity_labels,
     )

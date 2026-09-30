@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hindsight_api.engine import entity_resolver as entity_resolver_module
-from hindsight_api.engine.entity_resolver import EntityResolver
+from hindsight_api.engine.memories.pg import entity_resolver as entity_resolver_module
+from hindsight_api.engine.memories.pg.entity_resolver import EntityResolver
 
 
 def _make_resolver(max_candidates: int = 200) -> EntityResolver:
@@ -78,7 +78,7 @@ async def test_scoring_is_capped_at_max_candidates():
     all_candidates = {e["text"]: _candidates(1000, e["text"]) for e in entities_data}
 
     with patch(
-        "hindsight_api.engine.entity_resolver._tokens_are_compatible",
+        "hindsight_api.engine.memories.pg.entity_resolver._tokens_are_compatible",
         wraps=entity_resolver_module._tokens_are_compatible,
     ) as gate:
         await resolver._resolve_from_candidates(

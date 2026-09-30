@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from hindsight_api.config import DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY, clear_config_cache
-from hindsight_api.engine.retain.link_utils import (
+from hindsight_api.engine.memories.pg.links import (
     _NIL_ENTITY_UUID,
     MAX_TEMPORAL_LINKS_PER_UNIT,
     _cap_links_per_unit,

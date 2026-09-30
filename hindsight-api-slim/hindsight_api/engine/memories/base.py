@@ -1,45 +1,45 @@
 """Extension interface for the *memories* slice of storage.
 
-`memory_units` and the link tables around it (`memory_links`, `unit_entities`)
-are the one part of the schema that is a search index as much as a table: every
-recall arm — semantic, BM25, graph, temporal — is a query over them. This module
-carves that slice out from behind the raw SQL so a different engine can own it,
-without touching how documents, chunks, banks, operations or the entity registry
-are stored.
+The memories store owns every table a memory touches: `memory_units`, `memory_links`,
+`unit_entities`, `documents`, `chunks`, `entities`, `entity_cooccurrences` and
+`invalidated_memory_units`. Every recall arm — semantic, BM25, graph, temporal — is a
+query over them, so this module carves them out from behind the raw SQL and lets a
+different engine own them, without touching how banks, operations, mental models or
+the rest of the schema are stored.
 
-The default :class:`~hindsight_api.engine.memories.postgres.PostgresMemories`
-keeps everything exactly where it has always been: rows in `memory_units`, links
-in `memory_links` and `unit_entities`, retrieval as SQL. It is what runs unless
-an extension is configured, and it is the implementation the test suite
-exercises.
+The default :class:`~hindsight_api.engine.memories.postgres.PostgresMemories` keeps
+everything exactly where it has always been: rows in those tables, retrieval as SQL. It
+is what runs unless an extension is configured, and it is the implementation the test
+suite exercises. It is also the only code allowed to name those tables: it resolves
+them through :func:`~hindsight_api.engine.schema.fq_store_table`, while ``fq_table``
+refuses them, and ``tests/test_store_table_boundary.py`` fails on SQL text naming them,
+or on an import of the Postgres store's modules, anywhere else.
 
 An alternative implementation is loaded like any other Hindsight extension::
 
     HINDSIGHT_API_MEMORIES_EXTENSION=mypackage.memories:MyMemories
     HINDSIGHT_API_MEMORIES_SOME_SETTING=value
 
-Such an implementation is the **sole store** for memories: no memory- or
-link-shaped row reaches Postgres at all. Unit ids are minted by
-:meth:`MemoriesExtension.allocate_unit_ids` rather than by an INSERT's RETURNING
-clause, facts carry their entity ids and causal edges inline instead of becoming
-join rows, and recall results come back fully populated with no Postgres
-hydration. Everything else — documents, chunks, banks, the `entities` registry —
-stays in Postgres either way.
+Such an implementation is the **sole store** for a bank it owns: Postgres holds none of
+those tables' rows for it. Unit ids are minted by :meth:`MemoriesExtension.allocate_unit_ids`
+rather than by an INSERT's RETURNING clause, facts carry their entity ids and causal edges
+inline instead of becoming join rows, and recall results come back fully populated with no
+Postgres hydration. Banks, operations and the other engine tables stay in Postgres either way.
 
-Most operations are a method here, so the call chains route through the interface
-rather than reimplement it per store; where the two differ, they usually differ by
-what the method does — the Postgres implementation writes join rows and reprocesses
-links, one that owns the store no-ops those passes and does its own thing. A handful
-of call sites still branch on the one capability flag, ``store_owned`` — whether the
-store owns its writes or the caller issues them as SQL — where the shapes are
-genuinely different; those are the seams, not accidental leaks.
+Every operation on those tables is a method here, and each default is the answer for a store
+that owns its bank; Postgres overrides it with the SQL. The remaining ``store_owned_for``
+branches in the engine do not pick SQL — they pick a different flow where the shapes are
+genuinely different (the retain session that hands a whole document to the store, the transfer
+import that writes one), so they are the seams, not leaks.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
@@ -53,7 +53,10 @@ from ...extensions.base import Extension
 from ..search.tags import TagsMatch
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..retain.types import EmbeddingLike, EntityResolutionResult
     from ..search.retrieval import GraphRetriever
+
+logger = logging.getLogger(__name__)
 
 
 class StoreWriteUnavailable(RuntimeError):
@@ -193,6 +196,73 @@ def document_attachment_filenames(record: "Mapping | None") -> dict[str, str]:
     if not isinstance(decoded, dict):
         return {}
     return {str(k): str(v) for k, v in decoded.items() if k and v}
+
+
+# ------------------------------------------------------------------ document and chunk types
+
+
+@dataclass(frozen=True)
+class AttachmentRef:
+    """Attachment short ids named by one document: the filename lives on the document edge."""
+
+    document_id: str | None
+    attachment_ids: list[str]
+
+
+@dataclass
+class ObservationChunkIds:
+    """The chunk ids of each observation's sources, for recall ``include_chunks``.
+
+    ``chunk_ids_by_observation`` is in observation-rank order, each list in source order
+    and not yet deduplicated across observations. ``sources_by_observation`` is set only
+    when answering had to read the observations for their sources, so the caller can put
+    them back on its results rather than read them a second time.
+    """
+
+    chunk_ids_by_observation: dict[str, list[str]]
+    sources_by_observation: dict[str, list[str]] | None = None
+
+
+@dataclass
+class DocumentSourceUnits:
+    """A document's experience/world memory ids and its total memory count, read before a delete."""
+
+    unit_ids: list[str]
+    units_count: int
+
+
+@dataclass
+class DeletedDocument:
+    """What deleting a document found: whether it existed, and its uploaded file's storage key."""
+
+    deleted: bool
+    file_storage_key: str | None
+
+
+@dataclass
+class DocumentTags:
+    """A document's current tags. ``tags`` is ``None`` when they could not be read — the
+    document is absent, or its record does not carry them — which is never "no tags"."""
+
+    found: bool
+    tags: list[str] | None
+
+
+def _epoch_ms_to_datetime(value: Any) -> datetime | None:
+    """Epoch milliseconds -> aware datetime, for records read from a store rather than from SQL.
+
+    A store returns timestamps as integers; the SQL rows these records stand in for come back as
+    datetimes, and the response builders call ``.isoformat()`` on them. Normalising here keeps
+    those builders unaware of where the record came from. ``0`` means unset, not the epoch.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromtimestamp(int(value) / 1000.0, tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 #: Prefix for the per-source metadata key an observation carries, one per source.
@@ -771,6 +841,130 @@ class KnowledgePageMatch:
 
     page_id: str
     score: float
+
+
+@dataclass
+class MemoryLocation:
+    """Where one memory lives and what it is: the answer to the lookups that precede a delete
+    or a history read. ``source_memory_ids`` is filled only by :meth:`MemoriesExtension.observation_head`."""
+
+    unit_id: str
+    bank_id: str
+    fact_type: str
+    source_memory_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TypedMemoryScope:
+    """A bank's memories of one fact_type, as a typed bank clear needs them: the ids (source
+    types only, for the stale-observation sweep) and the count it reports."""
+
+    unit_ids: list[str] = field(default_factory=list)
+    count: int = 0
+
+
+@dataclass
+class BankContentCounts:
+    """What a whole-bank delete reports having removed."""
+
+    memory_units: int = 0
+    entities: int = 0
+    documents: int = 0
+
+
+# What the retain path's document reads return.
+
+
+@dataclass
+class DocumentBase:
+    """The stored document an append builds on: its body and the version it was read at.
+
+    ``watermark`` is the token a conditional write compare-and-sets against (see
+    :meth:`MemoriesExtension.put_document`); ``None`` for a store that serializes appends
+    on a row lock instead.
+    """
+
+    original_text: str | None
+    content_hash: str | None
+    attachment_filenames: dict[str, str] = field(default_factory=dict)
+    watermark: int | None = None
+
+
+@dataclass
+class ExistingChunk:
+    """A chunk already stored for a document: its id, position and content hash."""
+
+    chunk_id: str
+    chunk_index: int
+    content_hash: str | None
+
+
+@dataclass
+class DocumentChunkState:
+    """A stored document's version, body (when asked for) and chunks, as a delta retain diffs them.
+
+    ``watermark`` is the store-state token the delta's write compare-and-sets against (see
+    :meth:`MemoriesExtension.put_document`); ``None`` where the write serializes on a row lock."""
+
+    content_hash: str | None
+    original_text: str | None
+    chunks: list[ExistingChunk] = field(default_factory=list)
+    watermark: int | None = None
+
+
+def document_chunk_state(
+    record: "Mapping | None", *, bank_id: str, document_id: str, include_text: bool
+) -> DocumentChunkState:
+    """A store-owned document record read as a :class:`DocumentChunkState`; empty if ``None``.
+
+    The record's own chunk hashes, not a download of every chunk's text: they were computed with
+    the same ``sha256(chunk.encode()).hexdigest()`` retain compares with. A chunk_id is
+    ``build_chunk_id(bank_id, document_id, index)`` by construction, so the record carries none.
+    All of it comes from the ONE record: un-pairing the watermark from the hash is what the
+    compare-and-set exists to prevent.
+    """
+    from ..chunk_ids import build_chunk_id
+
+    rec = record or {}
+    return DocumentChunkState(
+        content_hash=rec.get("content_hash"),
+        original_text=rec.get("original_text") if include_text else None,
+        chunks=[
+            ExistingChunk(
+                chunk_id=build_chunk_id(bank_id, document_id, index),
+                chunk_index=index,
+                content_hash=chunk_hash,
+            )
+            for index, chunk_hash in enumerate(rec.get("chunk_hashes") or [])
+        ],
+        watermark=rec.get("watermark"),
+    )
+
+
+@dataclass
+class RelabelResult:
+    """What relabelling a document's memories did: how many it updated, and which of them
+    (``experience``/``world`` only) changed tags or observation scoping — the ones whose
+    observations are no longer valid."""
+
+    updated: int
+    rescoped_unit_ids: list = field(default_factory=list)
+
+
+class NullEntityResolver:
+    """The entity resolver of a store that resolves entities itself (see
+    :meth:`MemoriesExtension.create_entity_resolver`).
+
+    The retain and import paths flush or discard the resolver's per-task stats on every batch,
+    whichever store owns the bank; resolution is what accumulates them, and a store-owned bank
+    never resolves through the engine, so there is never anything to flush.
+    """
+
+    def discard_pending_stats(self) -> None:
+        pass
+
+    async def flush_pending_stats(self) -> None:
+        pass
 
 
 class MemoriesExtension(Extension, ABC):
@@ -1505,12 +1699,12 @@ class MemoriesExtension(Extension, ABC):
         return None
 
     def graph_retriever(self) -> "GraphRetriever | None":
-        """The retriever backing the graph arm, or ``None`` to use the configured one.
+        """The retriever backing the graph arm.
 
-        ``None`` means the links are in Postgres and ``config.graph_retriever``
-        chooses among the SQL retrievers, as it always has. An implementation that
-        owns the links returns its own, because the SQL retrievers would walk
-        tables it never wrote to.
+        Postgres returns the SQL retriever ``config.graph_retriever`` chooses, as it
+        always has. An implementation that owns the links returns its own, because
+        the SQL retrievers would walk tables it never wrote to. ``None`` (the default)
+        is for a store whose ``recall_unified`` never asks for one; asking then raises.
         """
         return None
 
@@ -2212,9 +2406,8 @@ class MemoriesExtension(Extension, ABC):
         """Record the unit→entity postings for a batch of memories.
 
         ``unit_ids`` and ``entity_ids`` are parallel: a unit that mentions three
-        entities appears three times. The `entities` registry itself stays in
-        Postgres regardless; this is the join from a memory to the entities it
-        mentions. ``bank_id`` is passed because a store that keeps the posting on
+        entities appears three times. This is the join from a memory to the
+        entities it mentions; the registry rows themselves are the store's too. ``bank_id`` is passed because a store that keeps the posting on
         the memory (rather than in a global join table) needs to know which
         namespace the units live in — the Postgres join is keyed by global unit id
         and ignores it.
@@ -2261,20 +2454,1642 @@ class MemoriesExtension(Extension, ABC):
         """
         return EntityPrunePassResult()
 
-    # ---------------------------------------------------------------- #4969: engine-documents
-    # (end #4969: engine-documents)
+    # ------------------------------------------------------------------ documents and chunks
+    #
+    # The document/chunk routes, the attachment lookups and the recall enrichment. Each default
+    # is what a store that owns its memories answers, through the methods above; the Postgres
+    # store overrides it with the SQL the engine used to run inline.
 
-    # ---------------------------------------------------------------- #4969: engine-curation
-    # (end #4969: engine-curation)
+    async def record_document_file(
+        self,
+        *,
+        backend,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        storage_key: str,
+        original_name: str,
+        content_type: str,
+    ) -> bool:
+        """Record on a document the uploaded file it was converted from. ``False`` if it is absent.
 
-    # ---------------------------------------------------------------- #4969: retain
-    # (end #4969: retain)
+        Default: :meth:`set_document_file` on the store's own record. Postgres updates the
+        `documents` row on a connection it acquires from ``backend``."""
+        return await self.set_document_file(
+            bank_id=bank_id,
+            document_id=document_id,
+            storage_key=storage_key,
+            original_name=original_name,
+            content_type=content_type,
+        )
 
-    # ---------------------------------------------------------------- #4969: entities-search-consolidation
-    # (end #4969: entities-search-consolidation)
+    async def memory_attachment_refs(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
+    ) -> dict[str, AttachmentRef]:
+        """Each memory's own attachment ids, keyed by unit id; memories with none are omitted.
 
-    # ---------------------------------------------------------------- #4969: transfer-metrics-admin
-    # (end #4969: transfer-metrics-admin)
+        Default: the ids the store carries on each row (``StoredMemory.attachment_ids``).
+        Postgres reads `memory_units.attachment_ids`."""
+        rows = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=list(unit_ids))
+        return {m.unit_id: AttachmentRef(m.document_id, list(m.attachment_ids)) for m in rows if m.attachment_ids}
+
+    async def recall_observation_chunk_ids(
+        self,
+        *,
+        backend,
+        ops,
+        fq_table,
+        bank_id: str,
+        observation_ids: list[uuid.UUID],
+        carried_sources: Mapping[str, list[str] | None],
+    ) -> ObservationChunkIds:
+        """The chunk ids of each observation's sources, for recall ``include_chunks``.
+
+        ``carried_sources`` is the sources each observation already carries on its recall
+        result (``None`` where it carries none). Default: resolve each observation's sources —
+        free when every one was carried, one addressed read otherwise — then read those source
+        memories for their chunk_ids, walked in observation-rank order. Postgres answers with one
+        join on a connection it acquires from ``backend``, and ignores ``carried_sources``."""
+        # The first half is free when the results carry their sources: hydration already fetched
+        # these observations whole, so re-fetching them to read one list back off is an addressed
+        # read that buys nothing. The SECOND read stays either way — the sources are memories
+        # recall never retrieved, and their chunk_ids are genuinely new.
+        sources_read: dict[str, list[str]] | None = None
+        if all(carried_sources.get(str(o)) is not None for o in observation_ids):
+            sources_by_obs = {str(o): (carried_sources[str(o)] or []) for o in observation_ids}
+        else:
+            obs_units = await self.get_memories(
+                conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(o) for o in observation_ids]
+            )
+            sources_by_obs = {u.unit_id: [str(s) for s in (u.source_memory_ids or [])] for u in obs_units}
+            sources_read = sources_by_obs
+        src_ids = [sid for sids in sources_by_obs.values() for sid in sids]
+        srcs = await self.get_memories(
+            conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=list(dict.fromkeys(src_ids))
+        )
+        src_chunk = {s.unit_id: s.chunk_id for s in srcs}
+        by_obs: dict[str, list[str]] = {}
+        for obs_uuid in observation_ids:
+            obs_sources = sources_by_obs.get(str(obs_uuid))
+            if obs_sources is None:
+                continue
+            for sid in obs_sources:
+                cid = src_chunk.get(sid)
+                if cid:
+                    by_obs.setdefault(str(obs_uuid), []).append(cid)
+        return ObservationChunkIds(chunk_ids_by_observation=by_obs, sources_by_observation=sources_read)
+
+    async def recall_chunks(self, *, backend, fq_table, bank_id: str, chunk_ids: list[str]) -> dict[str, Any]:
+        """The recall ``include_chunks`` candidates by chunk_id: rows with ``chunk_text`` and
+        ``chunk_index``. Absent chunks are omitted.
+
+        Default: a store that owns the document store keeps no `chunks` rows, so the metadata is
+        synthesized from the chunk ids themselves — the id carries the document and the index,
+        and ``bank_id`` is known (see ``engine/chunk_ids.py``) — and the text comes from
+        :meth:`get_chunk_texts`. Postgres reads the `chunks` rows on a connection it acquires from
+        ``backend``."""
+        from ..chunk_ids import resolve_chunk_id_in
+
+        chunks_rows = []
+        for _cid in chunk_ids:
+            _ref = resolve_chunk_id_in(_cid, bank_id)
+            if _ref is None:
+                continue
+            chunks_rows.append(
+                {
+                    "chunk_id": _cid,
+                    "chunk_text": "",
+                    "chunk_index": _ref.chunk_index,
+                    "document_id": _ref.document_id,
+                }
+            )
+        # Rows are mutable dicts so the fetch below can write into them.
+        chunks_lookup = {row["chunk_id"]: dict(row) for row in chunks_rows}
+        if chunks_lookup:
+            rows_by_doc: dict[str, list[dict]] = {}
+            for row in chunks_lookup.values():
+                rows_by_doc.setdefault(row["document_id"], []).append(row)
+
+            # Two things decide the cost here, and counting round-trips alone gets
+            # both wrong.
+            #
+            # 1. `list_chunk_texts` downloads a document's WHOLE packed chunk blob.
+            #    When a document contributes a single chunk to this recall — the
+            #    common case, since hits are spread across documents — fetching that
+            #    one chunk is strictly less data. So pick per document rather than
+            #    using one call shape for everything.
+            # 2. These were awaited in a loop, which serialises one store round-trip
+            #    per document. That, not the number of calls, was the cost: measured
+            #    end to end, a 30-hit recall spent ~20.6s here, ~690ms per document,
+            #    against ~735ms for the entire un-hydrated recall.
+            # 3. Concurrency only hides round-trips, it does not remove them. A
+            #    recall's hits are spread thin across documents — measured, 88
+            #    chunks over 76 documents — so per-document fetching was ~76 round
+            #    trips, and at a bounded concurrency that is still several waves.
+            #    `get_chunk_texts` asks for all of them at once; its default
+            #    implementation on the interface is the per-chunk loop, so this is
+            #    correct for every store and merely cheaper for one that batches.
+            _rows = [r for rows in rows_by_doc.values() for r in rows]
+            _refs = [(r["document_id"], r["chunk_index"]) for r in _rows]
+            if _refs:
+                try:
+                    _texts = await self.get_chunk_texts(bank_id=bank_id, refs=_refs)
+                    for _row, _text in zip(_rows, _texts):
+                        if _text is not None:
+                            _row["chunk_text"] = _text
+                except Exception as _err:
+                    # Returning the hits without text beats failing a whole recall
+                    # over chunk bodies, which is how the per-document path behaves
+                    # too — one failure there costs one document, not the request.
+                    logger.warning(
+                        "batched chunk hydration failed; returning %d chunk(s) without text: %s",
+                        len(_rows),
+                        _err,
+                    )
+        return chunks_lookup
+
+    async def recall_observation_sources(
+        self, *, conn, fq_table, bank_id: str, observation_ids: list[uuid.UUID]
+    ) -> dict[str, Any]:
+        """Each observation's source memory ids, keyed by observation id in observation-rank order.
+
+        The token budget recall fills from these is filled in this order, so an unordered read
+        would let a low-ranked observation spend the budget the top-ranked one needs (#3221).
+        Default: one addressed read of the observations. Postgres reads the two columns it needs."""
+        obs_by_id = {
+            m.unit_id: m
+            for m in await self.get_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(o) for o in observation_ids]
+            )
+            if m.fact_type == "observation"
+        }
+        return {
+            m.unit_id: m.source_memory_ids for m in (obs_by_id.get(str(o)) for o in observation_ids) if m is not None
+        }
+
+    async def recall_source_facts(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
+    ) -> dict[str, StoredMemory]:
+        """The source facts recall shows under its observations, keyed by unit id.
+
+        Only the display fields need be set (text, fact_type, context, the three content times,
+        document_id, chunk_id, tags, metadata). Default: :meth:`get_memories`. Postgres selects
+        just those columns."""
+        return {
+            m.unit_id: m
+            for m in await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        }
+
+    async def get_document_with_counts(
+        self, *, conn, ops, fq_table, bank_id: str, document_id: str
+    ) -> Mapping[str, Any] | None:
+        """A document with its memory counts, or ``None``: ``id, bank_id, original_text,
+        content_hash, created_at, updated_at, tags, retain_params, unit_count, world_count,
+        experience_count, observation_count``.
+
+        Default: the store's record (with its text), counted by scanning the document's memories
+        and the observations built on them; it also carries ``attachment_filenames``, an internal
+        carrier the get-document route takes off. Postgres reads the `documents` row and counts
+        in one statement."""
+        _rec = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
+        if _rec is None:
+            return None
+        doc: dict[str, Any] = {
+            "id": _rec.get("document_id") or document_id,
+            "bank_id": bank_id,
+            "original_text": _rec.get("original_text"),
+            "content_hash": _rec.get("content_hash"),
+            "created_at": _epoch_ms_to_datetime(_rec.get("created_at")),
+            "updated_at": _epoch_ms_to_datetime(_rec.get("updated_at")),
+            "tags": list(_rec.get("tags") or []),
+            # The store's metadata map is string -> string, so the write path
+            # carries retain_params as one JSON value (see
+            # `retain/orchestrator._store_document_bodies`). Documents written
+            # before that carry nothing here and still read back with null
+            # params — null beats 404-ing the whole document.
+            "retain_params": (_rec.get("metadata") or {}).get("retain_params"),
+            # The document's attachment names, from the same record. An internal
+            # carrier, not a response field: the get-document route and reprocess
+            # take it off, so the payload is the same shape on either backend.
+            "attachment_filenames": document_attachment_filenames(_rec),
+        }
+        _page = await self.scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+        )
+        doc["unit_count"] = len(_page.memories)
+        doc["world_count"] = sum(1 for m in _page.memories if m.fact_type == "world")
+        doc["experience_count"] = sum(1 for m in _page.memories if m.fact_type == "experience")
+        _sids = [m.unit_id for m in _page.memories if m.fact_type in ("experience", "world")]
+        _obs = (
+            await self.observations_for_sources(conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=_sids)
+            if _sids
+            else []
+        )
+        doc["observation_count"] = len(_obs)
+        return doc
+
+    async def document_source_units(self, *, conn, fq_table, bank_id: str, document_id: str) -> DocumentSourceUnits:
+        """The document's experience/world memory ids (for observation cleanup) and its total
+        memory count, read before it is deleted.
+
+        Default: a scan of the document's memories and :meth:`document_memory_counts`. Postgres
+        reads `memory_units`."""
+        src_page = await self.scan_memories(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            document_id=document_id,
+            fact_types=["experience", "world"],
+            limit=1_000_000,
+        )
+        _doc_counts = await self.document_memory_counts(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=[document_id]
+        )
+        return DocumentSourceUnits(
+            unit_ids=[m.unit_id for m in src_page.memories], units_count=_doc_counts.get(document_id, 0)
+        )
+
+    async def delete_document_rows(
+        self, *, conn, ops, fq_table, bank_id: str, document_id: str, unit_ids: list[str]
+    ) -> DeletedDocument:
+        """Delete a document and its memories — the explicit document deletion.
+
+        ``unit_ids`` are the document's memories from :meth:`document_source_units`. Default: the
+        store's record decides whether the document existed and where its uploaded file lives,
+        then :meth:`delete_document` drops its memories and :meth:`delete_document_record` the
+        record and bodies. Postgres drops the units' links and deletes the `documents` row, whose
+        FK cascade takes the memories."""
+        # Whether the RECORD existed has to be established before deleting it, and it
+        # cannot be inferred from `store_owned_for` — that is a capability of the store,
+        # true for every bank it serves, so using it here reported a successful deletion
+        # for a document that never existed and turned the 404 this endpoint promises
+        # into a 200.
+        #
+        # One read answers both questions: whether the record exists, and where the
+        # uploaded original the document was converted from lives (`set_document_file`
+        # puts the key in the record's metadata) — there is no SQL row to hold it.
+        #
+        # When the store owns the document store its RECORD is the authority, and the
+        # memory count is deliberately not consulted: "document not found" is a statement
+        # about the document, and a document with no memories still exists. It also cannot
+        # be trusted here — the per-document count is a per-segment tally that does not
+        # subtract a delete still sitting in the un-folded tail, so straight after a delete
+        # it reports the pre-delete number and a second delete of the same document would
+        # report success.
+        _record = await self.get_document_record(bank_id=bank_id, document_id=document_id)
+        file_storage_key = ((_record or {}).get("metadata") or {}).get(DOC_META_FILE_STORAGE_KEY)
+        await self.delete_document(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        # The EXPLICIT deletion also drops the document RECORD (its extracted text + chunk
+        # bodies; the orphan sweep reclaims the blobs) — distinct from the re-ingest
+        # facts-delete above.
+        await self.delete_document_record(bank_id=bank_id, document_id=document_id)
+        return DeletedDocument(deleted=_record is not None, file_storage_key=file_storage_key)
+
+    async def current_document_tags(self, *, conn, fq_table, bank_id: str, document_id: str) -> DocumentTags:
+        """The tags a document carries now, read before a retag overwrites them.
+
+        Default: the store's record. A record that does not carry a "tags" key at all is
+        unreadable for this purpose, not empty — collapsing it to [] would read a PATCH of []
+        as "unchanged" and skip a real clear-the-tags request. Postgres reads the `documents` row."""
+        _record = await self.get_document_record(bank_id=bank_id, document_id=document_id)
+        return DocumentTags(
+            found=_record is not None,
+            tags=list(_record["tags"] or []) if _record is not None and "tags" in _record else None,
+        )
+
+    async def update_document_tags(
+        self, *, conn, fq_table, bank_id: str, document_id: str, tags: list[str] | None, found: bool
+    ) -> bool:
+        """Mark a document updated and, when ``tags`` is given, replace its OWN tags (its memories
+        are retagged by :meth:`retag_document_memories`). ``False`` if the document is absent.
+
+        ``found`` is what :meth:`current_document_tags` saw in the same transaction. Default:
+        trusts it and writes the record's tags with :meth:`set_document_tags`. Postgres updates
+        the `documents` row and answers from the UPDATE itself."""
+        if not found:
+            return False
+        if tags is not None:
+            await self.set_document_tags(bank_id=bank_id, document_id=document_id, tags=list(tags))
+        return True
+
+    async def retag_document_memories(
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        tags: list[str],
+        retagged: Callable[[list[str] | None], list[str]],
+        rescoped: Callable[[Any], str | None],
+    ) -> int:
+        """Retag a document's memories to ``tags``, then invalidate the observations built on them
+        and requeue their sources, so the next consolidation rebuilds them under the new tags.
+        Returns how many observations were deleted.
+
+        ``retagged(existing_tags)`` is a memory's final tag list (the document's tags plus the
+        label projection it keeps); ``rescoped(observation_scopes)`` is its new scopes as JSON,
+        or ``None`` when they do not change. Default: patch through :meth:`update_memories`, then
+        :meth:`delete_stale_observations` (which requeues surviving co-sources) and
+        :meth:`mark_consolidated`. Postgres runs the same cascade as SQL."""
+        invalidated_obs = 0
+        _doc_page = await self.scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+        )
+        _doc_units = _doc_page.memories
+        if _doc_units:
+            _patches = []
+            for m in _doc_units:
+                _patch = MemoryPatch(unit_id=m.unit_id, tags=retagged(m.tags))
+                _scopes_json = rescoped(m.observation_scopes)
+                if _scopes_json is not None:
+                    _patch.metadata = {META_OBSERVATION_SCOPES: _scopes_json}
+                _patches.append(_patch)
+            await self.update_memories(bank_id, _patches)
+        _src_ids = [m.unit_id for m in _doc_units if m.fact_type in ("experience", "world")]
+        if _src_ids:
+            invalidated_obs = await self.delete_stale_observations(
+                conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, fact_ids=_src_ids
+            )
+            await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None)
+        return invalidated_obs
+
+    async def list_documents_page(
+        self,
+        *,
+        backend,
+        fq_table,
+        bank_id: str,
+        search_query: str | None,
+        tags: list[str] | None,
+        tags_match: TagsMatch,
+        time_field: str | None,
+        start_date: datetime | None,
+        end_date: datetime | None,
+        limit: int,
+        offset: int,
+    ) -> dict:
+        """A page of the bank's documents — ``{items, total, limit, offset}``.
+
+        Default: :meth:`list_documents` on the store's own registry. Postgres pages the
+        `documents` table on a connection it acquires from ``backend``."""
+        return await self.list_documents(
+            bank_id=bank_id,
+            search_query=search_query,
+            tags=tags,
+            tags_match=tags_match,
+            time_field=time_field,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_chunk_row(self, *, conn, fq_table, bank_id: str | None, chunk_id: str) -> Mapping[str, Any] | None:
+        """One chunk by an id that does NOT parse (``bank_id`` is ``None`` then), or ``None``:
+        ``chunk_id, document_id, bank_id, chunk_index, chunk_text, created_at``.
+
+        An id that parses is served by the engine from :meth:`get_chunk_text` for a store-owned
+        bank. Default: ``None`` — such a store keeps no chunk rows to look any other id up in.
+        Postgres reads the `chunks` row."""
+        return None
+
+    async def list_document_chunks(
+        self, *, backend, fq_table, bank_id: str, document_id: str, limit: int, offset: int
+    ) -> dict | None:
+        """A page of a document's chunks by index — ``{items, total, limit, offset}`` — or
+        ``None`` if the document does not exist.
+
+        Default: :meth:`list_chunk_texts`, with each chunk id rebuilt the way retain builds it.
+        Postgres pages the `chunks` rows on a connection it acquires from ``backend``."""
+        from ..chunk_ids import build_chunk_id
+
+        texts = await self.list_chunk_texts(bank_id=bank_id, document_id=document_id)
+        if texts is None:
+            return None
+        total = len(texts)
+        window = list(enumerate(texts))[offset : offset + limit]
+        return {
+            "items": [
+                {
+                    # Rebuilt the same way retain builds it (``engine/chunk_ids.py``) so an
+                    # id from this route is accepted by the addressed chunk route.
+                    "chunk_id": build_chunk_id(bank_id, document_id, idx),
+                    "document_id": document_id,
+                    "bank_id": bank_id,
+                    "chunk_index": idx,
+                    "chunk_text": text,
+                    # The store does not carry a per-chunk creation time; the document's is
+                    # the closest true value and inventing one per chunk would be worse.
+                    "created_at": "",
+                }
+                for idx, text in window
+            ],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    # ------------------------------------------------------------------ curation and bank admin
+    #
+    # The engine's curation and bank-admin surfaces: deleting memories, clearing or deleting a
+    # bank, requeueing consolidation, an observation's history, the entity views. Each default
+    # below is the answer for a store that owns its memories, built from the methods above;
+    # Postgres overrides every one with the SQL the engine used to run inline.
+
+    async def locate_memory(self, *, conn, fq_table, bank_id: str | None, unit_id: str) -> MemoryLocation | None:
+        """The bank and fact_type of one memory, or ``None`` if it does not exist.
+
+        Postgres finds the bank from the row (its ids are global), so ``bank_id`` may be None
+        there. A store partitioned by bank needs it, and answers ``None`` without one."""
+        if not bank_id:
+            return None
+        found = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[unit_id])
+        return MemoryLocation(unit_id=unit_id, bank_id=bank_id, fact_type=found[0].fact_type) if found else None
+
+    async def locate_memories(
+        self, *, conn, fq_table, bank_id: str | None, unit_ids: list[str]
+    ) -> list[MemoryLocation]:
+        """:meth:`locate_memory` for many ids in one read; ids that do not exist are absent.
+
+        Postgres ignores ``bank_id`` and finds each id's bank from its row; a store partitioned by
+        bank looks only in ``bank_id`` and finds nothing without one."""
+        if not bank_id:
+            return []
+        found = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return [MemoryLocation(unit_id=m.unit_id, bank_id=bank_id, fact_type=m.fact_type) for m in found]
+
+    async def delete_memory(self, *, conn, ops, fq_table, bank_id: str | None, unit_id: str) -> str | None:
+        """Delete one memory the caller just located; returns its id, or ``None`` if nothing was
+        deleted. ``bank_id`` is None when :meth:`locate_memory` found nothing.
+
+        Postgres drops the memory's links in lock order, then the row (which cascades to the
+        rest), on the caller's transaction."""
+        if not bank_id:
+            return None
+        await self.delete_facts(bank_id, [unit_id])
+        return unit_id
+
+    async def delete_memories(self, *, conn, ops, fq_table, bank_id: str, unit_ids: list[str]) -> int:
+        """Delete one bank's memories the caller just located; returns how many were deleted.
+
+        Postgres drops their links in lock order, then the rows in chunks, and counts the rows
+        its DELETEs report."""
+        await self.delete_facts(bank_id, unit_ids)
+        return len(unit_ids)
+
+    async def bank_memories_of_type(self, *, conn, fq_table, bank_id: str, fact_type: str) -> TypedMemoryScope:
+        """A bank's memories of one fact_type, for a typed clear: their ids (only for the source
+        types, which drive the stale-observation sweep) and their count."""
+        unit_ids: list[str] = []
+        if fact_type in ("experience", "world"):
+            page = await self.scan_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=[fact_type], limit=1_000_000
+            )
+            unit_ids = [m.unit_id for m in page.memories]
+        counts = await self.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return TypedMemoryScope(unit_ids=unit_ids, count=int(counts.get(fact_type, 0)))
+
+    async def delete_bank_memories_of_type(
+        self, *, conn, ops, fq_table, bank_id: str, fact_type: str, unit_ids: list[str]
+    ) -> None:
+        """Delete a bank's live and archived memories of one fact_type, inside the caller's
+        transaction.
+
+        A no-op here: a store that owns its memories is told after the commit, through
+        :meth:`delete_where`, by the bank delete itself. Postgres deletes the rows (links first,
+        in lock order) and the matching archive rows."""
+
+    async def count_bank_contents(self, *, conn, fq_table, bank_id: str) -> BankContentCounts:
+        """How many memories, entities and documents a bank holds — what a bank delete reports."""
+        counts = await self.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        documents = await self.count_documents(bank_id=bank_id)
+        entities = await self.list_entities(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, search=None, limit=1, offset=0
+        )
+        return BankContentCounts(
+            memory_units=sum(counts.values()), entities=int(entities.get("total") or 0), documents=documents
+        )
+
+    async def purge_bank_rows(self, *, conn, fq_table, bank_id: str) -> list[str]:
+        """Delete a bank's rows inside the caller's transaction, and return the storage keys of
+        its pre-tenant-prefix files, read before the rows naming them go (the post-commit sweep
+        cannot find those by prefix).
+
+        This default still runs SQL, on the caller's connection: attachments and observation
+        history live in Postgres for every store, so it deletes those and reads the legacy keys
+        from attachments. The memories themselves are dropped after the commit, through
+        :meth:`drop_bank_storage` / :meth:`delete_where`. Postgres also reads the legacy keys
+        off its documents and deletes its documents, memories, archive and entities, in one
+        statement order."""
+        legacy_files = [
+            row["storage_key"]
+            for row in await conn.fetch(
+                f"SELECT storage_key FROM {fq_table('attachments')} "
+                f"WHERE bank_id = $1 AND storage_key NOT LIKE 'tenants/%'",
+                bank_id,
+            )
+        ]
+        await conn.execute(f"DELETE FROM {fq_table('attachments')} WHERE bank_id = $1", bank_id)
+        await conn.execute(f"DELETE FROM {fq_table('observation_history')} WHERE bank_id = $1", bank_id)
+        return legacy_files
+
+    async def clear_observations_and_requeue(self, *, conn, fq_table, bank_id: str) -> int:
+        """Delete every observation in a bank and requeue every source for re-consolidation;
+        returns how many observations there were. Postgres counts, deletes and clears
+        ``consolidated_at`` in three statements on the caller's transaction."""
+        count = (await self.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)).get("observation", 0)
+        await self.delete_observations(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        page = await self.scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["experience", "world"], limit=1_000_000
+        )
+        src_ids = [m.unit_id for m in page.memories]
+        if src_ids:
+            await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=src_ids, when=None)
+        return count
+
+    async def requeue_failed_consolidation(self, *, conn, fq_table, bank_id: str) -> int:
+        """Return a bank's permanently-failed sources to the not-yet-consolidated state; returns
+        how many. ``mark_consolidated(when=None)`` clears both the failed and consolidated
+        markers. Postgres counts and clears both columns in two statements."""
+        failed = await self.find_failed_consolidation(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        if failed:
+            await self.mark_consolidated(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[m.unit_id for m in failed], when=None
+            )
+        return len(failed)
+
+    async def requeue_source_memory(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> None:
+        """Clear one source memory's consolidated marker so it re-consolidates. Scheduler state:
+        ``updated_at`` stays put. Postgres clears it only on a world/experience row."""
+        await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_id)], when=None)
+
+    async def entity_names_by_id(self, *, conn, fq_table, bank_id: str, entity_ids: list) -> list[str]:
+        """Canonical names of ``entity_ids`` in this bank, ordered by entity id; unknown ids are
+        skipped. Feeds a curation re-embed. Postgres reads its ``entities`` registry."""
+        names = await self.resolve_entity_names(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=[str(e) for e in entity_ids]
+        )
+        return [names[eid] for eid in sorted(names)]
+
+    async def observation_head(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> MemoryLocation | None:
+        """One memory's fact_type and current ``source_memory_ids``, or ``None`` if it does not
+        exist — the head an observation's history is rebuilt backwards from."""
+        found = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_id)])
+        if not found:
+            return None
+        return MemoryLocation(
+            unit_id=str(unit_id),
+            bank_id=bank_id,
+            fact_type=found[0].fact_type,
+            source_memory_ids=[str(s) for s in found[0].source_memory_ids],
+        )
+
+    async def source_fact_summaries(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> list[StoredMemory]:
+        """The memories an observation was built from, for its history view. Only ``text``,
+        ``fact_type`` and ``context`` are read; missing ids are absent."""
+        return await self.get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in unit_ids]
+        )
+
+    async def entity_graph(self, *, conn, fq_table, bank_id: str, limit: int, min_count: int) -> dict:
+        """The entity co-occurrence graph (``{nodes, edges, ...}``). Delegates to
+        :meth:`get_entity_graph`, the store's own aggregate; Postgres reads its
+        ``entity_cooccurrences`` table on the caller's connection."""
+        return await self.get_entity_graph(bank_id=bank_id, limit=limit, min_count=min_count)
+
+    async def count_bank_documents(self, *, conn, fq_table, bank_id: str) -> int:
+        """This bank's document count, for the stats page. Delegates to :meth:`count_documents`;
+        Postgres counts its ``documents`` table on the caller's connection."""
+        return await self.count_documents(bank_id=bank_id)
+
+    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: Any) -> dict[str, Any] | None:
+        """One entity rendered for the entity detail view, or ``None`` if the bank has no such entity.
+
+        An addressed lookup against the store's registry, not a page-and-scan, so it stays O(1) in
+        the registry size. First/last seen live on the registry record, which this lookup does not
+        carry (``list_entities`` surfaces them). Postgres reads its ``entities`` row."""
+        eid = str(entity_id)
+        names = await self.resolve_entity_names(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=[eid])
+        if eid not in names:
+            return None
+        counts = await self.entity_memory_counts(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=[eid])
+        return {
+            "id": eid,
+            "canonical_name": names[eid],
+            # Absent from the counts map means no live memories reference it (an orphan), which
+            # is 0 rather than missing.
+            "mention_count": counts.get(eid, 0),
+            "first_seen": None,
+            "last_seen": None,
+            "metadata": {},
+            "observations": [],
+        }
+
+    # ------------------------------------------------------------------ retain
+    #
+    # The retain path's reads and writes of the document row, its chunks and its memories, and
+    # the bank-list aggregates over them. Each default is the answer for a store that owns its
+    # memories: it keeps the document record itself (``put_document``), so there is no SQL row
+    # to read, lock or write. Postgres overrides every one with the SQL retain used to run inline.
+    # A default that raises ``NotImplementedError`` is only reached on the Postgres-only path.
+
+    async def read_document_base(self, *, conn, fq_table, bank_id: str, document_id: str) -> DocumentBase | None:
+        """The stored body and version an append concatenates onto; ``None`` if the document does
+        not exist. Postgres reads the `documents` row; this reads the store's own record."""
+        record = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
+        if not record:
+            return None
+        return DocumentBase(
+            original_text=record.get("original_text"),
+            content_hash=record.get("content_hash"),
+            attachment_filenames=document_attachment_filenames(record),
+            watermark=record.get("watermark"),
+        )
+
+    async def document_updated_at(self, *, backend, fq_table, bank_id: str, document_id: str) -> datetime | None:
+        """When the document was last written, for retain's best-effort stale-request check.
+
+        ``backend`` is the pool: Postgres acquires a connection for the read. ``None`` here, so the
+        check never fires: what serializes writers for a store that owns its documents is its own
+        compare-and-set (``put_document(expect_watermark=...)``)."""
+        return None
+
+    async def recovery_chunk_hashes(
+        self, *, backend, fq_table, bank_id: str, document_id: str, content_hash: str
+    ) -> set[str]:
+        """Hashes of the chunks a crashed retain of this same content (``content_hash``) already
+        committed, so the retry can skip them. ``backend`` is the pool.
+
+        Empty here: a store that owns its memories commits a retain atomically, so there is no
+        half-written retain to resume."""
+        return set()
+
+    async def lock_document_for_write(self, *, conn, ops, fq_table, bank_id: str, document_id: str) -> str | None:
+        """Create the document row if missing and row-lock it; the hash it carried before
+        (``'__pending__'`` for a new row) — the streaming write's ownership gate.
+
+        Here the stored hash, ``None`` if absent, and no lock: there is no row, and a store that
+        owns its documents serializes writers with ``put_document(expect_watermark=...)``."""
+        return await self.document_content_hash(bank_id=bank_id, document_id=document_id)
+
+    async def lock_pending_document(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
+        """Insert a ``'__pending__'`` document row if none exists, then row-lock it — the
+        zero-batch retain's document tracking. A no-op here: there is no row."""
+
+    async def lock_document_hash(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
+        """Row-lock the document and read its content_hash (``None`` if absent) — the delta
+        write's concurrency gate. Here the stored hash, unlocked (see :meth:`lock_document_for_write`)."""
+        return await self.document_content_hash(bank_id=bank_id, document_id=document_id)
+
+    async def load_document_chunks(
+        self, *, backend, fq_table, bank_id: str, document_id: str, include_text: bool
+    ) -> DocumentChunkState:
+        """The document's content_hash (and ``original_text`` when ``include_text``), then its
+        chunks — the base a delta retain diffs against. ``backend`` is the pool: Postgres acquires a
+        connection for the two reads. Here ONE record read, which also carries the watermark."""
+        record = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=include_text)
+        return document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=include_text)
+
+    async def load_existing_chunks(self, *, conn, fq_table, bank_id: str, document_id: str) -> list[ExistingChunk]:
+        """The document's chunks (id, index, content hash), in chunk order."""
+        record = await self.get_document_record(bank_id=bank_id, document_id=document_id)
+        return document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=False).chunks
+
+    async def current_document_hash(self, *, backend, fq_table, bank_id: str, document_id: str) -> str | None:
+        """The document's content_hash now, for the delta's pre-extraction recheck. ``backend`` is
+        the pool.
+
+        ``None`` here, so the recheck is skipped: it only saves extraction tokens, and the delta
+        write's compare-and-set on the store's watermark is what catches a concurrent writer."""
+        return None
+
+    async def document_original_text(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
+        """The document's stored text; ``None`` if it does not exist or keeps none."""
+        record = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=True)
+        return (record or {}).get("original_text")
+
+    async def count_document_memories(self, *, conn, fq_table, bank_id: str, document_id: str) -> int:
+        """How many memories the document owns — zero means it cannot be recalled."""
+        counts = await self.document_memory_counts(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=[document_id]
+        )
+        return int(counts.get(document_id, 0))
+
+    async def document_unit_ids(self, *, conn, fq_table, bank_id: str, document_id: str) -> list[str]:
+        """Every memory id the document owns, oldest first — what a retain resumed after a crash
+        reports as its result."""
+        found: list[StoredMemory] = []
+        page_token = ""
+        while True:
+            page = await self.scan_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=500, page_token=page_token
+            )
+            found.extend(page.memories)
+            page_token = page.next_page_token
+            if not page_token:
+                break
+        # Oldest first, undated last — the order Postgres's `ORDER BY created_at` gives.
+        found.sort(key=lambda m: (m.created_at is None, m.created_at or datetime.min.replace(tzinfo=timezone.utc)))
+        return [m.unit_id for m in found]
+
+    async def delete_document_for_replace(
+        self, *, conn, ops, fq_table, bank_id: str, document_id: str, outgoing_unit_ids: list[str]
+    ) -> datetime | None:
+        """Remove the document's memories, links and row before it is written again; the row's
+        ``created_at``, so the re-ingested document keeps it. Here only the memories go, through
+        :meth:`delete_document`: there is no SQL row, so nothing to carry forward."""
+        await self.delete_document(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        return None
+
+    async def upsert_document_row(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        original_text: str | None,
+        content_hash: str,
+        retain_params: dict | None,
+        document_tags: list[str] | None,
+        preserved_created_at: datetime | None,
+    ) -> None:
+        """Insert or update the SQL document row. A no-op here: the retain path writes the
+        document through :meth:`put_document`, and there is no SQL row."""
+
+    async def relabel_document_memories(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        tags: list[str],
+        metadata: dict[str, Any],
+        observation_scopes: list | str | None,
+        final_tags: Callable[[list[str] | None], list[str]],
+    ) -> RelabelResult:
+        """Give every memory of the document the document's current tags, metadata and
+        observation scoping. ``final_tags`` maps a memory's current tags to the ones it ends with
+        (the document tags, plus the label projection it already carries)."""
+        from ..metadata_utils import drop_null_values
+        from ..retain.fact_storage import _normalize_scopes
+
+        page = await self.scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+        )
+        # Metadata too, not just tags: a survivor left carrying the PREVIOUS retain's metadata is
+        # exactly what this exists to prevent — measured on an append, older units still read
+        # {"source": "email"} after a retain carrying {"source": "crm"}.
+        #
+        # Written under META_METADATA_JSON as one JSON value, which is where the bag contract puts a
+        # memory's user metadata and what every read reconstructs it from. A flat {"source": "crm"}
+        # would merge a stray top-level key into the record's own bag instead: applied, reported as
+        # applied, and invisible to every reader. The bag's other keys are internal (context,
+        # chunk_id, consolidation_failed_at, …) and a patch that carried user keys loose among them
+        # could not be told apart from one setting an internal field.
+        #
+        # Set unconditionally, mirroring Postgres's `SET metadata = $4`: a document whose metadata
+        # was cleared must clear on its survivors too, which an absent key would not do.
+        new_tags_by_unit = {m.unit_id: final_tags(m.tags) for m in page.memories}
+        patches = [
+            MemoryPatch(
+                unit_id=m.unit_id,
+                tags=new_tags_by_unit[m.unit_id],
+                metadata={
+                    META_METADATA_JSON: json.dumps(drop_null_values(metadata or {})),
+                    META_OBSERVATION_SCOPES: json.dumps(observation_scopes),
+                },
+            )
+            for m in page.memories
+        ]
+        if patches:
+            await self.update_memories(bank_id, patches)
+        # Against the tags the unit will actually END with, not the document's: a survivor
+        # keeping its label projection has not been rescoped, and comparing it to the bare
+        # document tags reported every such unit as moved on every retain — an observation
+        # sweep and a full re-consolidation of the document for no change at all.
+        rescoped = [
+            m.unit_id
+            for m in page.memories
+            if m.fact_type in ("experience", "world")
+            and (
+                set(m.tags or []) != set(new_tags_by_unit[m.unit_id])
+                or _normalize_scopes(m.observation_scopes) != _normalize_scopes(observation_scopes)
+            )
+        ]
+        return RelabelResult(updated=len(patches), rescoped_unit_ids=rescoped)
+
+    async def memory_ids_for_chunks(self, *, conn, fq_table, bank_id: str, chunk_ids: list[str]) -> list[str]:
+        """Ids of the ``experience``/``world`` memories these chunks own (observations are not
+        chunk-scoped). Paged to exhaustion: every id is about to be deleted, and a chunk whose
+        facts overflow one page must not keep half of them."""
+        unit_ids: list[str] = []
+        for chunk_id in chunk_ids:
+            page_token = ""
+            while True:
+                page = await self.scan_memories(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    fact_types=["experience", "world"],
+                    metadata_equals={META_CHUNK_ID: chunk_id},
+                    limit=500,
+                    page_token=page_token,
+                )
+                unit_ids.extend(m.unit_id for m in page.memories)
+                page_token = page.next_page_token
+                if not page_token:
+                    break
+        return unit_ids
+
+    async def delete_chunks(self, *, conn, fq_table, bank_id: str, chunk_ids: list[str]) -> None:
+        """Delete the named chunks and the memories (and links) they own. Here: the memories
+        carrying each chunk_id, through :meth:`delete_where` — the store keeps no chunk rows, and
+        without this a delta re-ingest leaves the old memories as duplicates."""
+        for chunk_id in chunk_ids:
+            await self.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: chunk_id}))
+
+    async def upsert_chunks(
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        chunk_ids: list[str],
+        chunk_texts: list[str],
+        chunk_indices: list[int],
+        content_hashes: list[str],
+    ) -> None:
+        """Write the document's chunk rows. A no-op here: the chunk texts and hashes travel with
+        the document record (:meth:`put_document`), and there are no SQL chunk rows."""
+
+    async def unit_embeddings(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list:
+        """``(id, embedding, fact_type)`` rows, embedding as pgvector text, for the end-of-retain
+        semantic-link pass. Empty here, so the pass links nothing: that pass writes SQL links, and
+        a store that owns its memories derives its own (and sets
+        :attr:`derives_semantic_links_internally`, which skips the pass altogether)."""
+        return []
+
+    async def create_bank_vector_indexes(
+        self, *, conn, ops, fq_table, bank_id: str, internal_id: str, index_clause: str, fact_types: dict[str, str]
+    ) -> None:
+        """Build a new bank's per-fact_type vector indexes. A no-op here: the store indexes its
+        own memories, and SQL indexes over rows it never writes would stay empty."""
+
+    async def list_bank_rows(self, *, conn, fq_table, where_clause: str, params: list[str]) -> list:
+        """Every bank row matching ``where_clause`` (over alias ``b``), with its document and
+        memory write watermarks (``last_document_at``, ``last_document_write_at``,
+        ``last_fact_at``), ordered by bank_id.
+
+        The watermarks are NULL here — the store has no SQL rows to take them from, and the bank
+        list asks the store for them (``last_write_at_many`` / ``last_document_at_many``)."""
+        return await conn.fetch(
+            f"""
+            SELECT
+                b.bank_id, b.name, b.disposition, b.mission,
+                b.created_at, b.updated_at,
+                NULL AS last_document_at,
+                NULL AS last_document_write_at,
+                NULL AS last_fact_at
+            FROM {fq_table("banks")} b
+            {where_clause}
+            ORDER BY b.bank_id
+            """,
+            *params,
+        )
+
+    async def bank_page_rows(self, *, conn, fq_table, bank_ids: list[str], sql_owned: list[str]) -> list:
+        """The rows of the named banks (any order), with the same three watermarks as
+        :meth:`list_bank_rows`; ``sql_owned`` are the banks whose memories are SQL rows. NULL
+        watermarks here, for the same reason."""
+        return await conn.fetch(
+            f"""
+            SELECT b.bank_id, b.name, b.disposition, b.mission, b.created_at, b.updated_at,
+                   NULL AS last_document_at, NULL AS last_document_write_at, NULL AS last_fact_at
+            FROM {fq_table("banks")} b
+            WHERE b.bank_id = ANY($1::text[])
+            """,
+            bank_ids,
+        )
+
+    async def bank_fact_counts(self, *, conn, fq_table, bank_ids: list[str]) -> dict[str, int]:
+        """Live memory count per bank, for the banks named; absent = 0."""
+        counts = await self.count_memories_many(bank_ids=bank_ids, strong=True)
+        return {bank_id: sum(by_type.values()) for bank_id, by_type in counts.items()}
+
+    # ------------------------------------------------------------------ retain links and entity resolution
+    #
+    # The retain-time link writes, the ANN neighbour search behind them, and entity resolution.
+    # All of them are reached only for a bank whose memories are SQL rows: the store-owned retain
+    # and import hand the store entity names and causal edges inline and let it derive its own
+    # temporal / semantic links, and the memory edit branches on ``store_owned_for`` before it
+    # resolves anything. So each default is the store-owned answer: nothing to write, no
+    # neighbours, no entities resolved.
+
+    def create_entity_resolver(
+        self,
+        *,
+        backend,
+        entity_lookup: str,
+        entity_resolution_batch_size: int,
+        intrabatch_merge_similarity: float,
+        entity_resolution_max_candidates: int,
+        merge_min_similarity: float,
+    ) -> Any:
+        """The entity resolver the engine builds once at startup and threads through retain,
+        import and the memory edit, handing it back to :meth:`resolve_entities`.
+
+        Here a :class:`NullEntityResolver`: a store that owns its entities resolves names itself."""
+        return NullEntityResolver()
+
+    async def resolve_entities(
+        self,
+        *,
+        entity_resolver,
+        conn,
+        bank_id: str,
+        unit_ids: list[str],
+        sentences: list[str],
+        context: str,
+        fact_dates: list,
+        llm_entities: list[list[dict]],
+        log_buffer: list[str] | None = None,
+        entity_labels: list | None = None,
+    ) -> EntityResolutionResult:
+        """Resolve each unit's entity mentions to canonical entity ids, creating the missing ones
+        (autocommitted on ``conn``, outside the write transaction).
+
+        Empty here — the same answer retain's phase 1 gives a store-owned bank without asking:
+        such a store resolves the names its write carries itself."""
+        from ..retain.types import EntityResolutionResult
+
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
+
+    async def compute_semantic_links_ann(
+        self,
+        *,
+        conn,
+        bank_id: str,
+        unit_ids: list[str],
+        embeddings: Sequence[EmbeddingLike],
+        fact_types: list[str] | None = None,
+        top_k: int = 50,
+        threshold: float,
+        log_buffer: list[str] | None = None,
+    ) -> list[tuple]:
+        """Semantic neighbours among the bank's existing memories, as link tuples, for
+        :meth:`create_semantic_links` / :meth:`insert_links`. None here: the store derives its own."""
+        return []
+
+    async def create_temporal_links(self, *, conn, ops, bank_id: str, unit_ids: list[str]) -> int:
+        """Link each new memory to the memories close to it in time; how many links were written."""
+        return 0
+
+    async def create_semantic_links(
+        self,
+        *,
+        conn,
+        ops,
+        bank_id: str,
+        unit_ids: list[str],
+        embeddings: Sequence[EmbeddingLike],
+        threshold: float,
+        pre_computed_ann_links: list[tuple] | None = None,
+    ) -> int:
+        """Link each new memory to similar ones — within the batch, plus the precomputed ANN
+        neighbours; how many links were written."""
+        return 0
+
+    async def create_causal_links(
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+    ) -> int:
+        """Write the new memories' ``caused_by`` edges; how many links were written."""
+        return 0
+
+    async def restore_legacy_causal_links(
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+    ) -> int:
+        """Write an imported archive's historical causal edge types, which retain never creates;
+        how many links were written."""
+        return 0
+
+    async def insert_links(self, *, conn, ops, bank_id: str, links: list[tuple]) -> None:
+        """Insert precomputed link tuples (the end-of-retain semantic pass)."""
+
+    # ------------------------------------------------------------------ consolidation writes and recall expansion
+    #
+    # Consolidation's writes and checks. Each runs on the caller's connection, inside the
+    # consolidation batch's transaction, so every write derived from one LLM response commits or
+    # rolls back together (#3876). The defaults are what a store that owns its rows does;
+    # Postgres overrides them with the SQL in ``pg/consolidation.py``.
+
+    async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> set[str]:
+        """Which of ``unit_ids`` still exist, held so a concurrent delete cannot remove one before
+        the caller's transaction commits.
+
+        Postgres takes ``FOR SHARE`` on the rows. A store that keeps memories outside SQL has its
+        own concurrency model, so this default is an unlocked existence check.
+        """
+        present = await self.get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(mid) for mid in unit_ids]
+        )
+        return {str(m.unit_id) for m in present}
+
+    async def memories_changed_since(self, *, conn, fq_table, bank_id: str, read_at: dict[str, datetime]) -> list[str]:
+        """Ids in ``read_at`` (id -> the ``updated_at`` it was read with) edited since (#4831).
+
+        Postgres compares ``updated_at`` and takes ``FOR SHARE`` so no edit lands before the
+        caller's transaction commits. A store whose reads carry no ``updated_at`` cannot tell,
+        so this default reports none.
+        """
+        return []
+
+    async def any_memory_exists(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> bool:
+        """Whether any of ``unit_ids`` still exists. A cheap, non-locking preflight."""
+        present = await self.get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(mid) for mid in unit_ids]
+        )
+        return bool(present)
+
+    async def count_observations_with_tags(self, *, conn, fq_table, bank_id: str, tags: list[str]) -> int:
+        """Observations whose tags contain every one of ``tags``. Postgres runs one ``COUNT``."""
+        total = 0
+        page_token = ""
+        for _ in range(100):
+            page = await self.scan_memories(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_types=["observation"],
+                tags=tags or None,
+                tags_match="all",
+                limit=500,
+                page_token=page_token,
+            )
+            total += len(page.memories)
+            page_token = page.next_page_token
+            if not page_token:
+                break
+        return total
+
+    async def insert_observation(
+        self,
+        *,
+        conn,
+        ops,
+        fq_table,
+        bank_id: str,
+        observation_id: uuid.UUID,
+        text: str,
+        embedding: str | None,
+        source_memory_ids: list,
+        tags: list[str],
+        event_date: datetime | None,
+        occurred_start: datetime | None,
+        occurred_end: datetime | None,
+        mentioned_at: datetime | None,
+        created_at: datetime,
+    ) -> str:
+        """Write a new observation; returns its id.
+
+        Postgres inserts a `memory_units` row (plus Oracle's `observation_sources` postings);
+        this default hands the store the whole record through :meth:`upsert_observation`.
+        """
+        await self.upsert_observation(
+            conn=conn,
+            bank_id=bank_id,
+            record=FactRecord(
+                unit_id=str(observation_id),
+                text=text,
+                # `FactRecord.embedding` is declared non-optional, but consolidation has nothing to
+                # write when the embedder returned nothing -- so a store reading the seam's own
+                # declaration is handed None anyway. Widening the field would make every extension
+                # handle it, so the mismatch is named here rather than moved onto implementers.
+                embedding=cast("list[float] | str", embedding),
+                fact_type="observation",
+                tags=list(tags),
+                proof_count=1,
+                source_memory_ids=[str(s) for s in source_memory_ids],
+                event_date=event_date,
+                occurred_start=occurred_start,
+                occurred_end=occurred_end,
+                mentioned_at=mentioned_at,
+                created_at=created_at,
+            ),
+        )
+        return str(observation_id)
+
+    async def rewrite_observation(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        observation_id: str,
+        text: str,
+        embedding: str | None,
+        source_memory_ids: list,
+        tags: list[str],
+        bounds: Any,
+        previous: Any,
+    ) -> bool:
+        """Replace an observation's text, embedding, sources and tags, widening its dates by
+        ``bounds`` (a consolidator ``_TemporalBounds``). False when the observation is gone.
+
+        Postgres UPDATEs the row in place. This default re-upserts the whole observation, so it
+        starts from the store's current copy — or, when that has vanished, from ``previous`` (the
+        pre-update recall snapshot) — and keeps the fields the update never touches (created_at).
+        """
+        from ..consolidation.consolidator import _as_dt, _TemporalBounds
+
+        current = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
+        cur = current[0] if current else None
+        # Widen the row the store still holds. If it has vanished, fall back to the
+        # pre-update recall snapshot — ISO strings, and no event_date on that model.
+        current_bounds = (
+            _TemporalBounds.of(cur)
+            if cur
+            else _TemporalBounds(
+                occurred_start=_as_dt(previous.occurred_start),
+                occurred_end=_as_dt(previous.occurred_end),
+                mentioned_at=_as_dt(previous.mentioned_at),
+            )
+        )
+        merged_bounds = current_bounds.merged_with(bounds)
+        await self.upsert_observation(
+            conn=conn,
+            bank_id=bank_id,
+            record=FactRecord(
+                unit_id=observation_id,
+                text=text,
+                # Same non-optional-field caveat as in `insert_observation` above.
+                embedding=cast("list[float] | str", embedding),
+                fact_type="observation",
+                tags=tags,
+                proof_count=len(source_memory_ids),
+                source_memory_ids=[str(s) for s in source_memory_ids],
+                event_date=merged_bounds.event_date,
+                occurred_start=merged_bounds.occurred_start,
+                occurred_end=merged_bounds.occurred_end,
+                mentioned_at=merged_bounds.mentioned_at,
+                created_at=cur.created_at if cur else None,
+            ),
+        )
+        return True
+
+    async def fold_sources_into_observation(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        observation_id: str,
+        expected_text: str,
+        merged_text: str,
+        source_memory_ids: list,
+        bounds: Any,
+        embeddings: Any,
+    ) -> bool:
+        """Dedup merge: fold ``source_memory_ids``, ``merged_text`` and ``bounds`` (a consolidator
+        ``_TemporalBounds``) into an existing observation. False when the fold did not happen.
+
+        Postgres UPDATEs the row gated on ``expected_text`` (its probe-time text) and keeps the
+        stored embedding. This default re-upserts the observation, preserving its other fields,
+        and re-embeds the merged text with ``embeddings`` because :meth:`get_memories` does not
+        return the stored vector.
+        """
+        from ..consolidation.consolidator import _TemporalBounds
+        from ..retain import embedding_utils
+
+        current = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
+        cur = current[0] if current else None
+        if cur is None:
+            # Nothing to fold into; the caller still skips its CREATE, as it always has here.
+            return True
+        merged_sources = list(dict.fromkeys([*(cur.source_memory_ids or []), *(str(s) for s in source_memory_ids)]))
+        merged_bounds = _TemporalBounds.of(cur).merged_with(bounds)
+        vectors = await embedding_utils.generate_embeddings_batch(embeddings, [merged_text])
+        await self.upsert_observation(
+            conn=conn,
+            bank_id=bank_id,
+            record=FactRecord(
+                unit_id=observation_id,
+                text=merged_text,
+                # Same non-optional-field caveat as in `insert_observation` above.
+                embedding=cast("list[float] | str", str(vectors[0]) if vectors else None),
+                fact_type="observation",
+                tags=list(cur.tags or []),
+                proof_count=len(merged_sources),
+                source_memory_ids=merged_sources,
+                event_date=merged_bounds.event_date,
+                occurred_start=merged_bounds.occurred_start,
+                occurred_end=merged_bounds.occurred_end,
+                mentioned_at=merged_bounds.mentioned_at,
+                created_at=cur.created_at,
+            ),
+        )
+        return True
+
+    async def fold_observation_into_twin(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        observation_id: str,
+        observation_text: str,
+        twin_id: str,
+        twin_text: str,
+        merged_text: str,
+        embeddings: Any,
+    ) -> bool:
+        """Dedup merge after an UPDATE: fold an observation's live sources and dates into its twin
+        with ``merged_text``. True when folded; the caller then deletes the observation.
+
+        Postgres reads the observation's sources, locks the live ones and UPDATEs the twin, each
+        gated on the probe-time texts. This default reads it through the store and folds with
+        :meth:`fold_sources_into_observation`.
+        """
+        from ..consolidation.consolidator import _TemporalBounds
+
+        updated_obs = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
+        updated_sources = list(updated_obs[0].source_memory_ids or []) if updated_obs else []
+        if not updated_sources:
+            return False
+        live = await self.lock_live_memory_ids(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=updated_sources)
+        live_sources = [mid for mid in updated_sources if str(mid) in live]
+        if not live_sources:
+            return False
+        await self.fold_sources_into_observation(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            observation_id=twin_id,
+            expected_text=twin_text,
+            merged_text=merged_text,
+            source_memory_ids=live_sources,
+            bounds=_TemporalBounds.of(updated_obs[0]),
+            embeddings=embeddings,
+        )
+        return True
+
+    async def delete_observation(self, *, conn, fq_table, bank_id: str, observation_id: str) -> None:
+        """Delete one superseded or contradicted observation, on the caller's transaction."""
+        await self.delete_facts(bank_id, [observation_id])
+
+    # -- reflect's `expand` tool: memories by id, then their chunks and documents --
+
+    async def expand_memories(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> list:
+        """``id`` (a UUID), ``text``, ``chunk_id``, ``document_id``, ``fact_type``, ``context`` for
+        each of ``unit_ids`` that exists, as mappings. Postgres returns its rows as they are."""
+        stored = await self.get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in unit_ids]
+        )
+        return [
+            {
+                "id": uuid.UUID(s.unit_id),
+                "text": s.text,
+                "chunk_id": s.chunk_id,
+                "document_id": s.document_id,
+                "fact_type": s.fact_type,
+                "context": s.context,
+            }
+            for s in stored
+        ]
+
+    async def expand_chunks(
+        self, *, conn, fq_table, bank_id: str, memories: list, chunk_ids: list[str]
+    ) -> dict[str, Any]:
+        """chunk_id -> ``chunk_id``, ``chunk_text``, ``chunk_index``, ``document_id`` for the chunks
+        behind ``memories`` (rows from :meth:`expand_memories`). Postgres reads ``chunk_ids``."""
+        from ..chunk_ids import resolve_chunk_id_in
+
+        # The store addresses a chunk by (document_id, index), and the index is what remains
+        # once the known bank/document prefix is removed (see `engine/chunk_ids.py`). Anchored
+        # on the ids in hand rather than split on "_", which a bank or document id containing
+        # one would break.
+        # Deduped by chunk_id: co-located memories share one chunk, and the SQL read collapses
+        # them through `= ANY($1)`. Without this the store is asked for the same chunk once per
+        # memory sitting in it.
+        chunk_map: dict[str, Any] = {}
+        refs: list[tuple[str, int]] = []
+        ref_owner: list[dict] = []
+        seen_chunks: set[str] = set()
+        for m in memories:
+            cid, did = m["chunk_id"], m["document_id"]
+            if not cid or not did:
+                continue
+            if cid in seen_chunks:
+                continue
+            # `cid` / `did` are row values, typed as the union of everything the row holds; the
+            # `if not cid or not did` guard above is what makes them present, not what types them.
+            cid = cast(str, cid)
+            did = cast(str, did)
+            ref = resolve_chunk_id_in(cid, bank_id)
+            if ref is None or ref.document_id != did:
+                continue
+            index = ref.chunk_index
+            seen_chunks.add(cid)
+            refs.append((did, index))
+            ref_owner.append({"chunk_id": cid, "document_id": did, "chunk_index": index})
+        if refs:
+            texts = await self.get_chunk_texts(bank_id=bank_id, refs=refs)
+            for owner, text in zip(ref_owner, texts):
+                if text is None:
+                    continue
+                chunk_map[owner["chunk_id"]] = {**owner, "chunk_text": text}
+        return chunk_map
+
+    async def expand_documents(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, Any]:
+        """document id -> ``id``, ``original_text``, ``retain_params`` for ``document_ids``."""
+        # One read per document: the store addresses a document by id and has no batch form here.
+        # The set is the documents behind the memories being expanded, which is bounded by the
+        # caller's own memory_ids rather than by corpus size.
+        doc_map: dict[str, Any] = {}
+        for did in document_ids:
+            record = await self.get_document_record(bank_id=bank_id, document_id=did, include_text=True)
+            if record is None:
+                continue
+            # The store has no `retain_params` column; it keeps the retain params inside the
+            # document record's metadata bag, under that key and serialised as JSON. So they are
+            # read back out of the bag rather than reconstructed — the expand tool's
+            # `_document_metadata_from_retain_params` already parses the JSON form, which is the
+            # same thing Postgres hands it from JSONB.
+            doc_map[did] = {
+                "id": did,
+                "original_text": record.get("original_text"),
+                "retain_params": (record.get("metadata") or {}).get("retain_params"),
+            }
+        return doc_map
+
+    # ------------------------------------------------------------------ transfer, gauges and vector indexes
+    #
+    # Bank transfer (export / import), the consolidation gauges and the per-bank vector-index
+    # counts. The transfer shapes (`_LoadedExport`, `TransferObservation`, `FactLifecycle`, …) live
+    # in `engine.transfer` and are typed `Any` here, because this module cannot import that package.
+    # The defaults are the store-owned behaviour, expressed through the interface; the transfer
+    # assembly they reuse lives next to the archive format, so it is imported at call time.
+
+    async def iter_transfer_documents(
+        self,
+        *,
+        backend,
+        fq_table,
+        bank_id: str,
+        document_ids: list[str] | None,
+        include_lifecycle: bool,
+        batch_size: int,
+    ) -> Any:
+        """Async-iterate the bank's documents (or ``document_ids``) as ``_LoadedExport`` batches, for export.
+
+        ``backend`` is a pool or one connection. Postgres reads ``batch_size`` documents per batch,
+        each on a connection it returns before the batch is yielded. This default takes no
+        connection: it yields :meth:`load_transfer_documents` once.
+        """
+        yield await self.load_transfer_documents(
+            conn=None,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            document_ids=document_ids,
+            include_lifecycle=include_lifecycle,
+        )
+
+    async def load_transfer_documents(
+        self, *, conn, fq_table, bank_id: str, document_ids: list[str] | None, include_lifecycle: bool
+    ) -> Any:
+        """The bank's documents (or ``document_ids``) with their chunks and facts, as one ``_LoadedExport``.
+
+        Postgres reads `documents`, `chunks`, `memory_units`, `unit_entities` and `memory_links`
+        on ``conn``. This default assembles the same archive through :meth:`list_documents`,
+        :meth:`scan_memories` and the edges each memory carries.
+        """
+        from ..transfer.export import _load_documents_from_store
+
+        return await _load_documents_from_store(self, bank_id, document_ids, include_lifecycle=include_lifecycle)
+
+    async def load_transfer_observations(self, *, conn, fq_table, bank_id: str, unit_index: dict) -> list:
+        """The bank's observations whose every source is in ``unit_index``, as ``TransferObservation``s.
+
+        ``unit_index`` maps an exported fact's unit id to its (document, ordinal) location.
+        Postgres reads `memory_units` on ``conn``; this default scans the store's observations.
+        """
+        from ..transfer.export import _load_observations_from_store
+
+        return await _load_observations_from_store(self, bank_id, unit_index)
+
+    async def dump_entity_maintenance_queue(self, *, conn, fq_table, bank_id: str) -> list[dict]:
+        """The bank's entity-maintenance queue for export, each entity named rather than numbered.
+
+        Postgres joins the queue to `entities` on ``conn``. Empty here: a store that keeps its own
+        entity registry queues no entity maintenance in Postgres (see
+        :meth:`enqueue_entity_prune_candidates`).
+        """
+        return []
+
+    async def dump_archived_memories(self, *, conn, fq_table, bank_id: str) -> list[dict]:
+        """The curation archive (invalidated, still revertable memories) as portable export rows.
+
+        One dict per archived memory, keyed like an `invalidated_memory_units` row, except that
+        ``entity_ids`` becomes ``entity_names`` (canonical names), ``chunk_id`` becomes
+        ``chunk_index`` (the id embeds the bank), and the surrogate ``id`` is dropped. Postgres
+        reads the archive table on ``conn``. No default: the interface has no way to list an
+        archive, so a store that owns its memories must answer this itself.
+        """
+        raise NotImplementedError("this store cannot list its archived memories")
+
+    async def restore_archived_memories(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        rows: list[dict],
+        unit_id_map: dict[str, str],
+        document_id_map: dict[str, str],
+        bank_rows_json_encoding: str,
+    ) -> int:
+        """Write :meth:`dump_archived_memories` rows into this bank's archive; returns how many.
+
+        ``unit_id_map`` / ``document_id_map`` map the source's unit and document ids to the ones the
+        import wrote (a causal-link snapshot whose endpoint did not come back is dropped). Postgres
+        re-resolves the entity names and inserts on ``conn``. No default, like
+        :meth:`dump_archived_memories`.
+        """
+        raise NotImplementedError("this store cannot restore archived memories")
+
+    async def resolve_entity_ids_by_name(self, *, conn, fq_table, bank_id: str, names: set[str]) -> dict[str, Any]:
+        """Canonical entity name -> this bank's entity id, for rows an import restores by name.
+
+        Postgres reads `entities` on ``conn``. Empty here: the only caller restores Postgres
+        entity-maintenance queue rows, which a store with its own registry does not have.
+        """
+        return {}
+
+    async def transfer_document_exists(self, *, backend, fq_table, bank_id: str, document_id: str) -> bool:
+        """Whether the bank already holds this document — the import's conflict check.
+
+        Postgres reads `documents` on a connection from ``backend``; this default asks
+        :meth:`get_document_record` and takes no connection.
+        """
+        return await self.get_document_record(bank_id=bank_id, document_id=document_id) is not None
+
+    async def restore_document_created_at(
+        self, *, conn, fq_table, bank_id: str, document_id: str, created_at: datetime
+    ) -> None:
+        """Stamp an imported document with the creation time its archive carries.
+
+        Postgres updates the `documents` row on ``conn``. No default: the document record has no
+        field a store could be asked to rewrite, so an import into such a store keeps the import
+        time (the importer logs it).
+        """
+        raise NotImplementedError("this store cannot restore a document's creation time")
+
+    async def restore_fact_lifecycle(self, *, conn, fq_table, bank_id: str, rows: list) -> None:
+        """Apply imported facts' source consolidation state (``FactLifecycle`` rows) to their new units.
+
+        Postgres rewrites ``created_at`` / ``consolidated_at`` / ``consolidation_failed_at`` on
+        ``conn``, inside the import's transaction. This default stamps the markers through
+        :meth:`mark_consolidated`, one call per distinct value. ``created_at`` is not restored here:
+        nothing on the interface rewrites it, so such a fact reads as created at import time.
+        """
+        groups: dict[tuple[datetime, bool], list[str]] = {}
+        for row in rows:
+            if row.consolidated_at is not None:
+                groups.setdefault((row.consolidated_at, False), []).append(row.unit_id)
+            elif row.consolidation_failed_at is not None:
+                groups.setdefault((row.consolidation_failed_at, True), []).append(row.unit_id)
+        for (when, failed), unit_ids in groups.items():
+            await self.mark_consolidated(
+                conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids, when=when, failed=failed
+            )
+
+    async def import_transfer_observations(
+        self,
+        *,
+        backend,
+        ops,
+        fq_table,
+        bank_id: str,
+        resolved: list,
+        processed: list,
+        outcome: Any,
+    ) -> Any:
+        """Write imported observations whose sources are all live; returns ``outcome``, updated.
+
+        ``resolved`` pairs each ``TransferObservation`` with its sources' new unit ids and
+        ``processed`` carries each one's embedded ``ProcessedFact``; an observation with a missing
+        source is skipped and counted in ``outcome.skipped``. Postgres re-checks liveness, inserts
+        and links in one transaction on a connection from ``backend``. This default checks
+        liveness with :meth:`get_memories`, writes each observation whole with
+        :meth:`upsert_observation`, and stamps the sources' consolidated marker when they have none.
+        """
+        all_sources = list(dict.fromkeys(s for _obs, sources in resolved for s in sources))
+        # Read once and reuse below: ``upsert_observation`` writes the observation, never its
+        # sources, so their ``consolidated_at`` is the same after the loop as it is here.
+        source_rows = await self.get_memories(conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=all_sources)
+        live = {m.unit_id for m in source_rows}
+        marked: set[str] = set()
+        for (obs, sources), fact in zip(resolved, processed):
+            missing = [s for s in sources if s not in live]
+            if missing:
+                logger.warning(
+                    "[transfer] Skipping observation for bank %s: %d of %d source units are missing (%s)",
+                    bank_id,
+                    len(missing),
+                    len(sources),
+                    ", ".join(sorted(missing)),
+                )
+                outcome.skipped += 1
+                continue
+            observation_id = str(uuid.uuid4())
+            await self.upsert_observation(
+                conn=None,
+                bank_id=bank_id,
+                record=FactRecord(
+                    unit_id=observation_id,
+                    text=obs.text,
+                    embedding=list(fact.embedding),
+                    fact_type="observation",
+                    tags=list(obs.tags),
+                    proof_count=obs.proof_count,
+                    observation_scopes=obs.observation_scopes,
+                    source_memory_ids=list(sources),
+                    event_date=obs.event_date,
+                    occurred_start=obs.occurred_start,
+                    occurred_end=obs.occurred_end,
+                    mentioned_at=fact.mentioned_at,
+                    created_at=obs.created_at,
+                ),
+            )
+            marked.update(sources)
+            outcome.imported += 1
+            if obs.source_id is not None:
+                outcome.remapped_unit_ids[obs.source_id] = observation_id
+
+        # Same rule as the SQL path's COALESCE: a source whose own consolidated marker came from the
+        # archive keeps it; only the ones with none are stamped now, so the consolidator skips them.
+        unmarked = [m.unit_id for m in source_rows if m.unit_id in marked and m.consolidated_at is None]
+        if unmarked:
+            await self.mark_consolidated(
+                conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=unmarked, when=datetime.now(timezone.utc)
+            )
+        return outcome
+
+    async def count_consolidation_backlog(
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+    ) -> dict[str | None, int]:
+        """Source memories (experience/world) still queued for consolidation, for the backlog gauge.
+
+        Keyed by bank id when ``per_bank``, else a single ``None`` key for the whole ``schema``.
+        Permanently failed memories are excluded (they are :meth:`count_consolidation_failed`).
+        Postgres counts every bank of ``schema`` in one query on ``conn``. This default asks
+        :meth:`count_unconsolidated` per bank, for the banks the async ``bank_ids()`` lists.
+        """
+        counts: dict[str | None, int] = {} if per_bank else {None: 0}
+        for bank_id in await bank_ids():
+            # ponytail: capped per bank, so a huge store-owned backlog reads as the cap. Enough
+            # for "backlog > 0 for N minutes"; a store with a real count overrides this method.
+            n = await self.count_unconsolidated(
+                conn=None,
+                fq_table=None,
+                bank_id=bank_id,
+                fact_types=["experience", "world"],
+                scopes=[None],
+                limit=10_000,
+            )
+            key = bank_id if per_bank else None
+            counts[key] = counts.get(key, 0) + n
+        return counts
+
+    async def count_consolidation_failed(
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+    ) -> dict[str | None, int]:
+        """Source memories whose consolidation permanently failed, keyed like
+        :meth:`count_consolidation_backlog`. This default counts :meth:`find_failed_consolidation`
+        per bank."""
+        counts: dict[str | None, int] = {} if per_bank else {None: 0}
+        for bank_id in await bank_ids():
+            n = len(await self.find_failed_consolidation(conn=None, fq_table=None, bank_id=bank_id))
+            key = bank_id if per_bank else None
+            counts[key] = counts.get(key, 0) + n
+        return counts
+
+    async def capped_memory_counts(
+        self, *, conn, schema: str, bank_id: str, fact_types: list[str], cap: int
+    ) -> dict[str, int]:
+        """``min(rows, cap)`` per fact type, for the per-bank vector-index policy.
+
+        Postgres stops its scan of `memory_units` at ``cap``. This default reads
+        :meth:`count_memories`; a store-owned bank is owed no Postgres index, so it is only here
+        for completeness.
+        """
+        counts = await self.count_memories(conn=None, fq_table=None, bank_id=bank_id)
+        return {fact_type: min(counts.get(fact_type, 0), cap) for fact_type in fact_types}
 
 
 __all__ = [
@@ -2293,15 +4108,18 @@ __all__ = [
     "META_SOURCE_MEMORY_IDS",
     "META_TEXT_SIGNALS",
     "META_UPDATED_AT",
+    "BankContentCounts",
     "CausalEdgeRecord",
     "DeletePredicate",
     "EntityPrunePassResult",
     "FactRecord",
     "MemoriesExtension",
+    "MemoryLocation",
     "MemoryPatch",
     "RelinkPassResult",
     "ScanPage",
     "StoredMemory",
+    "TypedMemoryScope",
     "build_fact_records",
     "build_text_signals",
     "source_key",

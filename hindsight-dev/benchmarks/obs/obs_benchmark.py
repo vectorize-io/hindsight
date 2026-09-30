@@ -31,7 +31,8 @@ from pathlib import Path
 
 from hindsight_api.config import DEFAULT_EMBEDDINGS_LOCAL_MODEL, _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.models import RequestContext
 from rich.console import Console

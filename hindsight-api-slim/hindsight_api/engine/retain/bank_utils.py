@@ -164,13 +164,16 @@ async def create_bank_vector_indexes(
         logger.debug("Skipping per-bank vector indexes for store-owned bank %s", bank_id)
         return
 
-    await ops.create_bank_vector_indexes(
-        conn,
-        fq_table("memory_units"),
-        bank_id,
-        internal_id,
-        index_clause,
-        _BANK_INDEX_FACT_TYPES,
+    from ..memories import get_memories
+
+    await get_memories().create_bank_vector_indexes(
+        conn=conn,
+        ops=ops,
+        fq_table=fq_table,
+        bank_id=bank_id,
+        internal_id=internal_id,
+        index_clause=index_clause,
+        fact_types=_BANK_INDEX_FACT_TYPES,
     )
 
 
@@ -697,10 +700,6 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
         List of dicts with bank info and stats (fact_count, last_document_at, last_write_at),
         most recently written bank first.
     """
-    banks_table = fq_table("banks")
-    docs_table = fq_table("documents")
-    mu_table = fq_table("memory_units")
-
     # Spelled out as UPPER(...) LIKE UPPER(...) rather than ILIKE: the Oracle
     # rewriter only recognizes ILIKE on an unqualified column, and these are
     # alias-qualified.
@@ -717,35 +716,14 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
         )
         params = [f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"]
 
+    from ..memories import get_memories
+
     async with acquire_with_retry(pool) as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT
-                b.bank_id, b.name, b.disposition, b.mission,
-                b.created_at, b.updated_at,
-                d.last_document_at,
-                d.last_document_write_at,
-                -- Per bank, off `idx_memory_units_bank_updated_at`: one index entry read instead of
-                -- the GROUP BY over all of memory_units this replaced. `updated_at`, not
-                -- `created_at`, because that index is the one that exists — and it is the right
-                -- column anyway: this feeds `last_write_at` only, and every write to a fact bumps
-                -- `updated_at`, so the watermark is the same or newer, which is what "last written"
-                -- means. The documents half stays a GROUP BY: correlating it would be random reads
-                -- over the same rows, since this query lists every bank before paging, and
-                -- `last_document_at` must stay ingestion time (frozen when a document is rewritten).
-                (SELECT MAX(m.updated_at) FROM {mu_table} m WHERE m.bank_id = b.bank_id) AS last_fact_at
-            FROM {banks_table} b
-            LEFT JOIN (
-                SELECT bank_id,
-                       MAX(created_at) AS last_document_at,
-                       MAX(updated_at) AS last_document_write_at
-                FROM {docs_table}
-                GROUP BY bank_id
-            ) d ON d.bank_id = b.bank_id
-            {where_clause}
-            ORDER BY b.bank_id
-            """,
-            *params,
+        # The bank rows with their document and fact write watermarks. A store that owns its
+        # memories has no SQL rows to take them from and returns them NULL;
+        # `_apply_store_last_write` below asks the store for them instead.
+        rows = await get_memories().list_bank_rows(
+            conn=conn, fq_table=fq_table, where_clause=where_clause, params=params
         )
 
         # Which alias made a bank match, so a result found by an id the bank does not
@@ -1071,43 +1049,8 @@ async def _bank_rows(pool, bank_ids: "list[str]") -> list:
 
     store = get_memories()
     sql_owned = [b for b in bank_ids if not store.store_owned_for(b)]
-    banks_table = fq_table("banks")
-    docs_table = fq_table("documents")
-    if sql_owned:
-        mu_table = fq_table("memory_units")
-        fact_select = "f.last_fact_at"
-        fact_join = f"""
-            LEFT JOIN (
-                SELECT bank_id, MAX(updated_at) AS last_fact_at
-                FROM {mu_table}
-                WHERE bank_id = ANY($2::text[])
-                GROUP BY bank_id
-            ) f ON f.bank_id = b.bank_id"""
-        params = (bank_ids, sql_owned)
-    else:
-        # Not `NULL::timestamptz` off a join that is simply empty — the table must not appear.
-        fact_select = "NULL::timestamptz AS last_fact_at"
-        fact_join = ""
-        params = (bank_ids,)
     async with acquire_with_retry(pool) as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT b.bank_id, b.name, b.disposition, b.mission, b.created_at, b.updated_at,
-                   d.last_document_at, d.last_document_write_at,
-                   {fact_select}
-            FROM {banks_table} b
-            LEFT JOIN (
-                SELECT bank_id,
-                       MAX(created_at) AS last_document_at,
-                       MAX(updated_at) AS last_document_write_at
-                FROM {docs_table}
-                WHERE bank_id = ANY($1::text[])
-                GROUP BY bank_id
-            ) d ON d.bank_id = b.bank_id{fact_join}
-            WHERE b.bank_id = ANY($1::text[])
-            """,
-            *params,
-        )
+        rows = await store.bank_page_rows(conn=conn, fq_table=fq_table, bank_ids=bank_ids, sql_owned=sql_owned)
     by_id = {}
     for row in rows:
         disposition_data = row["disposition"]
@@ -1257,16 +1200,7 @@ async def apply_sql_fact_counts(pool, banks: list[dict]) -> None:
     if not sql_owned:
         return
     async with acquire_with_retry(pool) as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT bank_id, COUNT(*) AS fact_count
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = ANY($1)
-            GROUP BY bank_id
-            """,
-            list(sql_owned),
-        )
-    counts = {row["bank_id"]: row["fact_count"] for row in rows}
+        counts = await store.bank_fact_counts(conn=conn, fq_table=fq_table, bank_ids=list(sql_owned))
     # Only the SQL-owned ones: a store-owned bank keeps the zero above for `apply_store_fact_counts`
     # to replace, rather than being re-zeroed here by a query that never asked about it.
     for bank in banks:

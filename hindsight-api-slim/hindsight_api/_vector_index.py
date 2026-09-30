@@ -103,7 +103,7 @@ def ann_max_scan_tuples() -> int:
 #
 # - pgvector exposes hnsw.ef_search. The 60 / 200 pair is unchanged from the
 #   pre-dispatcher code (internal benchmarks tuned around our embedding count
-#   and recall floor; see the link_utils / pool init call sites for the
+#   and recall floor; see the memories/pg/links / pool init call sites for the
 #   latency-vs-recall framing). With iterative scans on (below) the ef value is a
 #   batch size rather than a ceiling, so a query's own LIMIT decides its depth.
 # - vchord exposes vchordrq.probes, but its shape must match the index's

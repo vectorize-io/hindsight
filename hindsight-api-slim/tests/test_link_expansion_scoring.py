@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.engine.db.ops import LinkExpansionRows
-from hindsight_api.engine.search import link_expansion_retrieval
-from hindsight_api.engine.search.link_expansion_retrieval import LinkExpansionRetriever
+from hindsight_api.engine.memories.pg import link_expansion
+from hindsight_api.engine.memories.pg.link_expansion import LinkExpansionRetriever
 from hindsight_api.engine.search.types import RetrievalResult
 
 
@@ -42,8 +42,8 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
         # lookup rather than injecting seeds through retrieve().
         return [RetrievalResult(id=f"seed-{fact_type}", text="seed", fact_type=fact_type)]
 
-    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fake_find_semantic_seeds)
+    monkeypatch.setattr(link_expansion, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion, "_find_semantic_seeds", fake_find_semantic_seeds)
     monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
     pool = SimpleNamespace(ops=object())
 
@@ -87,8 +87,8 @@ async def test_preselected_semantic_seeds_skip_seed_query(monkeypatch):
         assert set(seed_ids) == {"seed-a", "seed-b"}
         return LinkExpansionRows(entity=[_row("result", 1.0, fact_type)], semantic=[], causal=[])
 
-    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
+    monkeypatch.setattr(link_expansion, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion, "_find_semantic_seeds", fail_find_semantic_seeds)
     monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
 
     retrieved = await retriever.retrieve(
@@ -121,8 +121,8 @@ async def test_empty_preselected_semantic_seeds_do_not_fall_back(monkeypatch):
     async def fail_find_semantic_seeds(*args, **kwargs):
         raise AssertionError("an empty shared pool must not trigger a second seed query")
 
-    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
+    monkeypatch.setattr(link_expansion, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion, "_find_semantic_seeds", fail_find_semantic_seeds)
 
     retrieved = await retriever.retrieve(
         SimpleNamespace(ops=object()),

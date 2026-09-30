@@ -18,6 +18,7 @@ store — a double that is easier to satisfy than the contract tests the double,
 from types import SimpleNamespace
 
 import hindsight_api.engine.retain.orchestrator as orch
+from hindsight_api.engine.memories.base import MemoriesExtension
 from hindsight_api.engine.retain.types import ConcurrentAppendConflict
 
 
@@ -159,6 +160,9 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
             # SQL read, which is what `saw_open` staying three entries proves.
             saw_open.append(tracker.open)
             return SimpleNamespace(memories=[], next_page_token="")
+
+        # The interface's store-owned answer: the ids come from `scan_memories` above.
+        memory_ids_for_chunks = MemoriesExtension.memory_ids_for_chunks
 
         async def retain(self, bank_id, unit_ids, facts, **kw):
             saw_open.append(tracker.open)

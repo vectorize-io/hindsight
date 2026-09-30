@@ -41,11 +41,11 @@ from __future__ import annotations
 import math
 from itertools import product
 
-from ..entity_resolver import trigram_similarity
+from ..trigram import trigram_similarity
 from .tags import TagGroup, TagGroupAnd, TagGroupLeaf, TagGroupNot, TagGroupOr
 
 #: Trigram similarity at or above which a token resolves to a tag. Shares
-#: ``entity_resolver.trigram_similarity`` — verified byte-identical to Postgres
+#: ``engine.trigram.trigram_similarity`` — verified byte-identical to Postgres
 #: ``similarity()`` (#3107) — rather than growing a second notion of name similarity.
 MIN_SIMILARITY = 0.45
 

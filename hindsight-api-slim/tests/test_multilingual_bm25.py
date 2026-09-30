@@ -26,7 +26,7 @@ from hindsight_api.engine.retain.fact_extraction import (
 )
 from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
 from hindsight_api.engine.search import bm25_term_selection as bm25_mod
-from hindsight_api.engine.search import retrieval as retrieval_mod
+from hindsight_api.engine.memories.pg import recall as recall_mod
 from hindsight_api.engine.search.retrieval import tokenize_query
 from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
 
@@ -431,11 +431,11 @@ async def test_combined_retrieval_rejects_config_missing_bm25_cap(monkeypatch):
         text_search_extension="native",
         text_search_extension_native_language="english",
     )
-    monkeypatch.setattr(retrieval_mod, "get_config", lambda: legacy_config)
-    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
+    monkeypatch.setattr(recall_mod, "get_config", lambda: legacy_config)
+    monkeypatch.setattr(recall_mod, "create_sql_dialect", lambda backend: fake_dialect)
 
     with pytest.raises(AttributeError, match="bm25_max_query_terms"):
-        await retrieval_mod.retrieve_semantic_bm25_combined_sql(
+        await recall_mod.retrieve_semantic_bm25_combined_sql(
             FakeConn(),
             "[0.0]",
             "alpha beta",
@@ -490,15 +490,13 @@ async def test_selective_terms_flag_gates_the_pg_stats_lookup(monkeypatch, selec
         bm25_max_query_terms=16,
         bm25_selective_terms=selective,
     )
-    monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
-    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
+    monkeypatch.setattr(recall_mod, "get_config", lambda: config)
+    monkeypatch.setattr(recall_mod, "create_sql_dialect", lambda backend: fake_dialect)
     monkeypatch.setattr(bm25_mod, "get_current_schema", lambda: "public")
     monkeypatch.setattr(bm25_mod, "select_selective_bm25_tokens", fake_select)
 
     long_query = " ".join(f"term{i}" for i in range(20))  # 20 tokens, over the cap
-    await retrieval_mod.retrieve_semantic_bm25_combined_sql(
-        FakeConn(), "[0.0]", long_query, "bank-1", ["observation"], 5
-    )
+    await recall_mod.retrieve_semantic_bm25_combined_sql(FakeConn(), "[0.0]", long_query, "bank-1", ["observation"], 5)
 
     if selective:
         assert selected == [True]
@@ -525,10 +523,10 @@ async def test_combined_retrieval_reuses_raw_semantic_pool_for_graph_seeds(monke
             ]
 
     config = SimpleNamespace(semantic_min_similarity=0.1, bm25_min_score=0.0)
-    monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
-    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
+    monkeypatch.setattr(recall_mod, "get_config", lambda: config)
+    monkeypatch.setattr(recall_mod, "create_sql_dialect", lambda backend: FakeDialect())
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
+    result = await recall_mod.retrieve_semantic_bm25_combined_sql(
         FakeConn(),
         "[0.0]",
         "",
@@ -555,10 +553,10 @@ async def test_combined_retrieval_keeps_graph_query_when_semantic_threshold_is_s
             return []
 
     config = SimpleNamespace(semantic_min_similarity=0.7, bm25_min_score=0.0)
-    monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
-    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
+    monkeypatch.setattr(recall_mod, "get_config", lambda: config)
+    monkeypatch.setattr(recall_mod, "create_sql_dialect", lambda backend: FakeDialect())
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
+    result = await recall_mod.retrieve_semantic_bm25_combined_sql(
         FakeConn(),
         "[0.0]",
         "",

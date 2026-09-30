@@ -19,6 +19,7 @@ import pytest
 
 from hindsight_api.engine import memory_engine as memory_engine_module
 from hindsight_api.engine.search.types import GraphRetrieval
+from hindsight_api.engine.memories.pg import recall as recall_module
 from hindsight_api.engine.search import retrieval as retrieval_module
 
 _QUERY = "[0.1,0.2,0.3]"
@@ -40,7 +41,7 @@ def stub_retrieval(monkeypatch):
 
     async def fake_semantic_bm25_combined_sql(*args, **kwargs):
         calls["text_search"] = kwargs["enable_text_search"]
-        return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
+        return {"world": recall_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
     async def fake_temporal_combined_sql(*args, **kwargs):
         calls["temporal_combined"] += 1
@@ -61,8 +62,8 @@ def stub_retrieval(monkeypatch):
 
     monkeypatch.setattr("hindsight_api.engine.memories._memories", PostgresMemories({}))
     monkeypatch.setattr("hindsight_api.engine.db_utils.acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined_sql", fake_semantic_bm25_combined_sql)
-    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined_sql", fake_temporal_combined_sql)
+    monkeypatch.setattr(recall_module, "retrieve_semantic_bm25_combined_sql", fake_semantic_bm25_combined_sql)
+    monkeypatch.setattr(recall_module, "retrieve_temporal_combined_sql", fake_temporal_combined_sql)
     monkeypatch.setattr(retrieval_module, "_default_graph_retriever", FakeGraphRetriever())
     monkeypatch.setattr(
         "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",

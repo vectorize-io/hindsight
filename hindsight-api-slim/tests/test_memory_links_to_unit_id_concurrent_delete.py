@@ -35,7 +35,7 @@ import pytest
 
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
 from hindsight_api.engine.db.postgresql import PostgresConnection
-from hindsight_api.engine.retain.link_utils import _bulk_insert_links
+from hindsight_api.engine.memories.pg.links import _bulk_insert_links
 
 # Asserts a raw memory_links row count around a concurrent delete; the graph read
 # path dedupes bidirectional edges, so the count is not reproducible through it.

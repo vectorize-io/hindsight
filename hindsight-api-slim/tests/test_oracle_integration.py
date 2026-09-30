@@ -680,7 +680,7 @@ class TestOracleRetainSql:
     @pytest.mark.asyncio
     async def test_semantic_ann_links_delete_chunks(self, oracle_memory: MemoryEngine, request_context: RequestContext):
         from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
-        from hindsight_api.engine.retain.link_utils import compute_semantic_links_ann
+        from hindsight_api.engine.memories.pg.links import compute_semantic_links_ann
 
         bank_id = _bank_id("retainsql")
         dim = oracle_memory.embeddings.dimension

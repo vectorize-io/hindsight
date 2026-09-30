@@ -2,7 +2,7 @@
 
 Retain and import paths convert embeddings to pgvector vector literals:
 * ``memories.pg.writes.insert_facts_batch`` — serializes 50~500 facts per batch into pgvector literals;
-* ``retain.link_utils.compute_semantic_links_within_batch`` / temp table generation — prepares records;
+* ``memories.pg.links.compute_semantic_links_within_batch`` / temp table generation — prepares records;
 * ``memories.pg.writes.update_memory_unit_embedding`` — updates individual memory embeddings.
 
 The baseline implementation used a Python generator:

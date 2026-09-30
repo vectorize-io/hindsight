@@ -28,6 +28,7 @@ from unittest.mock import patch
 
 import pytest
 
+from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
 from hindsight_api.engine.memories.base import (
     DOC_META_FILE_STORAGE_KEY,
@@ -41,6 +42,7 @@ from hindsight_api.engine.memories.base import (
     StoredMemory,
 )
 from hindsight_api.engine.memories.postgres import PostgresMemories
+from hindsight_api.engine.schema import fq_store_table
 
 
 class InMemoryMemories(MemoriesExtension):
@@ -206,7 +208,7 @@ class InMemoryMemories(MemoriesExtension):
         # from the dict rows — not an empty shell. An empty result means recall returns nothing and
         # every enrichment arm downstream (chunks / source facts / entities) has nothing to hydrate,
         # which is exactly the blind spot these tests exist to close.
-        from hindsight_api.engine.search.retrieval import SemanticBm25Result
+        from hindsight_api.engine.memories.pg.recall import SemanticBm25Result
         from hindsight_api.engine.search.types import RetrievalResult
 
         def _candidate(row, rank: int, *, semantic: bool) -> RetrievalResult:
@@ -390,10 +392,10 @@ class InMemoryMemories(MemoriesExtension):
         }
 
     async def resolve_entity_names(self, *, conn, fq_table, bank_id, entity_ids):
-        # The store owns the memory rows (and their entity ids), but the *names* live in the
-        # shared entity registry, which this store does not stand in for — resolve them through
-        # the connection recall hands us, bank-scoped, exactly as a store that owns its rows (but
-        # not the registry) would. No connection or no ids means no names to resolve.
+        # This stub keeps no entity registry of its own, so the tests seed names into the SQL
+        # `entities` table and the stub reads them back through the connection recall hands it,
+        # bank-scoped — standing in for a store's own registry. No connection or no ids means no
+        # names to resolve.
         if not entity_ids or conn is None:
             return {}
         try:
@@ -401,7 +403,7 @@ class InMemoryMemories(MemoriesExtension):
         except (ValueError, AttributeError, TypeError):
             return {}
         rows = await conn.fetch(
-            f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
+            f"SELECT id, canonical_name FROM {fq_store_table('entities')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
             as_uuids,
             bank_id,
         )
@@ -795,6 +797,41 @@ class InMemoryMemories(MemoriesExtension):
 
         return [KnowledgePageRef(page_id=e.page_id, updated_at=e.updated_at) for e in self._pages(bank_id).values()]
 
+    # -- transfer (#4969): the archive and document provenance an export/import carries ----------
+
+    async def dump_archived_memories(self, *, conn, fq_table, bank_id):
+        return [
+            {
+                "text": row.text,
+                "fact_type": row.fact_type,
+                "document_id": row.document_id,
+                "tags": list(row.tags),
+                "invalidation_reason": self.invalidation_reason.get(unit_id),
+                "chunk_index": None,
+                "entity_names": [],
+            }
+            for unit_id, row in self.archive.items()
+        ]
+
+    async def restore_archived_memories(
+        self, *, conn, fq_table, bank_id, rows, unit_id_map, document_id_map, bank_rows_json_encoding
+    ):
+        for row in rows:
+            unit_id = str(uuid.uuid4())
+            document_id = row.get("document_id")
+            self.archive[unit_id] = StoredMemory(
+                unit_id=unit_id,
+                text=row["text"],
+                fact_type=row["fact_type"],
+                document_id=document_id_map.get(document_id, document_id),
+                tags=list(row.get("tags") or []),
+            )
+            self.invalidation_reason[unit_id] = row.get("invalidation_reason")
+        return len(rows)
+
+    async def restore_document_created_at(self, *, conn, fq_table, bank_id, document_id, created_at):
+        self.documents[str(document_id)]["created_at"] = created_at
+
 
 class _InMemoryRetainSession(RetainSession):
     """Buffer-then-commit. Deliberately the whole-retain policy rather than a per-part flush: it is
@@ -847,6 +884,7 @@ class _InMemoryRetainSession(RetainSession):
                         document_id=part.document_id,
                         tags=list(fact.tags),
                         created_at=fact.created_at or datetime.now(timezone.utc),
+                        causal_edges=list(fact.causal_edges),
                     )
                 unit_ids.setdefault(part.document_id, []).extend(ids)
         self._parts.clear()
@@ -1417,12 +1455,11 @@ async def test_file_convert_retain_records_the_upload_on_the_store_record(memory
 
 
 async def test_recall_include_chunks_hydrates_body_from_store(memory, request_context, restore_default_store):
-    """include_chunks must overlay chunk TEXT from the store, not the empty SQL chunks row.
+    """include_chunks must return chunk TEXT from the store, with no SQL chunks row behind it.
 
-    This is the regression guard: the SQL ``chunks`` row a store that owns bodies writes carries an
-    EMPTY ``chunk_text``; the real text lives in the store. Remove the overlay in ``recall_async``
-    (~line 5271, the ``store_owned`` block) and the returned text falls back to that empty
-    string — this assertion then fails, which is exactly the bug that slipped through before.
+    A store that owns bodies keeps no `chunks` row: the chunk id carries the document and the
+    index (``engine/chunk_ids.py``), and the text lives in the store. The default
+    ``recall_chunks`` synthesizes the row from the id and fills the text through the interface.
     """
     store = InMemoryMemories({})
     set_memories(store)
@@ -1430,28 +1467,14 @@ async def test_recall_include_chunks_hydrates_body_from_store(memory, request_co
     bank_id = f"seam-chunks-{suffix}"
     await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
-    chunk_id = f"chunk-{suffix}"
+    chunk_id = build_chunk_id(bank_id, doc_id, 0)
     fact_id = str(uuid.uuid4())
     body = "the topological qubit stayed coherent for a record two hundred microseconds"
 
-    # The store owns the chunk body ...
+    # The store owns the chunk body; Postgres holds no documents/chunks row for it.
     await store.put_document(
         bank_id=bank_id, document_id=doc_id, content_hash="h", original_text=body, chunk_texts=[body]
     )
-    # ... while the SQL documents/chunks rows carry only metadata (empty text for this store).
-    pool = await memory._get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO documents (id, bank_id, original_text, content_hash) VALUES ($1, $2, '', 'h')",
-            doc_id,
-            bank_id,
-        )
-        await conn.execute(
-            "INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_index, chunk_text) VALUES ($1, $2, $3, 0, '')",
-            chunk_id,
-            doc_id,
-            bank_id,
-        )
     # The fact the search returns carries the chunk_id + document_id linking to that row.
     store.rows[fact_id] = _stored(
         fact_id,
@@ -1486,9 +1509,7 @@ async def test_recall_include_chunks_hydrates_body_from_store(memory, request_co
             f"no chunk read went through the interface: {store.calls}"
         )
     finally:
-        async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
-            await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 async def test_recall_include_source_facts_hydrates_from_store(memory, request_context, restore_default_store):
@@ -1683,7 +1704,7 @@ async def test_recall_all_enrichments_together_through_store(
     bank_id = f"seam-all-{suffix}"
     await memory.ensure_bank_profile(bank_id, request_context=request_context)  # see #4175 above
     doc_id = f"doc-{suffix}"
-    chunk_id = f"chunk-{suffix}"
+    chunk_id = build_chunk_id(bank_id, doc_id, 0)
     src_id = str(uuid.uuid4())
     obs_id = str(uuid.uuid4())
     body = "Alice migrated the billing service to the new cluster over the weekend"
@@ -1695,17 +1716,6 @@ async def test_recall_all_enrichments_together_through_store(
 
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO documents (id, bank_id, original_text, content_hash) VALUES ($1, $2, '', 'h')",
-            doc_id,
-            bank_id,
-        )
-        await conn.execute(
-            "INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_index, chunk_text) VALUES ($1, $2, $3, 0, '')",
-            chunk_id,
-            doc_id,
-            bank_id,
-        )
         ent_id = await conn.fetchval(
             "INSERT INTO entities (bank_id, canonical_name, mention_count) VALUES ($1, $2, 1) RETURNING id",
             bank_id,
@@ -1764,8 +1774,6 @@ async def test_recall_all_enrichments_together_through_store(
         assert result.entities and "billing service" in result.entities
     finally:
         async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
-            await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
 
 
@@ -1960,3 +1968,368 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
         # per-bank flag cannot make. Asserting NULL here would encode a saving that does not exist.
     finally:
         await memory.delete_bank(bank, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Curation surfaces on a store-owned bank (#4969): each read a store-owned bank's memories out of
+# `memory_units`, which holds none of them.
+# ---------------------------------------------------------------------------
+
+
+async def test_observation_history_of_a_store_owned_observation(memory, request_context, restore_default_store):
+    """The history of an observation the store holds resolves its source facts from the store.
+
+    It used to raise UnboundLocalError (a 500 on the route) as soon as the observation had any
+    history: the current source ids were read off a `memory_units` row only the Postgres branch
+    fetched. Past that, the source lookup went to `memory_units` too, so every source fact came
+    back with null text and type.
+    """
+    import json as _json
+
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.memories.base import FactRecord
+    from hindsight_api.engine.schema import fq_table
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    bank_id = f"seam-hist-{uuid.uuid4().hex[:8]}"
+    await memory._ensure_bank_exists(bank_id, request_context)
+    [source_id] = await _seed(store, bank_id, text="the cat sat on the mat", fact_type="world")
+    obs_id = str(uuid.uuid4())
+    await store.upsert_observation(
+        conn=None,
+        bank_id=bank_id,
+        record=FactRecord(
+            unit_id=obs_id,
+            text="cats sit on mats",
+            embedding=None,
+            fact_type="observation",
+            source_memory_ids=[source_id],
+        ),
+    )
+    # History rows live in Postgres for every store.
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        await conn.execute(
+            f"INSERT INTO {fq_table('observation_history')} (observation_id, bank_id, content, changed_at) "
+            "VALUES ($1, $2, $3::jsonb, now())",
+            uuid.UUID(obs_id),
+            bank_id,
+            _json.dumps({"previous_text": "cats sit", "new_source_memory_ids": [source_id]}),
+        )
+
+    history = await memory.get_observation_history(bank_id, obs_id, request_context=request_context)
+
+    assert history is not None and len(history) == 1
+    [fact] = history[0]["source_facts"]
+    assert fact["id"] == source_id
+    assert fact["text"] == "the cat sat on the mat", "the source fact must be read from the store"
+    assert fact["type"] == "world"
+    assert fact["is_new"] is True
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_bulk_delete_removes_store_owned_memories(memory, request_context, restore_default_store):
+    """`delete_memory_units` deletes through the store and reports what it deleted.
+
+    It used to find the ids in `memory_units`, find none, and return `deleted: 0` having told the
+    store nothing — the memories stayed.
+    """
+    store = InMemoryMemories({})
+    set_memories(store)
+    bank_id = f"seam-bulk-{uuid.uuid4().hex[:8]}"
+    await memory._ensure_bank_exists(bank_id, request_context)
+    [doomed_a] = await _seed(store, bank_id, text="first to go", fact_type="world")
+    [doomed_b] = await _seed(store, bank_id, text="second to go", fact_type="experience")
+    [kept] = await _seed(store, bank_id, text="stays", fact_type="world")
+
+    result = await memory.delete_memory_units([doomed_a, doomed_b], bank_id=bank_id, request_context=request_context)
+
+    assert result["deleted"] == 2
+    assert result["per_bank"][bank_id]["deleted"] == 2
+    assert set(store.rows) == {kept}, "the store really lost exactly those two"
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Transfer and the consolidation gauges against a store-owned bank (#4969). Each of these read or
+# wrote a Postgres table the store leaves empty: the export silently dropped the curation archive,
+# the import wrote the archive and the document's rows to Postgres, and the gauges read 0.
+# ---------------------------------------------------------------------------
+
+
+class _NoRowsConn:
+    """A connection that answers every read with nothing — the bank-config half of an export."""
+
+    async def fetch(self, sql, *args):
+        return []
+
+    async def fetchrow(self, sql, *args):
+        return None
+
+    async def fetchval(self, sql, *args):
+        return None
+
+
+async def test_export_carries_a_store_owned_banks_archived_memories():
+    """The archive was read from `invalidated_memory_units`, so a store-owned export carried none."""
+    import io
+    import json
+    import zipfile
+
+    from hindsight_api.engine.transfer.export import export_bank
+
+    store = InMemoryMemories({})
+    [unit_id] = await _seed(store, "bank-x", text="a retracted claim", fact_type="world")
+    await store.invalidate_memory(conn=None, fq_table=None, bank_id="bank-x", unit_id=unit_id, reason="wrong")
+
+    archive = await export_bank(_NoRowsConn(), "bank-x", memories=store)
+
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        rows = json.loads(zf.read("data/invalidated_memory_units.json"))
+        manifest = json.loads(zf.read("manifest.json"))
+    assert [(r["text"], r["invalidation_reason"]) for r in rows] == [("a retracted claim", "wrong")]
+    assert manifest["invalidated_memory_count"] == 1
+
+
+async def test_import_restores_the_archive_into_the_store(restore_default_store):
+    """It was inserted into Postgres, reported as imported, and unreachable by get-archived/revert."""
+    from hindsight_api.engine.transfer.importer import _restore_invalidated_units
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    row = {
+        "text": "a retracted claim",
+        "fact_type": "world",
+        "document_id": "doc-src",
+        "tags": [],
+        "invalidation_reason": "wrong",
+        "chunk_index": 0,
+        "entity_names": [],
+    }
+
+    # conn=None: any Postgres statement would fail here.
+    restored = await _restore_invalidated_units(
+        None,
+        "bank-x",
+        [row],
+        unit_id_map={},
+        document_id_map={"doc-src": "doc-dst"},
+        bank_rows_json_encoding="decoded",
+    )
+
+    assert restored == 1
+    [archived] = store.archive.values()
+    assert (archived.text, archived.document_id) == ("a retracted claim", "doc-dst")
+    assert await store.get_archived_memory(conn=None, fq_table=None, bank_id="bank-x", unit_id=archived.unit_id)
+
+
+async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(restore_default_store):
+    """One retain session carries the document, its facts and their legacy causal edges.
+
+    It used to run the Postgres retain steps: stray `documents` / `chunks` / `entities` rows, the
+    carried `created_at` on the stray document row, and the legacy edges into `memory_links`.
+    ``backend=None`` makes any of those fail.
+    """
+    from hindsight_api.engine.transfer.importer import _import_one_document
+    from hindsight_api.engine.transfer.schema import (
+        TransferCausalRelation,
+        TransferChunk,
+        TransferDocument,
+        TransferFact,
+    )
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    created = datetime(2025, 5, 5, tzinfo=timezone.utc)
+    text = "Ada met Bob. Then Bob left."
+    document = TransferDocument(
+        id="doc-1",
+        original_text=text,
+        tags=["t"],
+        created_at=created,
+        chunks=[TransferChunk(chunk_index=0, chunk_text=text)],
+        facts=[
+            TransferFact(text="Ada met Bob", fact_type="world", entities=["Ada", "Bob"], chunk_index=0),
+            TransferFact(
+                text="Bob left",
+                fact_type="world",
+                chunk_index=0,
+                causal_relations=[TransferCausalRelation(relation_type="enables", target_fact_index=0)],
+            ),
+        ],
+    )
+
+    class _Embedder:
+        async def embed_documents_async(self, texts):
+            return [[0.1, 0.2] for _ in texts]
+
+    class _Config:
+        store_document_text = True
+
+    batch = await _import_one_document(
+        backend=None,
+        embeddings_model=_Embedder(),
+        entity_resolver=None,
+        config=_Config(),
+        format_date_fn=str,
+        bank_id="bank-x",
+        document=document,
+        target_id="doc-1",
+        ops=None,
+    )
+
+    cause, effect = batch.unit_ids
+    assert (store.rows[cause].text, store.rows[effect].text) == ("Ada met Bob", "Bob left")
+    assert [(e.relation_type, e.target_unit_id) for e in store.rows[effect].causal_edges] == [("enables", cause)]
+    assert store.documents["doc-1"]["created_at"] == created
+
+
+async def test_backlog_gauges_count_a_store_owned_banks_memories(restore_default_store):
+    """The gauges counted `memory_units` only, so a store-owned bank's backlog always read 0."""
+    from hindsight_api.metrics import _BacklogKey
+    from tests.test_backlog_metrics import _collector, _FakePool
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    await _seed(store, "bank-x", text="waiting for consolidation", fact_type="world")
+
+    def fetch(sql, *args):
+        if "information_schema.tables" in sql:
+            return [{"table_schema": "public"}]
+        if ".banks" in sql:
+            return [{"bank_id": "bank-x"}]
+        return []
+
+    collector = _collector(include_bank_id=True)
+    collector._db_pool = _FakePool(fetch)
+    await collector._refresh_backlog()
+
+    assert collector._consolidation_backlog == {_BacklogKey("public", "bank-x"): 1}
+    assert collector._consolidation_failed == {_BacklogKey("public", "bank-x"): 0}
+
+
+# ---------------------------------------------------------------------------
+# Retain against a store-owned bank (#4969). Each of these read or wrote a Postgres table the store
+# leaves empty: a delta resolved entities into `entities`, the retain outcome metric counted
+# `memory_units`, and a resumed retain loaded its unit ids from `memory_units`.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_store_owned_delta_writes_no_entities_to_postgres(monkeypatch, restore_default_store):
+    """Phase 1 — the SQL entity resolution, which INSERTs `entities` rows — ran before the delta
+    branched on the store, so every re-retain of a store-owned document left orphan rows behind."""
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import orchestrator as orch
+    from hindsight_api.engine.retain.chunk_storage import compute_chunk_hash
+    from hindsight_api.engine.retain.types import RetainContent
+
+    class _WithChunkHashes(InMemoryMemories):
+        async def get_document_record(self, *, bank_id, document_id, include_text=False):
+            record = await super().get_document_record(
+                bank_id=bank_id, document_id=document_id, include_text=include_text
+            )
+            if record is not None:
+                record["chunk_hashes"] = [compute_chunk_hash(t) for t in self.documents[document_id]["chunk_texts"]]
+            return record
+
+    store = _WithChunkHashes({})
+    set_memories(store)
+    await store.put_document(
+        bank_id="bank-x", document_id="doc-1", content_hash="v1", original_text="kept\nold", chunk_texts=["kept", "old"]
+    )
+
+    async def _resolve_in_postgres(*_a, **_k):
+        raise AssertionError("a store-owned delta ran the SQL entity resolution")
+
+    written: dict = {}
+
+    async def _store_owned_write(**kw):
+        written.update(kw)
+        return True, [[]]
+
+    async def _extract(*_a, **_k):
+        return orch._EmbeddedExtraction(extracted_facts=[], processed_facts=[], chunks=[], usage=TokenUsage())
+
+    async def _no_outcome(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(orch, "_pre_resolve_phase1", _resolve_in_postgres)
+    monkeypatch.setattr(orch, "_delta_store_owned_write", _store_owned_write)
+    monkeypatch.setattr(orch, "_extract_and_embed", _extract)
+    monkeypatch.setattr(orch, "_record_retain_document_outcome", _no_outcome)
+    monkeypatch.setattr(orch, "_chunk_contents_for_delta", lambda _contents, _config: {0: "kept", 1: "new"})
+
+    result = await orch._try_delta_retain(
+        SimpleNamespace(ops=None),
+        None,
+        None,
+        SimpleNamespace(discard_pending_stats=lambda: None),
+        str,
+        "bank-x",
+        [{"content": "kept\nnew", "document_id": "doc-1"}],
+        [RetainContent(content="kept\nnew")],
+        SimpleNamespace(),
+        "doc-1",
+        None,
+        None,
+        [],
+        0.0,
+        None,
+        None,
+        None,
+    )
+
+    assert result is not None, "the delta fell back instead of writing through the store"
+    assert written["changed_indices"] == [1]
+
+
+async def test_the_retain_outcome_counts_a_store_owned_documents_memories(monkeypatch, restore_default_store):
+    """The count behind the 'document has zero units' metric read `memory_units`, so a delta that
+    created nothing reported every store-owned document as unreachable."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.retain import orchestrator as orch
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    await _seed(store, "bank-x", text="kept from an unchanged chunk", fact_type="world", document_id="doc-1")
+
+    recorded: list[int] = []
+
+    @asynccontextmanager
+    async def _no_connection(_pool):
+        yield None  # any SQL would fail on this
+
+    monkeypatch.setattr(orch, "acquire_with_retry", _no_connection)
+    monkeypatch.setattr(
+        orch,
+        "get_metrics_collector",
+        lambda: SimpleNamespace(
+            record_retain_document=lambda bank_id, memory_unit_count: recorded.append(memory_unit_count)
+        ),
+    )
+
+    await orch._record_retain_document_outcome(None, "bank-x", "doc-1", 0)
+
+    assert recorded == [1]
+
+
+async def test_a_resumed_retain_finds_a_store_owned_documents_unit_ids(restore_default_store):
+    """A retain resumed after a crash reports the document's unit ids; read from `memory_units`
+    alone it found none for a store-owned bank. Oldest first, as the SQL read orders them."""
+    store = InMemoryMemories({})
+    [first] = await _seed(store, "bank-x", text="written first", document_id="doc-1")
+    [second] = await _seed(store, "bank-x", text="written second", document_id="doc-1")
+    store.rows[first].created_at, store.rows[second].created_at = (
+        store.rows[second].created_at,
+        store.rows[first].created_at,
+    )
+
+    got = await store.document_unit_ids(conn=None, fq_table=None, bank_id="bank-x", document_id="doc-1")
+
+    assert got == [second, first]

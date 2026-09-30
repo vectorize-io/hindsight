@@ -10,14 +10,12 @@ import random
 
 import pytest
 
-from hindsight_api.engine.entity_resolver import (
+from hindsight_api.engine.memories.pg.entity_resolver import (
     _cluster_new_entity_names,
     _find_intrabatch_similar_pairs,
     _SimilarNamePair,
-    _trigram_set,
-    _trigram_set_similarity,
-    trigram_similarity,
 )
+from hindsight_api.engine.trigram import _trigram_set, _trigram_set_similarity, trigram_similarity
 
 
 # Expected values are what Postgres `SELECT similarity(lower(a), lower(b))` returns for each pair —

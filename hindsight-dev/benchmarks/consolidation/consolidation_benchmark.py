@@ -181,7 +181,7 @@ async def analyze_timing_breakdown(bank_id: str) -> None:
 async def get_bank_stats(memory_engine: MemoryEngine, bank_id: str) -> dict[str, Any]:
     """Get memory statistics for the bank."""
     pool = await memory_engine._get_pool()
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     async with pool.acquire() as conn:
         # Count memories by fact type

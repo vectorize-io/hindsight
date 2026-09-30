@@ -50,13 +50,6 @@ from typing import TYPE_CHECKING
 
 from ..models import RequestContext
 from .db.base import DatabaseConnection
-
-# Re-exported for callers and tests that import the link caps from here; the caps
-# themselves live with the link builders the relink pass mirrors — the temporal one
-# with the retain-time builders, the semantic one with the store's relink pass — so
-# there is a single definition of each and the two cannot drift.
-from .memories.pg.graph import MAX_SEMANTIC_LINKS_PER_UNIT  # noqa: F401
-from .retain.link_utils import MAX_TEMPORAL_LINKS_PER_UNIT  # noqa: F401
 from .schema import fq_table
 
 if TYPE_CHECKING:

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.engine.db.ops import LinkExpansionRows
-from hindsight_api.engine.search import link_expansion_retrieval
-from hindsight_api.engine.search.link_expansion_retrieval import LinkExpansionRetriever
+from hindsight_api.engine.memories.pg import link_expansion
+from hindsight_api.engine.memories.pg.link_expansion import LinkExpansionRetriever
 from hindsight_api.engine.search.types import RetrievalResult
 
 
@@ -28,10 +28,10 @@ async def test_retrieve_passes_configured_graph_seed_threshold(monkeypatch):
     async def fake_expand_combined(_conn, _seed_ids, _fact_type, _budget, *, ops, created_after, created_before):
         return LinkExpansionRows(entity=[], semantic=[], causal=[])
 
-    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fake_find_semantic_seeds)
+    monkeypatch.setattr(link_expansion, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion, "_find_semantic_seeds", fake_find_semantic_seeds)
     monkeypatch.setattr(
-        link_expansion_retrieval,
+        link_expansion,
         "get_config",
         lambda: SimpleNamespace(graph_seed_min_similarity=0.47),
     )

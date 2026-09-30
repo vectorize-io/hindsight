@@ -45,17 +45,17 @@ async def test_completion_counts_committed_document(
             raise RuntimeError("commit failed")
         visible_count = committed_count
 
-    async def count(**kwargs) -> dict[str, int]:
+    async def count(**kwargs) -> int:
         assert kwargs["bank_id"] == "test-bank"
-        assert kwargs["document_ids"] == ["test-document"]
+        assert kwargs["document_id"] == "test-document"
         steps.append("count")
-        return {"test-document": visible_count}
+        return visible_count
 
     session = MagicMock(commit=AsyncMock(side_effect=commit))
     store = MagicMock(
         store_owned_for=MagicMock(return_value=True),
         begin_retain=AsyncMock(return_value=session),
-        document_memory_counts=AsyncMock(side_effect=count),
+        count_document_memories=AsyncMock(side_effect=count),
     )
     monkeypatch.setattr("hindsight_api.engine.memories.get_memories", lambda: store)
 

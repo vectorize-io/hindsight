@@ -1439,7 +1439,7 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
         enqueue_relink_victims,
     )
     from hindsight_api.engine.memory_engine import acquire_with_retry
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     backend = await engine._get_backend()
     deleted_uuids = [uuid_module.UUID(uid) for uid in deleted_ids]
@@ -1474,7 +1474,7 @@ async def run_graph_maintenance_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     delete a fraction of units to enqueue relink victims, then run the job and
     break the wall-clock down by probe so the bottleneck is visible.
     """
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
     from hindsight_api.models import RequestContext
 
     bank_size = scale_cfg["graph_maintenance_bank_size"]
@@ -1637,7 +1637,7 @@ async def _seed_contention_fixture(engine: Any, bank_id: str, n_entities: int, n
     "both entities exist, no current unit witnesses them together" stale case
     that ``prune_stale_cooccurrences`` targets. Returns the sorted pair list.
     """
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     pool = await engine._get_pool()
     ent_ids = [uuid.uuid4() for _ in range(n_entities)]
@@ -1701,7 +1701,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     """
     from asyncpg.exceptions import DeadlockDetectedError
     from hindsight_api.engine.graph_maintenance import run_graph_maintenance_job
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
     from hindsight_api.models import RequestContext
 
     n_entities = scale_cfg["graph_contention_entities"]
@@ -1927,7 +1927,7 @@ async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     links in reasonable time.
     """
     from hindsight_api.engine.bank_stats_cache import BankStatsCache
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
     from hindsight_api.models import RequestContext
 
     bulk = "stats_semantic_links" in scale_cfg
@@ -2243,7 +2243,7 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     from hindsight_api.config import get_config
     from hindsight_api.engine.db import create_data_access_ops
     from hindsight_api.engine.db.ops import UpdatedWindow
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
     from hindsight_api.models import RequestContext
 
     fraction = scale_cfg["obs_hub_percent"] / 100

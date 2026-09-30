@@ -12,7 +12,7 @@ import pytest
 
 from hindsight_api.engine.db import create_database_backend
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
-from hindsight_api.engine.entity_resolver import EntityResolver, _canonical_cooccurrence_pairs
+from hindsight_api.engine.memories.pg.entity_resolver import EntityResolver, _canonical_cooccurrence_pairs
 from hindsight_api.engine.retain.types import ResolvedEntity
 from hindsight_api.pg0 import resolve_database_url
 

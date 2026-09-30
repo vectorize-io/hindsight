@@ -16,9 +16,10 @@ from types import SimpleNamespace
 
 import pytest
 
+import hindsight_api.engine.memories.pg.recall as recall_module
 import hindsight_api.engine.search.retrieval as retrieval_module
 from hindsight_api.engine.search.types import GraphRetrieval
-from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined_sql
+from hindsight_api.engine.memories.pg.recall import _select_with_temporal_coverage, retrieve_temporal_combined_sql
 from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
 EMBED_DIM = 384
@@ -186,7 +187,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
         yield object()
 
     async def fake_semantic_bm25_combined_sql(*args, **kwargs):
-        return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
+        return {"world": recall_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
     async def fake_temporal_combined_sql(*args, **kwargs):
         temporal_thresholds.append(kwargs["semantic_threshold"])
@@ -206,8 +207,8 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
 
     monkeypatch.setattr("hindsight_api.engine.memories._memories", PostgresMemories({}))
     monkeypatch.setattr("hindsight_api.engine.db_utils.acquire_with_retry", fake_acquire_with_retry)
-    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined_sql", fake_semantic_bm25_combined_sql)
-    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined_sql", fake_temporal_combined_sql)
+    monkeypatch.setattr(recall_module, "retrieve_semantic_bm25_combined_sql", fake_semantic_bm25_combined_sql)
+    monkeypatch.setattr(recall_module, "retrieve_temporal_combined_sql", fake_temporal_combined_sql)
     monkeypatch.setattr(retrieval_module, "_default_graph_retriever", FakeGraphRetriever())
     monkeypatch.setattr(retrieval_module, "get_config", lambda: fake_config)
     monkeypatch.setattr("hindsight_api.config.get_config", lambda: fake_config)

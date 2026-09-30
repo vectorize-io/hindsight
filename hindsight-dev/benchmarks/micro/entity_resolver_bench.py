@@ -29,7 +29,7 @@ import tracemalloc
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 
-from hindsight_api.engine.entity_resolver import (
+from hindsight_api.engine.memories.pg.entity_resolver import (
     _find_intrabatch_similar_pairs,
     _SimilarNamePair,
     _trigram_set,

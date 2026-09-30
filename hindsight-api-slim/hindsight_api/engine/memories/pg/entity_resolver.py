@@ -19,18 +19,24 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any, Final, cast
 
-from .db_utils import acquire_with_retry
-from .memory_engine import fq_table
-from .retain.entity_labels import (
+from ...db_utils import acquire_with_retry
+from ...retain.entity_labels import (
     build_labels_lookup as _build_labels_lookup_from_config,
 )
-from .retain.entity_labels import (
+from ...retain.entity_labels import (
     is_label_entity as _is_label_entity,
 )
-from .retain.entity_labels import (
+from ...retain.entity_labels import (
     parse_entity_labels as _parse_entity_labels,
 )
-from .retain.types import ResolvedEntity
+from ...retain.types import ResolvedEntity
+
+# The guard-free resolver, named `fq_table` like every pg/ function's resolver parameter:
+# this module is the Postgres entity registry, so the store tables are its own (#4969).
+from ...schema import fq_store_table as fq_table
+
+# The trigram helpers live outside the store because fuzzy tag matching shares them.
+from ...trigram import _TRGM_WORD, _trigram_set, _trigram_set_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -71,52 +77,6 @@ _INTRABATCH_MAX_NAMES = 250
 # punctuation or decoration — pg_trgm builds its trigrams per word, so identical sets means the
 # separators are all that differ. Name evidence that strong stands on its own.
 _IDENTICAL_TRIGRAMS: Final[float] = 1.0
-
-# A pg_trgm "word" is a maximal run of alphanumerics (Unicode letters/digits, underscore excluded);
-# everything else (space, punctuation, emoji) is a separator. This is why decoration variants like
-# "Wren <emoji>" collapse to the same trigram set.
-_TRGM_WORD = re.compile(r"[^\W_]+", re.UNICODE)
-
-
-def _trigram_set(text: str) -> set[str]:
-    """Trigrams of ``text`` the way PostgreSQL pg_trgm generates them: lowercase, split into words,
-    pad each word with two leading + one trailing blank, and take every 3-char window."""
-    trigrams: set[str] = set()
-    for word in _TRGM_WORD.findall(text.lower()):
-        padded = f"  {word} "
-        for i in range(len(padded) - 2):
-            trigrams.add(padded[i : i + 3])
-    return trigrams
-
-
-def _trigram_set_similarity(ta: set[str], tb: set[str]) -> float:
-    """Jaccard index of two already-computed trigram sets.
-
-    Split out from ``trigram_similarity`` so callers that compare one name against many
-    (the candidate scoring loop, the O(N^2) in-batch pass) build each set once instead of
-    once per comparison — the loop runs up to ``entity_resolution_max_candidates`` times per
-    mention on the retain hot path (GH-3211).
-    """
-    intersection = len(ta & tb)
-    union = len(ta) + len(tb) - intersection
-    return intersection / union if union else 0.0
-
-
-def trigram_similarity(a: str, b: str) -> float:
-    """pg_trgm ``similarity(a, b)`` computed in-memory — the Jaccard index of the trigram sets.
-
-    Public because two subsystems share it: entity resolution here, and fuzzy tag matching in
-    ``search.tag_resolution``. One notion of "similar name" for both, so a change to it is a
-    deliberate change to both — see ``tests/test_entity_intrabatch_clustering.py``, which pins
-    the values against Postgres.
-
-    Verified byte-for-byte against Postgres pg_trgm across emoji / accent / CJK / hyphen /
-    apostrophe cases (issue #3107), so the merge cutoff calibrated on pg_trgm transfers exactly.
-    Doing it in Python keeps the in-batch dedup off the retain transaction's DB connection and makes
-    it backend-agnostic (Postgres, Oracle, and the pg_trgm-absent "full" fallback all behave alike).
-    """
-    return _trigram_set_similarity(_trigram_set(a), _trigram_set(b))
-
 
 # Sequence ratio at/above which two *words* count as the same word. Calibrated on the pair this
 # exists to reject — "John Smith" vs "Jane Smith", where john/jane is 0.50 — against the legitimate
@@ -1641,7 +1601,7 @@ class EntityResolver:
         # read by the entity-graph endpoint and by resolution's disambiguation signal.
         # `store_write=False` means the caller already wrote the postings inline with the
         # memories, so we skip the (redundant) second store write and keep only co-occurrence.
-        from .memories import get_memories
+        from .. import get_memories
 
         if store_write:
             await get_memories().record_unit_entities(

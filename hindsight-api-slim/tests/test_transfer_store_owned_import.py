@@ -5,20 +5,16 @@ A store that owns its memories leaves that table empty, so every source read as 
 observation was skipped, its writes matched no rows, and no imported fact kept the consolidation
 markers the archive carried. These pin the store-backed halves that replace it.
 
-They are also the only coverage those two functions get. CI runs against Postgres, where
-``store_owned_for`` is False and neither is ever reached, so a defect in them would otherwise
-ship green.
+They are also the only coverage those two store defaults get (``import_transfer_observations``,
+``restore_fact_lifecycle``). CI runs against Postgres, which overrides both with SQL, so a defect
+in them would otherwise ship green.
 """
 
 from datetime import datetime, timezone
 
 from hindsight_api.engine.memories.base import StoredMemory
 from hindsight_api.engine.retain.types import ProcessedFact, pack_embedding
-from hindsight_api.engine.transfer.importer import (
-    _ObservationOutcome,
-    _import_observations_via_store,
-    _restore_fact_lifecycle_via_store,
-)
+from hindsight_api.engine.transfer.importer import _fact_lifecycle_rows, _ObservationOutcome
 from hindsight_api.engine.transfer.schema import TransferFact, TransferObservation
 from tests.test_memories_extension import InMemoryMemories
 
@@ -64,8 +60,14 @@ async def test_the_observation_is_written_whole_with_its_sources():
     store = _store(_source(SRC_A), _source(SRC_B))
     observation = TransferObservation(text=OBS_TEXT, source_id="src-obs", proof_count=4, tags=["team"])
 
-    outcome = await _import_observations_via_store(
-        store, BANK, [(observation, [SRC_A, SRC_B])], [_processed()], _ObservationOutcome()
+    outcome = await store.import_transfer_observations(
+        backend=None,
+        ops=None,
+        fq_table=None,
+        bank_id=BANK,
+        resolved=[(observation, [SRC_A, SRC_B])],
+        processed=[_processed()],
+        outcome=_ObservationOutcome(),
     )
 
     assert outcome.imported == 1
@@ -82,8 +84,14 @@ async def test_an_observation_whose_source_is_missing_is_skipped():
     """The liveness check still refuses an observation the archive cannot stand up."""
     store = _store(_source(SRC_A))  # SRC_B was never imported
 
-    outcome = await _import_observations_via_store(
-        store, BANK, [(TransferObservation(text=OBS_TEXT), [SRC_A, SRC_B])], [_processed()], _ObservationOutcome()
+    outcome = await store.import_transfer_observations(
+        backend=None,
+        ops=None,
+        fq_table=None,
+        bank_id=BANK,
+        resolved=[(TransferObservation(text=OBS_TEXT), [SRC_A, SRC_B])],
+        processed=[_processed()],
+        outcome=_ObservationOutcome(),
     )
 
     assert outcome.imported == 0
@@ -95,8 +103,14 @@ async def test_only_a_source_with_no_marker_of_its_own_is_stamped():
     """The SQL path's COALESCE: an archived marker wins over the one import would stamp."""
     store = _store(_source(SRC_A, consolidated_at=EARLIER), _source(SRC_B))
 
-    await _import_observations_via_store(
-        store, BANK, [(TransferObservation(text=OBS_TEXT), [SRC_A, SRC_B])], [_processed()], _ObservationOutcome()
+    await store.import_transfer_observations(
+        backend=None,
+        ops=None,
+        fq_table=None,
+        bank_id=BANK,
+        resolved=[(TransferObservation(text=OBS_TEXT), [SRC_A, SRC_B])],
+        processed=[_processed()],
+        outcome=_ObservationOutcome(),
     )
 
     assert store.rows[SRC_A].consolidated_at == EARLIER
@@ -121,7 +135,9 @@ async def test_fact_markers_are_restored_grouped_by_value():
         TransferFact(text="b", fact_type="world", consolidation_failed_at=failed),
     ]
 
-    await _restore_fact_lifecycle_via_store(store, BANK, facts, [0, 1], [SRC_A, SRC_B])
+    await store.restore_fact_lifecycle(
+        conn=None, fq_table=None, bank_id=BANK, rows=_fact_lifecycle_rows(facts, [0, 1], [SRC_A, SRC_B])
+    )
 
     assert store.rows[SRC_A].consolidated_at == done
     assert store.rows[SRC_B].consolidated_at == failed
@@ -132,6 +148,8 @@ async def test_a_fact_the_import_dropped_is_skipped():
     store = _store(_source(SRC_A))
     facts = [TransferFact(text="dropped", fact_type="world", consolidated_at=EARLIER)]
 
-    await _restore_fact_lifecycle_via_store(store, BANK, facts, [None], [SRC_A])
+    await store.restore_fact_lifecycle(
+        conn=None, fq_table=None, bank_id=BANK, rows=_fact_lifecycle_rows(facts, [None], [SRC_A])
+    )
 
     assert store.rows[SRC_A].consolidated_at is None
