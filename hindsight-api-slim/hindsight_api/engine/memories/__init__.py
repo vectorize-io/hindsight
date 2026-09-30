@@ -80,9 +80,9 @@ def sql_memories() -> PostgresMemories:
     A caller reaches for this only after it has already established that the rows in question are
     SQL-backed — a bank the configured store says it does not own, or one it could not answer for
     (``bank_indexes_are_store_owned``) — or when it walks the Postgres schema's own tables (the
-    admin backup / restore / bank rename). Asking :func:`get_memories` there is wrong in a way that
-    is silent: a non-Postgres store's default for a SQL-only operation is a no-op, so the work is
-    skipped rather than refused, and the bank loses its indexes with nothing in the log.
+    admin backup / restore / bank rename). Those operations are Postgres's alone, so they live only
+    on :class:`PostgresMemories`, not on the interface: asking :func:`get_memories` for them would
+    reach a store that has no such rows (for a non-Postgres store, no such method).
 
     When the configured store IS the Postgres store (every Postgres-only deployment) this returns
     that same instance, so that path is unchanged; otherwise one is built once, lazily.

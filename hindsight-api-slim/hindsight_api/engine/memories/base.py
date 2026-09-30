@@ -4109,18 +4109,6 @@ class MemoriesExtension(Extension, ABC):
             counts[key] = counts.get(key, 0) + n
         return counts
 
-    async def capped_memory_counts(
-        self, *, conn, schema: str, bank_id: str, fact_types: list[str], cap: int
-    ) -> dict[str, int]:
-        """``min(rows, cap)`` per fact type, for the per-bank vector-index policy.
-
-        Postgres stops its scan of `memory_units` at ``cap``. This default reads
-        :meth:`count_memories`; a store-owned bank is owed no Postgres index, so it is only here
-        for completeness.
-        """
-        counts = await self.count_memories(conn=None, fq_table=None, bank_id=bank_id)
-        return {fact_type: min(counts.get(fact_type, 0), cap) for fact_type in fact_types}
-
 
 __all__ = [
     "CONSOLIDATED_NO",

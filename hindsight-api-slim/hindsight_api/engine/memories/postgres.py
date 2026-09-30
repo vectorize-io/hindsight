@@ -1602,6 +1602,8 @@ class PostgresMemories(MemoriesExtension):
     ) -> dict[str | None, int]:
         return await pg_admin.count_consolidation_failed(conn=conn, schema=schema, per_bank=per_bank)
 
+    # Not on the interface: the vector-index policy counts Postgres's own rows for a bank already
+    # established SQL-backed, so its caller reaches this through ``sql_memories()``.
     async def capped_memory_counts(
         self, *, conn, schema: str, bank_id: str, fact_types: list[str], cap: int
     ) -> dict[str, int]:

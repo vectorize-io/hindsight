@@ -212,8 +212,8 @@ async def _capped_row_counts(
     The count itself belongs to the memories store, which owns `memory_units`
     (#4969); the Postgres store runs the capped scan described here — and it is asked directly,
     because the only caller has already established the bank is SQL-backed
-    (``bank_indexes_are_store_owned`` returned False above). Routing it through the configured
-    store would take a non-Postgres store's no-op default and plan no indexes at all, silently.
+    (``bank_indexes_are_store_owned`` returned False above), and the count is of Postgres's own
+    rows — so it is a Postgres-only method, not part of the store interface.
     """
     from .memories import sql_memories
 
