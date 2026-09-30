@@ -669,6 +669,16 @@
       "category": "framework",
       "link": "https://github.com/agentguard-ai/tealtiger/tree/main/packages/tealtiger-hindsight",
       "icon": "/img/icons/tealtiger.png"
+    },
+    {
+      "id": "forgetted",
+      "name": "forgetted",
+      "description": "Selective memory governance for agents: a context-managed window in which Hindsight retain calls are suspended through the client's task-local suspend_retains(), so the agent keeps reading memory while its writes do not persist.",
+      "type": "community",
+      "by": "hermes-labs-ai",
+      "category": "tool",
+      "link": "https://github.com/hermes-labs-ai/forgetted",
+      "icon": "/img/icons/forgetted.svg"
     }
   ]
 }
