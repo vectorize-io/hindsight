@@ -210,11 +210,14 @@ async def _capped_row_counts(
     from an outer query level, and the bounds are global anyway, not per-fact-type.
 
     The count itself belongs to the memories store, which owns `memory_units`
-    (#4969); the Postgres store runs the capped scan described here.
+    (#4969); the Postgres store runs the capped scan described here — and it is asked directly,
+    because the only caller has already established the bank is SQL-backed
+    (``bank_indexes_are_store_owned`` returned False above). Routing it through the configured
+    store would take a non-Postgres store's no-op default and plan no indexes at all, silently.
     """
-    from .memories import get_memories
+    from .memories import sql_memories
 
-    return await get_memories().capped_memory_counts(
+    return await sql_memories().capped_memory_counts(
         conn=conn, schema=schema, bank_id=bank_id, fact_types=fact_types, cap=cap
     )
 

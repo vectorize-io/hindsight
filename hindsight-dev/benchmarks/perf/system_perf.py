@@ -1439,7 +1439,7 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
         enqueue_relink_victims,
     )
     from hindsight_api.engine.memory_engine import acquire_with_retry
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
 
     backend = await engine._get_backend()
     deleted_uuids = [uuid_module.UUID(uid) for uid in deleted_ids]
@@ -1452,14 +1452,14 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
             # or this suite stops measuring Pass 2 entirely.
             await enqueue_entity_prune_candidates(conn, bank_id, deleted_ids)
             await conn.execute(
-                f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
+                f"DELETE FROM {fq_store_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
                 deleted_uuids,
                 bank_id,
             )
 
     pool = await engine._get_pool()
     depth = await pool.fetchval(
-        f"SELECT COUNT(*) FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1",
+        f"SELECT COUNT(*) FROM {fq_store_table('graph_maintenance_queue')} WHERE bank_id = $1",
         bank_id,
     )
     return int(depth or 0)
@@ -1474,7 +1474,7 @@ async def run_graph_maintenance_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     delete a fraction of units to enqueue relink victims, then run the job and
     break the wall-clock down by probe so the bottleneck is visible.
     """
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
     from hindsight_api.models import RequestContext
 
     bank_size = scale_cfg["graph_maintenance_bank_size"]
@@ -1494,7 +1494,7 @@ async def run_graph_maintenance_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     src_rows = await pool.fetch(
         f"""
         SELECT id::text AS id
-        FROM {fq_table("memory_units")}
+        FROM {fq_store_table("memory_units")}
         WHERE bank_id = $1 AND fact_type IN ('experience', 'world')
         ORDER BY id
         """,
@@ -1637,7 +1637,7 @@ async def _seed_contention_fixture(engine: Any, bank_id: str, n_entities: int, n
     "both entities exist, no current unit witnesses them together" stale case
     that ``prune_stale_cooccurrences`` targets. Returns the sorted pair list.
     """
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
 
     pool = await engine._get_pool()
     ent_ids = [uuid.uuid4() for _ in range(n_entities)]
@@ -1645,20 +1645,20 @@ async def _seed_contention_fixture(engine: Any, bank_id: str, n_entities: int, n
 
     await pool.executemany(
         f"""
-        INSERT INTO {fq_table("entities")} (id, bank_id, canonical_name, first_seen, last_seen, mention_count)
+        INSERT INTO {fq_store_table("entities")} (id, bank_id, canonical_name, first_seen, last_seen, mention_count)
         VALUES ($1, $2, $3, NOW(), NOW(), 1)
         """,
         [(eid, bank_id, f"contention-entity-{i}") for i, eid in enumerate(ent_ids)],
     )
     await pool.executemany(
         f"""
-        INSERT INTO {fq_table("memory_units")} (id, bank_id, text, fact_type, event_date, created_at, updated_at)
+        INSERT INTO {fq_store_table("memory_units")} (id, bank_id, text, fact_type, event_date, created_at, updated_at)
         VALUES ($1, $2, $3, 'experience', NOW(), NOW(), NOW())
         """,
         [(uid, bank_id, f"contention keeper unit {i}") for i, uid in enumerate(unit_ids)],
     )
     await pool.executemany(
-        f"INSERT INTO {fq_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2)",
+        f"INSERT INTO {fq_store_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2)",
         list(zip(unit_ids, ent_ids, strict=True)),
     )
 
@@ -1673,7 +1673,7 @@ async def _seed_contention_fixture(engine: Any, bank_id: str, n_entities: int, n
 
     await pool.executemany(
         f"""
-        INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+        INSERT INTO {fq_store_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
         VALUES ($1, $2, 1, NOW())
         ON CONFLICT (entity_id_1, entity_id_2) DO NOTHING
         """,
@@ -1701,7 +1701,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     """
     from asyncpg.exceptions import DeadlockDetectedError
     from hindsight_api.engine.graph_maintenance import run_graph_maintenance_job
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
     from hindsight_api.models import RequestContext
 
     n_entities = scale_cfg["graph_contention_entities"]
@@ -1729,12 +1729,12 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
 
     # Mirror entity_resolver._flush_pending's cooccurrence upsert exactly.
     upsert_sql = f"""
-        INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+        INSERT INTO {fq_store_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (entity_id_1, entity_id_2)
         DO UPDATE SET
-            cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + EXCLUDED.cooccurrence_count,
-            last_cooccurred    = GREATEST({fq_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
+            cooccurrence_count = {fq_store_table("entity_cooccurrences")}.cooccurrence_count + EXCLUDED.cooccurrence_count,
+            last_cooccurred    = GREATEST({fq_store_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
     """
 
     counters = _ContentionCounters()
@@ -1781,7 +1781,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     async def _rearm_entity_queue() -> None:
         async with pool.acquire() as conn:
             await conn.executemany(
-                f"INSERT INTO {fq_table('entity_maintenance_queue')} (bank_id, entity_id) "
+                f"INSERT INTO {fq_store_table('entity_maintenance_queue')} (bank_id, entity_id) "
                 f"VALUES ($1, $2) ON CONFLICT DO NOTHING",
                 [(bank_id, eid) for eid in entity_ids],
             )
@@ -1927,7 +1927,7 @@ async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     links in reasonable time.
     """
     from hindsight_api.engine.bank_stats_cache import BankStatsCache
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
     from hindsight_api.models import RequestContext
 
     bulk = "stats_semantic_links" in scale_cfg
@@ -1979,11 +1979,11 @@ async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     pool = await engine._get_pool()
 
     units_row = await pool.fetchrow(
-        f"SELECT COUNT(*) AS count FROM {fq_table('memory_units')} WHERE bank_id = $1",
+        f"SELECT COUNT(*) AS count FROM {fq_store_table('memory_units')} WHERE bank_id = $1",
         bank_id,
     )
     links_row = await pool.fetchrow(
-        f"SELECT COUNT(*) AS count FROM {fq_table('memory_links')} WHERE bank_id = $1",
+        f"SELECT COUNT(*) AS count FROM {fq_store_table('memory_links')} WHERE bank_id = $1",
         bank_id,
     )
     # Derived entity-link total — the same unit_entities rollup _compute_bank_stats
@@ -1994,8 +1994,8 @@ async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
         f"""
         WITH per_entity AS (
             SELECT ue.entity_id, COUNT(*) AS n
-            FROM {fq_table("unit_entities")} ue
-            JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+            FROM {fq_store_table("unit_entities")} ue
+            JOIN {fq_store_table("memory_units")} mu ON mu.id = ue.unit_id
             WHERE mu.bank_id = $1
             GROUP BY ue.entity_id
         )
@@ -2243,7 +2243,7 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     from hindsight_api.config import get_config
     from hindsight_api.engine.db import create_data_access_ops
     from hindsight_api.engine.db.ops import UpdatedWindow
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
     from hindsight_api.models import RequestContext
 
     fraction = scale_cfg["obs_hub_percent"] / 100
@@ -2258,7 +2258,7 @@ async def run_obs_hubs_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
     ops = create_data_access_ops("postgresql")
     per_entity_limit = get_config().link_expansion_per_entity_limit
-    mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
+    mu, ue, ml = fq_store_table("memory_units"), fq_store_table("unit_entities"), fq_store_table("memory_links")
     pool = await engine._get_pool()
 
     async def expand(seeds: list[uuid.UUID]) -> _ExpandTiming:

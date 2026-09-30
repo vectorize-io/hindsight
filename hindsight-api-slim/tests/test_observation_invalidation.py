@@ -806,17 +806,31 @@ async def _insert_document_with_memories(
 ) -> list[uuid.UUID]:
     """Insert a document and attach memory units to it. Returns list of memory UUIDs.
 
-    The documents row stays SQL (it is Postgres bookkeeping for every store); the memories
-    go through the store, attached via document_id at insert time.
+    The document goes wherever the store keeps it, and the memories go through the store,
+    attached via document_id at insert time. `documents` is a store table (#4969): a store that
+    owns its bank keeps the record itself and never reads the SQL row, so seeding the row here
+    left every one of these tests updating a document the engine reports as not found.
     """
-    await conn.execute(
-        """
-        INSERT INTO documents (id, bank_id, original_text, content_hash, created_at, updated_at)
-        VALUES ($1, $2, 'some doc', 'hash123', NOW(), NOW())
-        """,
-        doc_id,
-        bank_id,
-    )
+    from hindsight_api.engine.memories import get_memories
+
+    store = get_memories()
+    if store.store_owned_for(bank_id):
+        await store.put_document(
+            bank_id=bank_id,
+            document_id=doc_id,
+            content_hash="hash123",
+            original_text="some doc",
+            chunk_texts=[],
+        )
+    else:
+        await conn.execute(
+            """
+            INSERT INTO documents (id, bank_id, original_text, content_hash, created_at, updated_at)
+            VALUES ($1, $2, 'some doc', 'hash123', NOW(), NOW())
+            """,
+            doc_id,
+            bank_id,
+        )
     mem_ids = []
     for text, fact_type in memories:
         mem_ids.append(await _insert_memory(memory, conn, bank_id, text, fact_type, document_id=doc_id))

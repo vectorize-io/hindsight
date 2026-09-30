@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 
 
 def _ts() -> float:
@@ -36,7 +36,7 @@ async def test_lock_document_for_write_returns_pending_then_existing_hash(memory
     """Fresh row → '__pending__'; existing row → its stored hash."""
     bank_id = f"test_lock_doc_{_ts()}"
     doc_id = "doc-lock-regression"
-    documents = fq_table("documents")
+    documents = fq_store_table("documents")
 
     backend = await memory._get_backend()
     ops = backend.ops
@@ -71,7 +71,7 @@ async def test_lock_document_for_write_isolates_by_bank(memory):
     bank_a = f"test_lock_doc_a_{suffix}"
     bank_b = f"test_lock_doc_b_{suffix}"
     doc_id = "shared-doc-id"
-    documents = fq_table("documents")
+    documents = fq_store_table("documents")
 
     backend = await memory._get_backend()
     ops = backend.ops

@@ -39,10 +39,10 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ...extensions.base import Extension
 
@@ -51,10 +51,17 @@ from ...extensions.base import Extension
 # actually exist -- the SQL builders below take this exact type, and a bare `str` made
 # every hop between them unverifiable.
 from ..search.tags import TagsMatch
+from ..search.types import RetrievalResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..retain.types import EmbeddingLike, EntityResolutionResult
+    from ..consolidation.consolidator import _TemporalBounds
+    from ..embeddings import Embeddings
+    from ..response_models import MemoryFact
+    from ..retain.types import CausalRelation, EmbeddingLike, EntityResolutionResult, ProcessedFact
     from ..search.retrieval import GraphRetriever
+    from ..transfer.export import _LoadedExport, _UnitLocation
+    from ..transfer.importer import FactLifecycle, _ObservationOutcome
+    from ..transfer.schema import TransferObservation
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +533,8 @@ class FactRecord:
     occurred_end: datetime | None = None
     mentioned_at: datetime | None = None
     created_at: datetime | None = None
-    # What would have become `unit_entities` rows: the entity registry stays in
-    # Postgres, but the unit→entity posting travels with the memory.
+    # What would have become `unit_entities` rows: the unit→entity posting travels with the
+    # memory, and the ids point into the store's own entity registry.
     entity_ids: list[str] = field(default_factory=list)
     # What would have become causal `memory_links` rows.
     causal_edges: list[CausalEdgeRecord] = field(default_factory=list)
@@ -725,6 +732,24 @@ class RecallArms:
     bm25: list = field(default_factory=list)
     graph: list = field(default_factory=list)
     temporal: list = field(default_factory=list)
+
+
+#: How many semantic hits seed the graph arm's link expansion — its entry points into the graph.
+GRAPH_SEED_LIMIT = 20
+
+
+@dataclass
+class SemanticBm25Result:
+    """One fact_type's dense + keyword candidates, plus the graph arm's seeds.
+
+    What a store's combined semantic/BM25 read hands back (the Postgres store's ``search``). Declared
+    here rather than in the Postgres store's modules so a store implementing the same read does not
+    have to import them.
+    """
+
+    semantic: list[RetrievalResult]
+    bm25: list[RetrievalResult]
+    graph_seeds: list[RetrievalResult] | None
 
 
 @dataclass
@@ -948,7 +973,21 @@ class RelabelResult:
     observations are no longer valid."""
 
     updated: int
-    rescoped_unit_ids: list = field(default_factory=list)
+    rescoped_unit_ids: list[str] = field(default_factory=list)
+
+
+class EntityResolverHandle(Protocol):
+    """What the engine holds as its entity resolver, whichever store built it (see
+    :meth:`MemoriesExtension.create_entity_resolver`).
+
+    A Protocol rather than the Postgres ``EntityResolver`` class: this module may not import the
+    Postgres store's modules (``tests/test_store_table_boundary.py``). The two per-task stats
+    hooks are what the retain and import paths call on every batch whatever store owns the bank.
+    """
+
+    def discard_pending_stats(self) -> None: ...
+
+    async def flush_pending_stats(self) -> None: ...
 
 
 class NullEntityResolver:
@@ -2407,9 +2446,10 @@ class MemoriesExtension(Extension, ABC):
 
         ``unit_ids`` and ``entity_ids`` are parallel: a unit that mentions three
         entities appears three times. This is the join from a memory to the
-        entities it mentions; the registry rows themselves are the store's too. ``bank_id`` is passed because a store that keeps the posting on
-        the memory (rather than in a global join table) needs to know which
-        namespace the units live in — the Postgres join is keyed by global unit id
+        entities it mentions; the registry rows themselves are the store's too.
+        ``bank_id`` is passed because a store that keeps the posting on the memory
+        (rather than in a global join table) needs to know which namespace the
+        units live in — the Postgres join is keyed by global unit id
         and ignores it.
 
         For a store that keeps the posting ON the memory this call re-writes rows
@@ -2812,7 +2852,14 @@ class MemoriesExtension(Extension, ABC):
             invalidated_obs = await self.delete_stale_observations(
                 conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, fact_ids=_src_ids
             )
-            await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None)
+            # Only when an observation actually went — the same condition Postgres requeues
+            # under. Requeueing regardless re-consolidates the document's memories on a retag
+            # that invalidated nothing, and the marker it clears is the only record that they
+            # were ever consolidated: the next refresh has no way to tell the difference.
+            if invalidated_obs:
+                await self.mark_consolidated(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None
+                )
         return invalidated_obs
 
     async def list_documents_page(
@@ -2847,12 +2894,14 @@ class MemoriesExtension(Extension, ABC):
         )
 
     async def get_chunk_row(self, *, conn, fq_table, bank_id: str | None, chunk_id: str) -> Mapping[str, Any] | None:
-        """One chunk by an id that does NOT parse (``bank_id`` is ``None`` then), or ``None``:
-        ``chunk_id, document_id, bank_id, chunk_index, chunk_text, created_at``.
+        """One chunk by id, or ``None``: ``chunk_id, document_id, bank_id, chunk_index, chunk_text,
+        created_at``.
 
-        An id that parses is served by the engine from :meth:`get_chunk_text` for a store-owned
-        bank. Default: ``None`` — such a store keeps no chunk rows to look any other id up in.
-        Postgres reads the `chunks` row."""
+        Called for every id the engine does not serve itself: one that does not parse (``bank_id``
+        is ``None`` then), and one that parses to a bank this store does not own (``bank_id`` is
+        the parsed bank). An id that parses to a store-owned bank never reaches here — the engine
+        answers it from :meth:`get_chunk_text`. Default: ``None`` — a store that owns its banks
+        keeps no chunk rows to look any other id up in. Postgres reads the `chunks` row by id."""
         return None
 
     async def list_document_chunks(
@@ -3020,12 +3069,12 @@ class MemoriesExtension(Extension, ABC):
             )
         return len(failed)
 
-    async def requeue_source_memory(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> None:
+    async def requeue_source_memory(self, *, conn, fq_table, bank_id: str, unit_id: uuid.UUID) -> None:
         """Clear one source memory's consolidated marker so it re-consolidates. Scheduler state:
         ``updated_at`` stays put. Postgres clears it only on a world/experience row."""
         await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_id)], when=None)
 
-    async def entity_names_by_id(self, *, conn, fq_table, bank_id: str, entity_ids: list) -> list[str]:
+    async def entity_names_by_id(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> list[str]:
         """Canonical names of ``entity_ids`` in this bank, ordered by entity id; unknown ids are
         skipped. Feeds a curation re-embed. Postgres reads its ``entities`` registry."""
         names = await self.resolve_entity_names(
@@ -3033,7 +3082,7 @@ class MemoriesExtension(Extension, ABC):
         )
         return [names[eid] for eid in sorted(names)]
 
-    async def observation_head(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> MemoryLocation | None:
+    async def observation_head(self, *, conn, fq_table, bank_id: str, unit_id: uuid.UUID) -> MemoryLocation | None:
         """One memory's fact_type and current ``source_memory_ids``, or ``None`` if it does not
         exist — the head an observation's history is rebuilt backwards from."""
         found = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_id)])
@@ -3046,7 +3095,9 @@ class MemoriesExtension(Extension, ABC):
             source_memory_ids=[str(s) for s in found[0].source_memory_ids],
         )
 
-    async def source_fact_summaries(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> list[StoredMemory]:
+    async def source_fact_summaries(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]
+    ) -> list[StoredMemory]:
         """The memories an observation was built from, for its history view. Only ``text``,
         ``fact_type`` and ``context`` are read; missing ids are absent."""
         return await self.get_memories(
@@ -3064,7 +3115,7 @@ class MemoriesExtension(Extension, ABC):
         Postgres counts its ``documents`` table on the caller's connection."""
         return await self.count_documents(bank_id=bank_id)
 
-    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: Any) -> dict[str, Any] | None:
+    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: uuid.UUID) -> dict[str, Any] | None:
         """One entity rendered for the entity detail view, or ``None`` if the bank has no such entity.
 
         An addressed lookup against the store's registry, not a page-and-scan, so it stays O(1) in
@@ -3400,7 +3451,7 @@ class MemoriesExtension(Extension, ABC):
         intrabatch_merge_similarity: float,
         entity_resolution_max_candidates: int,
         merge_min_similarity: float,
-    ) -> Any:
+    ) -> EntityResolverHandle:
         """The entity resolver the engine builds once at startup and threads through retain,
         import and the memory edit, handing it back to :meth:`resolve_entities`.
 
@@ -3410,7 +3461,7 @@ class MemoriesExtension(Extension, ABC):
     async def resolve_entities(
         self,
         *,
-        entity_resolver,
+        entity_resolver: EntityResolverHandle,
         conn,
         bank_id: str,
         unit_ids: list[str],
@@ -3466,13 +3517,13 @@ class MemoriesExtension(Extension, ABC):
         return 0
 
     async def create_causal_links(
-        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list[list[CausalRelation]]
     ) -> int:
         """Write the new memories' ``caused_by`` edges; how many links were written."""
         return 0
 
     async def restore_legacy_causal_links(
-        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list[list[CausalRelation]]
     ) -> int:
         """Write an imported archive's historical causal edge types, which retain never creates;
         how many links were written."""
@@ -3488,7 +3539,7 @@ class MemoriesExtension(Extension, ABC):
     # rolls back together (#3876). The defaults are what a store that owns its rows does;
     # Postgres overrides them with the SQL in ``pg/consolidation.py``.
 
-    async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> set[str]:
+    async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> set[str]:
         """Which of ``unit_ids`` still exist, held so a concurrent delete cannot remove one before
         the caller's transaction commits.
 
@@ -3509,7 +3560,7 @@ class MemoriesExtension(Extension, ABC):
         """
         return []
 
-    async def any_memory_exists(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> bool:
+    async def any_memory_exists(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> bool:
         """Whether any of ``unit_ids`` still exists. A cheap, non-locking preflight."""
         present = await self.get_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(mid) for mid in unit_ids]
@@ -3547,7 +3598,7 @@ class MemoriesExtension(Extension, ABC):
         observation_id: uuid.UUID,
         text: str,
         embedding: str | None,
-        source_memory_ids: list,
+        source_memory_ids: list[uuid.UUID],
         tags: list[str],
         event_date: datetime | None,
         occurred_start: datetime | None,
@@ -3593,10 +3644,10 @@ class MemoriesExtension(Extension, ABC):
         observation_id: str,
         text: str,
         embedding: str | None,
-        source_memory_ids: list,
+        source_memory_ids: list[uuid.UUID],
         tags: list[str],
-        bounds: Any,
-        previous: Any,
+        bounds: _TemporalBounds,
+        previous: MemoryFact,
     ) -> bool:
         """Replace an observation's text, embedding, sources and tags, widening its dates by
         ``bounds`` (a consolidator ``_TemporalBounds``). False when the observation is gone.
@@ -3651,9 +3702,9 @@ class MemoriesExtension(Extension, ABC):
         observation_id: str,
         expected_text: str,
         merged_text: str,
-        source_memory_ids: list,
-        bounds: Any,
-        embeddings: Any,
+        source_memory_ids: list[uuid.UUID],
+        bounds: _TemporalBounds,
+        embeddings: Embeddings,
     ) -> bool:
         """Dedup merge: fold ``source_memory_ids``, ``merged_text`` and ``bounds`` (a consolidator
         ``_TemporalBounds``) into an existing observation. False when the fold did not happen.
@@ -3706,7 +3757,7 @@ class MemoriesExtension(Extension, ABC):
         twin_id: str,
         twin_text: str,
         merged_text: str,
-        embeddings: Any,
+        embeddings: Embeddings,
     ) -> bool:
         """Dedup merge after an UPDATE: fold an observation's live sources and dates into its twin
         with ``merged_text``. True when folded; the caller then deletes the observation.
@@ -3718,7 +3769,7 @@ class MemoriesExtension(Extension, ABC):
         from ..consolidation.consolidator import _TemporalBounds
 
         updated_obs = await self.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
-        updated_sources = list(updated_obs[0].source_memory_ids or []) if updated_obs else []
+        updated_sources = [uuid.UUID(s) for s in updated_obs[0].source_memory_ids or []] if updated_obs else []
         if not updated_sources:
             return False
         live = await self.lock_live_memory_ids(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=updated_sources)
@@ -3831,7 +3882,7 @@ class MemoriesExtension(Extension, ABC):
     #
     # Bank transfer (export / import), the consolidation gauges and the per-bank vector-index
     # counts. The transfer shapes (`_LoadedExport`, `TransferObservation`, `FactLifecycle`, …) live
-    # in `engine.transfer` and are typed `Any` here, because this module cannot import that package.
+    # in `engine.transfer`, which imports this module, so they are imported for typing only.
     # The defaults are the store-owned behaviour, expressed through the interface; the transfer
     # assembly they reuse lives next to the archive format, so it is imported at call time.
 
@@ -3844,7 +3895,7 @@ class MemoriesExtension(Extension, ABC):
         document_ids: list[str] | None,
         include_lifecycle: bool,
         batch_size: int,
-    ) -> Any:
+    ) -> AsyncIterator[_LoadedExport]:
         """Async-iterate the bank's documents (or ``document_ids``) as ``_LoadedExport`` batches, for export.
 
         ``backend`` is a pool or one connection. Postgres reads ``batch_size`` documents per batch,
@@ -3861,7 +3912,7 @@ class MemoriesExtension(Extension, ABC):
 
     async def load_transfer_documents(
         self, *, conn, fq_table, bank_id: str, document_ids: list[str] | None, include_lifecycle: bool
-    ) -> Any:
+    ) -> _LoadedExport:
         """The bank's documents (or ``document_ids``) with their chunks and facts, as one ``_LoadedExport``.
 
         Postgres reads `documents`, `chunks`, `memory_units`, `unit_entities` and `memory_links`
@@ -3872,7 +3923,9 @@ class MemoriesExtension(Extension, ABC):
 
         return await _load_documents_from_store(self, bank_id, document_ids, include_lifecycle=include_lifecycle)
 
-    async def load_transfer_observations(self, *, conn, fq_table, bank_id: str, unit_index: dict) -> list:
+    async def load_transfer_observations(
+        self, *, conn, fq_table, bank_id: str, unit_index: dict[Any, _UnitLocation]
+    ) -> list[TransferObservation]:
         """The bank's observations whose every source is in ``unit_index``, as ``TransferObservation``s.
 
         ``unit_index`` maps an exported fact's unit id to its (document, ordinal) location.
@@ -3949,7 +4002,7 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError("this store cannot restore a document's creation time")
 
-    async def restore_fact_lifecycle(self, *, conn, fq_table, bank_id: str, rows: list) -> None:
+    async def restore_fact_lifecycle(self, *, conn, fq_table, bank_id: str, rows: list[FactLifecycle]) -> None:
         """Apply imported facts' source consolidation state (``FactLifecycle`` rows) to their new units.
 
         Postgres rewrites ``created_at`` / ``consolidated_at`` / ``consolidation_failed_at`` on
@@ -3975,10 +4028,10 @@ class MemoriesExtension(Extension, ABC):
         ops,
         fq_table,
         bank_id: str,
-        resolved: list,
-        processed: list,
-        outcome: Any,
-    ) -> Any:
+        resolved: list[tuple[TransferObservation, list[str]]],
+        processed: list[ProcessedFact],
+        outcome: _ObservationOutcome,
+    ) -> _ObservationOutcome:
         """Write imported observations whose sources are all live; returns ``outcome``, updated.
 
         ``resolved`` pairs each ``TransferObservation`` with its sources' new unit ids and
@@ -4041,7 +4094,7 @@ class MemoriesExtension(Extension, ABC):
         return outcome
 
     async def count_consolidation_backlog(
-        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable[[], Awaitable[list[str]]]
     ) -> dict[str | None, int]:
         """Source memories (experience/world) still queued for consolidation, for the backlog gauge.
 
@@ -4067,7 +4120,7 @@ class MemoriesExtension(Extension, ABC):
         return counts
 
     async def count_consolidation_failed(
-        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable[[], Awaitable[list[str]]]
     ) -> dict[str | None, int]:
         """Source memories whose consolidation permanently failed, keyed like
         :meth:`count_consolidation_backlog`. This default counts :meth:`find_failed_consolidation`
@@ -4113,11 +4166,13 @@ __all__ = [
     "DeletePredicate",
     "EntityPrunePassResult",
     "FactRecord",
+    "GRAPH_SEED_LIMIT",
     "MemoriesExtension",
     "MemoryLocation",
     "MemoryPatch",
     "RelinkPassResult",
     "ScanPage",
+    "SemanticBm25Result",
     "StoredMemory",
     "TypedMemoryScope",
     "build_fact_records",

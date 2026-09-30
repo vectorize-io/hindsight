@@ -568,8 +568,6 @@ async def update_memory_units_metadata_and_tags(
         # consolidated against an observation that no longer exists and are never selected
         # into a batch again. Through the store's `mark_consolidated` rather than a raw
         # UPDATE, the same call `update_document` makes.
-        await store.mark_consolidated(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(uid) for uid in rescoped_ids], when=None
-        )
+        await store.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=rescoped_ids, when=None)
 
     return relabelled.updated

@@ -21,7 +21,7 @@ from hindsight_api.engine.db.postgresql import PostgresConnection, PostgreSQLBac
 from hindsight_api.engine.memories.pg.graph import relink_pass
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain.fact_storage import handle_document_tracking
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.models import RequestContext
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.memory_backend_incompatible]
@@ -166,7 +166,7 @@ async def test_document_mutation_and_relink_preserve_queue(
         backend = mutation._backend
         async with backend.acquire() as conn:
             async with conn.transaction():
-                await backend.ops.lock_document_for_write(conn, fq_table("documents"), "a", bank)
+                await backend.ops.lock_document_for_write(conn, fq_store_table("documents"), "a", bank)
                 await handle_document_tracking(
                     conn,
                     bank,
@@ -179,7 +179,7 @@ async def test_document_mutation_and_relink_preserve_queue(
 
     monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", pause_claim)
     worker_task = asyncio.create_task(
-        relink_pass(backend=worker._backend, fq_table=fq_table, bank_id=bank, config=None)
+        relink_pass(backend=worker._backend, fq_table=fq_store_table, bank_id=bank, config=None)
     )
     tasks = [worker_task]
     try:
@@ -213,7 +213,7 @@ async def test_document_mutation_and_relink_preserve_queue(
         )
         assert [row["unit_id"] for row in queued] == [units["b"]]
         monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", original_claim)
-        await relink_pass(backend=worker._backend, fq_table=fq_table, bank_id=bank, config=None)
+        await relink_pass(backend=worker._backend, fq_table=fq_store_table, bank_id=bank, config=None)
         assert not await race.setup.fetchval(
             "SELECT EXISTS(SELECT 1 FROM graph_maintenance_queue WHERE bank_id=$1)",
             bank,

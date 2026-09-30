@@ -10,6 +10,7 @@ transaction and the post-commit side effects stay with the engine.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -209,7 +210,7 @@ async def requeue_failed_consolidation(*, conn, fq_table: Callable[[str], str], 
     return count
 
 
-async def requeue_source_memory(*, conn, fq_table: Callable[[str], str], bank_id: str, unit_id: Any) -> None:
+async def requeue_source_memory(*, conn, fq_table: Callable[[str], str], bank_id: str, unit_id: uuid.UUID) -> None:
     """Clear one source memory's consolidated marker. Bookkeeping: `updated_at` stays put."""
     await conn.execute(
         f"""
@@ -224,7 +225,7 @@ async def requeue_source_memory(*, conn, fq_table: Callable[[str], str], bank_id
     )
 
 
-async def entity_names_by_id(*, conn, fq_table: Callable[[str], str], bank_id: str, entity_ids: list) -> list[str]:
+async def entity_names_by_id(*, conn, fq_table: Callable[[str], str], bank_id: str, entity_ids: list[str]) -> list[str]:
     """Canonical names of ``entity_ids`` in this bank, ordered by entity id."""
     if not entity_ids:
         return []
@@ -237,7 +238,7 @@ async def entity_names_by_id(*, conn, fq_table: Callable[[str], str], bank_id: s
 
 
 async def observation_head(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, unit_id: Any
+    *, conn, fq_table: Callable[[str], str], bank_id: str, unit_id: uuid.UUID
 ) -> MemoryLocation | None:
     """One memory's fact_type and current source ids, for its history view."""
     row = await conn.fetchrow(
@@ -259,7 +260,9 @@ async def observation_head(
     )
 
 
-async def source_fact_summaries(*, conn, fq_table: Callable[[str], str], unit_ids: list) -> list[StoredMemory]:
+async def source_fact_summaries(
+    *, conn, fq_table: Callable[[str], str], unit_ids: list[uuid.UUID]
+) -> list[StoredMemory]:
     """Text, fact_type and context of each of ``unit_ids`` that exists, in one query."""
     rows = await conn.fetch(
         f"""
@@ -369,7 +372,7 @@ async def count_bank_documents(*, conn, fq_table: Callable[[str], str], bank_id:
 
 
 async def get_entity_detail(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, entity_id: Any
+    *, conn, fq_table: Callable[[str], str], bank_id: str, entity_id: uuid.UUID
 ) -> dict[str, Any] | None:
     """One entity's registry row, rendered for the entity detail view; None if absent."""
     entity_row = await conn.fetchrow(

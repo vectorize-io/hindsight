@@ -9,21 +9,21 @@ import re
 # A pg_trgm "word" is a maximal run of alphanumerics (Unicode letters/digits, underscore excluded);
 # everything else (space, punctuation, emoji) is a separator. This is why decoration variants like
 # "Wren <emoji>" collapse to the same trigram set.
-_TRGM_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+TRGM_WORD = re.compile(r"[^\W_]+", re.UNICODE)
 
 
-def _trigram_set(text: str) -> set[str]:
+def trigram_set(text: str) -> set[str]:
     """Trigrams of ``text`` the way PostgreSQL pg_trgm generates them: lowercase, split into words,
     pad each word with two leading + one trailing blank, and take every 3-char window."""
     trigrams: set[str] = set()
-    for word in _TRGM_WORD.findall(text.lower()):
+    for word in TRGM_WORD.findall(text.lower()):
         padded = f"  {word} "
         for i in range(len(padded) - 2):
             trigrams.add(padded[i : i + 3])
     return trigrams
 
 
-def _trigram_set_similarity(ta: set[str], tb: set[str]) -> float:
+def trigram_set_similarity(ta: set[str], tb: set[str]) -> float:
     """Jaccard index of two already-computed trigram sets.
 
     Split out from ``trigram_similarity`` so callers that compare one name against many
@@ -49,4 +49,4 @@ def trigram_similarity(a: str, b: str) -> float:
     Doing it in Python keeps the in-batch dedup off the retain transaction's DB connection and makes
     it backend-agnostic (Postgres, Oracle, and the pg_trgm-absent "full" fallback all behave alike).
     """
-    return _trigram_set_similarity(_trigram_set(a), _trigram_set(b))
+    return trigram_set_similarity(trigram_set(a), trigram_set(b))

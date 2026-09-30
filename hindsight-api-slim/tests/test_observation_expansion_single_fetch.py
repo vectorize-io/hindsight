@@ -157,14 +157,18 @@ async def test_observation_expansion_performs_one_fetch(memory, request_context)
     The single fetch must still carry all three arms: the entity/source
     traversal plus the semantic and causal neighbours.
     """
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
     bank_id = f"test_obs_one_fetch_{uuid.uuid4().hex[:8]}"
     try:
         pool = await memory._get_pool()
         backend = await memory._get_backend()
-        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
-        entities_table = fq_table("entities")
+        mu, ue, ml = (
+            fq_store_table_explicit("memory_units"),
+            fq_store_table_explicit("unit_entities"),
+            fq_store_table_explicit("memory_links"),
+        )
+        entities_table = fq_store_table_explicit("entities")
 
         async with pool.acquire() as conn:
             await _ensure_bank(conn, bank_id)
@@ -198,14 +202,18 @@ async def test_fusion_preserves_ids_scores_counts_and_ordering(memory, request_c
     entities shared by several seeds are not double-counted); ordering is by
     score descending; each arm keeps its own budget limit.
     """
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
     bank_id = f"test_obs_fused_{uuid.uuid4().hex[:8]}"
     try:
         pool = await memory._get_pool()
         backend = await memory._get_backend()
-        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
-        entities_table = fq_table("entities")
+        mu, ue, ml = (
+            fq_store_table_explicit("memory_units"),
+            fq_store_table_explicit("unit_entities"),
+            fq_store_table_explicit("memory_links"),
+        )
+        entities_table = fq_store_table_explicit("entities")
 
         async with pool.acquire() as conn:
             await _ensure_bank(conn, bank_id)
@@ -271,14 +279,18 @@ async def test_time_window_binds_every_fused_arm(memory, request_context):
     both placeholder positions must bind correctly for every arm — the arms
     share one param list, so a mis-numbered window would fail everywhere.
     """
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
     bank_id = f"test_obs_window_{uuid.uuid4().hex[:8]}"
     try:
         pool = await memory._get_pool()
         backend = await memory._get_backend()
-        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
-        entities_table = fq_table("entities")
+        mu, ue, ml = (
+            fq_store_table_explicit("memory_units"),
+            fq_store_table_explicit("unit_entities"),
+            fq_store_table_explicit("memory_links"),
+        )
+        entities_table = fq_store_table_explicit("entities")
 
         async with pool.acquire() as conn:
             await _ensure_bank(conn, bank_id)
@@ -338,13 +350,17 @@ async def test_seed_without_sources_keeps_semantic_and_causal_arms(memory, reque
     CTE is empty, so the whole entity half of the fused query finds nothing —
     the semantic and causal neighbours must still come back.
     """
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
     bank_id = f"test_obs_nosrc_{uuid.uuid4().hex[:8]}"
     try:
         pool = await memory._get_pool()
         backend = await memory._get_backend()
-        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
+        mu, ue, ml = (
+            fq_store_table_explicit("memory_units"),
+            fq_store_table_explicit("unit_entities"),
+            fq_store_table_explicit("memory_links"),
+        )
 
         async with pool.acquire() as conn:
             await _ensure_bank(conn, bank_id)

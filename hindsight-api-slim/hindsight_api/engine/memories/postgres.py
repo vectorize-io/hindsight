@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +41,8 @@ from .base import (
     DocumentSourceUnits,
     DocumentTags,
     EntityPrunePassResult,
+    EntityResolverHandle,
+    ExistingChunk,
     MemoriesExtension,
     MemoryLocation,
     MemoryPatch,
@@ -50,6 +52,7 @@ from .base import (
     RelabelResult,
     RelinkPassResult,
     ScanPage,
+    SemanticBm25Result,
     StoredMemory,
     TypedMemoryScope,
 )
@@ -63,7 +66,15 @@ from .pg import retain as pg_retain
 from .pg import transfer as pg_transfer
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..consolidation.consolidator import _TemporalBounds
+    from ..embeddings import Embeddings
+    from ..response_models import MemoryFact
+    from ..retain.types import CausalRelation, ProcessedFact
     from ..search.graph_retrieval import GraphRetriever
+    from ..transfer.export import _LoadedExport, _UnitLocation
+    from ..transfer.importer import FactLifecycle, _ObservationOutcome
+    from ..transfer.schema import TransferObservation
+    from .pg.entity_resolver import EntityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +281,7 @@ class PostgresMemories(MemoriesExtension):
         min_keyword: float | None = None,
         graph_seed_min_similarity: float | None = None,
         enable_text_search: bool = True,
-    ) -> "dict[str, SemanticBm25Result]":
+    ) -> dict[str, SemanticBm25Result]:
         """The dense + keyword arms, as one UNION query.
 
         How deep the ANN scan goes is not decided here: the connection carries
@@ -981,22 +992,24 @@ class PostgresMemories(MemoriesExtension):
     async def requeue_failed_consolidation(self, *, conn, fq_table, bank_id: str) -> int:
         return await engine_curation.requeue_failed_consolidation(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
-    async def requeue_source_memory(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> None:
+    async def requeue_source_memory(self, *, conn, fq_table, bank_id: str, unit_id: uuid.UUID) -> None:
         await engine_curation.requeue_source_memory(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id
         )
 
-    async def entity_names_by_id(self, *, conn, fq_table, bank_id: str, entity_ids: list) -> list[str]:
+    async def entity_names_by_id(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> list[str]:
         return await engine_curation.entity_names_by_id(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, entity_ids=entity_ids
         )
 
-    async def observation_head(self, *, conn, fq_table, bank_id: str, unit_id: Any) -> MemoryLocation | None:
+    async def observation_head(self, *, conn, fq_table, bank_id: str, unit_id: uuid.UUID) -> MemoryLocation | None:
         return await engine_curation.observation_head(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id
         )
 
-    async def source_fact_summaries(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> list[StoredMemory]:
+    async def source_fact_summaries(
+        self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]
+    ) -> list[StoredMemory]:
         # Not bank-scoped, exactly as before: the ids come from this bank's own observation.
         return await engine_curation.source_fact_summaries(conn=conn, fq_table=fq_store_table, unit_ids=unit_ids)
 
@@ -1008,7 +1021,7 @@ class PostgresMemories(MemoriesExtension):
     async def count_bank_documents(self, *, conn, fq_table, bank_id: str) -> int:
         return await engine_curation.count_bank_documents(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
-    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: Any) -> dict[str, Any] | None:
+    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: uuid.UUID) -> dict[str, Any] | None:
         return await engine_curation.get_entity_detail(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, entity_id=entity_id
         )
@@ -1054,7 +1067,7 @@ class PostgresMemories(MemoriesExtension):
             pool=backend, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, include_text=include_text
         )
 
-    async def load_existing_chunks(self, *, conn, fq_table, bank_id: str, document_id: str) -> list:
+    async def load_existing_chunks(self, *, conn, fq_table, bank_id: str, document_id: str) -> list[ExistingChunk]:
         return await pg_retain.load_existing_chunks(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
         )
@@ -1214,7 +1227,7 @@ class PostgresMemories(MemoriesExtension):
         intrabatch_merge_similarity: float,
         entity_resolution_max_candidates: int,
         merge_min_similarity: float,
-    ) -> Any:
+    ) -> EntityResolver:
         from .pg.entity_resolver import EntityResolver
 
         return EntityResolver(
@@ -1229,7 +1242,7 @@ class PostgresMemories(MemoriesExtension):
     async def resolve_entities(
         self,
         *,
-        entity_resolver,
+        entity_resolver: EntityResolverHandle,
         conn,
         bank_id: str,
         unit_ids: list[str],
@@ -1302,12 +1315,12 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def create_causal_links(
-        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list[list[CausalRelation]]
     ) -> int:
         return await pg_links.create_causal_links_batch(conn, bank_id, unit_ids, causal_relations_per_fact, ops=ops)
 
     async def restore_legacy_causal_links(
-        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list
+        self, *, conn, ops, bank_id: str, unit_ids: list[str], causal_relations_per_fact: list[list[CausalRelation]]
     ) -> int:
         return await pg_links.restore_legacy_causal_links_batch(
             conn, bank_id, unit_ids, causal_relations_per_fact, ops=ops
@@ -1318,7 +1331,7 @@ class PostgresMemories(MemoriesExtension):
 
     # ------------------------------------------------------------------ consolidation writes and recall expansion
 
-    async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> set[str]:
+    async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> set[str]:
         return await pg_consolidation.lock_live_memory_ids(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids
         )
@@ -1328,7 +1341,7 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, read_at=read_at
         )
 
-    async def any_memory_exists(self, *, conn, fq_table, bank_id: str, unit_ids: list) -> bool:
+    async def any_memory_exists(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> bool:
         return await pg_consolidation.any_memory_exists(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids
         )
@@ -1348,7 +1361,7 @@ class PostgresMemories(MemoriesExtension):
         observation_id: uuid.UUID,
         text: str,
         embedding: str | None,
-        source_memory_ids: list,
+        source_memory_ids: list[uuid.UUID],
         tags: list[str],
         event_date: datetime | None,
         occurred_start: datetime | None,
@@ -1381,10 +1394,10 @@ class PostgresMemories(MemoriesExtension):
         observation_id: str,
         text: str,
         embedding: str | None,
-        source_memory_ids: list,
+        source_memory_ids: list[uuid.UUID],
         tags: list[str],
-        bounds: Any,
-        previous: Any,  # noqa: ARG002 — the UPDATE widens the row it finds; a missing row is a skip.
+        bounds: _TemporalBounds,
+        previous: MemoryFact,  # noqa: ARG002 — the UPDATE widens the row it finds; a missing row is a skip.
     ) -> bool:
         return await pg_consolidation.rewrite_observation(
             conn=conn,
@@ -1406,9 +1419,9 @@ class PostgresMemories(MemoriesExtension):
         observation_id: str,
         expected_text: str,
         merged_text: str,
-        source_memory_ids: list,
-        bounds: Any,
-        embeddings: Any,  # noqa: ARG002 — the fold keeps the stored embedding.
+        source_memory_ids: list[uuid.UUID],
+        bounds: _TemporalBounds,
+        embeddings: Embeddings,  # noqa: ARG002 — the fold keeps the stored embedding.
     ) -> bool:
         return await pg_consolidation.fold_sources_into_observation(
             conn=conn,
@@ -1431,7 +1444,7 @@ class PostgresMemories(MemoriesExtension):
         twin_id: str,
         twin_text: str,
         merged_text: str,
-        embeddings: Any,  # noqa: ARG002 — the fold keeps the twin's stored embedding.
+        embeddings: Embeddings,  # noqa: ARG002 — the fold keeps the twin's stored embedding.
     ) -> bool:
         return await pg_consolidation.fold_observation_into_twin(
             conn=conn,
@@ -1479,7 +1492,7 @@ class PostgresMemories(MemoriesExtension):
         document_ids: list[str] | None,
         include_lifecycle: bool,
         batch_size: int,
-    ) -> Any:
+    ) -> AsyncIterator[_LoadedExport]:
         async for loaded in pg_transfer.iter_documents(
             backend=backend,
             fq_table=fq_store_table,
@@ -1492,7 +1505,7 @@ class PostgresMemories(MemoriesExtension):
 
     async def load_transfer_documents(
         self, *, conn, fq_table, bank_id: str, document_ids: list[str] | None, include_lifecycle: bool
-    ) -> Any:
+    ) -> _LoadedExport:
         return await pg_transfer.load_documents(
             conn=conn,
             fq_table=fq_store_table,
@@ -1501,7 +1514,9 @@ class PostgresMemories(MemoriesExtension):
             include_lifecycle=include_lifecycle,
         )
 
-    async def load_transfer_observations(self, *, conn, fq_table, bank_id: str, unit_index: dict) -> list:
+    async def load_transfer_observations(
+        self, *, conn, fq_table, bank_id: str, unit_index: dict[Any, _UnitLocation]
+    ) -> list[TransferObservation]:
         return await pg_transfer.load_observations(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_index=unit_index
         )
@@ -1550,7 +1565,7 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, created_at=created_at
         )
 
-    async def restore_fact_lifecycle(self, *, conn, fq_table, bank_id: str, rows: list) -> None:
+    async def restore_fact_lifecycle(self, *, conn, fq_table, bank_id: str, rows: list[FactLifecycle]) -> None:
         await pg_transfer.restore_fact_lifecycle(conn=conn, fq_table=fq_store_table, bank_id=bank_id, rows=rows)
 
     async def import_transfer_observations(
@@ -1560,10 +1575,10 @@ class PostgresMemories(MemoriesExtension):
         ops,
         fq_table,
         bank_id: str,
-        resolved: list,
-        processed: list,
-        outcome: Any,
-    ) -> Any:
+        resolved: list[tuple[TransferObservation, list[str]]],
+        processed: list[ProcessedFact],
+        outcome: _ObservationOutcome,
+    ) -> _ObservationOutcome:
         return await pg_transfer.import_observations(
             backend=backend,
             ops=ops,
@@ -1575,12 +1590,12 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def count_consolidation_backlog(
-        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable[[], Awaitable[list[str]]]
     ) -> dict[str | None, int]:
         return await pg_admin.count_consolidation_backlog(conn=conn, schema=schema, per_bank=per_bank)
 
     async def count_consolidation_failed(
-        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable
+        self, *, conn, schema: str, per_bank: bool, bank_ids: Callable[[], Awaitable[list[str]]]
     ) -> dict[str | None, int]:
         return await pg_admin.count_consolidation_failed(conn=conn, schema=schema, per_bank=per_bank)
 

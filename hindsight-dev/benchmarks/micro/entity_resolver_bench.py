@@ -32,8 +32,8 @@ from dataclasses import asdict, dataclass
 from hindsight_api.engine.memories.pg.entity_resolver import (
     _find_intrabatch_similar_pairs,
     _SimilarNamePair,
-    _trigram_set,
 )
+from hindsight_api.engine.trigram import trigram_set
 from rich.console import Console
 from rich.table import Table
 
@@ -78,7 +78,7 @@ def _v_prefix_filtering(names: Sequence[str], threshold: float) -> list[_Similar
 
 def _v_baseline_quadratic(names: Sequence[str], threshold: float) -> list[_SimilarNamePair]:
     """Previous baseline: O(N^2) double-loop with len(ta & tb) and uncached trigrams."""
-    trigrams = [_trigram_set(n) for n in names]
+    trigrams = [trigram_set(n) for n in names]
     pairs: list[_SimilarNamePair] = []
     n = len(names)
     for i in range(n):
@@ -94,7 +94,7 @@ def _v_baseline_quadratic(names: Sequence[str], threshold: float) -> list[_Simil
 
 def _v_length_pruned_quadratic(names: Sequence[str], threshold: float) -> list[_SimilarNamePair]:
     """Intermediate variant: O(N^2) with length pre-pruning."""
-    trigrams = [_trigram_set(n) for n in names]
+    trigrams = [trigram_set(n) for n in names]
     trigrams_with_len = [(t, len(t)) for t in trigrams]
     pairs: list[_SimilarNamePair] = []
     n = len(names)

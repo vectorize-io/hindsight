@@ -361,7 +361,7 @@ async def relabel_document_memories(
         updated = int(result.split()[-1])
     except (ValueError, IndexError):
         updated = 0
-    return RelabelResult(updated=updated, rescoped_unit_ids=rescoped_ids)
+    return RelabelResult(updated=updated, rescoped_unit_ids=[str(uid) for uid in rescoped_ids])
 
 
 async def memory_ids_for_chunks(

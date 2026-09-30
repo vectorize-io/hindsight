@@ -36,7 +36,7 @@ from ...retain.types import ResolvedEntity
 from ...schema import fq_store_table as fq_table
 
 # The trigram helpers live outside the store because fuzzy tag matching shares them.
-from ...trigram import _TRGM_WORD, _trigram_set, _trigram_set_similarity
+from ...trigram import TRGM_WORD, trigram_set, trigram_set_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ def _tokens_are_compatible(a: str, b: str) -> bool:
     numbers_a, numbers_b = _numbers_in(a), _numbers_in(b)
     if numbers_a - numbers_b and numbers_b - numbers_a:
         return False
-    ta, tb = _TRGM_WORD.findall(a.lower()), _TRGM_WORD.findall(b.lower())
+    ta, tb = TRGM_WORD.findall(a.lower()), TRGM_WORD.findall(b.lower())
     if len(ta) < 2 and len(tb) < 2:
         return True
     short, rest = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
@@ -252,7 +252,7 @@ def _find_intrabatch_similar_pairs(names: list[str], threshold: float) -> list[_
     if len(names) < 2:
         return []
 
-    trigrams = [_trigram_set(n) for n in names]
+    trigrams = [trigram_set(n) for n in names]
 
     # How common each trigram is in this batch. Sorting each set by it puts the tokens that
     # discriminate best up front, which is what keeps the indexed prefixes small.
@@ -1243,7 +1243,7 @@ class EntityResolver:
             best_score = 0.0
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
-            mention_trigrams = _trigram_set(entity_text_lower)
+            mention_trigrams = trigram_set(entity_text_lower)
             # Weight each nearby name by how selective it is, once per mention rather than
             # once per candidate. Only the numerator is weighted: dividing by the weights too
             # would normalise the damping straight back out whenever the hub is the *only*
@@ -1285,9 +1285,9 @@ class EntityResolver:
                 canonical_lower = canonical_name.lower()
                 candidate_trigrams = candidate_trigram_map.get(canonical_name)
                 if candidate_trigrams is None:
-                    candidate_trigrams = _trigram_set(canonical_name)
+                    candidate_trigrams = trigram_set(canonical_name)
                     candidate_trigram_map[canonical_name] = candidate_trigrams
-                name_trigram_similarity = _trigram_set_similarity(mention_trigrams, candidate_trigrams)
+                name_trigram_similarity = trigram_set_similarity(mention_trigrams, candidate_trigrams)
                 if name_trigram_similarity < self._merge_min_similarity:
                     continue
 
@@ -1597,8 +1597,8 @@ class EntityResolver:
 
         # The unit→entity posting belongs to whoever stores the memory, so the
         # memories store records it. Co-occurrence below is separate and unaffected:
-        # it references only `entities`, which stays in Postgres either way, and is
-        # read by the entity-graph endpoint and by resolution's disambiguation signal.
+        # it references only this store's `entities` registry, and is read by the
+        # entity-graph endpoint and by resolution's disambiguation signal.
         # `store_write=False` means the caller already wrote the postings inline with the
         # memories, so we skip the (redundant) second store write and keep only co-occurrence.
         from .. import get_memories

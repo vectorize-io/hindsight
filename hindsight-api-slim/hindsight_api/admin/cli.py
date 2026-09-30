@@ -22,8 +22,7 @@ import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..db_url import is_oracle_url
-from ..engine.memories import get_memories
-from ..engine.memories.postgres import PostgresMemories
+from ..engine.memories import get_memories, sql_memories
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
@@ -346,7 +345,8 @@ async def _backup(
     extension-augmented list from ``_effective_backup_tables()``.
     """
     backup_tables = backup_tables if backup_tables is not None else BACKUP_TABLES
-    pg_store = PostgresMemories({})
+    # sql_memories(), not get_memories(): backup reads this Postgres schema's own tables, whatever the store.
+    pg_store = sql_memories()
     conn = await asyncpg.connect(database_url)
     try:
         tables: dict[str, Any] = {}
@@ -436,7 +436,9 @@ async def _restore(
                 typer.echo("  Clearing existing data...")
                 # Truncate tables in reverse order (respects FK constraints). Through the
                 # Postgres store, which alone may name its own tables (#4969).
-                await PostgresMemories({}).admin_truncate_tables(
+                # sql_memories(), not get_memories(): restore rewrites this Postgres schema's own tables,
+                # whatever the store.
+                await sql_memories().admin_truncate_tables(
                     conn=conn, schema=schema, tables=list(reversed(backup_tables))
                 )
 
@@ -1066,7 +1068,8 @@ async def _move_bank_rows(
         await conn.execute("SET CONSTRAINTS ALL DEFERRED")
         # Every table, store tables included, so the rewrite goes through the Postgres store,
         # which alone may name its own tables (#4969).
-        moved = await PostgresMemories({}).admin_move_bank_id(
+        # sql_memories(), not get_memories(): the rename walks this Postgres schema's own tables, whatever the store.
+        moved = await sql_memories().admin_move_bank_id(
             conn=conn,
             schema=schema,
             tables=[row["table_name"] for row in tables],
@@ -1117,7 +1120,8 @@ async def _move_bank_files(conn: asyncpg.Connection, db_url: str, schema: str, o
         # they are: delete_bank sweeps those from their rows, which the rename carries
         # to the new id. `documents` is a store table, so the Postgres store reads and
         # repoints the keys (#4969).
-        pg_store = PostgresMemories({})
+        # sql_memories(), not get_memories(): the rename walks this Postgres schema's own tables, whatever the store.
+        pg_store = sql_memories()
         rows = await pg_store.admin_bank_file_keys(conn=conn, schema=schema, bank_id=new_id, prefix=old_prefix)
         columns = {"attachments": "storage_key", "documents": "file_storage_key"}
         moved = 0

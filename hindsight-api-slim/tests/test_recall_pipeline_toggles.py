@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.engine import memory_engine as memory_engine_module
+from hindsight_api.engine.memories.base import SemanticBm25Result
 from hindsight_api.engine.search.types import GraphRetrieval
 from hindsight_api.engine.memories.pg import recall as recall_module
 from hindsight_api.engine.search import retrieval as retrieval_module
@@ -41,7 +42,7 @@ def stub_retrieval(monkeypatch):
 
     async def fake_semantic_bm25_combined_sql(*args, **kwargs):
         calls["text_search"] = kwargs["enable_text_search"]
-        return {"world": recall_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
+        return {"world": SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
     async def fake_temporal_combined_sql(*args, **kwargs):
         calls["temporal_combined"] += 1

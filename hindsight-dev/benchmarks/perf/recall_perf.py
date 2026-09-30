@@ -834,9 +834,9 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str, sources_per_ob
     import random
     import uuid
 
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
-    table = fq_table("memory_units")
+    table = fq_store_table_explicit("memory_units")
 
     # Fetch all non-observation units
     rows = await pool.fetch(
@@ -939,9 +939,9 @@ async def _wait_for_operation(pool: Any, operation_id: str, timeout: float = 864
     """
     import uuid
 
-    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit
 
-    table = fq_table("async_operations")
+    table = fq_store_table_explicit("async_operations")
     deadline = asyncio.get_event_loop().time() + timeout
     parent_uuid = uuid.UUID(operation_id)
 

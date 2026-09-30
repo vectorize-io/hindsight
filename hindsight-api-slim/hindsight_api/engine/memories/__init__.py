@@ -10,6 +10,7 @@ this behaves like every other extension point. Unset (the normal case) means
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from .base import (
     DOC_META_ATTACHMENT_FILENAMES,
@@ -34,6 +35,9 @@ from .base import (
     document_record_metadata,
     source_key,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .postgres import PostgresMemories
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,36 @@ def get_memories() -> MemoriesExtension:
     if _memories is None:
         _memories = create_memories()
     return _memories
+
+
+_sql_memories: PostgresMemories | None = None
+
+
+def sql_memories() -> PostgresMemories:
+    """The Postgres store, for rows Postgres owns whatever store is configured.
+
+    A caller reaches for this only after it has already established that the rows in question are
+    SQL-backed — a bank the configured store says it does not own, or one it could not answer for
+    (``bank_indexes_are_store_owned``) — or when it walks the Postgres schema's own tables (the
+    admin backup / restore / bank rename). Asking :func:`get_memories` there is wrong in a way that
+    is silent: a non-Postgres store's default for a SQL-only operation is a no-op, so the work is
+    skipped rather than refused, and the bank loses its indexes with nothing in the log.
+
+    When the configured store IS the Postgres store (every Postgres-only deployment) this returns
+    that same instance, so that path is unchanged; otherwise one is built once, lazily.
+
+    Not the configured store, and never a substitute for it: everything that follows the BANK's
+    owner still goes through :func:`get_memories`.
+    """
+    from .postgres import PostgresMemories
+
+    configured = get_memories()
+    if isinstance(configured, PostgresMemories):
+        return configured
+    global _sql_memories
+    if _sql_memories is None:
+        _sql_memories = PostgresMemories({})
+    return _sql_memories
 
 
 def set_memories(memories: MemoriesExtension | None) -> None:
@@ -103,4 +137,5 @@ __all__ = [
     "get_memories",
     "set_memories",
     "source_key",
+    "sql_memories",
 ]

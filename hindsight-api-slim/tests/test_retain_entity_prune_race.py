@@ -23,7 +23,7 @@ from hindsight_api.engine.db.ops_oracle import OracleOps
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
 from hindsight_api.engine.db.postgresql import PostgresConnection
 from hindsight_api.engine.memories.pg.entity_resolver import EntityResolver
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.retain.orchestrator import (
     _insert_facts_and_links,
     _pre_resolve_phase1,
@@ -164,7 +164,7 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
         async with backend.acquire() as conn:
             original_entity_id = await conn.fetchval(
                 f"""
-                INSERT INTO {fq_table("entities")}
+                INSERT INTO {fq_store_table("entities")}
                     (bank_id, canonical_name, first_seen, last_seen, mention_count)
                 VALUES ($1, 'Alice Smith', $2, $2, 1)
                 RETURNING id
@@ -184,8 +184,8 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
             async with prune_conn.transaction():
                 pruned = await backend.ops.prune_orphan_entities(
                     prune_conn,
-                    fq_table("entities"),
-                    fq_table("unit_entities"),
+                    fq_store_table("entities"),
+                    fq_store_table("unit_entities"),
                     bank_id,
                     [original_entity_id],
                 )
@@ -213,14 +213,14 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
         assert len(unit_id_groups[0]) == 1
         async with backend.acquire() as verify_conn:
             restored = await verify_conn.fetchrow(
-                f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = $1",
+                f"SELECT id, canonical_name FROM {fq_store_table('entities')} WHERE id = $1",
                 original_entity_id,
             )
             linked_entity_id = await verify_conn.fetchval(
                 f"""
                 SELECT ue.entity_id
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+                FROM {fq_store_table("unit_entities")} ue
+                JOIN {fq_store_table("memory_units")} mu ON mu.id = ue.unit_id
                 WHERE mu.bank_id = $1
                 """,
                 bank_id,
@@ -231,6 +231,6 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
         assert linked_entity_id == original_entity_id, "the unit must link back to the original entity id"
     finally:
         async with backend.acquire() as conn:
-            await conn.execute(f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id)
-            await conn.execute(f"DELETE FROM {fq_table('entities')} WHERE bank_id = $1", bank_id)
+            await conn.execute(f"DELETE FROM {fq_store_table('memory_units')} WHERE bank_id = $1", bank_id)
+            await conn.execute(f"DELETE FROM {fq_store_table('entities')} WHERE bank_id = $1", bank_id)
         await backend.shutdown()

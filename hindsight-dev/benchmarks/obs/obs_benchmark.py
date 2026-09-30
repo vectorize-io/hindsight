@@ -32,7 +32,7 @@ from pathlib import Path
 from hindsight_api.config import DEFAULT_EMBEDDINGS_LOCAL_MODEL, _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
 from hindsight_api.engine.memory_engine import MemoryEngine
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.models import RequestContext
 from rich.console import Console
@@ -151,7 +151,7 @@ async def _run_document(
             await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=ctx)
             async with pool.acquire() as conn:
                 pending = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id=$1 "
+                    f"SELECT COUNT(*) FROM {fq_store_table('memory_units')} WHERE bank_id=$1 "
                     f"AND fact_type IN ('experience','world') "
                     f"AND consolidated_at IS NULL AND consolidation_failed_at IS NULL",
                     bank_id,
@@ -161,12 +161,12 @@ async def _run_document(
 
         async with pool.acquire() as conn:
             facts = await conn.fetchval(
-                f"SELECT COUNT(*) FROM {fq_table('memory_units')} "
+                f"SELECT COUNT(*) FROM {fq_store_table('memory_units')} "
                 f"WHERE bank_id=$1 AND fact_type IN ('experience','world')",
                 bank_id,
             )
             facts_consolidated = await conn.fetchval(
-                f"SELECT COUNT(*) FROM {fq_table('memory_units')} "
+                f"SELECT COUNT(*) FROM {fq_store_table('memory_units')} "
                 f"WHERE bank_id=$1 AND fact_type IN ('experience','world') AND consolidated_at IS NOT NULL",
                 bank_id,
             )
@@ -175,10 +175,10 @@ async def _run_document(
             # few observations means heavy merging (high coverage) or discarding (low coverage).
             facts_covered = await conn.fetchval(
                 f"""
-                SELECT COUNT(*) FROM {fq_table("memory_units")} f
+                SELECT COUNT(*) FROM {fq_store_table("memory_units")} f
                 WHERE f.bank_id=$1 AND f.fact_type IN ('experience','world')
                   AND f.id IN (
-                    SELECT unnest(source_memory_ids) FROM {fq_table("memory_units")}
+                    SELECT unnest(source_memory_ids) FROM {fq_store_table("memory_units")}
                     WHERE bank_id=$1 AND fact_type='observation'
                   )
                 """,
@@ -186,7 +186,7 @@ async def _run_document(
             )
             rows = await conn.fetch(
                 f"SELECT id, text, tags, coalesce(array_length(source_memory_ids,1),0) AS n_src "
-                f"FROM {fq_table('memory_units')} WHERE bank_id=$1 AND fact_type='observation' ORDER BY created_at",
+                f"FROM {fq_store_table('memory_units')} WHERE bank_id=$1 AND fact_type='observation' ORDER BY created_at",
                 bank_id,
             )
         observations = [Observation(id=str(r["id"]), text=r["text"], tags=tuple(r["tags"] or [])) for r in rows]

@@ -77,6 +77,12 @@ class InMemoryMemories(MemoriesExtension):
         # from `rows` to `archive`, exactly as it moves between tables/namespaces.
         self.archive: dict[str, StoredMemory] = {}
         self.invalidation_reason: dict[str, str | None] = {}
+        # Units the consolidator gave up on — the store's `consolidation_failed_at`. Out of the
+        # backlog, and what `find_failed_consolidation` hands the retry.
+        self.failed: set[str] = set()
+        # The unresolved entity names a retain session handed over per unit — what a store that
+        # owns its entity registry resolves itself.
+        self.retained_entity_names: dict[str, list[str]] = {}
         self.embeddings: dict[str, object] = {}
         # What `apply_edit` was handed, so a test can tell which door the vector came through and
         # whether the caller supplied the pre-edit fact type.
@@ -208,7 +214,7 @@ class InMemoryMemories(MemoriesExtension):
         # from the dict rows — not an empty shell. An empty result means recall returns nothing and
         # every enrichment arm downstream (chunks / source facts / entities) has nothing to hydrate,
         # which is exactly the blind spot these tests exist to close.
-        from hindsight_api.engine.memories.pg.recall import SemanticBm25Result
+        from hindsight_api.engine.memories.base import SemanticBm25Result
         from hindsight_api.engine.search.types import RetrievalResult
 
         def _candidate(row, rank: int, *, semantic: bool) -> RetrievalResult:
@@ -361,8 +367,18 @@ class InMemoryMemories(MemoriesExtension):
     async def mark_consolidated(self, *, conn, fq_table, bank_id, unit_ids, when, failed=False):
         for unit_id in unit_ids:
             row = self.rows.get(str(unit_id))
-            if row is not None:
-                row.consolidated_at = when
+            if row is None:
+                continue
+            # One timestamp for both markers (the row has one field); `failed` also records which.
+            # Clearing (`when=None`) requeues: both go, as Postgres clears both columns.
+            row.consolidated_at = when
+            if failed and when is not None:
+                self.failed.add(row.unit_id)
+            elif when is None:
+                self.failed.discard(row.unit_id)
+
+    async def find_failed_consolidation(self, *, conn, fq_table, bank_id):
+        return [r for r in self.rows.values() if r.unit_id in self.failed and r.fact_type in ("experience", "world")]
 
     async def entity_memory_counts(self, *, conn, fq_table, bank_id, entity_ids=None):
         counts: dict[str, int] = {}
@@ -887,6 +903,7 @@ class _InMemoryRetainSession(RetainSession):
                         causal_edges=list(fact.causal_edges),
                     )
                 unit_ids.setdefault(part.document_id, []).extend(ids)
+            self._store.retained_entity_names.update(part.entity_names)
         self._parts.clear()
         return RetainResult(unit_ids=unit_ids)
 
@@ -1928,7 +1945,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
     index maintenance the column write triggers, not the code path.
     """
     from hindsight_api.engine.db_utils import acquire_with_retry
-    from hindsight_api.engine.schema import fq_store_table as fq_table
+    from hindsight_api.engine.schema import fq_store_table
 
     store = InMemoryMemories({})
     set_memories(store)
@@ -1949,7 +1966,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"SELECT name, content, embedding, search_vector "
-                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"FROM {fq_store_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank,
                 page["mental_model_id"],
             )
@@ -2183,6 +2200,9 @@ async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(res
     cause, effect = batch.unit_ids
     assert (store.rows[cause].text, store.rows[effect].text) == ("Ada met Bob", "Bob left")
     assert [(e.relation_type, e.target_unit_id) for e in store.rows[effect].causal_edges] == [("enables", cause)]
+    # The fact's entities reach the store as names, for it to resolve — not as Postgres rows.
+    assert sorted(store.retained_entity_names.get(cause, [])) == ["Ada", "Bob"]
+    assert not store.retained_entity_names.get(effect)
     assert store.documents["doc-1"]["created_at"] == created
 
 
@@ -2194,6 +2214,10 @@ async def test_backlog_gauges_count_a_store_owned_banks_memories(restore_default
     store = InMemoryMemories({})
     set_memories(store)
     await _seed(store, "bank-x", text="waiting for consolidation", fact_type="world")
+    [given_up] = await _seed(store, "bank-x", text="the consolidator gave up on this", fact_type="world")
+    await store.mark_consolidated(
+        conn=None, fq_table=None, bank_id="bank-x", unit_ids=[given_up], when=datetime.now(timezone.utc), failed=True
+    )
 
     def fetch(sql, *args):
         if "information_schema.tables" in sql:
@@ -2206,8 +2230,9 @@ async def test_backlog_gauges_count_a_store_owned_banks_memories(restore_default
     collector._db_pool = _FakePool(fetch)
     await collector._refresh_backlog()
 
+    # Disjoint: the failed fact is counted once, as failed, and does not hold the backlog up.
     assert collector._consolidation_backlog == {_BacklogKey("public", "bank-x"): 1}
-    assert collector._consolidation_failed == {_BacklogKey("public", "bank-x"): 0}
+    assert collector._consolidation_failed == {_BacklogKey("public", "bank-x"): 1}
 
 
 # ---------------------------------------------------------------------------
@@ -2264,23 +2289,23 @@ async def test_a_store_owned_delta_writes_no_entities_to_postgres(monkeypatch, r
     monkeypatch.setattr(orch, "_chunk_contents_for_delta", lambda _contents, _config: {0: "kept", 1: "new"})
 
     result = await orch._try_delta_retain(
-        SimpleNamespace(ops=None),
-        None,
-        None,
-        SimpleNamespace(discard_pending_stats=lambda: None),
-        str,
-        "bank-x",
-        [{"content": "kept\nnew", "document_id": "doc-1"}],
-        [RetainContent(content="kept\nnew")],
-        SimpleNamespace(),
-        "doc-1",
-        None,
-        None,
-        [],
-        0.0,
-        None,
-        None,
-        None,
+        pool=SimpleNamespace(ops=None),
+        embeddings_model=None,
+        llm_config=None,
+        entity_resolver=SimpleNamespace(discard_pending_stats=lambda: None),
+        format_date_fn=str,
+        bank_id="bank-x",
+        contents_dicts=[{"content": "kept\nnew", "document_id": "doc-1"}],
+        contents=[RetainContent(content="kept\nnew")],
+        config=SimpleNamespace(),
+        document_id="doc-1",
+        fact_type_override=None,
+        document_tags=None,
+        log_buffer=[],
+        start_time=0.0,
+        operation_id=None,
+        schema=None,
+        outbox_callback=None,
     )
 
     assert result is not None, "the delta fell back instead of writing through the store"
@@ -2333,3 +2358,70 @@ async def test_a_resumed_retain_finds_a_store_owned_documents_unit_ids(restore_d
     got = await store.document_unit_ids(conn=None, fq_table=None, bank_id="bank-x", document_id="doc-1")
 
     assert got == [second, first]
+
+
+async def test_a_resumed_streaming_retain_reports_a_store_owned_documents_unit_ids(monkeypatch, restore_default_store):
+    """The recovery branch of the streaming retain itself, not just the store method behind it.
+
+    An operation whose checkpoint says the document's facts are committed skips extraction and
+    loads the unit ids instead; read from `memory_units` it reported none for a store-owned bank,
+    so the operation result and the retain metric carried an empty list.
+    """
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.retain import orchestrator as orch
+    from hindsight_api.engine.retain.types import RetainContent
+
+    store = InMemoryMemories({})
+    # A store that owns its memories derives its own semantic links, so the final ANN pass (SQL
+    # over `memory_units`) is skipped and the test sees the recovery branch alone.
+    store.derives_semantic_links_internally = True
+    set_memories(store)
+    [first] = await _seed(store, "bank-x", text="written first", document_id="doc-1")
+    [second] = await _seed(store, "bank-x", text="written second", document_id="doc-1")
+
+    class _CheckpointConn:
+        """Answers the operation read with a checkpoint naming the document; nothing else."""
+
+        async def fetchrow(self, sql, *args):
+            assert "async_operations" in sql, sql
+            return {"result_metadata": {"facts_committed_document_ids": ["doc-1"], "unit_ids_count": 2}}
+
+    @asynccontextmanager
+    async def _checkpoint_only(_pool):
+        yield _CheckpointConn()
+
+    async def _no_llm(*_a, **_k):
+        raise AssertionError("a resumed retain re-ran extraction")
+
+    async def _no_bodies(**_k):
+        return None
+
+    monkeypatch.setattr(orch, "acquire_with_retry", _checkpoint_only)
+    monkeypatch.setattr(orch, "_store_document_bodies", _no_bodies)
+    monkeypatch.setattr(orch, "_extract_and_embed", _no_llm)
+
+    result = await orch._streaming_retain_batch(
+        pool=None,
+        embeddings_model=None,
+        llm_config=None,
+        entity_resolver=None,
+        format_date_fn=str,
+        bank_id="bank-x",
+        contents_dicts=[{"content": "written first\nwritten second", "document_id": "doc-1"}],
+        contents=[RetainContent(content="written first\nwritten second")],
+        config=SimpleNamespace(retain_memory_budget_mb=64),
+        document_id="doc-1",
+        is_first_batch=True,
+        fact_type_override=None,
+        document_tags=None,
+        log_buffer=[],
+        start_time=0.0,
+        all_pre_chunks=["written first", "written second"],
+        chunk_to_content=[0, 0],
+        chunk_batch_size=10,
+        operation_id=str(uuid.uuid4()),
+    )
+
+    assert result.memory_ids == [[first, second]]

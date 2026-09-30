@@ -1041,6 +1041,6 @@ class DataAccessOps(ABC):
 
     def _get_mu_table(self) -> str:
         """Get the fully-qualified memory_units table name."""
-        from ..schema import fq_store_table as fq_table
+        from ..schema import fq_store_table
 
-        return fq_table("memory_units")
+        return fq_store_table("memory_units")

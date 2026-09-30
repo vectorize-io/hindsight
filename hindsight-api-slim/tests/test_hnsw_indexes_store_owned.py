@@ -167,6 +167,9 @@ async def test_store_owned_bank_gets_no_vector_indexes(memory, request_context, 
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+# The SQL-owned control: it asserts the indexes a Postgres-backed bank gets, which needs the
+# ambient store to be Postgres. Its store-owned counterpart above is the half that runs here.
+@pytest.mark.memory_backend_incompatible
 async def test_a_sql_owned_bank_still_gets_all_three(memory, request_context):
     """The silent half: inverting the condition strips ANN from every ordinary bank.
 
@@ -336,6 +339,9 @@ async def test_importing_a_bank_into_a_store_owned_deployment_creates_no_indexes
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+# Its closing assertion counts the three indexes a Postgres-backed bank gets at creation, which
+# needs the ambient store to be Postgres: under a store that owns the bank there are none to count.
+@pytest.mark.memory_backend_incompatible
 async def test_repair_refuses_to_guess_when_the_store_cannot_answer(memory, request_context):
     """The reconcile's fallback is the opposite of bank creation's, and must stay so.
 

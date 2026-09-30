@@ -43,10 +43,9 @@ from ...schema import fq_store_table as fq_table
 from ...search.graph_retrieval import GraphRetriever
 from ...search.tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
 from ...search.types import GraphRetrieval, GraphRetrievalTimings, RetrievalResult
+from ..base import GRAPH_SEED_LIMIT
 
 logger = logging.getLogger(__name__)
-
-GRAPH_SEED_LIMIT = 20
 
 
 async def _find_semantic_seeds(

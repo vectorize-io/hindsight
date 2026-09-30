@@ -227,6 +227,9 @@ class TestEmbeddingsBatchLengthGuarantee:
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
 
 
+# The semantic-link ANN is Postgres's: a store that owns its memories derives those edges
+# itself, so the engine never computes a threshold to propagate.
+@pytest.mark.memory_backend_incompatible
 class TestSemanticLinkThresholdPropagation:
     @pytest.mark.asyncio
     async def test_phase1_ann_uses_resolved_semantic_link_threshold(self, monkeypatch):

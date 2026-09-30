@@ -4,7 +4,7 @@ Memory Engine - Core implementation of the memory system.
 This package contains all the implementation details of the memory engine:
 - MemoryEngine: Main class for memory operations
 - Utility modules: embedding_utils, bank_utils
-- Supporting modules: embeddings, cross_encoder, entity_resolver, etc.
+- Supporting modules: embeddings, cross_encoder, memories (the memories store), etc.
 """
 
 from .cross_encoder import CrossEncoderModel, LocalSTCrossEncoder, RemoteTEICrossEncoder

@@ -127,20 +127,22 @@ uv run run-amb --dataset longmemeval --split s -- --category single-session-user
 - `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, VertexAI, Groq, MiniMax, Ollama, LM Studio, LiteLLM, Claude Code, GitHub Copilot, DeepSeek, Fireworks, Codex (openai-codex), xAI (xai-oauth), Llama.cpp, Nous, etc. (See `hindsight-docs/docs/developer/configuration.mdx` for full provider lists)
 - `embeddings.py`: Embedding generation supporting local (SentenceTransformers) and standalone/remote providers (in-process: onnx; remote: tei, openai, cohere, zeroentropy, litellm, google, etc.)
 - `cross_encoder.py`: Reranking supporting local (CrossEncoder) and standalone/remote providers (in-process: flashrank, jina-mlx; remote: tei, cohere, siliconflow, zeroentropy, litellm, google, alibaba, etc.)
-- `entity_resolver.py`: Entity extraction and normalization
 - `query_analyzer.py`: Query intent analysis
 
 **retain/**: Memory ingestion pipeline
 - `orchestrator.py`: Coordinates the retain flow
 - `fact_extraction.py`: LLM-based fact extraction from content
-- `link_utils.py`: Entity link creation and management
 
 **search/**: Multi-strategy retrieval
 - `retrieval.py`: Main retrieval orchestrator
 - `graph_retrieval.py`: Graph retrieval abstract base class
-- `link_expansion_retrieval.py`: Link expansion graph retrieval
 - `fusion.py`: Reciprocal rank fusion for combining results
 - `reranking.py`: Cross-encoder reranking
+
+**memories/**: The memories store, which owns every table a memory touches (`base.py` is the interface, `postgres.py` + `pg/` the default Postgres store — the only code allowed to name those tables)
+- `pg/entity_resolver.py`: Entity extraction and normalization
+- `pg/links.py`: Entity link creation and management
+- `pg/link_expansion.py`: Link expansion graph retrieval
 
 ### API Layer (hindsight-api-slim/hindsight_api/api/)
 - `http.py`: FastAPI HTTP routers for all REST endpoints

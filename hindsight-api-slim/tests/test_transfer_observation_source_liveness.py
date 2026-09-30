@@ -12,7 +12,7 @@ import uuid
 import pytest
 
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.transfer import importer as importer_mod
 from hindsight_api.engine.transfer.schema import TransferObservation, TransferObservationSource
 
@@ -51,7 +51,7 @@ async def _imported_observation_sources(backend, bank_id):
 
     async with acquire_with_retry(backend) as conn:
         page = await get_memories().scan_memories(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["observation"], limit=1000
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, fact_types=["observation"], limit=1000
         )
     return [{str(sid) for sid in (m.source_memory_ids or [])} for m in page.memories if m.text == OBSERVATION_TEXT]
 
@@ -144,13 +144,13 @@ async def test_retain_replacing_the_document_mid_import_is_not_cited(memory, req
 
     async with acquire_with_retry(backend) as conn:
         rows = await conn.fetch(
-            f"SELECT id, source_memory_ids FROM {fq_table('memory_units')} "
+            f"SELECT id, source_memory_ids FROM {fq_store_table('memory_units')} "
             f"WHERE bank_id = $1 AND fact_type = 'observation'",
             dst,
         )
         dangling = []
         for r in rows:
             for sid in r["source_memory_ids"] or []:
-                if not await conn.fetchval(f"SELECT 1 FROM {fq_table('memory_units')} WHERE id = $1", sid):
+                if not await conn.fetchval(f"SELECT 1 FROM {fq_store_table('memory_units')} WHERE id = $1", sid):
                     dangling.append((str(r["id"])[:8], str(sid)[:8]))
     assert not dangling, f"observation cites deleted units: {dangling}"

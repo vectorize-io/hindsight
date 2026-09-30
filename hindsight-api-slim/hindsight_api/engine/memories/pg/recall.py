@@ -6,7 +6,6 @@ Reached only through :class:`~hindsight_api.engine.memories.postgres.PostgresMem
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,18 +20,9 @@ from ...search.retrieval import tokenize_query
 from ...search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from ...search.types import RetrievalResult
 from ...sql import create_sql_dialect
-from .link_expansion import GRAPH_SEED_LIMIT
+from ..base import GRAPH_SEED_LIMIT, SemanticBm25Result
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SemanticBm25Result:
-    """Per-fact-type candidates returned by the shared semantic/BM25 query."""
-
-    semantic: list[RetrievalResult]
-    bm25: list[RetrievalResult]
-    graph_seeds: list[RetrievalResult] | None
 
 
 async def retrieve_semantic_bm25_combined_sql(

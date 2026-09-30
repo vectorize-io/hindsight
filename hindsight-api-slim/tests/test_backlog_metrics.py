@@ -100,6 +100,10 @@ def _rows_for(sql):
 
 
 @pytest.mark.asyncio
+# The backlog gauge reads `memory_units` directly here, asserting the SQL text and the fake
+# pool's statement list. A store that owns its memories answers the same gauge from its own
+# count, so there is no SQL to assert on (#4969).
+@pytest.mark.memory_backend_incompatible
 async def test_refresh_backlog_aggregates_queue_and_consolidation():
     collector = _collector(include_bank_id=False)
     collector._db_pool = _FakePool(lambda sql, *a: _rows_for(sql))
@@ -117,6 +121,10 @@ async def test_refresh_backlog_aggregates_queue_and_consolidation():
 
 
 @pytest.mark.asyncio
+# The backlog gauge reads `memory_units` directly here, asserting the SQL text and the fake
+# pool's statement list. A store that owns its memories answers the same gauge from its own
+# count, so there is no SQL to assert on (#4969).
+@pytest.mark.memory_backend_incompatible
 async def test_refresh_backlog_uses_index_matched_predicates_not_filter_scan():
     """Backlog/failed must be two separate COUNT(*) queries whose WHERE matches
     a partial-index predicate exactly (no FILTER over a full-table scan), and
@@ -144,6 +152,10 @@ async def test_refresh_backlog_uses_index_matched_predicates_not_filter_scan():
 
 
 @pytest.mark.asyncio
+# The backlog gauge reads `memory_units` directly here, asserting the SQL text and the fake
+# pool's statement list. A store that owns its memories answers the same gauge from its own
+# count, so there is no SQL to assert on (#4969).
+@pytest.mark.memory_backend_incompatible
 async def test_backlog_count_runs_with_seqscan_disabled():
     """`consolidated_at IS NULL` is true for a large fraction of the table, so
     the planner misjudges selectivity and won't use the partial index without a
@@ -159,6 +171,10 @@ async def test_backlog_count_runs_with_seqscan_disabled():
 
 
 @pytest.mark.asyncio
+# The backlog gauge reads `memory_units` directly here, asserting the SQL text and the fake
+# pool's statement list. A store that owns its memories answers the same gauge from its own
+# count, so there is no SQL to assert on (#4969).
+@pytest.mark.memory_backend_incompatible
 async def test_refresh_backlog_per_bank_labels_and_group_by_when_enabled():
     """With metrics_include_bank_id on, bank_id enters the cache key and the
     SQL switches to GROUP BY bank_id."""

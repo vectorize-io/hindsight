@@ -52,7 +52,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str, ops=Non
     ``bank_id`` is required, not optional: `chunks` is keyed on chunk_id alone, so an id
     that collides with another bank's row (possible for rows written before the escaping
     in `chunk_ids.py` -- see #4244) would otherwise let a delta retain here cascade that
-    bank's facts away. Every statement below carries it.
+    bank's facts away. Every call below passes it on, down to the store's own statements.
 
     ``ops`` is the backend-specific DataAccessOps the observation sweep below needs to choose
     the PG (native array) vs Oracle (junction table) read path — pass ``pool.ops``.

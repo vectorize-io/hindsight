@@ -9806,8 +9806,8 @@ class MemoryEngine(MemoryEngineInterface):
                     else:
                         async with acquire_with_retry(backend) as entity_conn:
                             # The memory carries its own entity ids; the store resolves
-                            # them to names (observations inherit their sources'), the
-                            # `entities` registry staying in postgres.
+                            # them to names (observations inherit their sources') against
+                            # its own entity registry.
                             fact_entity_map = await get_memories().entity_map_for_units(
                                 conn=entity_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
                             )
@@ -10621,13 +10621,13 @@ class MemoryEngine(MemoryEngineInterface):
                         source_ids_by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
 
                 # Step 3 — per-bank cascade.
-                for bank_id, ids_for_bank in by_bank.items():
-                    source_ids = source_ids_by_bank.get(bank_id, [])
+                for target_bank, ids_for_bank in by_bank.items():
+                    source_ids = source_ids_by_bank.get(target_bank, [])
 
                     # Sweep before the delete as well, in the sweep's lock order (see delete_document).
                     invalidated = 0
                     if source_ids:
-                        invalidated = await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
+                        invalidated = await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
 
                     # 3a. Capture relink victims and entity prune candidates
                     # BEFORE the cascade. Victims come from the fact rows (only
@@ -10637,28 +10637,28 @@ class MemoryEngine(MemoryEngineInterface):
                     from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
                     if source_ids:
-                        await enqueue_relink_victims(conn, bank_id, source_ids)
-                    await enqueue_entity_prune_candidates(conn, bank_id, ids_for_bank)
+                        await enqueue_relink_victims(conn, target_bank, source_ids)
+                    await enqueue_entity_prune_candidates(conn, target_bank, ids_for_bank)
 
                     # 3b. The delete itself. Postgres drops the links in lock order, then the
                     # rows in chunks (the cascade handles unit_entities / memory_links /
                     # observation history); a store that owns its memories deletes them itself.
                     deleted_this_bank = await store.delete_memories(
-                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_ids=ids_for_bank
+                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=target_bank, unit_ids=ids_for_bank
                     )
 
                     # 3c. Racing-observation sweep — only fires for banks
                     # whose source facts were touched (observations reference
                     # source_memory_ids).
                     if source_ids:
-                        invalidated += await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
+                        invalidated += await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
                         if invalidated > 0:
-                            banks_with_invalidated_obs.add(bank_id)
+                            banks_with_invalidated_obs.add(target_bank)
 
                     if source_ids:
-                        banks_with_source_deletes.add(bank_id)
+                        banks_with_source_deletes.add(target_bank)
 
-                    per_bank[bank_id] = {
+                    per_bank[target_bank] = {
                         "deleted": deleted_this_bank,
                         "invalidated_observations": invalidated,
                     }
@@ -10666,33 +10666,35 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Step 4 — post-commit side effects, best-effort per bank.
         current_schema = get_current_schema()
-        for bank_id, counts in per_bank.items():
+        for target_bank, counts in per_bank.items():
             if counts["deleted"] <= 0:
                 continue
             try:
-                await self._bank_stats_cache.invalidate(current_schema, bank_id)
+                await self._bank_stats_cache.invalidate(current_schema, target_bank)
             except Exception as e:
                 logger.warning(
-                    f"Failed to invalidate bank stats cache after bulk memory deletion for bank {bank_id}: {e}"
+                    f"Failed to invalidate bank stats cache after bulk memory deletion for bank {target_bank}: {e}"
                 )
 
-        for bank_id in banks_with_invalidated_obs:
+        for target_bank in banks_with_invalidated_obs:
             try:
-                config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                config = await self._config_resolver.resolve_full_config(target_bank, request_context)
                 if config.enable_auto_consolidation:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    await self.submit_async_consolidation(bank_id=target_bank, request_context=request_context)
             except Exception as e:
-                logger.warning(f"Failed to submit consolidation after bulk memory deletion for bank {bank_id}: {e}")
+                logger.warning(f"Failed to submit consolidation after bulk memory deletion for bank {target_bank}: {e}")
 
-        for bank_id in banks_with_source_deletes:
+        for target_bank in banks_with_source_deletes:
             try:
                 await self.submit_async_graph_maintenance(
-                    bank_id=bank_id, request_context=request_context, force_sweep=True
+                    bank_id=target_bank, request_context=request_context, force_sweep=True
                 )
             except Exception as e:
-                logger.warning(f"Failed to submit graph maintenance after bulk memory deletion for bank {bank_id}: {e}")
+                logger.warning(
+                    f"Failed to submit graph maintenance after bulk memory deletion for bank {target_bank}: {e}"
+                )
             await self._submit_vector_index_maintenance_quietly(
-                bank_id, request_context, after="bulk memory deletion", grew=False
+                target_bank, request_context, after="bulk memory deletion", grew=False
             )
 
         return {
@@ -11468,6 +11470,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # outscores the one the caller actually named, and the edit lands on it with
                         # a 200 and no warning. Callers correcting a fact by hand should pass False,
                         # which reuses an existing entity only on a case-insensitive name match.
+                        assert self.entity_resolver is not None, "initialize() builds the entity resolver"
                         entity_resolution = await store.resolve_entities(
                             entity_resolver=self.entity_resolver,
                             conn=conn,

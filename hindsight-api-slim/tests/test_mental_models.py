@@ -15,7 +15,7 @@ from hindsight_api.engine.memory_engine import (
     _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
 )
-from hindsight_api.engine.schema import fq_store_table as fq_table
+from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.memories import MemoryScopeWatermark
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate
@@ -1304,7 +1304,7 @@ class TestMentalModelStaleness:
         async with pool.acquire() as conn:
             await conn.execute(
                 f"""
-                INSERT INTO {fq_table("memory_units")}
+                INSERT INTO {fq_store_table("memory_units")}
                     (id, bank_id, text, event_date, fact_type, tags, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6::varchar[], $4)
                 """,
@@ -1544,7 +1544,7 @@ class TestMentalModelStaleness:
             rows = {
                 name: await conn.fetchrow(
                     f"SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
-                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    f"FROM {fq_store_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mm["id"],
                 )
@@ -1710,7 +1710,7 @@ class TestMentalModelStaleness:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 f"SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
-                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"FROM {fq_store_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
@@ -1825,7 +1825,7 @@ class TestMentalModelStaleness:
             async with pool.acquire() as conn:
                 single = await store.any_memory_updated_since(
                     conn=conn,
-                    fq_table=fq_table,
+                    fq_table=fq_store_table,
                     bank_id=bank_id,
                     since=since,
                     tags=["user_a"],
@@ -1833,7 +1833,7 @@ class TestMentalModelStaleness:
                 )
                 batch = await store.any_memory_updated_since_batch(
                     conn=conn,
-                    fq_table=fq_table,
+                    fq_table=fq_store_table,
                     bank_id=bank_id,
                     scopes=[
                         MemoryScopeWatermark(
@@ -1878,11 +1878,11 @@ class TestMentalModelStaleness:
         async def ask(**kwargs) -> bool:
             async with pool.acquire() as conn:
                 single = await store.any_memory_updated_since(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, since=since, **kwargs
+                    conn=conn, fq_table=fq_store_table, bank_id=bank_id, since=since, **kwargs
                 )
                 batch = await store.any_memory_updated_since_batch(
                     conn=conn,
-                    fq_table=fq_table,
+                    fq_table=fq_store_table,
                     bank_id=bank_id,
                     scopes=[
                         MemoryScopeWatermark(
@@ -1976,7 +1976,7 @@ class TestMentalModelStaleness:
             pool = await memory._get_pool()
             async with pool.acquire() as conn:
                 await conn.execute(
-                    f"UPDATE {fq_table('mental_models')} SET last_memory_seen_at = now() "
+                    f"UPDATE {fq_store_table('mental_models')} SET last_memory_seen_at = now() "
                     f"WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     model["id"],
@@ -2095,7 +2095,7 @@ class TestMentalModelRefreshTimestamps:
         async with pool.acquire() as conn:
             return await conn.fetchrow(
                 f"SELECT last_refreshed_at, last_memory_seen_at "
-                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"FROM {fq_store_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm_id,
             )
@@ -2203,7 +2203,7 @@ class TestMentalModelRefreshTimestamps:
         async with pool.acquire() as conn:
             await conn.execute(
                 f"""
-                INSERT INTO {fq_table("memory_units")}
+                INSERT INTO {fq_store_table("memory_units")}
                     (id, bank_id, text, event_date, fact_type, tags, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, 'experience', $5::varchar[], $4, $4)
                 """,
@@ -3052,7 +3052,7 @@ class TestClearMentalModel:
         async def stored_embedding() -> str:
             async with memory._pool.acquire() as conn:
                 return await conn.fetchval(
-                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    f"SELECT embedding::text FROM {fq_store_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mm["id"],
                 )
@@ -3125,7 +3125,7 @@ class TestMentalModelRefreshFactTypeFilter:
         async with pool.acquire() as conn:
             await conn.execute(
                 f"""
-                INSERT INTO {fq_table("memory_units")}
+                INSERT INTO {fq_store_table("memory_units")}
                     (id, bank_id, text, event_date, fact_type, tags, embedding, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, $5, $6::varchar[], $7::vector, $4, $4)
                 """,

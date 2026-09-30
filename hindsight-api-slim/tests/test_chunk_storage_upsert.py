@@ -115,6 +115,8 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
 
 
 @pytest.mark.asyncio
+# Counts rows in the SQL `chunks` table, which a store-owned bank never writes.
+@pytest.mark.memory_backend_incompatible
 async def test_store_chunks_batch_second_call_with_identical_payload(memory):
     """
     The exact #977 shape: ``store_chunks_batch`` called twice with the same

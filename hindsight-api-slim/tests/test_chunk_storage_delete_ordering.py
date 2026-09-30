@@ -25,6 +25,9 @@ class RecordingConn:
 
 
 @pytest.mark.asyncio
+# Asserts the order and shape of the SQL that deletes `chunks` and `memory_links`. A
+# store-owned bank has neither table's rows, so nothing reaches the recording connection.
+@pytest.mark.memory_backend_incompatible
 async def test_delete_chunks_by_ids_predeletes_links_before_chunks():
     conn = RecordingConn()
     chunk_ids = ["chunk-b", "chunk-a"]
@@ -55,6 +58,9 @@ async def test_delete_chunks_by_ids_predeletes_links_before_chunks():
 
 
 @pytest.mark.asyncio
+# Asserts the order and shape of the SQL that deletes `chunks` and `memory_links`. A
+# store-owned bank has neither table's rows, so nothing reaches the recording connection.
+@pytest.mark.memory_backend_incompatible
 async def test_delete_chunks_by_ids_matches_link_endpoints_through_indexable_joins():
     """The endpoint match must stay two single-column joins, never an OR across columns.
 

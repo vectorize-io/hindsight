@@ -164,9 +164,14 @@ async def create_bank_vector_indexes(
         logger.debug("Skipping per-bank vector indexes for store-owned bank %s", bank_id)
         return
 
-    from ..memories import get_memories
+    # The SQL store, not the configured one: this line is only reached once the bank has been
+    # decided SQL-backed (or undecidable, which falls back to SQL-backed above), so these are
+    # Postgres's indexes over Postgres's rows. Asking the configured store would hit a
+    # non-Postgres store's no-op default and skip them silently — the same silent half this
+    # function's own test guards against from the other direction.
+    from ..memories import sql_memories
 
-    await get_memories().create_bank_vector_indexes(
+    await sql_memories().create_bank_vector_indexes(
         conn=conn,
         ops=ops,
         fq_table=fq_table,

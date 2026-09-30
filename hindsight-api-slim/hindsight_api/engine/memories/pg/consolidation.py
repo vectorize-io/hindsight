@@ -11,9 +11,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ....config import get_config
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ...consolidation.consolidator import _TemporalBounds
 
 
 def _native_search_vector_update(config, param: str) -> str:
@@ -90,8 +93,8 @@ async def fold_sources_into_observation(
     observation_id: str,
     expected_text: str,
     merged_text: str,
-    source_memory_ids: list,
-    bounds: Any,
+    source_memory_ids: list[uuid.UUID],
+    bounds: _TemporalBounds,
 ) -> bool:
     """Fold ``source_memory_ids`` and ``merged_text`` into the observation, widening its dates.
 
@@ -212,9 +215,9 @@ async def rewrite_observation(
     observation_id: str,
     text: str,
     embedding: str | None,
-    source_memory_ids: list,
+    source_memory_ids: list[uuid.UUID],
     tags: list[str],
-    bounds: Any,
+    bounds: _TemporalBounds,
 ) -> bool:
     """Rewrite an observation in place, widening its dates by ``bounds``. False if the row is gone."""
     search_vector_clause = _native_search_vector_update(get_config(), "$1")
@@ -265,7 +268,7 @@ async def insert_observation(
     observation_id: uuid.UUID,
     text: str,
     embedding: str | None,
-    source_memory_ids: list,
+    source_memory_ids: list[uuid.UUID],
     tags: list[str],
     event_date: datetime | None,
     occurred_start: datetime | None,
