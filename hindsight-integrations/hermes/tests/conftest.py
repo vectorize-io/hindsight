@@ -114,7 +114,6 @@ def _install_hermes_stubs(hermes_home: Path) -> None:
     module("hermes_time", now=lambda: datetime.now(timezone.utc))
     module("tools")
     module("tools.registry", tool_error=lambda msg: f"ERROR: {msg}")
-    module("tools.lazy_deps", install_specs=lambda *a, **k: None)
     module("utils", read_json_or_empty=_read_json_or_empty, atomic_json_write=_atomic_json_write)
     # plugins.memory.config_schema stays Hermes-owned (the desktop panel needs core's type).
     module("plugins")

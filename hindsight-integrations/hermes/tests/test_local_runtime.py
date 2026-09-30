@@ -25,7 +25,7 @@ def test_the_probe_requires_only_the_client_and_the_daemon_manager(monkeypatch):
     assert asked == ["hindsight_client", "hindsight_embed.daemon_embed_manager"]
 
 
-def test_a_missing_plugin_package_reports_it_with_the_reinstall_hint(monkeypatch):
+def test_a_missing_plugin_package_reports_it_with_the_repair_hint(monkeypatch):
     def _boom(name):
         raise ModuleNotFoundError("No module named 'hindsight_embed'")
 
@@ -33,7 +33,7 @@ def test_a_missing_plugin_package_reports_it_with_the_reinstall_hint(monkeypatch
     status = embedded._check_local_runtime()
     assert status.available is False and "hindsight_embed" in status.reason
     hint = embedded._local_runtime_hint(status.reason)
-    assert "hermes plugins install hindsight" in hint
+    assert "hermes pm repair" in hint
     assert "hindsight-all" not in hint
 
 
@@ -121,15 +121,23 @@ def test_the_plugin_never_depends_on_hindsight_all_again():
     declared = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     assert not [s for s in declared["project"]["dependencies"] if "hindsight-all" in s]
 
-    banned_modules = {"hindsight", "tools.lazy_deps"}
+    # Hermes' runtime installers: the retired lazy_deps shim and PM's ensure_import. Dependencies
+    # reach the environment through PM admission (pyproject.toml), never from plugin code.
+    banned_modules = {"hindsight", "tools.lazy_deps", "pm"}
+
+    def banned(module: str) -> bool:
+        return module in banned_modules or module.startswith("pm.")
+
     for name in ("__init__.py", "embedded.py", "setup.py"):
         tree = ast.parse((root / name).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module in banned_modules:
-                raise AssertionError(f"{name}:{node.lineno} imports from {node.module}")
+            if isinstance(node, ast.ImportFrom):
+                assert not banned(node.module or ""), f"{name}:{node.lineno} imports from {node.module}"
+                if node.module == "tools":
+                    assert all(a.name != "lazy_deps" for a in node.names), f"{name}:{node.lineno} imports lazy_deps"
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name not in banned_modules, f"{name}:{node.lineno} imports {alias.name}"
+                    assert not banned(alias.name), f"{name}:{node.lineno} imports {alias.name}"
 
 
 def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(monkeypatch, tmp_path):
@@ -219,3 +227,16 @@ def test_an_unreadable_embed_defaults_to_the_safe_path(monkeypatch):
     is correct either way, while skipping it on a release that needs it breaks the daemon."""
     monkeypatch.setitem(sys.modules, "hindsight_embed", SimpleNamespace())  # no daemon_embed_manager
     assert embedded._embed_scrubs_parent_env() is False
+
+
+def test_the_binary_probe_checks_the_scripts_dir_the_manager_uses(monkeypatch):
+    """No hindsight-api installed means the daemon comes down through uvx first. The probe must
+    look where the manager looks — the sysconfig scripts path — not only beside the interpreter."""
+    monkeypatch.setattr(embedded.shutil, "which", lambda name, path=None: None)
+    assert embedded._installed_api_binary_exists() is False
+
+    scripts = embedded.sysconfig.get_path("scripts")
+    monkeypatch.setattr(
+        embedded.shutil, "which", lambda name, path=None: "/s/hindsight-api" if path == scripts else None
+    )
+    assert embedded._installed_api_binary_exists() is True

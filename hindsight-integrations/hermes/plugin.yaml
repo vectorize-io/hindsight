@@ -1,7 +1,8 @@
 name: hindsight
-version: 1.1.0
+version: 1.2.1
 description: "Hindsight — long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval."
-pip_dependencies:
-  - "hindsight-client>=0.10.1"
-  - "hindsight-embed>=0.10.1"
+# No dependency list here on purpose: Hermes' package manager reads this plugin's own
+# pyproject.toml (pm/plugin_declarations.py prefers an authored project.dependencies and ignores
+# the manifest lists), so a copy here would be dead and could only drift. The setup card shows
+# manifest deps only until NousResearch/hermes-agent#128408 lands — display, not installation.
 requires_env: []
