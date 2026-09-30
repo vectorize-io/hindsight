@@ -35,7 +35,7 @@ Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs
 
 > **💡 Works in Grok Build too**
 >
-Grok Build natively supports Claude Code plugins. See the [Grok Build integration guide](grok-build.md) for Grok-specific setup.
+Grok Build is installed by the [Coding Agents plugin](coding-agents.md#-grok-build).
 ## Quick Start
 
 ```bash
