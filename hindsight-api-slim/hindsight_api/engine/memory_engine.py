@@ -13719,33 +13719,16 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             from .memories import get_memories
 
-            _hist_store = get_memories()
-            if not _hist_store.store_owned_for(bank_id):
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT fact_type, source_memory_ids
-                    FROM {fq_table("memory_units")}
-                    WHERE id = $1 AND bank_id = $2
-                    """,
-                    memory_uuid,
-                    bank_id,
-                )
-                if not row:
-                    return None
-                fact_type = row["fact_type"]
-            else:
-                # A store that keeps memories outside SQL has no `memory_units` row to check
-                # existence against, so this lookup could only ever miss and the caller 404'd a
-                # memory that `memories/list` had just returned. The HISTORY rows themselves stay
-                # in SQL (`observation_history` below) — it is only the existence + fact_type probe
-                # that has to come from the store.
-                _found = await _hist_store.get_memories(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
-                )
-                if not _found:
-                    return None
-                fact_type = _found[0].fact_type
-            if fact_type != "observation":
+            store = get_memories()
+            # Memories and their source ids belong to the store; only the history snapshots
+            # stay in SQL. Reading memory_units here misses externally stored observations.
+            observations = await store.get_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+            )
+            if not observations:
+                return None
+            observation = observations[0]
+            if observation.fact_type != "observation":
                 return []
 
             # History now lives in the dedicated observation_history table
@@ -13790,7 +13773,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             # Collect all source memory IDs (current full set + all historical new ones)
-            current_source_ids: list[str] = [str(sid) for sid in (row["source_memory_ids"] or [])]
+            current_source_ids = observation.source_memory_ids
             all_source_ids: set[uuid.UUID] = set(uuid.UUID(sid) for sid in current_source_ids)
             for entry in raw_history:
                 for sid in entry.get("new_source_memory_ids", []):
@@ -13802,20 +13785,15 @@ class MemoryEngine(MemoryEngineInterface):
             # Resolve all source memories in one query
             source_map: dict[str, dict] = {}
             if all_source_ids:
-                source_rows = await conn.fetch(
-                    f"""
-                    SELECT id, text, fact_type, context
-                    FROM {fq_table("memory_units")}
-                    WHERE id = ANY($1::uuid[])
-                    """,
-                    list(all_source_ids),
+                sources = await store.get_memories(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(sid) for sid in all_source_ids]
                 )
-                for r in source_rows:
-                    source_map[str(r["id"])] = {
-                        "id": str(r["id"]),
-                        "text": r["text"],
-                        "type": r["fact_type"],
-                        "context": r["context"] or None,
+                for source in sources:
+                    source_map[source.unit_id] = {
+                        "id": source.unit_id,
+                        "text": source.text,
+                        "type": source.fact_type,
+                        "context": source.context or None,
                     }
 
             # Reconstruct cumulative source IDs per change by working backwards from current state.
