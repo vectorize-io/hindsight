@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hindsight_api.engine.memory_engine import fq_table
+from hindsight_api.engine.schema import fq_store_table as fq_table
 
 
 def _ts() -> float:

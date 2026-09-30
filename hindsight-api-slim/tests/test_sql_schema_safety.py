@@ -91,7 +91,7 @@ def find_unqualified_table_refs(content: str, filename: str) -> list[tuple[int, 
             if re.search(pattern, line, re.IGNORECASE):
                 # Check if it's actually qualified (has schema prefix)
                 qualified_pattern = rf"\.\s*{table}(?:\s|$|,|\))"
-                fq_table_pattern = rf'fq_table\s*\(\s*["\']?{table}'
+                fq_table_pattern = rf'fq(?:_store)?_table\s*\(\s*["\']?{table}'
 
                 if not re.search(qualified_pattern, line) and not re.search(fq_table_pattern, line):
                     # Additional check: line must have SQL indicators

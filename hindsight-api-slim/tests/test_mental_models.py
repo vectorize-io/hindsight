@@ -14,8 +14,8 @@ from hindsight_api.engine.memory_engine import (
     MemoryEngine,
     _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
-    fq_table,
 )
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.memories import MemoryScopeWatermark
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate

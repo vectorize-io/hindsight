@@ -51,7 +51,7 @@ async def _insert_unit(
 async def test_score_counts_distinct_shared_sources(memory, request_context):
     """Score == number of distinct source facts shared with the seed neighbourhood."""
     from hindsight_api.engine.db.ops import UpdatedWindow
-    from hindsight_api.engine.task_backend import fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
     bank_id = f"test_obs_score_{uuid.uuid4().hex[:8]}"
     try:
@@ -120,7 +120,7 @@ async def test_wide_source_arrays_do_not_change_results(memory, request_context)
     whether their arrays hold 1 id or 200 — the extra ids are simply unrelated.
     """
     from hindsight_api.engine.db.ops import UpdatedWindow
-    from hindsight_api.engine.task_backend import fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
     bank_id = f"test_obs_wide_{uuid.uuid4().hex[:8]}"
     try:
@@ -177,7 +177,7 @@ async def test_per_entity_cap_bounds_hub_traversal(memory, request_context):
     lowest ids of an over-cap entity must fall outside the cap and score nothing.
     """
     from hindsight_api.engine.db.ops import UpdatedWindow
-    from hindsight_api.engine.task_backend import fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
     bank_id = f"test_obs_cap_{uuid.uuid4().hex[:8]}"
     per_entity_limit = 3

@@ -905,7 +905,7 @@ async def test_retain_extracts_single_value_label(memory_real_llm, request_conte
     Verify that the LLM assigns the label and it ends up as a key:value entity on the memory unit.
     """
     memory = memory_real_llm
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     bank_id = f"test-labels-single-{uuid.uuid4().hex[:8]}"
     try:
@@ -972,7 +972,7 @@ async def test_retain_extracts_multi_value_label(memory_real_llm, request_contex
     Verify that multiple label values can be assigned to a single fact.
     """
     memory = memory_real_llm
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     bank_id = f"test-labels-multi-{uuid.uuid4().hex[:8]}"
     try:
@@ -1039,7 +1039,7 @@ async def test_retain_extracts_free_values_label(memory_real_llm, request_contex
     (not constrained to a predefined enum list).
     """
     memory = memory_real_llm
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     bank_id = f"test-labels-free-{uuid.uuid4().hex[:8]}"
     try:
@@ -1103,7 +1103,7 @@ async def test_retain_extracts_map_type_entities(memory_real_llm, request_contex
     End-to-end: retain content with a map-type entity_labels group.
     Verify that structured entity fields are extracted as key:field:value entity strings.
     """
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     bank_id = f"test-labels-map-{uuid.uuid4().hex[:8]}"
     try:
@@ -2092,7 +2092,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
     With the 0.6 merge threshold and temporal/co-occurrence boosts, the resolver
     might incorrectly merge them into a single entity.
     """
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
     from hindsight_api.engine.retain.entity_processing import resolve_entities
     from hindsight_api.engine.retain.types import EntityRef, ProcessedFact
 
@@ -2309,7 +2309,7 @@ async def test_retain_application_tags_extract_complete_pairs(memory_real_llm, r
     chunk. This test fails when any expected pair is incomplete, surfacing that
     inconsistency.
     """
-    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     bank_id = f"test-app-pairs-{uuid.uuid4().hex[:8]}"
     # Three tagged elements in ONE chunk, with surface forms that differ from the

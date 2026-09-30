@@ -19,7 +19,7 @@ import pytest
 import hindsight_api.engine.search.retrieval as retrieval_module
 from hindsight_api.engine.search.types import GraphRetrieval
 from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined_sql
-from hindsight_api.engine.task_backend import fq_table
+from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
 EMBED_DIM = 384
 

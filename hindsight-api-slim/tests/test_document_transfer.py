@@ -24,7 +24,7 @@ from hindsight_api.engine.consolidation.consolidator import (
     _embed_observation_text,
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
 from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive

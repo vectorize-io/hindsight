@@ -23,7 +23,7 @@ from hindsight_api.engine.db.ops_oracle import OracleOps
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
 from hindsight_api.engine.db.postgresql import PostgresConnection
 from hindsight_api.engine.entity_resolver import EntityResolver
-from hindsight_api.engine.memory_engine import fq_table
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.retain.orchestrator import (
     _insert_facts_and_links,
     _pre_resolve_phase1,

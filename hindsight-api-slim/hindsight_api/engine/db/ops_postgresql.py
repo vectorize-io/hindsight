@@ -300,7 +300,7 @@ class PostgreSQLOps(DataAccessOps):
         # into the one INSERT keeps this to a single round-trip — no extra query
         # and no surrounding transaction needed. (Oracle's immediate FK has no
         # such window and uses exists_clause via its own bulk_insert_links.)
-        from ..schema import fq_table
+        from ..schema import fq_store_table as fq_table
 
         mu_table = fq_table("memory_units")
         from_ids = [lnk[0] for lnk in sorted_links]

@@ -1920,7 +1920,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
     index maintenance the column write triggers, not the code path.
     """
     from hindsight_api.engine.db_utils import acquire_with_retry
-    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.schema import fq_store_table as fq_table
 
     store = InMemoryMemories({})
     set_memories(store)

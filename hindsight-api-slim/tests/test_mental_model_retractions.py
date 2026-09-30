@@ -20,7 +20,8 @@ import pytest
 
 from hindsight_api import RequestContext
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.reflect.retractions import (
     MEMORY_BACKED_FACT_TYPES,
     based_on_fact_ids,

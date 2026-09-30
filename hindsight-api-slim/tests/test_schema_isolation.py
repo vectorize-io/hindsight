@@ -11,7 +11,8 @@ import uuid
 import pytest
 import pytest_asyncio
 
-from hindsight_api.engine.memory_engine import _current_schema, fq_table
+from hindsight_api.engine.memory_engine import _current_schema
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.extensions import RequestContext, TenantContext, TenantExtension
 from hindsight_api.migrations import run_migrations
 

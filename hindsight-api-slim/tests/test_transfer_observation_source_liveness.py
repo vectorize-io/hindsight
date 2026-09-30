@@ -12,7 +12,7 @@ import uuid
 import pytest
 
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.engine.transfer import importer as importer_mod
 from hindsight_api.engine.transfer.schema import TransferObservation, TransferObservationSource
 

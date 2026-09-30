@@ -21,7 +21,7 @@ from hindsight_api.engine.db.postgresql import PostgresConnection, PostgreSQLBac
 from hindsight_api.engine.memories.pg.graph import relink_pass
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain.fact_storage import handle_document_tracking
-from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.schema import fq_store_table as fq_table
 from hindsight_api.models import RequestContext
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.memory_backend_incompatible]

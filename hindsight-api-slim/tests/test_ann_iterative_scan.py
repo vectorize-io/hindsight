@@ -209,7 +209,7 @@ async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_contex
         create_bank_vector_indexes,
         get_or_create_bank_profile,
     )
-    from hindsight_api.engine.task_backend import fq_table
+    from hindsight_api.engine.schema import fq_store_table_explicit as fq_table
 
     if not uses_per_bank_vector_indexes(get_config().vector_extension):
         pytest.skip("backend uses a global vector index, so there is no per-bank ANN index to name")

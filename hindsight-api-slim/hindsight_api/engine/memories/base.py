@@ -2261,6 +2261,21 @@ class MemoriesExtension(Extension, ABC):
         """
         return EntityPrunePassResult()
 
+    # ---------------------------------------------------------------- #4969: engine-documents
+    # (end #4969: engine-documents)
+
+    # ---------------------------------------------------------------- #4969: engine-curation
+    # (end #4969: engine-curation)
+
+    # ---------------------------------------------------------------- #4969: retain
+    # (end #4969: retain)
+
+    # ---------------------------------------------------------------- #4969: entities-search-consolidation
+    # (end #4969: entities-search-consolidation)
+
+    # ---------------------------------------------------------------- #4969: transfer-metrics-admin
+    # (end #4969: transfer-metrics-admin)
+
 
 __all__ = [
     "CONSOLIDATED_NO",

@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from ..schema import fq_store_table
 from ..search.tags import TagsMatch
 from .base import (
     DeletePredicate,
@@ -67,13 +68,13 @@ class PostgresMemories(MemoriesExtension):
         return 0
 
     async def delete_document(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
-        await writes.delete_document(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        await writes.delete_document(conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id)
 
     async def drop_bank_storage(self, bank_id: str) -> None:
         """No-op: deleting the bank cascades to its memories."""
 
     async def delete_observations(self, *, conn, fq_table, bank_id: str) -> None:
-        await writes.delete_observations(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        await writes.delete_observations(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
     async def update_memories(self, bank_id: str, patches: list[MemoryPatch]) -> None:
         """No-op: the caller's UPDATE already wrote the row it holds open."""
@@ -298,7 +299,7 @@ class PostgresMemories(MemoriesExtension):
     # ------------------------------------------------------------------ addressed reads
 
     async def get_memories(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[StoredMemory]:
-        return await reads.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await reads.get_memories(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     async def scan_memories(
         self,
@@ -319,7 +320,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> ScanPage:
         return await reads.scan_memories(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             fact_types=fact_types,
             limit=limit,
@@ -334,7 +335,7 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict[str, int]:
-        return await reads.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return await reads.count_memories(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
     async def list_tags(
         self,
@@ -347,7 +348,7 @@ class PostgresMemories(MemoriesExtension):
         offset: int = 0,
     ) -> dict[str, Any]:
         return await reads.list_tags(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, pattern=pattern, limit=limit, offset=offset
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, pattern=pattern, limit=limit, offset=offset
         )
 
     async def find_unconsolidated(
@@ -362,7 +363,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> list[StoredMemory]:
         return await reads.find_unconsolidated(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             fact_types=fact_types,
             limit=limit,
@@ -380,7 +381,7 @@ class PostgresMemories(MemoriesExtension):
         limit: int,
     ) -> int:
         return await reads.count_unconsolidated(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=fact_types, scopes=scopes, limit=limit
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, fact_types=fact_types, scopes=scopes, limit=limit
         )
 
     async def mark_consolidated(
@@ -394,7 +395,7 @@ class PostgresMemories(MemoriesExtension):
         failed: bool = False,
     ) -> None:
         await reads.mark_consolidated(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids, when=when, failed=failed
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids, when=when, failed=failed
         )
 
     async def any_memory_updated_since(
@@ -411,7 +412,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> bool:
         return await reads.any_memory_updated_since(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             since=since,
             fact_types=fact_types,
@@ -428,7 +429,9 @@ class PostgresMemories(MemoriesExtension):
         bank_id: str,
         scopes: list[MemoryScopeWatermark],
     ) -> dict[str, bool]:
-        return await reads.any_memory_updated_since_batch(conn=conn, fq_table=fq_table, bank_id=bank_id, scopes=scopes)
+        return await reads.any_memory_updated_since_batch(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, scopes=scopes
+        )
 
     async def newest_memory_updated_at(
         self,
@@ -445,7 +448,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> datetime | None:
         return await reads.newest_memory_updated_at(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             until=until,
             since=since,
@@ -456,36 +459,36 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
-        return await reads.latest_memory_write_at(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return await reads.latest_memory_write_at(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
     async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
-        return await reads.live_memory_ids(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await reads.live_memory_ids(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     # -- count surfaces --
 
     async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
-        return await counts.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return await counts.consolidation_freshness(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
     async def document_memory_counts(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, int]:
         return await counts.document_memory_counts(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=document_ids
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_ids=document_ids
         )
 
     async def link_counts(self, *, conn, fq_table, bank_id: str) -> dict[str, int]:
-        return await counts.link_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return await counts.link_counts(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
     async def memories_timeseries(
         self, *, conn, fq_table, bank_id: str, time_field: str, trunc: str, since: datetime
     ) -> list[dict[str, Any]]:
         return await counts.memories_timeseries(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=trunc, since=since
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, time_field=time_field, trunc=trunc, since=since
         )
 
     async def observation_scope_counts(
         self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0
     ) -> dict[str, Any]:
         return await counts.observation_scope_counts(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, limit=limit, offset=offset
         )
 
     # ------------------------------------------------------------------ observations
@@ -497,12 +500,12 @@ class PostgresMemories(MemoriesExtension):
         self, *, conn, ops, fq_table, bank_id: str, unit_ids: list[str]
     ) -> list[StoredMemory]:
         return await writes.observations_for_sources(
-            conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
+            conn=conn, ops=ops, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids
         )
 
     async def delete_stale_observations(self, *, conn, ops, fq_table, bank_id: str, fact_ids: list) -> int:
         return await writes.delete_stale_observations(
-            conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, fact_ids=fact_ids
+            conn=conn, ops=ops, fq_table=fq_store_table, bank_id=bank_id, fact_ids=fact_ids
         )
 
     # ------------------------------------------------------------------ curation reads
@@ -532,7 +535,7 @@ class PostgresMemories(MemoriesExtension):
         return await curation.list_memory_units(
             conn=conn,
             ops=ops,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             fact_type=fact_type,
             search_query=search_query,
@@ -551,33 +554,35 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id: str, unit_id: str) -> dict[str, Any] | None:
-        return await curation.get_memory_unit(conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+        return await curation.get_memory_unit(
+            conn=conn, ops=ops, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id
+        )
 
     # -- curation archive --
 
     async def get_archived_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
-        return await writes.get_archived_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+        return await writes.get_archived_memory(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id)
 
     async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
         return await writes.invalidate_memory(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id, reason=reason
         )
 
     async def set_invalidation_reason(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
         await writes.set_invalidation_reason(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id, reason=reason
         )
 
     async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
-        return await writes.restore_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+        return await writes.restore_memory(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id)
 
     async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
         await writes.set_memory_embedding(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding
         )
 
     async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
-        await writes.clear_unit_entities(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+        await writes.clear_unit_entities(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_id=unit_id)
 
     async def apply_edit(
         self,
@@ -600,7 +605,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> None:
         await writes.apply_edit(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             unit_id=unit_id,
             text=text,
@@ -625,7 +630,7 @@ class PostgresMemories(MemoriesExtension):
         offset: int = 0,
     ) -> dict[str, Any]:
         return await curation.list_entities(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, search=search, limit=limit, offset=offset
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, search=search, limit=limit, offset=offset
         )
 
     # ------------------------------------------------------------------ graph
@@ -646,7 +651,7 @@ class PostgresMemories(MemoriesExtension):
     ) -> dict[str, Any]:
         return await graph.graph_units(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             fact_type=fact_type,
             search_query=search_query,
@@ -658,26 +663,30 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def graph_entity_rows(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
-        return await graph.graph_entity_rows(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await graph.graph_entity_rows(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     async def graph_direct_links(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
-        return await graph.graph_direct_links(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await graph.graph_direct_links(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     async def entity_memory_counts(
         self, *, conn, fq_table, bank_id: str, entity_ids: list[str] | None = None
     ) -> dict[str, int]:
-        return await graph.entity_memory_counts(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=entity_ids)
+        return await graph.entity_memory_counts(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, entity_ids=entity_ids
+        )
 
     async def entities_for_units(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> dict[str, list[str]]:
-        return await graph.entities_for_units(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await graph.entities_for_units(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     async def entity_map_for_units(
         self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
     ) -> dict[str, list[dict[str, str]]]:
-        return await graph.entity_map_for_units(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids)
+        return await graph.entity_map_for_units(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
     async def resolve_entity_names(self, *, conn, fq_table, bank_id: str, entity_ids: list[str]) -> dict[str, str]:
-        return await graph.resolve_entity_names(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=entity_ids)
+        return await graph.resolve_entity_names(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, entity_ids=entity_ids
+        )
 
     # ------------------------------------------------------------------ maintenance
 
@@ -692,14 +701,14 @@ class PostgresMemories(MemoriesExtension):
         entity_ids: list[Any],
     ) -> None:
         # The join is keyed by global unit id, so bank_id is not needed here.
-        await ops.bulk_insert_unit_entities(conn, fq_table("unit_entities"), unit_ids, entity_ids)
+        await ops.bulk_insert_unit_entities(conn, fq_store_table("unit_entities"), unit_ids, entity_ids)
 
     async def enqueue_relink_victims(
         self, *, conn, fq_table, bank_id: str, affected_unit_ids: list, include_affected_units: bool = False
     ) -> int:
         return await graph.enqueue_relink_victims(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             affected_unit_ids=affected_unit_ids,
             include_affected_units=include_affected_units,
@@ -709,13 +718,13 @@ class PostgresMemories(MemoriesExtension):
         self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
     ) -> RelinkPassResult:
         return await graph.relink_pass(
-            backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, config=config, deadline=deadline
         )
 
     async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
         return await graph.enqueue_entity_prune_candidates(
             conn=conn,
-            fq_table=fq_table,
+            fq_table=fq_store_table,
             bank_id=bank_id,
             affected_unit_ids=affected_unit_ids,
         )
@@ -723,7 +732,24 @@ class PostgresMemories(MemoriesExtension):
     async def entity_prune_pass(
         self, *, backend, fq_table, bank_id: str, deadline: float | None = None
     ) -> EntityPrunePassResult:
-        return await graph.entity_prune_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, deadline=deadline)
+        return await graph.entity_prune_pass(
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, deadline=deadline
+        )
+
+    # ---------------------------------------------------------------- #4969: engine-documents
+    # (end #4969: engine-documents)
+
+    # ---------------------------------------------------------------- #4969: engine-curation
+    # (end #4969: engine-curation)
+
+    # ---------------------------------------------------------------- #4969: retain
+    # (end #4969: retain)
+
+    # ---------------------------------------------------------------- #4969: entities-search-consolidation
+    # (end #4969: entities-search-consolidation)
+
+    # ---------------------------------------------------------------- #4969: transfer-metrics-admin
+    # (end #4969: transfer-metrics-admin)
 
 
 __all__ = ["PostgresMemories"]
