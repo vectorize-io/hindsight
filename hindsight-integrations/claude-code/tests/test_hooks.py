@@ -88,15 +88,15 @@ class TestRecallHook:
         assert "Paris is the capital of France" in context
         assert "<hindsight_memories>" in context
 
-    def test_recall_min_scores_filters_low_scoring_memories(self, monkeypatch, tmp_path):
-        low_semantic = make_memory("Marginal match")
-        low_semantic["scores"] = {"semantic": 0.42, "reranker": 0.8}
-        low_reranker = make_memory("Junk reranker match")
-        low_reranker["scores"] = {"semantic": 0.9, "reranker": 0.03}
-        no_scores = make_memory("BM25-only match")
-        good = make_memory("Relevant match")
-        good["scores"] = {"semantic": 0.91, "reranker": 0.45}
-        response = FakeHTTPResponse({"results": [low_semantic, low_reranker, no_scores, good]})
+    def test_recall_min_scores_are_enforced_by_the_server(self, monkeypatch, tmp_path):
+        returned = make_memory("Server-approved match")
+        returned["scores"] = {"semantic": 0.42, "reranker": 0.03}
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({"results": [returned]})
 
         hook_input = make_hook_input(prompt="What deployment rule applies?")
         output = _run_hook(
@@ -104,15 +104,19 @@ class TestRecallHook:
             hook_input,
             monkeypatch,
             tmp_path,
-            urlopen_side_effect=lambda *a, **kw: response,
-            extra_settings={"recallMinScores": {"semantic": 0.65, "reranker": 0.2}},
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "recallMinScores": {"semantic": 0.65, "reranker": 0.2},
+                "recallAdditionalBanks": ["shared-bank"],
+            },
         )
 
         context = json.loads(output)["hookSpecificOutput"]["additionalContext"]
-        assert "Marginal match" not in context
-        assert "Junk reranker match" not in context
-        assert "BM25-only match" in context
-        assert "Relevant match" in context
+        assert [body["min_scores"] for body in captured] == [
+            {"semantic": 0.65, "reranker": 0.2},
+            {"semantic": 0.65, "reranker": 0.2},
+        ]
+        assert "Server-approved match" in context
 
     def test_recall_min_scores_ignores_invalid_floor(self, monkeypatch, tmp_path):
         memory = make_memory("Relevant match")

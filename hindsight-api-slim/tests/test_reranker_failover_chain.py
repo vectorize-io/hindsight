@@ -9,6 +9,7 @@ neutral-score ordering you get with no reranker configured at all.
 
 import os
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -20,9 +21,13 @@ from hindsight_api.engine.cross_encoder import (
     RemoteTEICrossEncoder,
     RerankTimeoutError,
     RRFPassthroughCrossEncoder,
+    ScoreSemantics,
+    ServedReranker,
     create_cross_encoder,
     create_cross_encoder_from_env,
 )
+from hindsight_api.engine.search.reranking import CrossEncoderReranker
+from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
 PAIRS = [("q", "doc a"), ("q", "doc b")]
 
@@ -36,11 +41,15 @@ class _FakeCrossEncoder(CrossEncoderModel):
         scores: list[float] | None = None,
         init_error: Exception | None = None,
         predict_error: Exception | None = None,
+        score_semantics: ScoreSemantics = ScoreSemantics.POINTWISE,
+        prunes_candidates: bool = False,
     ) -> None:
         self._name = name
         self._scores = scores
         self._init_error = init_error
         self._predict_error = predict_error
+        self.score_semantics = score_semantics
+        self.prunes_candidates = prunes_candidates
         self.init_calls = 0
         self.predict_calls = 0
 
@@ -59,6 +68,16 @@ class _FakeCrossEncoder(CrossEncoderModel):
             raise self._predict_error
         assert self._scores is not None
         return self._scores
+
+
+def _make_candidates(count: int) -> list[MergedCandidate]:
+    return [
+        MergedCandidate(
+            retrieval=RetrievalResult(id=str(uuid4()), text=f"doc {index}", fact_type="world"),
+            rrf_score=1.0 / (index + 1),
+        )
+        for index in range(count)
+    ]
 
 
 # ── env parsing ────────────────────────────────────────────────────────────────
@@ -234,6 +253,34 @@ async def test_unreachable_primary_falls_over_to_the_next_member():
 
 
 @pytest.mark.asyncio
+async def test_failover_to_pruning_member_honors_its_cut() -> None:
+    primary = _FakeCrossEncoder("primary", predict_error=TimeoutError("down"))
+    typesafe = _FakeCrossEncoder(
+        "typesafe",
+        scores=[1.0, 0.0],
+        score_semantics=ScoreSemantics.ORDINAL,
+        prunes_candidates=True,
+    )
+    result = await CrossEncoderReranker(MultiCrossEncoder([primary, typesafe])).rerank("q", _make_candidates(2))
+    assert result.served == ServedReranker("typesafe", ScoreSemantics.ORDINAL, True)
+    assert [item.weight for item in result.results] == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_failover_away_from_pruning_member_keeps_zero_score() -> None:
+    typesafe = _FakeCrossEncoder(
+        "typesafe",
+        predict_error=TimeoutError("down"),
+        score_semantics=ScoreSemantics.ORDINAL,
+        prunes_candidates=True,
+    )
+    fallback = _FakeCrossEncoder("tei", scores=[0.5, 0.0])
+    result = await CrossEncoderReranker(MultiCrossEncoder([typesafe, fallback])).rerank("q", _make_candidates(2))
+    assert result.served == ServedReranker("tei", ScoreSemantics.POINTWISE, False)
+    assert len(result.results) == 2
+
+
+@pytest.mark.asyncio
 async def test_wrong_length_scores_fail_over():
     """A member that answers with the wrong number of scores is unusable, not fatal."""
     primary = _FakeCrossEncoder("primary", scores=[0.9])  # one score for two pairs
@@ -320,3 +367,7 @@ async def test_rerank_timeout_surfaces_when_it_is_the_last_member():
     with pytest.raises(RerankTimeoutError) as excinfo:
         await chain.predict(PAIRS)
     assert excinfo.value.scores == [0.9, None]
+
+    result = await CrossEncoderReranker(chain).rerank("q", _make_candidates(2))
+    assert result.served == ServedReranker("local", ScoreSemantics.POINTWISE, False)
+    assert len(result.results) == 2

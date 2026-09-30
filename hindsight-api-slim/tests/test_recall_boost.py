@@ -5,10 +5,11 @@ from dataclasses import dataclass
 import pytest
 
 from hindsight_api.config import RECALL_BOOST_LEVELS, _parse_strategy_boosts
+from hindsight_api.engine.cross_encoder import ScoreSemantics, ServedReranker
 from hindsight_api.engine.search.recall_boost import (
-    apply_post_rerank_boost,
     BOOST_LEVELS,
     additive_strategy_boost,
+    apply_post_rerank_boost,
     boosted_rrf_score,
     stage2_passthrough,
     trim_merged_candidates,
@@ -456,7 +457,7 @@ def test_recall_async_wires_stage2_and_keeps_interleave(monkeypatch):
                     )
                     for candidate in candidates
                 ],
-                provider_name=self.cross_encoder.provider_name,
+                served=ServedReranker(self.cross_encoder.provider_name, ScoreSemantics.POINTWISE, False),
             )
 
     class _Config:

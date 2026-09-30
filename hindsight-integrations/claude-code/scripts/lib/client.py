@@ -92,6 +92,7 @@ class HindsightClient:
         tags: Optional[list] = None,
         tags_match: Optional[str] = None,
         tag_groups: Optional[object] = None,
+        min_scores: Optional[dict] = None,
         timeout: int = 10,
     ) -> dict:
         """Recall memories from a bank.
@@ -113,6 +114,8 @@ class HindsightClient:
             body["tags_match"] = tags_match
         if tag_groups:
             body["tag_groups"] = tag_groups
+        if min_scores:
+            body["min_scores"] = min_scores
         return self.request("POST", path, body, timeout=timeout)
 
     def retain(

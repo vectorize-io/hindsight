@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from hindsight_api.engine.cross_encoder import RerankTimeoutError
+from hindsight_api.engine.cross_encoder import RerankTimeoutError, ScoreSemantics, ServedReranker
 from hindsight_api.engine.search.reranking import CrossEncoderReranker, RerankResult
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
@@ -49,6 +49,7 @@ def _make_cross_encoder(predict_return: list[float]):
     # so leaving this out would make the fake claim it prunes and silently drop any
     # candidate scoring 0.0.
     ce.prunes_candidates = False
+    ce.score_semantics = ScoreSemantics.POINTWISE
     return ce
 
 
@@ -134,7 +135,27 @@ async def test_empty_candidates_returns_empty_without_predict():
     results = await reranker.rerank("test query", [])
 
     assert results.results == []
+    assert results.served is None
     ce.predict.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_duck_typed_cross_encoder_uses_legacy_capability_defaults() -> None:
+    class DuckTypedCrossEncoder:
+        provider_name = "custom"
+
+        async def initialize(self) -> None:
+            pass
+
+        async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+            return [0.8] * len(pairs)
+
+    reranked = await CrossEncoderReranker(cross_encoder=DuckTypedCrossEncoder()).rerank(
+        "test query", _make_candidates(1)
+    )
+
+    assert reranked.served == ServedReranker("custom", ScoreSemantics.POINTWISE, False)
+    assert reranked.results[0].cross_encoder_score_normalized == pytest.approx(0.8)
 
 
 @pytest.mark.asyncio
@@ -184,6 +205,9 @@ async def test_concurrent_reranks_capture_the_serving_member(first_query: str) -
     second_scored = asyncio.Event()
 
     class _Primary(CrossEncoderModel):
+        score_semantics = ScoreSemantics.POINTWISE
+        prunes_candidates = True
+
         @property
         def provider_name(self) -> str:
             return "tei"
@@ -194,7 +218,7 @@ async def test_concurrent_reranks_capture_the_serving_member(first_query: str) -
         async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
             if pairs[0][0] == "fallback":
                 raise RuntimeError("member down")
-            return [0.4] * len(pairs)
+            return [0.4, 0.0]
 
     class _InterleavedChain(MultiCrossEncoder):
         async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
@@ -215,16 +239,21 @@ async def test_concurrent_reranks_capture_the_serving_member(first_query: str) -
 
     async def second_rerank() -> RerankResult:
         await first_scored.wait()
-        return await reranker.rerank(second_query, _make_candidates(1))
+        return await reranker.rerank(second_query, _make_candidates(2))
 
     results = await asyncio.wait_for(
-        asyncio.gather(reranker.rerank(first_query, _make_candidates(1)), second_rerank()), timeout=5
+        asyncio.gather(reranker.rerank(first_query, _make_candidates(2)), second_rerank()), timeout=5
     )
-    assert [r.provider_name for r in results] == [
-        "tei" if query == "primary" else "rrf" for query in [first_query, second_query]
+    expected = {
+        "primary": ServedReranker("tei", ScoreSemantics.POINTWISE, True),
+        "fallback": ServedReranker("rrf", ScoreSemantics.ORDINAL, False),
+    }
+    assert [result.served for result in results] == [expected[query] for query in [first_query, second_query]]
+    assert [len(result.results) for result in results] == [
+        1 if query == "primary" else 2 for query in [first_query, second_query]
     ]
-    assert chain.provider_name == results[1].provider_name
-    assert chain.provider_name != results[0].provider_name
+    assert chain.provider_name == results[1].served.provider_name
+    assert chain.provider_name != results[0].served.provider_name
 
 
 @pytest.mark.asyncio
@@ -240,7 +269,9 @@ async def test_rerank_timeout_keeps_unscored_candidates_in_rrf_order():
     reranker = CrossEncoderReranker(cross_encoder=ce)
     reranker._initialized = True
 
-    results = (await reranker.rerank("test query", _make_candidates(5))).results
+    reranked = await reranker.rerank("test query", _make_candidates(5))
+    assert reranked.served == ServedReranker("local", ScoreSemantics.POINTWISE, False)
+    results = reranked.results
 
     # Nothing is dropped.
     assert len(results) == 5

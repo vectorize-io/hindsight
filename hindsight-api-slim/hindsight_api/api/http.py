@@ -486,8 +486,15 @@ class RecallRequest(BaseModel):
         "graph, temporal) and returns a result surfaced by any of them, so a returned result reports null for a "
         "stage that did not surface it (a non-null score always clears its floor). Setting both therefore "
         "does not restrict the response to results clearing both. `reranker` and `final` are post-ranking "
-        "filters applied to every scored result, so those floors *are* guaranteed by each result returned — "
-        "use them for query abstention. Any field left unset imposes no floor; omitting `min_scores` entirely "
+        "filters applied to every scored result, so those floors *are* guaranteed by each result returned. "
+        "`min_scores.reranker` is accepted only when the reranker that actually serves the request returns "
+        "a pointwise or calibrated-probability score. Pool-dependent providers, including TypeSafe's ordinal "
+        "scores and Jina MLX's listwise scores, and RRF/interleave passthrough modes return HTTP 400. Known "
+        "pool-dependent configurations reject this floor even when retrieval is empty. If retrieval is empty "
+        "for a failover chain with a pointwise member, no member serves the "
+        "request, so recall returns an empty result without applying the floor. `min_scores.final` remains "
+        "available for ordinal providers. "
+        "Any field left unset imposes no floor; omitting `min_scores` entirely "
         "(the default) applies no score filtering. Use with care — the reranker's absolute scores are not "
         "calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).",
     )

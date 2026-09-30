@@ -41,37 +41,6 @@ from lib.state import write_state
 LAST_RECALL_STATE = "last_recall.json"
 
 
-def filter_by_min_scores(results: list[dict], min_scores: dict, config: dict) -> list[dict]:
-    """Drop recall results whose numeric scores are below configured floors."""
-    if not min_scores:
-        return results
-
-    floors = {}
-    for field, floor in min_scores.items():
-        try:
-            floors[field] = float(floor)
-        except (TypeError, ValueError):
-            debug_log(config, f"Ignoring invalid recallMinScores floor for '{field}': {floor!r}")
-    if not floors:
-        return results
-
-    def passes_floors(result: dict) -> bool:
-        scores = result.get("scores") or {}
-        for field, floor in floors.items():
-            value = scores.get(field)
-            # Missing/None scores pass (fail-open): BM25-only hits lack semantic
-            # scores, and passthrough rerankers report null.
-            if isinstance(value, (int, float)) and value < floor:
-                return False
-        return True
-
-    before_count = len(results)
-    filtered = [result for result in results if passes_floors(result)]
-    dropped_count = before_count - len(filtered)
-    debug_log(config, f"Score floors dropped {dropped_count}/{before_count} results")
-    return filtered
-
-
 def read_transcript_messages(transcript_path: str) -> list:
     """Read messages from a JSONL transcript file for multi-turn context.
 
@@ -193,6 +162,7 @@ def main():
             tags=recall_tags,
             tags_match=tags_match,
             tag_groups=tag_groups,
+            min_scores=config.get("recallMinScores") or None,
             timeout=10,
         )
     except Exception as e:
@@ -227,6 +197,7 @@ def main():
                 tags=extra_tags,
                 tags_match=extra_tags_match,
                 tag_groups=extra_tag_groups,
+                min_scores=config.get("recallMinScores") or None,
                 timeout=10,
             )
             extra_results = extra_response.get("results", [])
@@ -235,8 +206,6 @@ def main():
                 results = results + extra_results
         except Exception as e:
             debug_log(config, f"Recall from additional bank '{extra_bank_id}' failed: {e}")
-
-    results = filter_by_min_scores(results, config.get("recallMinScores") or {}, config)
 
     if not results:
         debug_log(config, "No memories found")

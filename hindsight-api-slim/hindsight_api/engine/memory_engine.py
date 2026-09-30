@@ -572,7 +572,7 @@ def validate_sql_schema(sql: str) -> None:
                         )
 
 
-from .cross_encoder import CrossEncoderModel
+from .cross_encoder import CrossEncoderModel, MultiCrossEncoder, ScoreSemantics, ServedReranker
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 
@@ -1630,6 +1630,33 @@ def _resolve_reranking(config_dict: dict, reranking: "RecallReranking") -> "Reca
     if reranking == "cross_encoder" and not config_dict.get("enable_reranking", True):
         return "rrf"
     return reranking
+
+
+def _validate_explicit_reranker_floor(reranking: "RecallReranking", min_scores: MinScores | None) -> None:
+    from hindsight_api.extensions.operation_validator import OperationValidationError
+
+    min_reranker = min_scores.reranker if min_scores else None
+    if min_reranker is not None and reranking in ("rrf", "interleave"):
+        raise OperationValidationError(
+            f"min_scores.reranker is not supported because reranking mode {reranking!r} "
+            "returns ordinal scores that only encode position",
+            status_code=400,
+        )
+
+
+def _configured_pool_dependent_floor_source(encoder: CrossEncoderModel) -> str | None:
+    """Describe a configured reranker only when every possible score is pool-dependent."""
+    if isinstance(encoder, MultiCrossEncoder):
+        semantics = encoder.possible_score_semantics
+        if all(not item.supports_absolute_floor for item in semantics):
+            values = ", ".join(sorted(item.value for item in semantics))
+            return f"every configured failover member returns pool-dependent scores ({values})"
+        return None
+
+    semantics = getattr(encoder, "score_semantics", ScoreSemantics.POINTWISE)
+    if not semantics.supports_absolute_floor:
+        return f"the configured reranker {encoder.provider_name!r} returns {semantics.value} scores"
+    return None
 
 
 def utcnow():
@@ -8458,6 +8485,7 @@ class MemoryEngine(MemoryEngineInterface):
         enable_temporal_retrieval = bool(budget_config_dict.get("enable_temporal_retrieval", True))
         enable_graph_retrieval = bool(budget_config_dict.get("enable_graph_retrieval", True))
         reranking = _resolve_reranking(budget_config_dict, reranking)
+        _validate_explicit_reranker_floor(reranking, min_scores)
 
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:
@@ -8728,6 +8756,8 @@ class MemoryEngine(MemoryEngineInterface):
             RecallResultModel with results, trace, optional entities, and optional chunks
         """
         # Initialize tracer if requested
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
         from .search.tracer import SearchTracer
 
         # Always trace the PHASES; only capture the rest when asked. The phase metrics are a
@@ -8825,6 +8855,8 @@ class MemoryEngine(MemoryEngineInterface):
             # reached by their decline, not by a switch. There is deliberately no way to force it
             # for a store that CAN: equivalence is measured between stores, over the same corpus,
             # which needs no override because a store that declines uses this path already.
+            min_reranker = min_scores.reranker if min_scores else None
+
             from .memories import FullRecallRequest
             from .memories import get_memories as _get_memories_for_full_recall
 
@@ -8925,6 +8957,20 @@ class MemoryEngine(MemoryEngineInterface):
                     _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
                     _store_result.trace = _trace.to_dict() if _trace else None
                 return _store_result
+
+            # The store declined this request, so the in-process pipeline owns
+            # validation from here. Reject configurations that can only return
+            # pool-dependent scores before retrieval or local model startup. A
+            # mixed failover chain must continue because its served pointwise
+            # member can still support the floor.
+            if min_reranker is not None and reranking == "cross_encoder":
+                unsupported_source = _configured_pool_dependent_floor_source(self._cross_encoder_reranker.cross_encoder)
+                if unsupported_source is not None:
+                    raise OperationValidationError(
+                        f"min_scores.reranker is not supported because {unsupported_source}; "
+                        "these scores depend on the candidate pool and cannot be used as an absolute floor",
+                        status_code=400,
+                    )
 
             # Step 2: Optimized parallel retrieval using batched queries
             # - Semantic + BM25 combined in 1 CTE query for ALL fact types
@@ -9289,9 +9335,9 @@ class MemoryEngine(MemoryEngineInterface):
             rerank_span.set_attribute("hindsight.candidates_count", len(merged_candidates))
 
             scored_results: list = []
-            # Provider that produced scored_results for THIS call. None until a
-            # cross-encoder rerank returns; rrf/interleave never consult it.
-            served_provider: str | None = None
+            # Complete capability record for this call, independent of the
+            # failover chain's shared active member.
+            served_reranker: ServedReranker | None = None
             pre_filtered_count = 0
             rerank_kind = "cross-encoder"
             try:
@@ -9370,10 +9416,7 @@ class MemoryEngine(MemoryEngineInterface):
                     await reranker_instance.ensure_initialized()
                     reranked = await reranker_instance.rerank(query, merged_candidates)
                     scored_results = reranked.results
-                    # Copied off the call that produced these scores. Do not read
-                    # cross_encoder.provider_name here: on a failover chain that
-                    # property follows a cursor other requests can move.
-                    served_provider = reranked.provider_name
+                    served_reranker = reranked.served
                 else:
                     # "rrf" / "interleave": skip the cross-encoder and keep the fusion order
                     # (rrf_score is descending by fusion position for both). The cross-encoder
@@ -9381,6 +9424,11 @@ class MemoryEngine(MemoryEngineInterface):
                     # "twin") far below the budget cutoff (semantic rank #1 -> reranked #37),
                     # causing the LLM to never see it and create a duplicate.
                     rerank_kind = f"{reranking}-passthrough"
+                    served_reranker = ServedReranker(
+                        provider_name=reranking,
+                        score_semantics=ScoreSemantics.ORDINAL,
+                        prunes_candidates=False,
+                    )
                     scored_results = [
                         ScoredResult(
                             candidate=mc,
@@ -9399,6 +9447,10 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             finally:
                 rerank_span.set_attribute("hindsight.scored_count", len(scored_results))
+                if served_reranker is not None:
+                    rerank_span.set_attribute("hindsight.reranker_provider", served_reranker.provider_name)
+                    rerank_span.set_attribute("hindsight.score_semantics", served_reranker.score_semantics.value)
+                    rerank_span.set_attribute("hindsight.reranker_prunes_candidates", served_reranker.prunes_candidates)
                 if pre_filtered_count > 0:
                     rerank_span.set_attribute("hindsight.pre_filtered_count", pre_filtered_count)
                 rerank_span.end()
@@ -9428,7 +9480,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # (a configured rrf provider, or the failover member that answered).
                 from .search.recall_boost import stage2_passthrough
 
-                is_passthrough = stage2_passthrough(reranking, served_provider)
+                is_passthrough = stage2_passthrough(
+                    reranking, served_reranker.provider_name if served_reranker else None
+                )
                 scoring_config = get_config()
                 apply_combined_scoring(
                     scored_results,
@@ -9464,6 +9518,26 @@ class MemoryEngine(MemoryEngineInterface):
             # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
             min_reranker = min_scores.reranker if min_scores else None
             min_final = min_scores.final if min_scores else None
+            unsupported_score_source: str | None = None
+            if min_reranker is not None:
+                if reranking in ("rrf", "interleave"):
+                    unsupported_score_source = f"reranking mode {reranking!r}"
+                elif served_reranker is not None:
+                    if not served_reranker.score_semantics.supports_absolute_floor:
+                        unsupported_score_source = (
+                            f"the served reranker {served_reranker.provider_name!r} returns "
+                            f"{served_reranker.score_semantics.value} scores"
+                        )
+                else:
+                    # With no scored candidate, semantics are certain only when
+                    # every possible configured member is pool-dependent.
+                    unsupported_score_source = _configured_pool_dependent_floor_source(reranker_instance.cross_encoder)
+            if unsupported_score_source is not None:
+                raise OperationValidationError(
+                    f"min_scores.reranker is not supported because {unsupported_score_source}; "
+                    "these scores depend on the candidate pool and cannot be used as an absolute floor",
+                    status_code=400,
+                )
             if (min_reranker is not None or min_final is not None) and scored_results:
                 before_min_score = len(scored_results)
                 scored_results = [
@@ -9489,7 +9563,13 @@ class MemoryEngine(MemoryEngineInterface):
             tracer.add_phase_metric(
                 "reranking",
                 step_duration,
-                {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
+                {
+                    "reranker_type": rerank_kind,
+                    "reranker_provider": served_reranker.provider_name if served_reranker else None,
+                    "candidates_reranked": len(scored_results),
+                    "score_semantics": served_reranker.score_semantics.value if served_reranker else None,
+                    "prunes_candidates": served_reranker.prunes_candidates if served_reranker else None,
+                },
             )
             # Combined scoring + additive boosts + final sort, plus -- when a trace was
             # asked for -- the serialization of reranked entries done just above.
@@ -10149,7 +10229,9 @@ class MemoryEngine(MemoryEngineInterface):
             # interleave modes, or the RRFPassthroughCrossEncoder), since its
             # cross_encoder_score_normalized is then a rank-derived placeholder, not a
             # true relevance score.
-            reranker_passthrough = (reranking != "cross_encoder") or served_provider == "rrf"
+            reranker_passthrough = (reranking != "cross_encoder") or (
+                served_reranker is not None and served_reranker.provider_name == "rrf"
+            )
             scores_by_id: dict[str, RecallScores] = {
                 sr.id: RecallScores(
                     final=sr.weight,
@@ -10327,6 +10409,8 @@ class MemoryEngine(MemoryEngineInterface):
             # Client disconnected mid-recall — propagate the cancellation so the
             # HTTP layer can return 499. Must precede the broad handler below,
             # which would otherwise bury it inside a RuntimeError (issue #2122).
+            raise
+        except OperationValidationError:
             raise
         except Exception as e:
             # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())

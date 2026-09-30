@@ -78,6 +78,7 @@ class HindsightClient:
         max_tokens: int = 1024,
         budget: str = "mid",
         types: Optional[list] = None,
+        min_scores: Optional[dict] = None,
         timeout: int = 10,
     ) -> dict:
         """Recall memories from a bank.
@@ -93,6 +94,8 @@ class HindsightClient:
             body["budget"] = budget
         if types:
             body["types"] = types
+        if min_scores:
+            body["min_scores"] = min_scores
         return self._request("POST", path, body, timeout=timeout)
 
     def retain(

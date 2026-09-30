@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from httpx import AsyncClient
 
 import hindsight_api.engine.memories as memories_module
 from hindsight_api.engine.chunk_ids import build_chunk_id
@@ -48,6 +49,7 @@ from hindsight_api.engine.retain.attachment_content import (
     short_attachment_id,
 )
 from hindsight_api.engine.retain.attachment_store import StoredAttachment, _record_attachments
+from hindsight_api.models import RequestContext
 from tests.test_memories_extension import InMemoryMemories
 
 UNIT_A = "00000000-0000-0000-0000-00000000000a"
@@ -459,6 +461,7 @@ class _CarryingStore(InMemoryMemories):
     def __init__(self, answers_full_recall: bool):
         super().__init__({})
         self.answers_full_recall = answers_full_recall
+        self.full_recall_calls = 0
         #: Every batched record read, so a test can count what a response cost.
         self.record_reads: list[list[str]] = []
 
@@ -467,6 +470,7 @@ class _CarryingStore(InMemoryMemories):
         return await super().get_document_records(bank_id=bank_id, document_ids=document_ids)
 
     async def full_recall(self, request):
+        self.full_recall_calls += 1
         if not self.answers_full_recall:
             return None
         return RecallResult(
@@ -609,6 +613,31 @@ async def test_recall_returns_the_attachments_the_store_carried(
     # The names ride on the attachment rows the lookup already reads, so the store's document
     # records cost nothing at all.
     assert store.record_reads == []
+
+
+@pytest.mark.asyncio
+async def test_http_rejects_resolved_rrf_floor_before_store_full_recall(
+    api_client: AsyncClient,
+    memory: MemoryEngine,
+    request_context: RequestContext,
+    restore_default_store: None,
+) -> None:
+    bank_id, store = await _store_owned_bank(memory, request_context, answers_full_recall=True)
+    config = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/config",
+        json={"updates": {"enable_reranking": False}},
+    )
+    assert config.status_code == 200, config.text
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall",
+        json={"query": "how do I reset the VPN", "types": ["world"], "min_scores": {"reranker": 0.5}},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "min_scores.reranker" in response.text
+    assert "ordinal" in response.text
+    assert store.full_recall_calls == 0
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,8 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import aiohttp
@@ -60,14 +62,54 @@ from .token_encoding import count_tokens, truncate_to_tokens
 
 logger = logging.getLogger(__name__)
 
-# Which member produced the scores for the predict() running in this task.
-# MultiCrossEncoder._active is shared by every request on the chain, so reading
-# it after await rerank can observe a neighbour's failover. This is set in the
-# same task that is about to return those scores, and rerank() copies it onto
-# the result before yielding.
-_served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "hindsight_rerank_served_provider", default=None
+
+class ScoreSemantics(StrEnum):
+    """Meaning of the numeric scores returned by a reranker."""
+
+    ORDINAL = "ordinal"
+    LISTWISE = "listwise"
+    POINTWISE = "pointwise"
+    CALIBRATED_PROBABILITY = "calibrated_probability"
+
+    @property
+    def supports_absolute_floor(self) -> bool:
+        """Whether a fixed numeric floor has meaning independent of the candidate pool."""
+        return self in {ScoreSemantics.POINTWISE, ScoreSemantics.CALIBRATED_PROBABILITY}
+
+
+@dataclass(frozen=True)
+class ServedReranker:
+    provider_name: str
+    score_semantics: ScoreSemantics
+    prunes_candidates: bool
+
+
+# MultiCrossEncoder._active is shared by every request on the chain. Capture
+# capabilities in the prediction task so another request's failover cannot
+# change the provider, semantics, or pruning reported by this rerank.
+_served_reranker_context: contextvars.ContextVar[ServedReranker | None] = contextvars.ContextVar(
+    "hindsight_served_reranker", default=None
 )
+
+
+def begin_served_reranker_capture() -> contextvars.Token:
+    """Start an isolated capture and return the token needed to restore its parent context."""
+    return _served_reranker_context.set(None)
+
+
+def record_served_reranker(served: ServedReranker) -> None:
+    """Record the member serving the current prediction task."""
+    _served_reranker_context.set(served)
+
+
+def get_served_reranker() -> ServedReranker | None:
+    """Return the member captured for the current prediction task."""
+    return _served_reranker_context.get()
+
+
+def end_served_reranker_capture(token: contextvars.Token) -> None:
+    """Restore the context that preceded a capture."""
+    _served_reranker_context.reset(token)
 
 
 class RerankTimeoutError(Exception):
@@ -96,6 +138,10 @@ class CrossEncoderModel(ABC):
 
     Cross-encoders take query-document pairs and return relevance scores.
     """
+
+    # Preserve the historical contract for third-party subclasses. Built-in
+    # providers whose scores depend on the candidate pool must override this.
+    score_semantics: ScoreSemantics = ScoreSemantics.POINTWISE
 
     @property
     @abstractmethod
@@ -991,6 +1037,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     how :attr:`prunes_candidates` tells the caller to leave them out.
     """
 
+    score_semantics = ScoreSemantics.ORDINAL
     SYSTEMONE_PATH = "/v1/systemone"
 
     # A Choice accepts at most 255 options; stay clear of the edge. A pool larger
@@ -1261,6 +1308,8 @@ class RRFPassthroughCrossEncoder(CrossEncoderModel):
     - Deployments where reranking latency is unacceptable
     - Debugging to isolate retrieval vs reranking issues
     """
+
+    score_semantics = ScoreSemantics.ORDINAL
 
     def __init__(self):
         """Initialize RRF passthrough cross-encoder."""
@@ -1742,6 +1791,7 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
     """
 
     HF_REPO_ID = "jinaai/jina-reranker-v3-mlx"
+    score_semantics = ScoreSemantics.LISTWISE
 
     def __init__(self, model_path: str | None = None):
         """
@@ -2093,6 +2143,11 @@ class MultiCrossEncoder(CrossEncoderModel):
         """
         return self._members[self._active].provider_name
 
+    @property
+    def possible_score_semantics(self) -> frozenset[ScoreSemantics]:
+        """Score meanings that any configured failover member may serve."""
+        return frozenset(member.score_semantics for member in self._members)
+
     async def _initialize_member(self, index: int) -> None:
         """Initialize one member, off the event loop when it loads a model in-process."""
         member = self._members[index]
@@ -2136,6 +2191,11 @@ class MultiCrossEncoder(CrossEncoderModel):
             try:
                 if not self._ready[index]:
                     await self._ensure_member_ready(index)
+                # Capture all capabilities in this request before predict. A final
+                # member's partial timeout still returns scores from that member.
+                record_served_reranker(
+                    ServedReranker(member.provider_name, member.score_semantics, member.prunes_candidates)
+                )
                 scores = await member.predict(pairs)
                 if len(scores) != len(pairs):
                     raise RuntimeError(f"returned {len(scores)} scores for {len(pairs)} pairs")
@@ -2157,9 +2217,6 @@ class MultiCrossEncoder(CrossEncoderModel):
                     member.provider_name,
                 )
             self._active = index
-            # Record the member for this task before returning. A later read of
-            # provider_name follows _active and can name a different request.
-            _served_provider.set(member.provider_name)
             return scores
         # All members failed; surface the last error (loop ran at least once).
         assert last_exc is not None

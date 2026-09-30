@@ -769,7 +769,7 @@ An optional object of per-stage score floors, each compared **inclusively** (`>=
 |---|---|---|---|
 | `semantic` | retrieval | minimum vector similarity, pushed into the **semantic arm's** SQL — prunes weak vector matches **before** fusion (overrides the global similarity minimum for this request) | no |
 | `keyword` | retrieval | minimum keyword/full-text (BM25) score, pushed into the **keyword arm's** SQL — prunes weak keyword matches before fusion | no |
-| `reranker` | post-query | minimum normalized cross-encoder score, applied to the ranked results | yes |
+| `reranker` | post-query | minimum normalized reranker score, supported only when the provider that serves the request returns pointwise or calibrated-probability scores | yes, when supported |
 | `final` | post-query | minimum final ranking score, applied to the ranked results | yes |
 
 ```json
@@ -788,11 +788,17 @@ Setting `semantic` and `keyword` together therefore does not restrict the respon
 
 #### For abstention, use `reranker` or `final`
 
-The post-query floors are applied to every scored result after fusion and reranking, so a returned result always clears them — and a query where nothing clears them returns no results. That is the floor to reach for when you want recall to abstain on a low-confidence or nonsense query. Note they gate a *combined* signal: `final` blends RRF rank, cross-encoder relevance, recency/temporal and strategy boosts, and `reranker` depends on the cross-encoder's calibration, so neither is a drop-in equivalent of a retrieval-stage cutoff.
+The post-query floors are applied to every scored result after fusion and reranking, so a returned result always clears a floor it was allowed to set. A query where nothing clears it returns no results. `min_scores.reranker` is accepted only when the reranker that actually serves the request returns a pointwise or calibrated-probability score. Pool-dependent providers, including TypeSafe's ordinal scores and Jina MLX's listwise scores, and RRF/interleave passthrough modes return HTTP 400. Failover is decided per request, so the same chain may accept or reject this floor depending on which member answers.
+
+Known pool-dependent configurations, including an explicit RRF/interleave mode, TypeSafe, Jina MLX, or a failover chain made entirely of ordinal/listwise members, reject the floor even when retrieval is empty. If retrieval is empty for a chain that has a pointwise member, no member serves the request, so recall returns an empty result without applying the floor.
+
+For example, TypeSafe gives six ranked candidates ordinal scores `1, 5/6, 4/6, 3/6, 2/6, 1/6`. A `0.5` floor would retain four candidates by arithmetic, regardless of whether any is relevant. TypeSafe's own pruning still works without a reranker floor. `min_scores.final` remains available for ordinal providers, but its post-boost ranking score may also depend on the query pool.
+
+For pointwise providers, a reranker floor can support query abstention after calibration. `final` blends the ranking signal with recency/temporal and strategy boosts, so neither post-query floor is equivalent to a retrieval-stage cutoff.
 
 Because freed slots are **not** backfilled, any floor can return fewer results than the budget allows.
 
-**Use floors with care.** The reranker's scores are reliable for *ordering* but not as *absolute* values — a clearly-relevant memory can score `~0.001` on one query and `~1.0` on another, so a fixed cutoff risks silently dropping good results. Calibrate any threshold against the scores you actually observe (recall with no `min_scores` first and inspect the [`scores`](#scores) object). See the note under [`scores`](#scores) on why the scale is relative, not absolute, before relying on a fixed threshold.
+**Use floors with care.** Even pointwise reranker scores need calibration before use as absolute thresholds: a clearly-relevant memory can score `~0.001` on one query and `~1.0` on another. Calibrate against your own data (recall with no `min_scores` first and inspect the [`scores`](#scores) object). A normalized value in `[0, 1]` is not necessarily a probability.
 
 ---
 
@@ -802,7 +808,7 @@ Because freed slots are **not** backfilled, any floor can return fewer results t
 
 The main list of recalled facts, ordered by relevance. Relevance is computed by running four retrieval strategies in parallel — semantic similarity, BM25 keyword, graph traversal, and temporal — fusing their rankings with Reciprocal Rank Fusion (RRF), then re-scoring the merged candidates with a cross-encoder reranker against the original query.
 
-Each result carries a [`scores`](#scores) object (see below). Treat these as **relative** signals: they reflect the ranking within a single query, not an absolute, cross-query confidence — a `0.8` from one query is not comparable to a `0.8` from another. For most agents the right approach is to consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score. The `scores` object (and the [`min_scores`](#min_scores) parameter) exist for callers that want to inspect the ranking or drop a low-confidence tail; calibrate any threshold against the scores you see on an unfiltered query.
+Each result carries a [`scores`](#scores) object (see below). Score meaning depends on the stage and provider: TypeSafe publishes a query-pool-dependent ordinal position, Jina MLX computes listwise scores from the complete candidate prompt, and a pointwise provider scores the query-document pair. None should be read as calibrated cross-query confidence by default. For most agents the right approach is to consume memories in order and let `max_tokens` determine how many fit. Calibrate supported thresholds against your own unfiltered queries.
 
 Each item in `results` has the following fields:
 
@@ -858,12 +864,12 @@ For `observation`-type results only: the IDs of the original facts this observat
 
 An object of the per-stage scores for this result. `null` for `source_facts` entries, which are attached by provenance rather than ranked. Fields:
 
-- **`final`** — the score this fact was ranked by (cross-encoder relevance × recency/temporal/evidence boosts). `results` is ordered by it descending. A relative signal, not a calibrated probability (see the note above).
-- **`reranker`** — the cross-encoder's normalized relevance (`0`–`1`). `null` when the deployment uses a passthrough reranker (RRF/interleave modes).
+- **`final`** — the ranking score after boosts. `results` is ordered by it descending. It is a relative signal, not a calibrated probability.
+- **`reranker`** — the reranker's normalized numeric score (`0`–`1`). For pointwise providers it belongs to the query-document pair. TypeSafe's ordinal position and Jina MLX's listwise score depend on the candidate pool and cannot be used with `min_scores.reranker`. `null` in RRF/interleave passthrough modes.
 - **`semantic`** — the raw vector cosine similarity (`0`–`1`). `null` if this result was not surfaced by semantic search.
 - **`keyword`** — the raw keyword/full-text (BM25) score (`≥ 0`, unbounded). `null` if this result was not surfaced by keyword search.
 
-Each field is also a valid [`min_scores`](#min_scores) floor — but `semantic` and `keyword` gate their own retrieval arm rather than the returned result, so a `null` here is expected even when you set that floor. A non-null value always clears it. See [`min_scores`](#min_scores).
+Each field has a corresponding [`min_scores`](#min_scores) floor, subject to the reranker provider restriction above. `semantic` and `keyword` gate their own retrieval arm rather than the returned result, so a `null` here is expected even when you set that floor. A non-null value always clears it. See [`min_scores`](#min_scores).
 
 ---
 

@@ -1280,9 +1280,14 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     the retrieval arm they name — recall fuses four arms (semantic, keyword, graph, temporal)
                     and returns what any of them surfaced, so a result may report null or a lower score for an
                     arm that did not surface it, and setting both does not restrict results to those clearing
-                    both. Use "reranker"/"final" — applied to every scored result — to make recall abstain.
-                    The reranker's absolute scores are not calibrated across queries, so only threshold
-                    against scores you've calibrated for your own data.
+                    both. "reranker"/"final" apply to every scored result, but "reranker" requires
+                    pointwise or calibrated-probability scores from the provider that serves the request.
+                    Pool-dependent providers, including TypeSafe (ordinal) and Jina MLX (listwise), and
+                    RRF/interleave passthrough modes reject that floor. Known pool-dependent configurations
+                    reject it even when retrieval is empty. An empty failover chain with a pointwise member
+                    returns empty without applying the floor because no member served the request.
+                    "final" remains available for pool-dependent providers. Calibrate pointwise thresholds against
+                    scores observed on your own data; absolute scores can vary across queries.
                 temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
@@ -1378,9 +1383,14 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     the retrieval arm they name — recall fuses four arms (semantic, keyword, graph, temporal)
                     and returns what any of them surfaced, so a result may report null or a lower score for an
                     arm that did not surface it, and setting both does not restrict results to those clearing
-                    both. Use "reranker"/"final" — applied to every scored result — to make recall abstain.
-                    The reranker's absolute scores are not calibrated across queries, so only threshold
-                    against scores you've calibrated for your own data.
+                    both. "reranker"/"final" apply to every scored result, but "reranker" requires
+                    pointwise or calibrated-probability scores from the provider that serves the request.
+                    Pool-dependent providers, including TypeSafe (ordinal) and Jina MLX (listwise), and
+                    RRF/interleave passthrough modes reject that floor. Known pool-dependent configurations
+                    reject it even when retrieval is empty. An empty failover chain with a pointwise member
+                    returns empty without applying the floor because no member served the request.
+                    "final" remains available for pool-dependent providers. Calibrate pointwise thresholds against
+                    scores observed on your own data; absolute scores can vary across queries.
                 temporal_window: Window for the temporal arm as {"start": ISO, "end": ISO}, used instead of
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside

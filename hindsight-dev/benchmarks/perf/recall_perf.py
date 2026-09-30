@@ -1111,12 +1111,13 @@ class _RRFReranker:
         pass
 
     async def rerank(self, query: str, candidates: list["MergedCandidate"]) -> "RerankResult":
+        from hindsight_api.engine.cross_encoder import ScoreSemantics, ServedReranker
         from hindsight_api.engine.search.reranking import RerankResult
         from hindsight_api.engine.search.types import ScoredResult
 
         scored = [ScoredResult(candidate=c, weight=c.rrf_score) for c in candidates]
         scored.sort(key=lambda x: x.weight, reverse=True)
-        return RerankResult(results=scored, provider_name="rrf")
+        return RerankResult(results=scored, served=ServedReranker("rrf", ScoreSemantics.ORDINAL, False))
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import (
 // checks if the RecallScores type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &RecallScores{}
 
-// RecallScores Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance.
+// RecallScores Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter, subject to the reranker floor's score-semantics restriction. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result). ``reranker`` is a normalized numeric score: pointwise for pointwise providers, but an ordinal position for TypeSafe.
 type RecallScores struct {
 	// Final ranking score (combined reranker + recency/temporal/proof boosts)
 	Final float32 `json:"final"`

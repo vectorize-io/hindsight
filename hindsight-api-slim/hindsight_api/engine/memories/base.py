@@ -698,6 +698,9 @@ class FullRecallRequest:
     recency_decay_halflife_days: float = 90.0
     #: What recency is measured from — ``question_date`` when the caller gave one, else now.
     now: "datetime | None" = None
+    #: Pointwise/calibrated reranker floor. The engine rejects this before delegation when
+    #: ``reranking`` is ``"rrf"`` or ``"interleave"`` because those modes are ordinal. A store
+    #: that claims cross-encoder recall must likewise reject ordinal or listwise served scores.
     min_reranker: "float | None" = None
     min_final: "float | None" = None
 
@@ -1485,6 +1488,12 @@ class MemoriesExtension(Extension, ABC):
         chunk enrichment. It must return the same shape the engine would have — the results in
         rank order, with their scores — because the caller cannot tell which path produced its
         answer and must not need to.
+
+        The engine rejects ``min_reranker`` with explicit ``rrf`` or ``interleave`` before
+        calling this method. A store therefore never receives that known-ordinal combination.
+        Cross-encoder stores remain responsible for applying the same served-member rule as the
+        engine: pointwise and calibrated scores accept the floor, while a served ordinal or
+        listwise member rejects it.
 
         **Declining is normal and must stay cheap.** A store should return ``None`` for any
         request shape it does not implement rather than approximating it: a recall answered

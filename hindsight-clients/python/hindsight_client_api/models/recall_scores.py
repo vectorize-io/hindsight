@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class RecallScores(BaseModel):
     """
-    Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance.
+    Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter, subject to the reranker floor's score-semantics restriction. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result). ``reranker`` is a normalized numeric score: pointwise for pointwise providers, but an ordinal position for TypeSafe.
     """ # noqa: E501
     final: Union[StrictFloat, StrictInt] = Field(description="Final ranking score (combined reranker + recency/temporal/proof boosts)")
     reranker: Optional[Union[StrictFloat, StrictInt]] = None

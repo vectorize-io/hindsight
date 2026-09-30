@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hindsight_api.engine import memory_engine
+from hindsight_api.engine.cross_encoder import ScoreSemantics, ServedReranker
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.search.reranking import RerankResult
 from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
@@ -35,7 +36,7 @@ class _Reranker:
                     weight=0.8,
                 )
             ],
-            provider_name=None,
+            served=ServedReranker("tei", ScoreSemantics.POINTWISE, False),
         )
 
 

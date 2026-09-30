@@ -242,16 +242,17 @@ class RecallScores(BaseModel):
     """Per-result recall scores from different stages of the pipeline.
 
     ``final`` is the value results are ranked by. The others are diagnostic and
-    can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
-    and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
-    strategy did not surface this result); ``reranker`` is the cross-encoder's
-    normalized relevance.
+    can be filtered on via the recall ``min_scores`` request parameter, subject to
+    the reranker floor's score-semantics restriction. ``semantic`` and ``keyword``
+    are the raw per-strategy retrieval scores (``None`` when that strategy did not
+    surface this result). ``reranker`` is a normalized numeric score: pointwise for
+    pointwise providers, but an ordinal position for TypeSafe.
     """
 
     final: float = Field(description="Final ranking score (combined reranker + recency/temporal/proof boosts)")
     reranker: float | None = Field(
         default=None,
-        description="Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).",
+        description="The reranker's normalized numeric score. For pointwise providers it belongs to the query-document pair. TypeSafe's ordinal position and Jina MLX's listwise score depend on the candidate pool and cannot be used with `min_scores.reranker`. None for RRF/interleave passthrough modes.",
     )
     semantic: float | None = Field(
         default=None, description="Vector cosine similarity (0-1). None if this result was not surfaced semantically."
@@ -284,8 +285,15 @@ class MinScores(BaseModel):
 
     ``reranker`` and ``final`` are **post-query** filters applied to every scored
     result after fusion and reranking, so these *are* per-result predicates: a
-    returned result always clears them. Use them, not the retrieval floors, to make
-    recall abstain on low-confidence queries.
+    returned result always clears them. ``min_scores.reranker`` is accepted only
+    when the reranker that actually serves the request returns a pointwise or
+    calibrated-probability score. Pool-dependent providers, including TypeSafe's
+    ordinal scores and Jina MLX's listwise scores, and RRF/interleave passthrough
+    modes return HTTP 400. Known pool-dependent configurations reject the floor
+    even when retrieval is empty. If retrieval is empty for a failover chain with
+    a pointwise member, no member serves the request, so recall returns an empty
+    result without applying the floor. ``final`` remains available for
+    pool-dependent providers.
 
     Any field left None imposes no floor; all-None (the default) means no score
     filtering.
@@ -303,7 +311,7 @@ class MinScores(BaseModel):
     )
     reranker: float | None = Field(
         default=None,
-        description="Post-query: minimum normalized reranker score (0-1). Applied to every returned result.",
+        description="Post-query: minimum normalized reranker score (0-1), applied to every returned result. Accepted only when the reranker that actually serves the request returns a pointwise or calibrated-probability score. Pool-dependent providers, including TypeSafe's ordinal scores and Jina MLX's listwise scores, and RRF/interleave passthrough modes return HTTP 400. Known pool-dependent configurations reject this floor even when retrieval is empty. If retrieval is empty for a failover chain with a pointwise member, no member serves the request, so recall returns an empty result without applying the floor.",
     )
     final: float | None = Field(
         default=None,

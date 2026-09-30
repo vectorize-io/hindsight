@@ -8,7 +8,14 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ..cross_encoder import RerankTimeoutError, _served_provider
+from ..cross_encoder import (
+    RerankTimeoutError,
+    ScoreSemantics,
+    ServedReranker,
+    begin_served_reranker_capture,
+    end_served_reranker_capture,
+    get_served_reranker,
+)
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -16,15 +23,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RerankResult:
-    """Scores from one rerank call, plus the provider that actually produced them.
+    """Scores and capabilities from the member that served one rerank call.
 
-    ``provider_name`` is copied out before ``rerank`` returns. On a failover
-    chain it is the member that served this call, not a later read of the
-    chain's shared active member.
+    ``served`` is copied out before ``rerank`` returns. A failover chain's
+    shared active member can change before this result is consumed.
     """
 
     results: list[ScoredResult]
-    provider_name: str | None
+    served: ServedReranker | None
 
 
 UTC = timezone.utc
@@ -370,13 +376,12 @@ class CrossEncoderReranker:
             candidates: Merged candidates from RRF
 
         Returns:
-            Scored results sorted by cross-encoder score, and the provider that
-            produced those scores for this call.
+            Scored results sorted by cross-encoder score and the served member's capabilities.
         """
         if not candidates:
             return RerankResult(
                 results=[],
-                provider_name=getattr(self.cross_encoder, "provider_name", None),
+                served=None,
             )
 
         # Prepare query-document pairs with date information
@@ -411,7 +416,7 @@ class CrossEncoderReranker:
         # to score (#4696); the rest keep their pre-rerank (RRF) order behind the
         # scored ones rather than the recall never returning.
         unscored: set[int] = set()
-        token = _served_provider.set(None)
+        token = begin_served_reranker_capture()
         try:
             try:
                 scores = await self.cross_encoder.predict(pairs)
@@ -419,19 +424,21 @@ class CrossEncoderReranker:
                 logger.warning(f"Reranking: {exc}; ranking the remainder by RRF order")
                 unscored = {i for i, score in enumerate(exc.scores) if score is None}
                 scores = [0.0 if score is None else score for score in exc.scores]
-            served_provider = _served_provider.get()
+            served = get_served_reranker()
         finally:
-            _served_provider.reset(token)
-        if served_provider is None:
-            # Single-member encoders do not record one. Their provider_name is
-            # fixed for the instance, so it is not the shared failover cursor.
-            served_provider = getattr(self.cross_encoder, "provider_name", None)
+            end_served_reranker_capture(token)
+        if served is None:
+            # Single-member encoders have fixed capabilities for this instance.
+            served = ServedReranker(
+                provider_name=self.cross_encoder.provider_name,
+                score_semantics=getattr(self.cross_encoder, "score_semantics", ScoreSemantics.POINTWISE),
+                prunes_candidates=getattr(self.cross_encoder, "prunes_candidates", False),
+            )
 
         # Normalize scores to [0, 1] range.
-        # External API rerankers (Cohere, Jina, llama.cpp/Qwen, etc.) return
-        # calibrated relevance_score already in [0, 1]. These are used as-is
-        # so that absolute confidence is preserved — a top candidate scoring
-        # 0.007 stays low rather than being inflated to 1.0 by rank normalization.
+        # External API rerankers (Cohere, Jina, llama.cpp/Qwen, etc.) may return
+        # scores in [0, 1]. Keep those values as-is rather than rank-normalizing
+        # them; that range alone does not establish probability calibration.
         # Local models return logits (any real number) — sigmoid is appropriate.
         import numpy as np
 
@@ -439,8 +446,7 @@ class CrossEncoderReranker:
             return 1 / (1 + np.exp(-x))
 
         if scores and min(scores) >= 0.0 and max(scores) <= 1.0:
-            # Scores already in [0, 1] — pass through to preserve absolute
-            # confidence signal from calibrated rerankers.
+            # Scores already in [0, 1] pass through unchanged.
             normalized_scores = list(scores)
         else:
             # Scores are logits (e.g. local sentence-transformers models).
@@ -481,8 +487,8 @@ class CrossEncoderReranker:
         # `candidates` arrives in RRF order, so appending preserves it for the tail.
         scored_results.extend(unscored_results)
 
-        if not self.cross_encoder.prunes_candidates:
-            return RerankResult(results=scored_results, provider_name=served_provider)
+        if not served.prunes_candidates:
+            return RerankResult(results=scored_results, served=served)
 
         # This backend judges relevance rather than only ordering it, and marks a
         # candidate it would prune with a score of exactly 0.0. It cannot remove the
@@ -492,4 +498,4 @@ class CrossEncoderReranker:
         # and so keeps whatever is left when nothing is relevant.
         kept = [result for result in scored_results if result.weight > 0.0]
         logger.info(f"Reranking: reranker kept {len(kept)}/{len(scored_results)} candidates as relevant")
-        return RerankResult(results=kept, provider_name=served_provider)
+        return RerankResult(results=kept, served=served)
