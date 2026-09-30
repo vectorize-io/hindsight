@@ -598,7 +598,7 @@ async def newest_memory_updated_at(
     since: datetime | None = None,
     fact_types: list[str] | None = None,
     tags: list[str] | None = None,
-    tags_match: str = "any",
+    tags_match: TagsMatch = "any",
     tag_groups: list | None = None,
 ) -> datetime | None:
     """``MAX(updated_at)`` over ``bank_id``'s scope within ``(since, until]``.

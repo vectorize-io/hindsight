@@ -1759,7 +1759,7 @@ class MemoriesExtension(Extension, ABC):
         since: datetime | None = None,
         fact_types: list[str] | None = None,
         tags: list[str] | None = None,
-        tags_match: str = "any",
+        tags_match: TagsMatch = "any",
         tag_groups: list | None = None,
     ) -> datetime | None:
         """The newest ``updated_at`` in the given scope within ``(since, until]``, or None.
