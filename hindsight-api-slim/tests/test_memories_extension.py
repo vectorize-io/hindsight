@@ -163,6 +163,7 @@ class InMemoryMemories(MemoriesExtension):
         facts,
         document_id=None,
         unit_entity_names=None,
+        unit_exact_entity_names=None,
         replace_document_id="",
         replace_chunk_ids=None,
         replace_keep_chunk_ids=None,
