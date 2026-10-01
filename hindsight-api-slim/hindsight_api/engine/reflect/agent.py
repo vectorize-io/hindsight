@@ -148,6 +148,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
 
+#: How many extra attempts a *pinned* retrieval step gets when the provider
+#: answers a forced ``tool_choice`` with zero parsed tool calls. Observed on vLLM
+#: 0.24.0 at roughly 1 turn in 5: ``finish_reason="tool_calls"`` with no tool call
+#: in the payload (#4564). The step used to be dropped silently, so a run missing
+#: ``recall`` entirely was indistinguishable from a complete one. Same shape as the
+#: provider-error budget below (``consecutive_errors < 2``): retry the identical
+#: request a bounded number of times, then fail loudly rather than answer around it.
+_MAX_FORCED_STEP_RETRIES = 2
+
 #: Temperature for split synthesis's map calls. They copy claims and ids out of one
 #: chunk — the mechanical half of the job, like consolidation's extraction passes,
 #: which also run at 0. The reflect temperature (0.9 by default) belongs to the calls
@@ -188,10 +197,12 @@ class ReflectToolCallError(RuntimeError):
     Vertex AI gpt-oss MaaS path strips ``tools``/``tool_choice`` when the model is
     flagged as not supporting them). The model then answers in free text that may
     mimic a ``done`` payload. Other endpoints support tools but ignore the forced
-    tool choice for some prompts only (#4557). Rather than salvage that untooled
-    text -- and risk surfacing raw tool-call JSON as the answer -- we fail loudly,
-    naming the requested tool choice and the response's finish reason so the
-    operator can tell the two cases apart.
+    tool choice for some prompts only (#4557), or return ``finish_reason``
+    ``"tool_calls"`` with an empty tool-call list on a pinned retrieval step
+    (#4564). Rather than salvage that untooled text -- and risk surfacing raw
+    tool-call JSON as the answer, or answering past a retrieval step that never
+    ran -- we fail loudly, naming the requested tool choice and the response's
+    finish reason so the operator can tell the cases apart.
     """
 
 
@@ -1072,6 +1083,14 @@ async def _run_reflect_agent_inner(
         )
 
     consecutive_errors = 0
+    # Turns spent re-asking a pinned step that came back with no tool call at all.
+    # The forced sequence is indexed by ``iteration`` MINUS this, so a retry re-pins
+    # the SAME step instead of advancing past it: indexing by ``iteration`` alone is
+    # what let a zero-tool-call turn consume a pinned step without running it (#4564).
+    forced_retries = 0
+    # Consecutive zero-tool-call turns on the pinned step we are currently on. Reset
+    # as soon as any turn produces a parsed tool call, like ``consecutive_errors``.
+    forced_step_misses = 0
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers from this
     # iteration onward and let the agent answer (or retrieve deeper itself)
@@ -1126,11 +1145,15 @@ async def _run_reflect_agent_inner(
         if include_recall:
             forced_sequence.append("recall")
 
+        # Which pinned step this turn is for. Retry turns (a pinned step that came
+        # back with no tool call) do not advance it, so the same step is re-asked.
+        forced_step = iteration - forced_retries
+
         if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
             # A fresh mental model already short-circuited the forced path.
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
-        elif iteration < len(forced_sequence):
-            iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
+        elif forced_step < len(forced_sequence):
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[forced_step])
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
@@ -1141,7 +1164,7 @@ async def _run_reflect_agent_inner(
         next_iter = iteration + 1
         if stop_forcing_from_iteration is not None and next_iter >= stop_forcing_from_iteration:
             next_is_auto = True
-        elif next_iter < len(forced_sequence):
+        elif forced_step + 1 < len(forced_sequence):
             next_is_auto = False
         else:
             next_is_auto = True
@@ -1237,20 +1260,25 @@ async def _run_reflect_agent_inner(
         # No tool calls this turn.
         if not result.tool_calls:
             # Reflect is driven by structured tool calls. A turn with no tool call
-            # means one of two things:
+            # means one of three things:
             #   * the model already gathered evidence via earlier tool calls and is
             #     now stopping -- fine, synthesize a clean final answer below;
+            #   * the turn PINNED a retrieval tool, so stopping is not on offer:
+            #     the step has to be retried, and failing that the run fails (#4564);
             #   * no usable tool call has been produced yet. The endpoint may have
             #     ignored this prompt's tool choice, or lack tool support altogether
             #     (e.g. litellm strips tools on the Vertex gpt-oss MaaS path).
             # We no longer salvage that free text as the answer -- it can be a raw
             # done()-payload with sibling id fields leaking into user-visible text.
             # Fail loudly with request/response diagnostics instead.
+            #
+            # Same response preview for either failure below: what the model sent
+            # instead of a tool call is the diagnostic in both cases.
+            snippet = (result.content or "").strip()
+            if len(snippet) > 500:
+                snippet = snippet[:500] + "..."
+            detail = f" Response: {snippet!r}" if snippet else " The model returned no content."
             if not saw_tool_call:
-                snippet = (result.content or "").strip()
-                if len(snippet) > 500:
-                    snippet = snippet[:500] + "..."
-                detail = f" Response: {snippet!r}" if snippet else " The model returned no content."
                 # A single text-only response does not prove the model lacks tool
                 # support: some endpoints ignore a forced choice for short prompts.
                 # Report the requested choice and normalized response so operators can probe the
@@ -1264,6 +1292,39 @@ async def _run_reflect_agent_inner(
                     "Check tool-choice handling for this prompt on the configured endpoint; "
                     "a successful tool call for another prompt does not establish compatibility." + detail
                 )
+
+            # A PINNED step that produced nothing is not a stop. The turn asked for
+            # one specific retrieval tool (``recall`` and friends) and came back
+            # empty-handed -- observed on vLLM 0.24.0 with finish_reason="tool_calls"
+            # and zero tool calls in the payload, roughly 1 turn in 5 (#4564).
+            # Falling through to the answer here dropped that retrieval layer
+            # silently: no retry, no error, and nothing downstream could tell a
+            # complete evidence set from one missing ``recall`` entirely. Re-ask the
+            # identical request a bounded number of times (``forced_step`` does not
+            # advance, so the same tool stays pinned), then fail loudly. A retry is
+            # only worth spending when a non-final iteration remains -- the final one
+            # answers without retrieving, which would be the same silent skip.
+            if iter_tool_choice is not LLM_TOOL_CHOICE_AUTO:
+                forced_tool = iter_tool_choice.function_name or iter_tool_choice.mode.value
+                forced_step_misses += 1
+                if forced_step_misses <= _MAX_FORCED_STEP_RETRIES and iteration + 1 < max_iterations - 1:
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Forced tool {forced_tool!r} returned no tool call on "
+                        f"iteration {iteration + 1} (finish_reason={result.finish_reason!r}); "
+                        f"retrying the same step ({forced_step_misses}/{_MAX_FORCED_STEP_RETRIES})."
+                    )
+                    forced_retries += 1
+                    continue
+                raise ReflectToolCallError(
+                    f"Reflect pinned {forced_tool!r} on iteration {iteration + 1} and "
+                    f"{llm_config.provider}/{llm_config.model} returned no tool call "
+                    f"after {forced_step_misses} attempt(s) "
+                    f"(tool_choice={forced_tool!r}, finish_reason={result.finish_reason!r}). "
+                    "Answering here would silently drop a required retrieval step, so the run fails "
+                    "instead. Check forced tool-choice handling for this prompt on the configured "
+                    "endpoint." + detail
+                )
+
             # Model tool-called earlier and is now stopping with prose.
             return await _finish(iteration + 1)
 
@@ -1271,6 +1332,7 @@ async def _run_reflect_agent_inner(
         # drive the loop, so a later text-only turn is a legitimate stop, not a
         # broken transport.
         saw_tool_call = True
+        forced_step_misses = 0
 
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)

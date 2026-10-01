@@ -350,10 +350,17 @@ class TestSplitSynthesisAgentFlow:
         """No overflow → exactly the pre-existing single forced-synthesis call."""
         small = {"memories": [{"id": "mem-1", "text": "one small fact"}]}
         llm = self._mock_llm("Direct answer.")
-        # First turn recalls; second turn stops with no tool calls → forced synthesis.
+        # The forced retrieval ladder runs first (search_observations, then recall);
+        # the turn after it is ``auto``, and stopping there with no tool call is the
+        # legitimate stop that reaches forced synthesis. Stopping *on* a pinned step
+        # is retried and then fails instead (#4564), which is a different path.
         llm.call_with_tools.side_effect = [
             LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                tool_calls=[LLMToolCall(id="1", name="search_observations", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="recall", arguments={"query": "q"})],
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(tool_calls=[], finish_reason="stop", content="done"),
@@ -369,7 +376,7 @@ class TestSplitSynthesisAgentFlow:
 
         assert result.text == "Direct answer."
         scopes = [c.scope for c in result.llm_trace]
-        assert scopes == ["agent_1", "agent_2", "final"], f"unexpected scopes {scopes}"
+        assert scopes == ["agent_1", "agent_2", "agent_3", "final"], f"unexpected scopes {scopes}"
 
     @pytest.mark.asyncio
     async def test_map_prompts_partition_the_evidence(self):
